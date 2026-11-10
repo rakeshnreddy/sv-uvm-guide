@@ -7,6 +7,7 @@ import SearchCombobox from '@/components/search/SearchCombobox';
 import SearchDialog from '@/components/search/SearchDialog';
 import { focusAfterNavigation } from '@/components/search/focus-target';
 import { shellStore } from '@/components/search/shell-store';
+import { focusableWithin } from '@/components/search/useModalDialog';
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 
@@ -184,6 +185,36 @@ describe('SearchDialog (phones, and Ctrl/Cmd+K when the navbar field is hidden)'
     expect(document.activeElement).toBe(opener);
   });
 
+  it('keeps Tab inside the dialog while results are showing', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <a href="#behind">Link behind the dialog</a>
+        <SearchDialog />
+      </>,
+    );
+    act(() => shellStore.openSearch());
+    const dialog = screen.getByRole('dialog', { name: 'Search the curriculum' });
+    const input = within(dialog).getByRole('combobox');
+    await user.type(input, 'phasing');
+    await within(dialog).findByRole('listbox');
+
+    // The result options have tabIndex -1 (they are reached with the arrow keys),
+    // so Tab and Shift+Tab cycle through the dialog's own controls and never
+    // reach the page behind it.
+    const close = within(dialog).getByRole('button', { name: 'Close search' });
+    await user.tab();
+    expect(document.activeElement).toBe(close);
+    for (let step = 0; step < 6; step += 1) {
+      await user.tab({ shift: step % 2 === 1 });
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+    for (let step = 0; step < 4; step += 1) {
+      await user.tab({ shift: true });
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+  });
+
   it('closes and navigates when a result is chosen with Enter', async () => {
     const user = userEvent.setup();
     render(<SearchDialog />);
@@ -195,6 +226,22 @@ describe('SearchDialog (phones, and Ctrl/Cmd+K when the navbar field is hidden)'
     expect(push).toHaveBeenCalledWith(MAILBOXES);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(shellStore.getState().searchOpen).toBe(false);
+  });
+});
+
+describe('focusableWithin', () => {
+  it('skips elements taken out of the Tab order with a negative tabIndex', () => {
+    const container = document.createElement('div');
+    container.innerHTML = `
+      <button type="button">First</button>
+      <input aria-label="Field" />
+      <span tabindex="0">Focusable span</span>
+      <a href="/result" tabindex="-1" role="option">Result</a>
+    `;
+    document.body.appendChild(container);
+    const names = focusableWithin(container).map((element) => element.textContent?.trim() || element.getAttribute('aria-label'));
+    expect(names).toEqual(['First', 'Field', 'Focusable span']);
+    container.remove();
   });
 });
 

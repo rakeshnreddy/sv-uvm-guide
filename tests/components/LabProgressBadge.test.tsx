@@ -193,11 +193,14 @@ describe('lab entry-point client components', () => {
     const clientFiles = [
       'src/components/practice/LabProgressBadge.tsx',
       'src/components/curriculum/ModuleCard.tsx',
-      'src/components/home/InteractiveFeaturesSection.tsx',
     ];
-    for (const file of clientFiles) {
+    // The home feature section is a server component since the design refresh removed its animation, so it ships
+    // no client code at all. The import ban still applies to it, in case it becomes a client component again.
+    const serverFiles = ['src/components/home/InteractiveFeaturesSection.tsx'];
+    for (const file of [...clientFiles, ...serverFiles]) {
       const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8');
-      expect(source.startsWith("'use client'") || source.startsWith('"use client"'), file).toBe(true);
+      const isClient = source.startsWith("'use client'") || source.startsWith('"use client"');
+      expect(isClient, file).toBe(clientFiles.includes(file));
       expect(source, file).not.toMatch(/from ['"]@\/(lib|generated)\/lab-registry['"]/);
       expect(source, file).not.toMatch(/from ['"]@\/lib\/flashcard-decks['"]/);
     }

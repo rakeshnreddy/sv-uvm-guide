@@ -1,0 +1,384 @@
+{
+ "lens": "Theme and design tokens",
+ "summary": "The reviewer's contrast numbers reproduce exactly from globals.css, and the main claims hold: Cal Sans renders all text, dark destructive text is unreadable (1.46:1 on the lab console's muted panel, worse than reported), dark: utilities wait for hydration, color-scheme is never set, prose ignores the tokens, and lesson code has no highlighting. Corrections: shiki and rehype-pretty-code are already installed but unused; accent-as-text has no live users; cards sit darker than the page in every dark theme, not only two; OS-preference default is P3. Hero edges and h1 sizes are duplicates of other lenses. Added: dark-theme lessons print with invisible headings.",
+ "strengths": [
+  "The visual-language encodings (src/components/visual-system/visual-language.ts, docs/visual-learning/visual-language.md) pair every colour with a non-colour cue (hatching for X, dashed for Z, DUT/TB tags, check and cross glyphs) and carry dark: variants.",
+  "Code ligatures are disabled globally (globals.css font-mono rule), so SystemVerilog <= and === render exactly as typed.",
+  "Core text pairs pass AA in all ten themes: foreground on background 7.28-15.69:1, muted-foreground 5.58-6.98:1, primary on card 5.06-10.61:1; light primaries were deliberately deepened (comment at globals.css:20).",
+  "All colour roles live in one place as HSL variables, so a palette rework is a token edit plus codemods, not a rewrite.",
+  "Fonts are self-hosted through next/font/local, with no third-party font requests.",
+  "ocean-light (shots/home.desktop.ocean-light.s0.png) is a coherent light theme close to a light mode that matches the dark brand.",
+  "Lessons are statically generated, so build-time syntax highlighting and token changes cost no client JS."
+ ],
+ "proposal": "Typography, three roles. (1) Text: Inter, already self-hosted, for body, UI, tables, labels and lesson prose. Add 500/600 (or the variable woff2). Prose 16-17px, line height 1.7, measure about 70ch; UI 14/20; nothing visible below 12px. (2) Display: Cal Sans, converted to woff2, only for the landing hero, page h1 and lesson h2 at weight 600 with font-synthesis: none. The SVG wordmark in Logo.tsx already names Cal Sans directly. (3) Code: JetBrains Mono with ligatures off, as today. Lesson code gets build-time highlighting with rehype-pretty-code and Shiki, both already in package.json, using the system-verilog grammar on always-dark panels. A named type scale in tailwind.config.ts: display, h1 36/40, h2 24/32, h3 20/28, lead 18/28, body 16/26, body-sm 14/20, label 12/16, code 13.5/22, then a codemod of the 698 arbitrary 8.5-11px sizes.\n\nColour roles. Keep background, foreground, card, popover, muted, muted-foreground, primary(-foreground), border, ring. Change: input gets its own 3:1 boundary value per theme; accent becomes fill-only with dark ink on it in dark themes; destructive splits into a fill and a danger-text role; ghost and outline hovers use muted, not accent. Add success, warning, info (each with -foreground, -text, -subtle), named encoding tokens for visual-language.ts, a radius scale, two elevation shadows per mode, ring = primary. In dark mode surfaces are lighter than the page, not darker as today. Delete the blueprint family, the glass/hero/neon utilities, src/components/Card.tsx, ui/CodeBlock.tsx and src/lib/code-theme.ts. Map the typography plugin's --tw-prose-* variables to the tokens and drop dark:prose-invert, so lessons follow the theme.\n\nOne brand in two modes. Keep the navy and cyan identity. Dark: navy background, near-white foreground (210 40% 96%) instead of mint, cyan primary, mint only for highlights and progress. Light: white or slate-50 background, ink 222 47% 15%, primary 192 85% 30% (close to today's ocean-light, which passes), accent darkened. Headings use foreground in both modes; primary means clickable.\n\nMechanics. darkMode: ['selector', '[data-theme$=\"-dark\"]'] with ThemeWatcher and html.dark removed (update tests/e2e/theming.spec.ts, which waits for html.dark). color-scheme in every block and a themeColor viewport export. A print block that forces light tokens and hides the site chrome. Optionally, next-themes system mode via its value map, which also means updating ThemeSwitcher's name parsing and toggledThemeName. Add a CI contrast check over every token pair.\n\nTheme count. Ship Light and Dark (System optional). The four colour families recolour only header, links and buttons over shared slate surfaces, and each doubles the test surface for about 118 interactives. Drop them, or keep at most one optional accent hue applied through --primary and --accent on the same neutral ramp. Existing stored values such as 'ocean-dark' must fall back cleanly to the matching mode.\n",
+ "findings": [
+  {
+   "id": "theme-1",
+   "p": "P1",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "A single-weight display face (Cal Sans SemiBold) renders all text, including lesson prose; headings are faux-bolded",
+   "where": "Every page: body, lesson prose, nav, tables, 9-12px labels",
+   "evidence": "tailwind.config.ts:54-59 puts var(--font-cal-sans) first in fontFamily.sans; src/app/layout.tsx:28 applies font-sans to body. src/app/fonts.ts:46-52 loads only CalSans-SemiBold.otf at weight 600; Inter 400/700 is loaded and preloaded (fonts.ts:9-25) but nothing uses it. metrics.json: every desktop default-dark record reports body/p/h1/h2/navLink in __calSans_1e5256 (h1 w700). Verified with extra/verify-theme/probe.cjs: '.prose p' fontFamily '__calSans_1e5256, ...', weight 400, fontSynthesis 'weight style small-caps', h2 weight 700; document.fonts shows only Cal Sans 600 for that family, so 400 text uses the 600 face and 700 is synthesized. Five fonts preloaded, one a .otf. shots/lesson-f1a.desktop.default-dark.s0.png: Quick Take paragraphs are uniformly semibold and tightly tracked; bold terms barely differ from body. Overlaps design-critic-1 and landing-13.",
+   "impact": "Long lessons (75-minute reads) are set in a heavy, tightly spaced headline face. Bold and regular look nearly the same, so emphasis is weak, and readers tire faster. 9-12px labels in a display face are the hardest to read.",
+   "fix": "tailwind.config.ts: fontFamily.sans = ['var(--font-inter)','system-ui','sans-serif']; add fontFamily.display with Cal Sans first. Apply font-display only to the landing hero h1, page h1s and lesson h2 at font-semibold, with font-synthesis:none in globals.css. fonts.ts: add Inter 500/600 (or the variable woff2), convert Cal Sans to woff2, preload only Inter 400 and Cal Sans. Logo.tsx already sets fontFamily on its SVG text, so the wordmark keeps Cal Sans (change its className font-bold to font-semibold).",
+   "files": [
+    "tailwind.config.ts",
+    "src/app/fonts.ts",
+    "src/app/globals.css",
+    "src/components/ui/Logo.tsx",
+    "src/components/home/HeroSection.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "No test pins font classes (grep of tests/ for font-sans, calSans: none). Re-run visual Playwright suites (tests/e2e/hero-animation.spec.ts, tests/e2e/curriculum-overview.spec.ts) for layout shifts from the new metrics."
+   ]
+  },
+  {
+   "id": "theme-2",
+   "p": "P1",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Destructive red is unreadable as text in all five dark themes, including lab failure output (1.46:1)",
+   "where": "Lab check output and 'Check details' list, lab load error; destructive buttons in light themes",
+   "evidence": "globals.css:84 (and 125, 166, 207, 248) set --destructive: 0 62.8% 30.6% for every dark theme. extra/verify-theme/contrast.py: destructive on background 1.46-1.79, on card 2.00. The lab console sits in 'border-t border-border bg-muted p-4' (LabClientPage.tsx, panel above line 467), and destructive on --muted (217.2 32.6% 17.5%) is 1.46:1 in default-dark, worse than the reviewer's 1.74. text-destructive is used at LabClientPage.tsx:355 (load error), :467 (console output on failure) and :469 (Check details). Light themes: white on destructive 3.59:1, used by Button.tsx:16, LabClientPage.tsx:71, LearnerDataControls.tsx:64 and StateMachineDesigner.tsx:86. Correction: DataTypeQuiz.tsx:133,146 uses border-destructive and bg-destructive/10, not text-destructive.",
+   "impact": "The message a learner most needs in a lab ('your check failed, here is why') is dark red on slate at about 1.5:1 in the default theme. It fails WCAG AA by a wide margin.",
+   "fix": "globals.css: add --danger-text (dark 0 91% 71%: 6.33:1 on background, 5.31:1 on muted; light 0 72% 45%: 5.53:1 on cream) and set light --destructive to 0 72% 45% (white on it 5.55:1). Map text-danger in tailwind.config.ts and use it at LabClientPage.tsx:355,467,469. Keep the dark fill at 0 63% 31% with white text (9.56:1).",
+   "files": [
+    "src/app/globals.css",
+    "tailwind.config.ts",
+    "src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/LabClientPage.test.tsx (asserts text, not classes; re-run)"
+   ]
+  },
+  {
+   "id": "theme-3",
+   "p": "P1",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "Light and dark default themes look like two brands; dark uses one neon mint for UI text, headings and accent",
+   "where": "Every page in default-dark (the default for new visitors) versus default-light",
+   "evidence": "globals.css:73-75: default-dark --foreground and --accent are both 165 100% 70% (mint #64FFDA), --primary is cyan 199 100% 50%; mint and cyan differ by only 1.98:1, so colour alone does not separate links from text. globals.css:18-21: default-light is cream, grey #4A4A4A ink, crimson primary 344 100% 43%, salmon accent. Compare shots/home.desktop.default-dark.s0.png with shots/home.desktop.default-light.s0.png. Correction: lesson prose is not mint; the typography plugin sets it to gray-300 with white h2 and strong (probe), so a dark lesson page has three inks: mint h1/UI, white h2, grey body (shots/lesson-f1a.desktop.default-dark.s0.png). In light, card ink 222 84% 4.9% differs from page ink 0 0% 29%. Overlaps design-critic-2 and design-critic-3.",
+   "impact": "Switching mode changes the site's identity. In dark mode, coloured text no longer marks links or emphasis because nearly everything is saturated cyan or mint, which weakens hierarchy on every page.",
+   "fix": "globals.css: derive both modes from the navy/cyan brand. Dark: --foreground 210 40% 96%, --primary 190 90% 55%, --accent 165 80% 60% for highlights only. Light: background white or 210 40% 98%, --foreground 222 47% 15%, --primary 192 85% 30%, --accent 172 70% 30%. Set --card-foreground = --foreground. Headings use foreground; primary only for links, active state and the main CTA.",
+   "files": [
+    "src/app/globals.css"
+   ],
+   "effort": "M",
+   "tests": [
+    "No unit test pins token values. Re-run tests/e2e/theming.spec.ts and attach before/after screenshots."
+   ]
+  },
+  {
+   "id": "theme-4",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Light themes: input borders (1.14-1.18:1) and destructive pairs fail contrast",
+   "where": "default-light, ocean-light, sunset-light, forest-light, violet-light",
+   "evidence": "extra/verify-theme/contrast.py reproduces the reviewer's table exactly: border/input on background 1.14-1.18, white on destructive 3.59, destructive text 3.48-3.61, accent on background 2.20-4.37, violet-light accent-foreground on accent 3.78. Passing in all five: foreground on background 7.28-10.57, muted-foreground 5.58-5.86, primary on background 4.85-5.24, white on primary 4.83-5.41. border-input is used by Input.tsx:12, the ThemeSwitcher select (ThemeSwitcher.tsx:67) and the outline Button (Button.tsx:18). Correction: accent-as-text has no real users today. The only text-accent class is on Logo.tsx:8, and its SVG text sets fill=hsl(var(--primary)), so the failing accent pairs are latent, not visible.",
+   "impact": "Text fields and selects have nearly invisible edges (WCAG 1.4.11 needs 3:1 for input boundaries). Destructive buttons and text fail AA.",
+   "fix": "globals.css: give --input its own light value 214 16% 55% (3.36:1 on cream, 3.53:1 on white) and keep --border for dividers. Apply the destructive change from theme-2. Document accent as fill-only and remove the dead text-accent from Logo.tsx:8.",
+   "files": [
+    "src/app/globals.css",
+    "src/components/ui/Logo.tsx"
+   ],
+   "effort": "S",
+   "tests": []
+  },
+  {
+   "id": "theme-5",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Dark themes: ghost/outline hover text on accent, input borders, sunset-dark muted and forest-dark primary fail",
+   "where": "default-dark, ocean-dark, sunset-dark, forest-dark, violet-dark",
+   "evidence": "extra/verify-theme/contrast.py reproduces the table: accent-foreground on accent 1.19-2.32; border/input on background 1.00-1.23; muted vs background 1.00 in sunset-dark; forest-dark primary on background 3.95. Button.tsx:18,21 (outline, ghost: hover:bg-accent hover:text-accent-foreground), Select.tsx:84 (focus:bg-accent focus:text-accent-foreground) and CodeEditor.tsx:368 put near-white text on bright accent. extra/theme/ghost-hover.default-dark.png shows the hovered theme toggle: a pale moon on a mint square.",
+   "impact": "Ghost and outline buttons, including the header theme toggle, lose their icon or label on hover; focused Select items cannot be read; in sunset-dark, muted panels and borders vanish.",
+   "fix": "Button.tsx ghost/outline and CodeEditor.tsx:368: hover:bg-muted hover:text-foreground. Select.tsx:84: focus:bg-muted focus:text-foreground. globals.css dark: --accent-foreground 222 47% 11% (14.4:1 on mint). Set --input per theme to 3:1 on that theme's background (217 20% 45% gives 3.33 on default but only 2.80 on sunset-dark). Raise forest-dark --primary to 161 94% 40% (6.82:1).",
+   "files": [
+    "src/app/globals.css",
+    "src/components/ui/Button.tsx",
+    "src/components/ui/Select.tsx",
+    "src/components/ui/CodeEditor.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/CodeEditor.test.tsx (re-run; no class asserts found)"
+   ]
+  },
+  {
+   "id": "theme-6",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "dark: utilities switch on only after hydration, so headings and bold terms flash invisible on dark pages",
+   "where": "All pages in any *-dark theme until JS hydrates",
+   "evidence": "tailwind.config.ts:10 darkMode: 'class'. ThemeProvider.tsx:32-43 adds 'dark' to <html> in a useEffect. next-themes 0.3.0 sets only data-theme before paint. Reproduced with extra/verify-theme/probe.cjs (blocks /_next/static/chunks): html data-theme='default-dark', className '', '.prose p' rgb(55,65,81) and '.prose h2' rgb(17,24,39) on a dark card; image extra/verify-theme/prehydration.dark-prehydration.png matches extra/theme/prehydration.lesson-f1a.default-dark.png (Quick Take heading and bold terms nearly invisible, header shows 'Loading...'). globals.css:65 also keys default-dark variables on html.dark.",
+   "impact": "On slow connections every dark-theme visitor (the default) first sees unreadable headings, bold terms and visuals, then a repaint; the header shifts when 'Loading...' is replaced.",
+   "fix": "tailwind.config.ts: darkMode: ['selector', '[data-theme$=\"-dark\"]'] (Tailwind 3.4.19 installed). Remove ThemeWatcher from ThemeProvider.tsx and the html.dark selector at globals.css:65. ThemeSwitcher.tsx:57-59: render a fixed-size empty placeholder instead of 'Loading...'.",
+   "files": [
+    "tailwind.config.ts",
+    "src/components/providers/ThemeProvider.tsx",
+    "src/app/globals.css",
+    "src/components/ui/ThemeSwitcher.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/e2e/theming.spec.ts (waits for html.dark and asserts class 'dark'; must switch to data-theme)",
+    "tests/components/ThemeSwitcher.test.tsx"
+   ]
+  },
+  {
+   "id": "theme-7",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "color-scheme is never set, so native controls and scrollbars stay light in dark themes",
+   "where": "All dark themes: scrollbars, the header theme <select> dropdown, form widgets, mobile browser chrome",
+   "evidence": "node_modules/next-themes/dist/index.mjs contains \"if(e==='light'||e==='dark')d.style.colorScheme=e\"; theme names here are 'default-dark' etc. probe: getComputedStyle(html).colorScheme 'normal' in default-dark. grep: no color-scheme in globals.css. Added: no themeColor/viewport export in src/app/layout.tsx, so mobile browser chrome does not match either.",
+   "impact": "The theme dropdown list, scrollbars and form widgets render with light system styling on a navy page.",
+   "fix": "globals.css: color-scheme: light on :root and each *-light block, color-scheme: dark on each *-dark block. src/app/layout.tsx: export viewport with themeColor for light and dark media.",
+   "files": [
+    "src/app/globals.css",
+    "src/app/layout.tsx"
+   ],
+   "effort": "S",
+   "tests": []
+  },
+  {
+   "id": "theme-8",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "New visitors always get default-dark; the OS light/dark preference is ignored",
+   "where": "First visit, every page",
+   "evidence": "ClientProviders.tsx:27 and (public)/layout.tsx:6 pass defaultTheme='default-dark'. probe with Playwright colorScheme 'light' and empty storage: data-theme 'default-dark', class 'dark'. Downgraded to P3: the header has a visible toggle and dark-by-default is a deliberate choice.",
+   "impact": "Learners who use a light OS setting start in dark mode and have to find the control.",
+   "fix": "Use next-themes enableSystem with defaultTheme 'system' and value={{light:'default-light',dark:'default-dark'}} (themes list must include 'light','dark'). Update ThemeSwitcher's name parsing and toggledThemeName (src/components/search/shortcuts.ts:124) for 'system'/'light'/'dark'; keep stored 'default-dark' values working. Mount one provider in src/app/layout.tsx.",
+   "files": [
+    "src/components/providers/ThemeProvider.tsx",
+    "src/components/providers/ClientProviders.tsx",
+    "src/app/(public)/layout.tsx",
+    "src/components/ui/ThemeSwitcher.tsx",
+    "src/components/search/shortcuts.ts"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/search/shortcuts.test.ts (toggledThemeName('system') expects 'default-light')",
+    "tests/components/ThemeSwitcher.test.tsx",
+    "tests/app/settings-page-client.spec.tsx (expects setTheme('default-light'))",
+    "tests/e2e/theming.spec.ts (default dark on /)",
+    "tests/e2e/settings-data.spec.ts"
+   ]
+  },
+  {
+   "id": "theme-9",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Eight alternate themes change only 4-5 variables; every dark theme puts cards darker than the page",
+   "where": "ocean/sunset/forest/violet light and dark; card elevation in all five dark themes",
+   "evidence": "globals.css:91-253: each alternate sets only --background, --foreground, --primary, --accent (plus --gradient-end in light); card, muted, secondary, border, input, ring and destructive are copied from the default slate pair. Correction: --card 222.2 84% 4.9% is darker than the background in all five dark themes, including default-dark (212 78% 11%), not only sunset/violet. shots/lesson-f1a.desktop.violet-dark.s0.png: near-black slate cards on an indigo page. sunset-dark --muted/--border equal its background (1.00:1). Blueprint tokens are themed only for the default pair (moot; see theme-17).",
+   "impact": "Choosing a theme mostly recolours header, links and buttons; surfaces stay default slate, so the dark alternates look unfinished. Each component must be checked in ten themes that were not designed.",
+   "fix": "Cut the set (see proposal). For any theme kept, generate the full role set from a neutral ramp tinted with the theme hue: surfaces lighter than the page in dark (+4-6% lightness), white in light; muted, border, input, ring per theme. Add scripts/theme-contrast.ts (port of contrast.py) to CI.",
+   "files": [
+    "src/app/globals.css",
+    "src/components/ui/ThemeSwitcher.tsx",
+    "src/components/providers/ThemeProvider.tsx",
+    "scripts/theme-contrast.ts"
+   ],
+   "effort": "L",
+   "tests": [
+    "tests/components/ThemeSwitcher.test.tsx (uses 'ocean-dark')",
+    "tests/e2e/settings-data.spec.ts (stores 'ocean-dark')",
+    "tests/search/shortcuts.test.ts (ocean-light)"
+   ]
+  },
+  {
+   "id": "theme-10",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Lesson prose uses the typography plugin's grey palette, not theme tokens, with no line-length limit",
+   "where": "Lesson article, history page, InfoPage template",
+   "evidence": "[...slug]/page.tsx:134 'prose prose-base max-w-none ... dark:prose-invert'; history/page.tsx:36,69,107 'prose prose-slate max-w-none dark:prose-invert'; InfoPage.tsx:22 'prose dark:prose-invert lg:prose-xl max-w-none'. probe: dark '.prose p' rgb(209,213,219), h2 rgb(255,255,255); light '.prose p' rgb(55,65,81) and h2 rgb(17,24,39) while the page h1 is --foreground rgb(74,74,74); paragraph width 750px, max-width none. tailwind.config.ts:89 loads @tailwindcss/typography 0.5.19 with no override.",
+   "impact": "Lesson body text does not follow any theme: violet or forest lessons still read in Tailwind grey, a different grey from the UI on the same page, and lines run well past 75 characters.",
+   "fix": "tailwind.config.ts: theme.extend.typography.DEFAULT.css mapping --tw-prose-body/headings/bold/links/code/borders (and invert) to the foreground, primary and border tokens; drop dark:prose-invert. On the lesson article set prose-p:max-w-[70ch] prose-li:max-w-[70ch] and body line-height 1.7, keeping visuals full width.",
+   "files": [
+    "tailwind.config.ts",
+    "src/app/(learning)/curriculum/[...slug]/page.tsx",
+    "src/app/(learning)/history/page.tsx",
+    "src/components/templates/InfoPage.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/app/history-page.test.tsx (renders HTML; re-run)",
+    "tests/components/LessonMdxPipeline.test.tsx",
+    "tests/curriculum/mdx-render-smoke.test.tsx"
+   ]
+  },
+  {
+   "id": "theme-11",
+   "p": "P2",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "Lesson code blocks have no syntax highlighting, though shiki and rehype-pretty-code are already installed",
+   "where": "Every fenced code sample in lessons; src/components/ui/CodeBlock.tsx",
+   "evidence": "src/lib/curriculum/lesson-mdx.ts:50-60 has remark plugins only, and [...slug]/page.tsx:99-103 passes no rehypePlugins. Fences: 1,019 ```systemverilog and 340 ```text (grep of content). Live /curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index has 8 '<pre><code class=\"language-systemverilog\">' and 4 language-text with no token spans. Added: package.json already lists \"shiki\": \"^3.7.0\" and \"rehype-pretty-code\": \"^0.14.1\", with no imports anywhere in src. Lessons are statically generated (generateStaticParams, page.tsx:34), so highlighting runs at build time. ui/CodeBlock.tsx:70 tests theme === 'dark', which never matches '*-dark' names; it is registered in src/generated/mdx-component-registry.tsx:25 but used by no MDX (StreamPackLab and ScenarioSorter define their own local CodeBlock).",
+   "impact": "SystemVerilog and UVM learners read about a thousand monochrome code samples; keywords, comments and strings do not stand out, which matters most for juniors.",
+   "fix": "lesson-mdx.ts: export lessonRehypePlugins with rehype-pretty-code (theme e.g. github-dark-dimmed, always-dark panels per visual-language.md:88), and pass it at [...slug]/page.tsx:102. Keep ligatures off (globals.css). Delete ui/CodeBlock.tsx and src/lib/code-theme.ts and their registry entry, or rebuild CodeBlock on Shiki.",
+   "files": [
+    "src/lib/curriculum/lesson-mdx.ts",
+    "src/app/(learning)/curriculum/[...slug]/page.tsx",
+    "src/components/ui/CodeBlock.tsx",
+    "src/lib/code-theme.ts",
+    "src/generated/mdx-component-registry.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/LessonMdxPipeline.test.tsx",
+    "tests/curriculum/mdx-render-smoke.test.tsx",
+    "the generator that writes src/generated/mdx-component-registry.tsx (run npm run generate:curriculum)"
+   ]
+  },
+  {
+   "id": "theme-12",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "About 700 labels are set at 8.5-11px, often uppercase and widely tracked, in the display face",
+   "where": "Visuals, tables, eyebrows, badges across src/components and content",
+   "evidence": "grep over src and content: text-[8.5px|9px|10px|11px] = 698 occurrences (matches the reviewer's 481+161+50+6). Heaviest files: PowerDomainVisualizer.tsx, AnalysisBroadcastVisualizer.tsx, ScoreboardMatchingVisualizer.tsx, ConstraintSolverHeatmapVisualizer.tsx. These are HTML spans and table heads, not scaled SVG text. docs/visual-learning/visual-language.md:84 standardises '11 px uppercase tracking for section eyebrows'. metrics.json placement-quiz first p is 11px/16.5px w600. Page h1 sizes also range 20px (lab-basics) to 60px (home) in metrics.json, which the same type scale would fix.",
+   "impact": "Small all-caps semibold display text is hard to read, especially on phones, and undercuts the visuals the owner treats as a strength.",
+   "fix": "tailwind.config.ts: named fontSize tokens (label 12/16, caption 13/18, body-sm 14/20, body 16/26, h1 36/40, h2 24/32). Floor of 12px for visible text; codemod text-[8.5-11px] to text-label, tracking at most 0.08em, uppercase only for short eyebrows. Update visual-language.md section 4.",
+   "files": [
+    "tailwind.config.ts",
+    "docs/visual-learning/visual-language.md",
+    "src/components/curriculum/interactives/visuals/PowerDomainVisualizer.tsx",
+    "src/components/visuals/AnalysisBroadcastVisualizer.tsx",
+    "src/components/visuals/ScoreboardMatchingVisualizer.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "Component tests for the touched visuals in tests/components/ (text queries only; re-run)"
+   ]
+  },
+  {
+   "id": "theme-13",
+   "p": "P2",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "No success, warning or info roles, so status colour is hard-coded thousands of times",
+   "where": "src/components, content MDX, globals.css callouts",
+   "evidence": "tailwind.config.ts:13-52 and globals.css define no success/warning/info tokens. My count of text|bg|border|ring|from|to|via|fill|stroke-<hue>-<n> in src/components and content: rose 1,058, amber 1,046, emerald 792, sky 97, red 47 (the reviewer's regex gave lower numbers; same order of magnitude). Callout borders are fixed rgb() in globals.css (aside.callout-tip/-important/-warning/-caution, around lines 385-410).",
+   "impact": "Status colours and visual encodings do not follow the theme and must be paired with dark: variants by hand; a palette change means editing hundreds of files.",
+   "fix": "globals.css: --success, --warning, --info, --danger each with -foreground, -text and -subtle, for light and dark; named encoding tokens (--logic-0/1/x/z, --dut, --tb, --expected, --actual) mapped in tailwind.config.ts and used by visual-language.ts; callouts use the tokens. Codemod the heaviest files first.",
+   "files": [
+    "src/app/globals.css",
+    "tailwind.config.ts",
+    "src/components/visual-system/visual-language.ts",
+    "src/components/visuals/SubroutineLab.tsx",
+    "src/components/visuals/ForkJoinVisualizer.tsx"
+   ],
+   "effort": "L",
+   "tests": [
+    "Tests under tests/components/ for visual-system components (re-run)"
+   ]
+  },
+  {
+   "id": "theme-15",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "confirmed",
+   "title": "Radius, elevation and focus ring are ad hoc rather than scaled tokens",
+   "where": "Cards, panels, buttons across the site",
+   "evidence": "globals.css:7 single --radius 0.5rem mapped at tailwind.config.ts:68-72. Lesson article is rounded-3xl ([...slug]/page.tsx:134). --ring is the same grey in every theme (globals.css:34, 88 and copies); grep finds 22 hard-coded ring-cyan-300.",
+   "impact": "Cards on different pages have different corners and depth, and the focus ring does not follow the theme.",
+   "fix": "globals.css and tailwind.config.ts: --radius-sm 6px, -md 10px, -lg 14px, -xl 20px mapped to rounded-*; lg for cards, md for controls. Two elevation shadows per mode. --ring = primary per theme; replace ring-cyan-300 with ring-ring.",
+   "files": [
+    "src/app/globals.css",
+    "tailwind.config.ts"
+   ],
+   "effort": "M",
+   "tests": []
+  },
+  {
+   "id": "theme-16",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "confirmed",
+   "title": "Theme switcher is an unlabelled native select plus icon toggle, with no preview and no System option",
+   "where": "Header right side; /settings Appearance",
+   "evidence": "ThemeSwitcher.tsx:63-74 native select 'Default/Ocean/Sunset/Forest/Violet'; :75-87 ghost icon button with Sun/Moon swapped by dark: classes and aria-pressed; :57-59 'Loading...' before mount. shots/lesson-f1a.desktop.default-dark.s0.png ('Default' select next to the moon).",
+   "impact": "'Default' says nothing, learners cannot preview a theme, and the two-part control takes header space.",
+   "fix": "One menu button (sun/moon/monitor) with Light, Dark, System as menuitemradio; if colour families survive, labelled swatches in /settings only.",
+   "files": [
+    "src/components/ui/ThemeSwitcher.tsx",
+    "src/components/Navbar.tsx",
+    "src/app/(learning)/settings/SettingsPageClient.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/ThemeSwitcher.test.tsx",
+    "tests/app/settings-page-client.spec.tsx (combobox 'Select theme', button 'Toggle theme')",
+    "tests/e2e/navigation.spec.ts:284 (combobox 'Select theme')",
+    "tests/e2e/settings-data.spec.ts:74-75",
+    "tests/components/Navbar.test.tsx (mocks 'Toggle theme')"
+   ]
+  },
+  {
+   "id": "theme-17",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "Blueprint tokens and the glass, hero-gradient and neon utilities are dead code",
+   "where": "globals.css, tailwind.config.ts",
+   "evidence": "globals.css:8-16, 38-43, 66-71 (blueprint vars) and the .glass-card, .hero-gradient, .glow-border, .neon-divider, .animated-gradient rules after line 262. tailwind.config.ts:43-51, 73-82. Users: community/CommunityPageClient.tsx, notifications/page.tsx, src/components/Card.tsx (imported nowhere; the app imports components/ui/Card) and, added, src/lib/notifications.ts:43 (var(--blueprint-accent)). curl: /community 404, /notifications 404.",
+   "impact": "A second, untested palette that misleads anyone editing the theme and would look wrong in eight of ten themes if reused.",
+   "fix": "Delete the blueprint vars and five classes from globals.css, the blueprint colours, shadows and hero-glow from tailwind.config.ts, and src/components/Card.tsx. Port notifications.ts badgeClass and the two disabled pages to semantic tokens, or delete them.",
+   "files": [
+    "src/app/globals.css",
+    "tailwind.config.ts",
+    "src/components/Card.tsx",
+    "src/lib/notifications.ts",
+    "src/app/(learning)/community/CommunityPageClient.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests that render community/notifications, if any (grep found none pinning blueprint classes; 'from blueprint' asserts in history/projects/learning-strategies tests are copy checks, unaffected)"
+   ]
+  },
+  {
+   "id": "theme-v1",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "added",
+   "title": "Printing a lesson in a dark theme gives white headings and near-invisible bold terms on paper",
+   "where": "Any lesson printed or saved as PDF while a *-dark theme is active (the default)",
+   "evidence": "grep: globals.css has no @media print rule and src uses print:hidden once. extra/verify-theme/print.cjs emulates print media on /curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index in default-dark: h1 rgb(102,255,217), .prose p rgb(209,213,219), .prose h2 rgb(255,255,255), header and sidebar still display:block. extra/verify-theme/print-sim.lesson-f1a.default-dark.png (backgrounds removed, as Chrome prints by default): the Quick Take heading and the bold 'What it is:', 'bug', 'tape-out' terms are invisible, body text is pale grey, mint h1, and the navbar prints.",
+   "impact": "Learners who print a lesson or save it as PDF for study get pages with missing headings and terms, and the site chrome.",
+   "fix": "globals.css: @media print { :root, html[data-theme] { copy the default-light token values; color-scheme: light } .prose { --tw-prose-body/headings/bold: black-ish } } and add print:hidden to the Navbar, Sidebar, on-this-page TOC and Footer wrappers in MainLayout.",
+   "files": [
+    "src/app/globals.css",
+    "src/components/Navbar.tsx",
+    "src/components/layout/MainLayout.tsx"
+   ],
+   "effort": "S",
+   "tests": []
+  }
+ ],
+ "dropped": [
+  {
+   "id": "theme-14",
+   "reason": "Duplicate: the hero hard-edge bug is already reported as landing-9 and design-critic-4. The cause checks out (HeroSection.tsx:44 section has no w-full inside page.tsx:32 'flex flex-col items-center'; edges at x=144 and x=1296 in shots/home.desktop.default-light.s0.png), but it is a layout bug, not a token issue."
+  },
+  {
+   "id": "theme-18",
+   "reason": "Duplicate of design-critic-8 (page-header patterns differ by page). The h1 range in metrics.json is real (20px lab to 60px home); the type-scale part is folded into theme-12."
+  }
+ ]
+}

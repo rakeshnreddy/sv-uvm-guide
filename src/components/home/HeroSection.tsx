@@ -1,96 +1,49 @@
-"use client";
-
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { ArrowRight, Compass } from 'lucide-react';
 import Link from 'next/link';
 
 import { PLACEMENT_QUIZ_HREF } from '@/lib/site-links';
 
-const taglines = [
-  "From Basics to Brilliance in UVM",
-  "Your Interactive Guide to SystemVerilog",
-  "Master Verification with Confidence",
-  "The Ultimate Open-Source UVM Learning Hub",
-];
+import { heroSubtitle, type HomeStats } from './home-stats';
 
-const highlights = [
+const highlights = ({ labCount }: HomeStats) => [
   {
     title: 'Curated tiers',
     description: 'Progress through four tiers that mirror real verification onboarding, from fundamentals to SoC strategy.',
   },
   {
-    title: 'Hands-on reinforcement',
-    description: 'Pair every concept with labs, flashcards, and quizzes so the knowledge sticks beyond the page.',
+    title: 'Hands-on practice',
+    description: `${labCount} guided labs, plus quizzes and flashcards for review`,
   },
   {
-    title: 'Reusable playbooks',
-    description: 'Lift checklists, diagrams, and best practices directly into your next project without hunting for context.',
+    title: 'Sourced to the standards',
+    description:
+      'Lessons cite IEEE 1800-2023 for SystemVerilog, IEEE 1800.2-2020 for UVM and the Arm AMBA specifications for AXI, AHB and APB.',
   },
 ];
 
-const HeroSection = () => {
-  const [taglineIndex, setTaglineIndex] = React.useState(0);
+type HeroSectionProps = HomeStats;
 
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setTaglineIndex((prevIndex) => (prevIndex + 1) % taglines.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
+/** The home page hero. Static markup, so it is visible before and without JavaScript. */
+const HeroSection = (stats: HeroSectionProps) => {
   return (
-    <section className="relative isolate overflow-hidden bg-background text-foreground">
-      <div
-        className="absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-primary/15 via-primary/5 to-transparent"
-        aria-hidden
-      />
-      <div
-        className="absolute -top-24 left-1/2 h-80 w-[55%] -translate-x-1/2 rounded-full bg-accent/15 blur-3xl"
-        aria-hidden
-      />
+    <section className="w-full bg-background text-foreground">
       <div className="mx-auto flex max-w-6xl flex-col gap-14 px-6 pb-24 pt-28">
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7 }}
-          className="flex flex-col items-center gap-8 text-center"
-        >
+        <div className="flex flex-col items-center gap-8 text-center">
           <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-4 py-1 text-sm font-medium text-primary">
-            <Compass className="h-4 w-4" /> Complete SV/UVM roadmap
+            <Compass aria-hidden="true" className="h-4 w-4" /> Complete SV/UVM roadmap
           </span>
           <div className="space-y-6">
-            <motion.h1
-              className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl md:text-6xl"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.1 }}
-            >
+            <h1 className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl md:text-6xl">
               Master SystemVerilog & UVM with confidence
-            </motion.h1>
-            <AnimatePresence mode="wait">
-              <motion.p
-                key={taglineIndex}
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                transition={{ duration: 0.4 }}
-                className="mx-auto max-w-2xl text-lg text-muted-foreground sm:text-xl"
-              >
-                {taglines[taglineIndex]}
-              </motion.p>
-            </AnimatePresence>
+            </h1>
+            <p className="mx-auto max-w-2xl text-lg text-muted-foreground sm:text-xl">{heroSubtitle(stats)}</p>
           </div>
-        </motion.div>
+        </div>
 
         <div className="flex flex-col gap-8">
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="rounded-3xl border border-border/60 bg-card/80 p-6 text-left shadow-sm"
-          >
+          <div className="rounded-3xl border border-border/60 bg-card/80 p-6 text-left shadow-sm">
             <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">
               Start with a quick skills check
             </h2>
@@ -109,15 +62,10 @@ const HeroSection = () => {
                 <Link href="/curriculum">Browse the curriculum</Link>
               </Button>
             </div>
-          </motion.div>
+          </div>
 
-          <motion.dl
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="grid gap-4 sm:grid-cols-2"
-          >
-            {highlights.map((item) => (
+          <dl className="grid gap-4 sm:grid-cols-3">
+            {highlights(stats).map((item) => (
               <div
                 key={item.title}
                 className="rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-sm"
@@ -126,7 +74,7 @@ const HeroSection = () => {
                 <dd className="mt-2 text-sm text-muted-foreground">{item.description}</dd>
               </div>
             ))}
-          </motion.dl>
+          </dl>
         </div>
       </div>
     </section>

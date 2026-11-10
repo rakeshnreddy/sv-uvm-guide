@@ -233,7 +233,7 @@ export default function SearchCombobox({
             setPopupOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         />
       </div>
 

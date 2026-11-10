@@ -1,0 +1,424 @@
+{
+  "lens": "Landing page",
+  "summary": "Verified. The landing page works and is well wired, but it undersells the site. Every hero and section block is sent from the server at opacity 0 by framer-motion, so without JS only the footer shows, and the H1 becomes the LCP element about 0.75 s after DOMContentLoaded. Some claims are false or contradict each other: 'Reusable playbooks' names a feature that does not exist, 'every concept' has a lab when there are 30 labs for 112 lessons, and 'Open-Source' sits beside 'All rights reserved' on an MIT repo. The page never shows a real interactive. It links the placement quiz three times and repeats the /curriculum route chooser. It has no header, while the legal pages do. It uses the default Next.js favicon, has no OG image and splits its name between Hub and Mastery. The hero band stops at hard vertical edges, and the page uses three different content widths.",
+  "strengths": [
+    "Route data is generated, not hand-written: page.tsx:26 builds summarizeRoutes(resolveRoutes(curriculumData, {labs})) on the server, so step and lesson counts stay true and the curriculum is not bundled to the client.",
+    "The feature-card copy is concrete and honest ('Watch one clock edge region by region, flip = and <=', 'Interactives say whether they are illustrations or tested models'). The whole page should be written in this voice.",
+    "Route definitions are carefully targeted ('no HDL or verification background is assumed', 'staff-level interviews') and are validated against the manifest by tests/lib/learning-paths.test.ts.",
+    "No horizontal overflow at any width (metrics overflowX 0), no console errors, and tap targets of at least 40 px.",
+    "The footer site map links every tier start, practice area and reference page, so the landing page is never a dead end, and it links Privacy and Terms, which explain the browser-only data (no-login mode).",
+    "Clean heading outline: one H1, an H2 per section and an H3 per card. The route section is a labelled region and the footer is a 'Site map' nav landmark.",
+    "Only theme tokens are used (no hard-coded colours), so all six themes render without breakage (shots home.desktop.*.s0-s3.png).",
+    "The component split (HeroSection, LearningPathsSection, LearningPathCard, InteractiveFeaturesSection) and the data-testid/aria-labelledby hooks make the page easy to test and easy to rework one section at a time."
+  ],
+  "proposal": "1. Header. Pull the slim header that the privacy and terms pages already render (src/app/(public)/privacy-policy/page.tsx:113, with the Logo and 'SV/UVM Hub home') into a shared PublicHeader. Add links to Curriculum, Labs (LABS_HREF), Practice and Interview prep, a theme toggle and a 'Start learning' button. A search button that opens the Navbar's search dialog is optional: that dialog lives in the learning layout, so reusing it means extracting it.\n\n2. Hero, server-rendered and visible with no opacity-0 entry. Left column: an H1 that names SystemVerilog, UVM and AMBA, and one fixed subtitle with real counts (no rotating taglines). The primary action is 'Start lesson 1: The Cost of Bugs' (F1A, the Junior route's CTA href). The secondary is 'Already write SV? Find your level' (PLACEMENT_QUIZ_HREF). A small client island may swap the primary to 'Continue: <lesson>' after mount when src/lib/learning-route-state.ts or the learner store holds a position; reserve its height so nothing shifts. Right column: a static poster (public/uvm-hero-diagram.svg or a public/visuals SVG) linking to the live interactive.\n\n3. Proof strip, computed from data: lessons and tiers from curriculum-data, labs from getAllLabs().length (30 today), interactives from src/generated/mdx-component-registry.tsx, plus 'free, no sign-up, progress stays in this browser' and the standards cited in the lessons' sources (IEEE 1800-2023, IEEE 1800.2-2020, ARM AMBA AXI/AHB/APB/CHI). Any hand-written number must be generated, so it cannot drift.\n\n4. One real interactive below the fold, lazy-mounted (for example TimeSlotTraceVisualizer from F3C, or the UVM architecture map), with a link to its lesson.\n\n5. What you can do here: four cards in one Card style, each with a real thumbnail and a specific verb. Interactives, Labs (LABS_HREF, not /practice), Exercises and Interview prep. Headings use text-foreground, body text text-muted-foreground, and eyebrows and links text-primary.\n\n6. Routes, compact: three columns from the same RouteSummary data, each with a name, a one-line audience, a lesson count and one CTA, plus 'Compare routes' linking to /curriculum#routes. Drop the step lists and the separate 'Not sure which route fits?' block. Use the curriculum's button labels ('Follow the X route').\n\n7. Milestone ladder teaser (M0 to M8), from the Milestone data in src/lib/learning-paths.ts (MilestoneId M0-M8, with each milestone's lab).\n\n8. Footer and metadata: add Labs and 'Source on GitHub (MIT licensed)' and replace 'All rights reserved'. Use one name ('SV/UVM Hub', which the Logo and the tests already use) in the title template, siteName and a new src/app/opengraph-image.tsx. Replace the default favicon with src/app/icon.svg. Use one content width (max-w-6xl) for every section and the footer.\n\nSequencing: fixes 1, 2 (the copy and opacity parts), 8 and the hero width are S-sized and should land first. The interactive embed, the thumbnails and the continue island follow. Update the tests named in each finding in the same change, in particular tests/e2e/hero-animation.spec.ts, which pins the rotating tagline.",
+  "findings": [
+    {
+      "id": "landing-2",
+      "p": "P1",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "Hero and footer make false or contradictory claims: 'Reusable playbooks', 'every concept ... labs', 'Open-Source' vs 'All rights reserved'",
+      "where": "Hero highlight cards and rotating tagline; footer copyright",
+      "evidence": "src/components/home/HeroSection.tsx:28-29 'Reusable playbooks' with 'Lift checklists, diagrams, and best practices directly into your next project'. There is no playbook feature: `grep -rni playbook src` matches only HeroSection.tsx:28. HeroSection.tsx:25 says 'Pair every concept with labs, flashcards, and quizzes', but src/generated/lab-registry.ts holds 30 lab manifests (`grep -cE '^    \"id\":'` = 30) for 112 lesson MDX files (`find content/curriculum -name '*.mdx' | wc -l` = 112). HeroSection.tsx:15 has the tagline 'The Ultimate Open-Source UVM Learning Hub', while Footer.tsx:125 says 'SV/UVM Hub · SystemVerilog & UVM learning. All rights reserved.' and LICENSE is MIT. The badge 'Complete SV/UVM roadmap' (HeroSection.tsx:61) cannot be checked and leaves out AMBA. (The reviewer's '39 of 112 lessons link a lab' could not be reproduced with a simple grep; the 30-labs-for-112-lessons count is enough to refute 'every concept'.)",
+      "impact": "The owner's bar is 'accurate'. A senior engineer who looks for playbooks or a lab per concept finds neither and stops trusting the rest of the page. 'All rights reserved' on an MIT project contradicts the open-source claim.",
+      "fix": "In HeroSection.tsx, replace 'Reusable playbooks' with a true claim, for example 'Sourced to the standards: lessons cite IEEE 1800-2023, IEEE 1800.2-2020 and the ARM AMBA specs'. Change the labs line to '{getAllLabs().length} guided labs, and flashcards and quizzes for every lesson', passing the count as a prop from page.tsx. Delete the 'Ultimate Open-Source' tagline. In Footer.tsx:125, replace 'All rights reserved' with 'MIT licensed' and a link to the source.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/Footer.tsx",
+        "src/app/(public)/page.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx (describe 'home hero', line 109-116)",
+        "tests/e2e/hero-animation.spec.ts (expects the tagline to rotate)",
+        "tests/app/home-page.test.tsx (footer)",
+        "tests/app/legal-pages.test.tsx (footer site map)"
+      ]
+    },
+    {
+      "id": "landing-1",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "Hero and section blocks are server-rendered at opacity 0, so without JS only the footer shows and LCP waits for hydration",
+      "where": "/ (all sections), src/components/home/HeroSection.tsx:54-129, LearningPathsSection.tsx:27-74, InteractiveFeaturesSection.tsx:42-75",
+      "evidence": "In `curl -s https://sv-uvm-guide.rakesh-n99.workers.dev/` the H1 is `<h1 class=... style=\"opacity:0;transform:translateY(18px)\">`, and the HTML has 15 inline `opacity:0` styles. extra/verify-landing/verify.cjs (JS disabled): {h1 visible:false, routes H2 visible:false, footer visible:true}. extra/landing/home.nojs.desktop.png shows only the hero gradient. With JS on, the LCP entries are P at 276 ms, then H1 at 976 ms, against DCL 234 ms: the H1 paints about 0.75 s after the DOM is ready. metrics.json home: desktop default-dark lcpMs 2048 vs DCL 1281, and mobile default-dark lcpMs 2728 vs DCL 1847. The mobile default-light run was 1620, so the 2.5 s overrun is one sample, not a constant. The whileInView reveals also catch screenshots mid-fade: in shots/home.desktop.default-dark.s1.png, 'Not sure which route fits?' is still at low opacity. Correction: LearningPathCard.tsx has only whileHover. Its opacity-0 entry is on the motion.li wrapper in LearningPathsSection.tsx:49-56.",
+      "impact": "Link-preview bots, non-rendering crawlers and any visitor whose JS fails or is slow see an empty page above the footer. The first meaningful paint waits for hydration on every visit.",
+      "fix": "Remove `initial={{opacity:0,...}}` from the hero motion elements (HeroSection.tsx:54-58, 64-69, 88-92, 114-118) and render them static, or use a CSS keyframe that starts visible. For the below-the-fold reveals in LearningPathsSection.tsx and InteractiveFeaturesSection.tsx, use `initial={false}` or plain elements. Do this together with landing-16 and landing-17.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx",
+        "tests/e2e/hero-animation.spec.ts",
+        "tests/e2e/navigation-entry-points.spec.ts (route region toBeInViewport, line 46)"
+      ]
+    },
+    {
+      "id": "landing-3",
+      "p": "P2",
+      "type": "opportunity",
+      "verdict": "corrected",
+      "title": "The page describes the product in words and icons but never shows a real diagram, interactive or lab",
+      "where": "'Experience Interactive Learning' section and the hero",
+      "evidence": "InteractiveFeaturesSection.tsx:49-51 makes each card's 'image' an h-24 bg-muted/60 band holding a lucide icon (Code, Share2, Gamepad2, FlaskConical), as shots/home.desktop.default-dark.s2.png shows. Nothing above the fold (shots/home.desktop.default-dark.s0.png) shows a diagram, waveform, code or lab. Real assets exist: public/uvm-hero-diagram.svg, public/visuals/, public/diagrams/ and the live interactives in src/generated/mdx-component-registry.tsx.",
+      "impact": "The site's strength, about 118 interactives, 30 labs and sourced lessons, is invisible from the front door, so the page reads like a generic course template.",
+      "fix": "Put a static poster (public/uvm-hero-diagram.svg or a public/visuals SVG) in a hero right column, linking to the live interactive. Lazy-mount one real interactive (for example TimeSlotTraceVisualizer) below the fold. Replace the four icon bands with real thumbnails.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx",
+        "src/app/(public)/page.tsx"
+      ],
+      "effort": "M",
+      "tests": [
+        "tests/qa/curriculumCoverageAudit.spec.ts (visits /, line 324)"
+      ]
+    },
+    {
+      "id": "landing-5",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "No single primary action: the placement quiz is linked three times and four filled buttons compete",
+      "where": "Hero skills-check box, Practitioner route card, 'Not sure which route fits?' block",
+      "evidence": "The quiz links are HeroSection.tsx:102-107 'Find your level', the Practitioner card CTA 'Find your level' (learning-paths data, rendered by LearningPathCard.tsx:58), and LearningPathsSection.tsx:69-73 'Take the placement quiz', all pointing to /quiz/placement. The Practitioner card's first step is also 'Check your level' (shots/home.desktop.default-dark.s1.png). The filled primary buttons are the hero 'Find your level', 'Begin the Junior route', 'Find your level' and 'Expert layers'. The hero H2 'Start with a quick skills check' (HeroSection.tsx:95) sends a total beginner to a quiz first.",
+      "impact": "First-time visitors meet the same choice three times in different words. A junior who should simply start F1A is steered to a quiz.",
+      "fix": "Make the hero primary 'Start lesson 1: The Cost of Bugs' (the Junior CTA href) and the secondary 'Already write SV? Find your level'. Delete LearningPathsSection.tsx:62-74 ('Not sure which route fits?'). Give each route card a single action.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/LearningPathCard.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx (lines 101, 113: getByRole link 'Find your level' and 'Take the placement quiz')",
+        "tests/e2e/navigation-entry-points.spec.ts (home route cards, lines 106-121)",
+        "tests/e2e/F2_F3_lessons.spec.ts (clicks 'Browse the curriculum', lines 39-50)"
+      ]
+    },
+    {
+      "id": "landing-7",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "No header on the landing page, though the privacy and terms pages in the same route group have one",
+      "where": "/ top of page",
+      "evidence": "metrics.json home records: headerLinks [], navLabels ['Site map'] (footer only). shots/home.desktop.default-dark.s0.png starts directly with the gradient and badge. The only paths into the app above the fold are the quiz and 'Browse the curriculum'. By contrast, src/app/(public)/privacy-policy/page.tsx:113 renders `<header className=\"border-b border-border\">` with the Logo ('SV/UVM Hub home') and 'Back to the curriculum' (pinned by tests/app/legal-pages.test.tsx:28-34). Search and the theme control live only in the learning layout's Navbar.",
+      "impact": "Returning learners can't jump to labs, practice or interview prep from the front door, and can't change the theme there. The brand wordmark that every other page shows is missing, so the landing page feels like a different site.",
+      "fix": "Extract the legal pages' header into src/components/PublicHeader.tsx. Extend it with Curriculum, Labs (LABS_HREF), Practice and Interview prep links, a theme toggle and a 'Start learning' button. Render it in src/app/(public)/page.tsx and the legal pages. Search is optional: it would need the Navbar's search dialog extracted.",
+      "files": [
+        "src/app/(public)/page.tsx",
+        "src/app/(public)/privacy-policy/page.tsx",
+        "src/app/(public)/terms-of-service/page.tsx",
+        "src/components/ui/Logo.tsx",
+        "src/components/Navbar.tsx"
+      ],
+      "effort": "M",
+      "tests": [
+        "tests/app/home-page.test.tsx (asserts no 'Keyboard shortcuts' button)",
+        "tests/app/legal-pages.test.tsx (header links)",
+        "tests/components/Navbar.test.tsx (if pieces are extracted)"
+      ]
+    },
+    {
+      "id": "landing-4",
+      "p": "P2",
+      "type": "opportunity",
+      "verdict": "confirmed",
+      "title": "No trust signals on the page: no standards, real counts, AMBA mention or source link",
+      "where": "Whole landing page",
+      "evidence": "The lessons cite IEEE 1800-2023, IEEE 1800.2-2020 and the ARM AMBA specs heavily (reviewer's grep counts), and most lessons have `sources:` frontmatter. None of this appears on / (shots/home.desktop.default-dark.s0-s3.png). There are no lesson, lab or interactive counts and no GitHub link. The footer's 'About this site' column lists only Privacy and Terms. AMBA, a whole strand of the curriculum, is not named in the H1, the taglines or the badge (HeroSection.tsx:11-16, 61, 70).",
+      "impact": "A senior engineer judges trust in seconds by standards versions and protocol coverage. Without them the page looks like a beginner blog.",
+      "fix": "Add a proof strip under the hero, computed from curriculum-data, getAllLabs() and the MDX component registry, plus the cited standards. Add 'Source on GitHub (MIT)' to the footer's About column.",
+      "files": [
+        "src/app/(public)/page.tsx",
+        "src/components/home/HeroSection.tsx",
+        "src/components/Footer.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/app/home-page.test.tsx",
+        "tests/app/legal-pages.test.tsx (footer site map)"
+      ]
+    },
+    {
+      "id": "landing-6",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "'Choose your route' repeats the /curriculum route chooser almost word for word, with different secondary labels",
+      "where": "/ section 2 vs /curriculum#routes",
+      "evidence": "Both use the H2 'Choose your route' (LearningPathsSection.tsx:34-36, RouteChooser.tsx:316) and the same three cards built from the same RouteSummary data: 'Start here', 'Working DV engineer' and 'Jump in', with '6 steps · 47 lessons' and so on. The home secondary label is 'See the {name} route' (LearningPathCard.tsx:63); the curriculum label is 'Follow the {name} route' (RouteChooser.tsx:70). Compare shots/home.desktop.default-dark.s1.png with shots/curriculum.desktop.default-dark.s0.png.",
+      "impact": "A visitor who clicks through reads the same block twice, and one action has two labels.",
+      "fix": "On /, shrink the routes to a compact three-column strip (name, audience, lesson count, one CTA) with 'Compare routes' linking to /curriculum#routes. Use the curriculum's label wording. Put a milestone-ladder teaser from the Milestone data in learning-paths.ts in the space saved.",
+      "files": [
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/LearningPathCard.tsx"
+      ],
+      "effort": "M",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx (lines 59-102: region name, steps list, 'See the Junior route')",
+        "tests/e2e/navigation-entry-points.spec.ts (home route cards)",
+        "tests/lib/learning-paths.test.ts"
+      ]
+    },
+    {
+      "id": "landing-8",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "Metadata: 'Hub' vs 'Mastery' naming, a generic description, no OG image, the default Next.js favicon",
+      "where": "src/app/layout.tsx:8-23, src/app/favicon.ico, public/",
+      "evidence": "layout.tsx:11-19 sets the title 'SystemVerilog & UVM Mastery', the template '%s | SV/UVM Mastery' and siteName 'SV/UVM Mastery'. The Logo (Logo.tsx:20, aria-label 'SV/UVM Hub logo') and Footer.tsx:125 say 'SV/UVM Hub'. The live head has description 'The definitive online platform for mastering SystemVerilog and UVM.', twitter:card 'summary' and no og:image. curl: /og.png, /opengraph-image, /icon.png, /icon.svg and /apple-touch-icon.png all return 404, and /favicon.ico is 200 at 25,931 bytes (the create-next-app default). public/next.svg, vercel.svg, file.svg, globe.svg and window.svg are boilerplate.",
+      "impact": "Shared links show no preview image and a vague line, the browser tab shows the Next.js mark, and two names weaken the brand.",
+      "fix": "Use 'SV/UVM Hub' in the layout.tsx title template and siteName, and keep 'SystemVerilog' in the default title. Write a concrete description. Add src/app/opengraph-image.tsx and src/app/icon.svg (plus apple-icon.png), delete src/app/favicon.ico, and remove the boilerplate SVGs from public/.",
+      "files": [
+        "src/app/layout.tsx",
+        "src/app/favicon.ico",
+        "src/app/opengraph-image.tsx",
+        "src/app/icon.svg"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/e2e/F2_F3_lessons.spec.ts (toHaveTitle /SystemVerilog/i)",
+        "tests/components/Navbar.test.tsx:128 ('SV/UVM Hub home')",
+        "tests/app/legal-pages.test.tsx:33 ('SV/UVM Hub home')"
+      ]
+    },
+    {
+      "id": "landing-9",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "The hero background stops at hard vertical edges because the section shrinks to its content width",
+      "where": "Hero top band, desktop and tablet, every theme",
+      "evidence": "shots/home.desktop.default-dark.s0.png and home.desktop.default-light.s0.png show the gradient ending sharply at x=144 and x=1296. verify.cjs measured the hero section at left 144 and width 1152 in a 1440 viewport. Cause: page.tsx:32 `<main className=\"flex flex-col items-center ...\">` centres children at their intrinsic width, and HeroSection.tsx:44 `<section>` has no w-full. InteractiveFeaturesSection.tsx:67 also lacks w-full and measures 1280 wide; LearningPathsSection has w-full and measures 1440.",
+      "impact": "The most-seen part of the site looks like a rendering error.",
+      "fix": "Add `w-full` to the section elements at HeroSection.tsx:44 and InteractiveFeaturesSection.tsx:67, or drop `items-center` from main in page.tsx:32.",
+      "files": [
+        "src/app/(public)/page.tsx",
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/e2e/navigation-entry-points.spec.ts (overflow checks)"
+      ]
+    },
+    {
+      "id": "landing-10",
+      "p": "P2",
+      "type": "opportunity",
+      "verdict": "confirmed",
+      "title": "Generic marketing copy in the hero, section headings and buttons",
+      "where": "Hero, section headings, buttons",
+      "evidence": "HeroSection.tsx: H1 'Master SystemVerilog & UVM with confidence' (70), badge 'Complete SV/UVM roadmap' (61), and the taglines 'From Basics to Brilliance in UVM' and 'Master Verification with Confidence' (11-16), the second of which repeats the H1. Also the highlight 'Curated tiers' (20) and 'Calibrate the roadmap to your baseline...' (98). InteractiveFeaturesSection.tsx:76 'Experience Interactive Learning' and 'Try It Now' x4 (57).",
+      "impact": "None of these lines tells a junior what they will be able to do or tells a senior how deep the site goes.",
+      "fix": "Rewrite in the voice of the feature-card bodies. The H1 names SV, UVM and AMBA. Use one fixed subtitle with real counts and a section H2 such as 'Watch the simulator think'. Each card gets a specific verb ('Step through a race', 'Open the UVM map', 'Start a lab').",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx:112 (H1 /Master SystemVerilog & UVM/)",
+        "tests/e2e/simple-test.spec.ts:6 (H1 contains 'Master SystemVerilog & UVM')",
+        "tests/e2e/hero-animation.spec.ts"
+      ]
+    },
+    {
+      "id": "landing-11",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "Heading and body colours change from section to section, and light vs dark read as different brands",
+      "where": "All landing sections",
+      "evidence": "In dark (shots/home.desktop.default-dark.s0-s2.png), the H1, 'Start with a quick skills check' and 'Choose your route' are mint (text-foreground). 'Experience Interactive Learning' (InteractiveFeaturesSection.tsx:76) and the card titles (line 53) are blue text-primary. The feature-card body and the section intro are mint text-foreground/80 (lines 54 and 77), while route-card bodies are grey text-muted-foreground. In light (home.desktop.default-light.s0.png), the H1 is charcoal and the primary button is crimson.",
+      "impact": "Section titles and card titles carry no consistent hierarchy, long mint body text is tiring to read, and switching modes looks like switching products.",
+      "fix": "Apply one rule: headings text-foreground, eyebrows and links text-primary, body text text-muted-foreground. Change InteractiveFeaturesSection.tsx lines 53, 54, 76 and 77. Align the default-light primary hue with default-dark in globals.css, coordinating with the theme lens.",
+      "files": [
+        "src/components/home/InteractiveFeaturesSection.tsx",
+        "src/app/globals.css"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/e2e/theming.spec.ts"
+      ]
+    },
+    {
+      "id": "landing-13",
+      "p": "P2",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "All text, including paragraphs, renders in Cal Sans SemiBold, a single-weight display face",
+      "where": "Whole page (site-wide; same root cause as the lead's note 1)",
+      "evidence": "metrics.json home: body '__calSans 16px w400', p '__calSans 20px w400', h1 '__calSans 60px w700'. tailwind.config.ts fontFamily.sans lists var(--font-cal-sans) before var(--font-inter), and layout.tsx:28 applies font-sans to body. fonts.ts:46-52 loads only CalSans-SemiBold.otf at weight 600, so every requested weight resolves to that one SemiBold face. Inter 400/700 is loaded but used only as a fallback.",
+      "impact": "Body copy reads tight and heavy, and the display face loses impact because it is everywhere.",
+      "fix": "In tailwind.config.ts, set `sans` to Inter first and add `display: ['var(--font-cal-sans)', 'var(--font-inter)', ...]`. Apply `font-display` to h1-h2 in the globals.css base layer. This is a site-wide change, so ship it once from the typography/theme lens.",
+      "files": [
+        "tailwind.config.ts",
+        "src/app/globals.css",
+        "src/app/fonts.ts"
+      ],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "landing-14",
+      "p": "P2",
+      "type": "opportunity",
+      "verdict": "confirmed",
+      "title": "Returning learners get no 'continue where you left off', though route position is kept in the browser",
+      "where": "Hero",
+      "evidence": "src/lib/learning-route-state.ts exists and learning-paths.ts says it holds the chosen route and position. src/lib/learner-store/ holds lesson progress. HeroSection.tsx shows the same quiz-first box to everyone.",
+      "impact": "After the first visit, the most common visitor has to dig through the curriculum to find their place.",
+      "fix": "Add a small client island in the hero that reads learning-route-state and the learner store after mount and, when it finds a position, shows 'Continue: <lesson>' as the primary action. The server renders the default CTA, and the island reserves its height so nothing shifts.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/lib/learning-route-state.ts",
+        "src/lib/learner-store/index.ts"
+      ],
+      "effort": "M",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx (home hero)"
+      ]
+    },
+    {
+      "id": "landing-12",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "Four different card styles on one page; the feature cards have the brightest border",
+      "where": "Hero box, highlight cards, route cards, feature cards",
+      "evidence": "Hero box: rounded-3xl border-border/60 bg-card/80 (HeroSection.tsx:92). Highlights: rounded-2xl border-border/60 bg-card/80 (123). Route cards: rounded-2xl border-border bg-card with a hover lift (LearningPathCard.tsx:34-35). Feature cards: rounded-xl with the bare `border` class (InteractiveFeaturesSection.tsx:43), which renders as a bright outline in dark mode (shots/home.desktop.default-dark.s2.png), plus a grey icon band.",
+      "impact": "The page looks assembled from different templates. This is polish rather than a learner-facing problem, so P3.",
+      "fix": "Use one card treatment (rounded-2xl border border-border bg-card), ideally src/components/ui/card.tsx, for the hero box, highlights, route cards and feature cards.",
+      "files": [
+        "src/components/home/InteractiveFeaturesSection.tsx",
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/LearningPathCard.tsx"
+      ],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "landing-17",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "corrected",
+      "title": "The rotating tagline keeps changing every 5 s even under prefers-reduced-motion",
+      "where": "HeroSection.tsx:11-16, 34-41, 72-83",
+      "evidence": "A setInterval swaps the subtitle every 5000 ms. Correction to the reviewer: the page is wrapped in ReducedMotionProvider (src/app/(public)/layout.tsx:7), but that is `MotionConfig reducedMotion=\"user\"`, which only removes transforms. verify.cjs with reducedMotion 'reduce' read 'From Basics to Brilliance in UVM' and then, 5.6 s later, 'Your Interactive Guide to SystemVerilog'.",
+      "impact": "Text keeps changing for people who asked for less motion, and the page never states one clear value proposition.",
+      "fix": "Delete the taglines array, the interval and the AnimatePresence, and render one fixed subtitle (see landing-10). Delete tests/e2e/hero-animation.spec.ts or rewrite it to assert a static subtitle.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "tests/e2e/hero-animation.spec.ts"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/e2e/hero-animation.spec.ts (asserts the tagline changes after 6 s)"
+      ]
+    },
+    {
+      "id": "landing-15",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "Three highlight cards in a two-column grid leave an orphan card and an empty quadrant",
+      "where": "Hero highlights",
+      "evidence": "HeroSection.tsx:118 `grid gap-4 sm:grid-cols-2` with 3 items. In shots/home.desktop.default-dark.s0.png and default-light.s0.png, 'Reusable playbooks' sits alone with an empty right half.",
+      "impact": "It looks unfinished and pushes the route section below the fold.",
+      "fix": "Replace the highlights with the proof strip (landing-4), or use `sm:grid-cols-3`.",
+      "files": [
+        "src/components/home/HeroSection.tsx"
+      ],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "landing-16",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "next/dynamic wrappers and a 'Loading Section...' placeholder add chunks for no gain",
+      "where": "src/app/(public)/page.tsx:9-22",
+      "evidence": "Both sections are dynamic() client components that are server-rendered anyway, so the placeholder never shows. 'Loading Section...' appears once in the live HTML, inside the RSC payload. metrics.json home: jsTransferKB 333 for a mostly static page. framer-motion is used only for decorative entrances.",
+      "impact": "Extra JS and hydration work on the most important page, which adds to landing-1.",
+      "fix": "Import LearningPathsSection and InteractiveFeaturesSection directly in page.tsx and delete LoadingPlaceholder. Replace the framer entrances with CSS motion-safe classes or nothing.",
+      "files": [
+        "src/app/(public)/page.tsx",
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/app/home-page.test.tsx (mocks next/dynamic and expects two 'Below the fold' regions)"
+      ]
+    },
+    {
+      "id": "landing-18",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "confirmed",
+      "title": "The 'Guided Labs' card links to the top of /practice, and the footer has no Labs link",
+      "where": "InteractiveFeaturesSection.tsx:32, Footer.tsx Practice column",
+      "evidence": "The card's href is '/practice', while src/lib/site-links.ts:11 exports LABS_HREF = '/practice#labs'. The footer Practice column (Footer.tsx from line 54) lists Practice hub, Exercises, Interview prep and Self-assessment, with no Labs entry (shots/home.desktop.default-dark.s3.png).",
+      "impact": "One extra scroll-and-search step to reach the labs, the site's most hands-on content.",
+      "fix": "Use LABS_HREF in the Guided Labs card and add a 'Labs' link to the footer Practice column.",
+      "files": [
+        "src/components/home/InteractiveFeaturesSection.tsx",
+        "src/components/Footer.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/app/legal-pages.test.tsx (footer site map links)",
+        "tests/app/home-page.test.tsx (footer)"
+      ]
+    },
+    {
+      "id": "landing-19",
+      "p": "P3",
+      "type": "opportunity",
+      "verdict": "confirmed",
+      "title": "The mobile page is about 7 screens long, and tablet stacks three full-width route cards",
+      "where": "/ at 390 px and 820 px",
+      "evidence": "metrics.json home mobile docHeight 5869 (about 7 viewports). On tablet (shots/home.tablet.default-dark.s1.png), lg:grid-cols-3 (LearningPathsSection.tsx:47) stacks three 736 px cards, each with its full step list and two buttons.",
+      "impact": "Mobile visitors scroll through repeated route detail before they reach any interactive.",
+      "fix": "Drop the step lists or put them behind a disclosure (see landing-6), give each card one CTA, and use md:grid-cols-3 with compact cards.",
+      "files": [
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/LearningPathCard.tsx"
+      ],
+      "effort": "S",
+      "tests": [
+        "tests/components/LearningPathsSection.test.tsx (line 88, steps list)",
+        "tests/e2e/navigation-entry-points.spec.ts (390 px test, line 123)"
+      ]
+    },
+    {
+      "id": "landing-v1",
+      "p": "P3",
+      "type": "defect",
+      "verdict": "added",
+      "title": "Three different content widths on one page: hero 1104 px, routes and features 1248 px, footer 1152 px",
+      "where": "/ desktop: hero, route section, features section, footer",
+      "evidence": "HeroSection.tsx:53 uses `mx-auto max-w-6xl px-6` (content 1104 px, from x=168). LearningPathsSection.tsx:26 and InteractiveFeaturesSection.tsx:68 use `container mx-auto px-4`; verify.cjs measured the container at left 80, width 1280 (content 1248 px, from x=96). Footer.tsx:29 uses `max-w-6xl px-4 sm:px-6 lg:px-8`. In the screenshots, the hero cards' left edge is at x=169 (home.desktop.default-dark.s0.png) and the route and feature cards' left edge is at x=96 (s1.png, s2.png).",
+      "impact": "Left edges jump by about 70 px between sections, which weakens the page's alignment and makes the hero look narrower than the rest.",
+      "fix": "Use one wrapper for every landing section and the footer, for example `mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8`, in HeroSection.tsx, LearningPathsSection.tsx and InteractiveFeaturesSection.tsx.",
+      "files": [
+        "src/components/home/HeroSection.tsx",
+        "src/components/home/LearningPathsSection.tsx",
+        "src/components/home/InteractiveFeaturesSection.tsx",
+        "src/components/Footer.tsx"
+      ],
+      "effort": "S",
+      "tests": []
+    }
+  ],
+  "dropped": []
+}

@@ -352,7 +352,7 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
           <StorageStatusNote savedLabel="Your progress is saved in this browser." className="mb-3" />
         ) : null}
         {loadError ? (
-          <p role="status" className="mb-3 text-sm font-medium text-destructive">{LOAD_ERROR_MESSAGE}</p>
+          <p role="status" className="mb-3 text-sm font-medium text-danger">{LOAD_ERROR_MESSAGE}</p>
         ) : null}
         {olderVersions.map((older) => (
           <OlderVersionNotice
@@ -373,10 +373,10 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
           {lab.steps.map((step, index) => {
             const done = progress.completedSteps.includes(step.id);
             return (
-              <li key={step.id} className={`rounded border px-3 py-2 text-sm ${currentStepIndex === index ? "border-primary bg-primary/10 font-semibold" : "border-border"}`}>
+              <li key={step.id} className={`rounded border px-3 text-sm ${currentStepIndex === index ? "border-primary bg-primary/10 font-semibold" : "border-border"}`}>
                 <button
                   type="button"
-                  className={cn("flex w-full items-start gap-2 rounded-sm text-left disabled:cursor-not-allowed disabled:opacity-60", focusRing)}
+                  className={cn("flex min-h-10 w-full items-start gap-2 rounded-sm py-2 text-left disabled:cursor-not-allowed disabled:opacity-60", focusRing)}
                   aria-current={currentStepIndex === index ? "step" : undefined}
                   disabled={!loaded || !isStepUnlocked(policy, progress.completedSteps, step.id)}
                   onClick={() => storeActions.selectStep(step.id)}
@@ -427,11 +427,12 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
           <h2 className="text-lg font-bold">{currentStep.title}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{currentStep.instructions}</p>
         </div>
-        <div className="min-h-[520px] flex-1">
+        {/* Below lg the page is one column with no fixed height, so the editor needs its own height or 100% resolves to 0. */}
+        <div data-testid="lab-editor-frame" className="h-[60vh] min-h-[420px] lg:h-auto lg:min-h-[520px] lg:flex-1">
           {/* Monaco, or a plain text editor when Monaco cannot load (CodeEditor). */}
           <CodeEditor
             height="100%"
-            className="min-h-[520px]"
+            className="min-h-[420px] lg:min-h-[520px]"
             language={selectedFile?.language ?? "systemverilog"}
             value={selectedContent}
             onChange={updateCode}
@@ -464,9 +465,9 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
                 : "This step is complete. Your progress and workspace edits are saved to your account."}
             </p>
           )}
-          <pre aria-live="polite" className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isSuccess === true ? "text-emerald-800 dark:text-emerald-200" : isSuccess === false ? "text-destructive" : ""}`}>{consoleOutput}</pre>
+          <pre aria-live="polite" className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isSuccess === true ? "text-emerald-800 dark:text-emerald-200" : isSuccess === false ? "text-danger" : ""}`}>{consoleOutput}</pre>
           {diagnostics.length > 0 ? (
-            <ul aria-label="Check details" className="mt-2 list-disc space-y-1 pl-5 text-sm text-destructive">
+            <ul aria-label="Check details" className="mt-2 list-disc space-y-1 pl-5 text-sm text-danger">
               {diagnostics.map((diagnostic, index) => (
                 <li key={`${diagnostic.code}-${index}`} className="[overflow-wrap:anywhere]">
                   {diagnostic.file ? `${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""}: ` : ""}

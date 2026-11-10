@@ -457,7 +457,7 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
               <button
                 type="button"
                 onClick={evaluate}
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Reveal without predicting
               </button>
@@ -934,14 +934,14 @@ function SvaSamplingLab() {
               <button
                 type="button"
                 onClick={() => reveal(false)}
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Reveal without predicting
               </button>
               <button
                 type="button"
                 onClick={() => setRevealed(new Set(result.edges.map((e) => e.edge)))}
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Reveal every edge
               </button>

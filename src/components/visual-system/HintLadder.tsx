@@ -25,7 +25,7 @@ export function HintLadder({ hints, resetKey, className }: HintLadderProps) {
         <button
           type="button"
           onClick={() => setShown((n) => n + 1)}
-          className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {shown === 0 ? "Need a hint?" : "Another hint"} ({shown}/{hints.length})
         </button>

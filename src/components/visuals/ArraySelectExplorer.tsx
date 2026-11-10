@@ -671,7 +671,7 @@ function QueryMode({ initialTarget, initialDimension }: { initialTarget: string;
             >
               Check my predictions
             </button>
-            <button type="button" onClick={reveal} className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <button type="button" onClick={reveal} className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               Reveal without predicting
             </button>
           </div>

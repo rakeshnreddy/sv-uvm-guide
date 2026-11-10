@@ -14,8 +14,9 @@ function firstLessonHref(): string {
   return tier && section && topic ? lessonPath([tier.slug, section.slug, topic.slug]) : "/curriculum";
 }
 
+/** At least 40 px tall, so each link is an easy tap target on a phone. */
 const linkClass =
-  "font-semibold text-foreground underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
+  "inline-flex min-h-10 items-center font-semibold text-foreground underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
 
 /**
  * "Find your way back": the curriculum overview, the first lesson and the

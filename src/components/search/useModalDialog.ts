@@ -16,10 +16,18 @@ const openDialogs: HTMLElement[] = [];
 /** The body's overflow before the first dialog opened; restored when the last one closes. */
 let savedBodyOverflow: string | null = null;
 
-/** Tabbable elements inside `container`, skipping collapsed (`hidden`) and aria-hidden parts. */
+/**
+ * Tabbable elements inside `container`, skipping collapsed (`hidden`) and aria-hidden parts,
+ * and elements taken out of the Tab order with a negative tabIndex (such as the search
+ * results, which are reached with the arrow keys).
+ */
 export function focusableWithin(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (element) => !element.closest("[hidden]") && !element.closest("[inert]") && element.getAttribute("aria-hidden") !== "true",
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.closest("[hidden]") &&
+      !element.closest("[inert]") &&
+      element.getAttribute("aria-hidden") !== "true",
   );
 }
 

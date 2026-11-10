@@ -90,4 +90,44 @@ test.describe('Mobile Navigation', () => {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     expect(await fits('[role="dialog"]')).toBe(true);
   });
+
+  test('should open the course outline from the menu (responsive-a11y-14)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Open main menu' }).click();
+    const mobileMenu = page.getByTestId('mobile-menu');
+    await mobileMenu.getByRole('button', { name: 'Course outline' }).click();
+    await expect(mobileMenu).toHaveCount(0);
+    const drawer = page.getByRole('dialog', { name: 'Course outline' });
+    await expect(drawer).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Open main menu' })).toBeFocused();
+  });
+
+  test('should offer the theme controls and the learner pages in the menu (navigation-6, responsive-a11y-3)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Open main menu' }).click();
+    const mobileMenu = page.getByTestId('mobile-menu');
+    const appearance = mobileMenu.getByRole('region', { name: 'Appearance' });
+    const select = appearance.getByRole('combobox', { name: 'Select theme' });
+    const toggle = appearance.getByRole('button', { name: 'Toggle theme' });
+    await expect(select).toBeVisible();
+    for (const control of [select, toggle]) {
+      const box = await control.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(40);
+      expect(box!.height).toBeLessThanOrEqual(44);
+    }
+    const learning = mobileMenu.getByRole('navigation', { name: 'Your learning' });
+    for (const name of ['Settings', 'Self-assessment', 'Find your level']) {
+      await expect(learning.getByRole('link', { name, exact: true })).toBeVisible();
+    }
+
+    // The choice applies at once and survives a reload.
+    await select.selectOption('forest');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', /^forest-/);
+    await toggle.click();
+    const theme = await page.evaluate(() => localStorage.getItem('theme'));
+    expect(theme).toMatch(/^forest-(light|dark)$/);
+    await page.reload();
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme!);
+  });
 });

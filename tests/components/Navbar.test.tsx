@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import Navbar, { mainNavLinks, navLinkCurrent, signInHref } from '@/components/Navbar';
+import Navbar, { LEARNER_MENU_LINKS, mainNavLinks, navLinkCurrent, signInHref } from '@/components/Navbar';
 import Sidebar, { OUTLINE_DRAWER_ID } from '@/components/layout/Sidebar';
 import { shellStore } from '@/components/search/shell-store';
 
@@ -44,12 +44,15 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/components/ui/ThemeSwitcher', () => ({
-  ThemeSwitcher: () => (
-    <button type="button" aria-label="Toggle theme">
+  ThemeSwitcher: ({ layout = 'bar' }: { layout?: 'bar' | 'menu' }) => (
+    <button type="button" aria-label="Toggle theme" data-layout={layout}>
       theme
     </button>
   ),
 }));
+
+const MAIN_HREFS = ['/curriculum#routes', '/curriculum', '/practice', '/practice#labs', '/interview-prep', '/dashboard'];
+const LEARNING_HREFS = ['/settings', '/assessment', '/quiz/placement'];
 
 vi.mock('next/navigation', () => ({
   usePathname: () => nav.pathname,
@@ -421,15 +424,10 @@ describe('mobile menu', () => {
     expect(menu).toHaveAttribute('aria-modal', 'true');
     expect(within(menu).getAllByRole('button')[0]).toHaveAccessibleName('Close menu');
     expect(within(menu).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
-    // Every main link, including the ones the desktop bar shows only from xl.
-    expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
-      '/curriculum#routes',
-      '/curriculum',
-      '/practice',
-      '/practice#labs',
-      '/interview-prep',
-      '/dashboard',
-    ]);
+    // Every main link, including the ones the desktop bar shows only from xl, then the learner's own pages.
+    const mainNav = within(menu).getByRole('navigation', { name: 'Main' });
+    expect(within(mainNav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(MAIN_HREFS);
+    expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([...MAIN_HREFS, ...LEARNING_HREFS]);
     for (const link of within(menu).getAllByRole('link')) expect(link).not.toHaveClass('hidden');
     // The Dashboard link is a full-width, 44 px row with a visible keyboard focus ring.
     expect(within(menu).getByRole('link', { name: 'Dashboard' })).toHaveClass('min-h-11', 'focus-visible:ring-2');
@@ -451,6 +449,110 @@ describe('mobile menu', () => {
   });
 });
 
+describe('phone menu: course outline, appearance and your learning (navigation-6, responsive-a11y-3, responsive-a11y-14)', () => {
+  async function openPhoneMenu(user: ReturnType<typeof userEvent.setup>) {
+    const menuButton = screen.getByRole('button', { name: 'Open main menu' });
+    await user.click(menuButton);
+    return { menuButton, menu: screen.getByTestId('mobile-menu') };
+  }
+
+  it('starts with a Course outline row that closes the menu and opens the outline drawer', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Navbar />
+        <Sidebar />
+      </>,
+    );
+    const { menu, menuButton } = await openPhoneMenu(user);
+    const row = within(menu).getByRole('button', { name: 'Course outline' });
+    expect(row).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(row).toHaveClass('min-h-11', 'w-full', 'focus-visible:ring-2');
+    // It is the first control after the close button, above the main links.
+    const buttons = within(menu).getAllByRole('button');
+    expect(buttons[0]).toHaveAccessibleName('Close menu');
+    expect(buttons[1]).toBe(row);
+    const mainNav = within(menu).getByRole('navigation', { name: 'Main' });
+    expect(row.compareDocumentPosition(mainNav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(row);
+    expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
+    const drawer = screen.getByRole('dialog', { name: 'Course outline' });
+    expect(drawer).toHaveAttribute('id', OUTLINE_DRAWER_ID);
+
+    // Closing the drawer returns focus to the menu button, where the learner started.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(menuButton);
+  });
+
+  it('shows the theme controls under Appearance whatever the accounts switch says', async () => {
+    for (const accounts of [false, true]) {
+      if (accounts) accountsOnSignedOut();
+      const user = userEvent.setup();
+      const { unmount } = render(<Navbar />);
+      const { menu } = await openPhoneMenu(user);
+      const appearance = within(menu).getByRole('region', { name: 'Appearance' });
+      expect(within(appearance).getByRole('heading', { name: 'Appearance', level: 3 })).toBeInTheDocument();
+      expect(within(appearance).getByRole('button', { name: 'Toggle theme' })).toHaveAttribute('data-layout', 'menu');
+      unmount();
+      shellStore.reset();
+    }
+  });
+
+  it('lists Settings, Self-assessment and Find your level under Your learning as 44 px rows, marking the current page', async () => {
+    expect(LEARNER_MENU_LINKS.map((link) => link.label)).toEqual(['Settings', 'Self-assessment', 'Find your level']);
+    nav.pathname = '/assessment';
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu } = await openPhoneMenu(user);
+    const learning = within(menu).getByRole('navigation', { name: 'Your learning' });
+    const links = within(learning).getAllByRole('link');
+    expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['Settings', '/settings'],
+      ['Self-assessment', '/assessment'],
+      ['Find your level', '/quiz/placement'],
+    ]);
+    for (const link of links) expect(link).toHaveClass('min-h-11', 'focus-visible:ring-2');
+    expect(within(learning).getByRole('link', { name: 'Self-assessment' })).toHaveAttribute('aria-current', 'page');
+
+    await user.click(within(learning).getByRole('link', { name: 'Find your level' }));
+    expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
+  });
+
+  it('keeps every new control inside the focus loop, in reading order', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu, menuButton } = await openPhoneMenu(user);
+    const expected = [
+      'Close menu',
+      'Course outline',
+      'Start here',
+      'Curriculum',
+      'Practice',
+      'Labs',
+      'Interview prep',
+      'Dashboard',
+      'Toggle theme',
+      'Settings',
+      'Self-assessment',
+      'Find your level',
+    ];
+    const seen: string[] = [];
+    for (let i = 0; i < expected.length; i += 1) {
+      const active = document.activeElement as HTMLElement;
+      expect(menu.contains(active)).toBe(true);
+      seen.push(active.getAttribute('aria-label') ?? active.textContent ?? '');
+      await user.keyboard('{Tab}');
+    }
+    expect(seen).toEqual(expected);
+    // Tab from the last item wraps to the close button.
+    expect(document.activeElement).toHaveAccessibleName('Close menu');
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(menuButton);
+  });
+});
+
 describe('account items in the phone menu (accounts seam below md)', () => {
   async function openPhoneMenu(user: ReturnType<typeof userEvent.setup>) {
     const menuButton = screen.getByRole('button', { name: 'Open main menu' });
@@ -458,26 +560,20 @@ describe('account items in the phone menu (accounts seam below md)', () => {
     return { menuButton, menu: screen.getByTestId('mobile-menu') };
   }
 
-  it('adds nothing while accounts are off: no account heading, Settings, Sign in or Sign out, and no fetch', async () => {
+  it('adds no account items while accounts are off: no account heading, Sign in or Sign out, and no fetch', async () => {
     const user = userEvent.setup();
     render(<Navbar />);
     const { menu } = await openPhoneMenu(user);
     expect(within(menu).queryByTestId('mobile-account')).not.toBeInTheDocument();
     expect(within(menu).queryByRole('heading', { name: 'Account' })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    // Settings is still offered, once, under "Your learning" (navigation-6).
+    expect(within(menu).getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
     expect(within(menu).queryByText(/sign in|sign out|signed in|checking sign-in/i)).not.toBeInTheDocument();
-    expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
-      '/curriculum#routes',
-      '/curriculum',
-      '/practice',
-      '/practice#labs',
-      '/interview-prep',
-      '/dashboard',
-    ]);
+    expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([...MAIN_HREFS, ...LEARNING_HREFS]);
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('offers a signed-out visitor Settings and Sign in back to this page, after the main links', async () => {
+  it('offers a signed-out visitor Sign in back to this page, after the main links, with Settings listed once', async () => {
     accountsOnSignedOut();
     nav.pathname = '/practice/lab/basics-1';
     const user = userEvent.setup();
@@ -488,9 +584,10 @@ describe('account items in the phone menu (accounts seam below md)', () => {
     expect(within(account).getByRole('heading', { name: 'Account', level: 3 })).toBeInTheDocument();
     expect(within(account).getByText('Not signed in')).toHaveAttribute('aria-live', 'polite');
     expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['Settings', '/settings'],
       ['Sign in', '/api/auth/signin?callbackUrl=%2Fpractice%2Flab%2Fbasics-1'],
     ]);
+    // Settings sits under "Your learning" for everyone, so the account items do not repeat it.
+    expect(within(menu).getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
     expect(within(menu).queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();
     // Dashboard stays a main link and is not repeated, so the menu has one Dashboard link.
@@ -530,13 +627,14 @@ describe('account items in the phone menu (accounts seam below md)', () => {
     const { menu } = await openPhoneMenu(user);
     const account = within(menu).getByTestId('mobile-account');
     expect(within(account).getByText('Checking sign-in…')).toBeInTheDocument();
-    expect(within(account).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
+    expect(within(account).queryAllByRole('link')).toHaveLength(0);
+    expect(within(menu).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
     expect(within(menu).queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('offers a signed-in learner Notifications, Settings and Sign out, and Sign out signs out and closes the menu', async () => {
+  it('offers a signed-in learner Notifications and Sign out, and Sign out signs out and closes the menu', async () => {
     accountsOnSignedIn('Ada');
     const user = userEvent.setup();
     render(<Navbar />);
@@ -547,8 +645,8 @@ describe('account items in the phone menu (accounts seam below md)', () => {
     expect(within(account).getByText('Signed in as Ada')).toBeInTheDocument();
     expect(within(account).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
       ['Notifications', '/notifications'],
-      ['Settings', '/settings'],
     ]);
+    expect(within(menu).getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
     expect(within(menu).queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
 
@@ -568,7 +666,10 @@ describe('account items in the phone menu (accounts seam below md)', () => {
     const { menu } = await openPhoneMenu(user);
     const account = within(menu).getByTestId('mobile-account');
     expect(within(account).getByText('Signed in')).toBeInTheDocument();
-    expect(within(account).getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+    expect(within(menu).getByRole('navigation', { name: 'Your learning' }).querySelector('a[href="/settings"]')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(within(account).getByRole('link', { name: 'Notifications' })).not.toHaveAttribute('aria-current');
   });
 });

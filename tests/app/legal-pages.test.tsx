@@ -45,6 +45,11 @@ describe.each([
     const siteMap = within(footer).getByRole('navigation', { name: 'Site map' });
     expect(within(siteMap).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
     expect(within(siteMap).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
+    expect(footer).toHaveTextContent('MIT licensed');
+    expect(within(footer).getByRole('link', { name: 'Source on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/rakeshnreddy/sv-uvm-guide',
+    );
     // The shortcuts dialog lives in the learning layout, so this page does not offer it.
     expect(within(footer).queryByRole('button', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
   });

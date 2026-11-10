@@ -16,7 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { formatTimestamp, NOTIFICATION_CATEGORY_META, type NotificationItem } from "@/lib/notifications";
 import { useAccountSession, useServerFeature, type AccountSessionStatus } from "@/lib/persistence/target";
 import { SITE_FEATURES, type SiteFeatureSwitches } from "@/lib/site-features";
-import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from "@/lib/site-links";
+import { INTERVIEW_PREP_HREF, LABS_HREF, PLACEMENT_QUIZ_HREF, START_HERE_HREF } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
 interface NavLink {
@@ -60,6 +60,18 @@ export function mainNavLinks(features: Pick<SiteFeatureSwitches, "community"> = 
 export function signInHref(pathname: string | null): string {
   return `/api/auth/signin?callbackUrl=${encodeURIComponent(pathname || "/")}`;
 }
+
+/**
+ * The learner's own pages, listed in the phone menu under "Your learning"
+ * whatever the accounts switch says: settings (theme, and export, import or
+ * reset of the progress kept in this browser), the self-assessment and the
+ * placement quiz. On wider windows the footer and the dashboard link to them.
+ */
+export const LEARNER_MENU_LINKS: readonly NavLink[] = [
+  { label: "Settings", href: "/settings" },
+  { label: "Self-assessment", href: "/assessment" },
+  { label: "Find your level", href: PLACEMENT_QUIZ_HREF },
+];
 
 const MD_MIN_WIDTH = 768;
 
@@ -382,18 +394,16 @@ function mobileAccountStatus(user: { displayName?: string | null } | null, statu
  * it renders this only while accounts are on (SITE_FEATURES.accounts). It
  * follows UserMenu: "Sign in", back to this page, once the session check says
  * nobody is signed in; "Sign out" for a signed-in learner; neither while the
- * check runs. Dashboard is already a main link in the same menu, so it is not
- * repeated here. Notifications is a link to /notifications, shown only to a
+ * check runs. Dashboard is already a main link and Settings is under "Your
+ * learning" in the same menu, so neither is repeated here. Notifications is a link to /notifications, shown only to a
  * signed-in learner (useServerFeature), so this menu never fetches the feed.
  */
 function MobileAccountItems({ pathname }: { pathname: string | null }) {
   const { user, signOut } = useAuth();
   const { status } = useAccountSession();
   const notificationsOn = useServerFeature("notifications");
-  const accountLinks = [
-    ...(notificationsOn ? [{ label: "Notifications", href: "/notifications" }] : []),
-    { label: "Settings", href: "/settings" },
-  ];
+  // Settings is in the menu's "Your learning" group for everyone, so it is not repeated here.
+  const accountLinks = notificationsOn ? [{ label: "Notifications", href: "/notifications" }] : [];
 
   return (
     <div data-testid="mobile-account" className="mt-4 border-t border-border pt-4">
@@ -401,7 +411,7 @@ function MobileAccountItems({ pathname }: { pathname: string | null }) {
       <p aria-live="polite" className="mt-1 break-words px-3 text-sm text-foreground">
         {mobileAccountStatus(user, status)}
       </p>
-      <ul className="mt-2 space-y-1">
+      <ul className="mt-2 space-y-1 empty:hidden">
         {accountLinks.map((link) => {
           const current = navLinkCurrent(pathname, link.href);
           return (
@@ -442,6 +452,8 @@ function MobileAccountItems({ pathname }: { pathname: string | null }) {
 function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: readonly NavLink[] }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const appearanceId = useId();
+  const learningId = useId();
   useModalDialog(panelRef, { onClose: shellStore.closeMenu });
 
   return (
@@ -466,9 +478,45 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
+          {/* Below md the outline is always a drawer; opening it closes this menu (one modal at a time). */}
+          <button
+            type="button"
+            onClick={shellStore.openOutline}
+            aria-haspopup="dialog"
+            data-testid="mobile-menu-outline"
+            className={cn(mobileRowClass(), "mb-4 w-full gap-3 border border-border text-left")}
+          >
+            <PanelLeft aria-hidden="true" className="h-5 w-5 shrink-0" />
+            Course outline
+          </button>
           <nav aria-label="Main">
             <ul className="space-y-1">
               {links.map((link) => {
+                const current = navLinkCurrent(pathname, link.href);
+                return (
+                  <li key={link.href}>
+                    <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
+                      {link.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+          <section aria-labelledby={appearanceId} data-testid="mobile-appearance" className="mt-4 border-t border-border pt-4">
+            <h3 id={appearanceId} className="px-3 text-sm font-semibold text-muted-foreground">
+              Appearance
+            </h3>
+            <div className="mt-2 px-3">
+              <ThemeSwitcher layout="menu" />
+            </div>
+          </section>
+          <nav aria-labelledby={learningId} data-testid="mobile-learning" className="mt-4 border-t border-border pt-4">
+            <h3 id={learningId} className="px-3 text-sm font-semibold text-muted-foreground">
+              Your learning
+            </h3>
+            <ul className="mt-2 space-y-1">
+              {LEARNER_MENU_LINKS.map((link) => {
                 const current = navLinkCurrent(pathname, link.href);
                 return (
                   <li key={link.href}>
@@ -492,7 +540,8 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
  * curriculum search (an inline field from lg, a dialog below it), the main
  * links, the theme switch, and, only while accounts are on, the account menu
  * and (for a signed-in learner) the notification feed. Below md the phone menu
- * holds the main links and, while accounts are on, the account items.
+ * holds a course outline row, the main links, the theme controls, the
+ * learner's own pages and, while accounts are on, the account items.
  *
  * From md to lg the bar has 720 px of room at 768 px, so the links and the
  * controls are spaced more tightly there and the divider is hidden: the default

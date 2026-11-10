@@ -183,7 +183,7 @@ function MultiPrediction({ questions, resetKey, children }: { questions: MultiQu
           >
             Lock in prediction
           </button>
-          <button type="button" onClick={() => setRevealed(true)} className="min-h-10 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <button type="button" onClick={() => setRevealed(true)} className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             Reveal without predicting
           </button>
         </div>
@@ -668,7 +668,7 @@ function DebugCasePanel({ caseId }: { caseId: DebugCaseId }) {
       </div>
       <HintLadder hints={c.hints} resetKey={c.id} />
       {!found ? (
-        <button type="button" onClick={() => setFound(true)} className="min-h-10 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <button type="button" onClick={() => setFound(true)} className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           Skip to the fixes
         </button>
       ) : (

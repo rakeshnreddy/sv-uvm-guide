@@ -372,7 +372,7 @@ function EventPrediction({ drill, resetKey, onReveal }: { drill: EventDrill; res
           <button
             type="button"
             onClick={() => setSkipped(true)}
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Reveal without predicting
           </button>

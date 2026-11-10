@@ -61,6 +61,21 @@ test.describe('Interactive lab framework (anonymous)', () => {
     expect(accountRequests).toEqual([]);
   });
 
+  // Below lg the lab is one column; the editor once collapsed to 5 px there.
+  for (const viewport of [
+    { name: 'phone', width: 390, height: 844 },
+    { name: 'tablet', width: 820, height: 1180 },
+  ]) {
+    test(`shows a usable editor at ${viewport.name} width (${viewport.width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/practice/lab/basics-1');
+      const editor = page.locator('.monaco-editor');
+      await expect(editor).toBeVisible({ timeout: 60000 });
+      const box = await editor.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(300);
+    });
+  }
+
   test('returns 404 for an unregistered lab', async ({ page }) => {
     const response = await page.goto('/practice/lab/this-is-not-a-lab');
     expect(response?.status()).toBe(404);

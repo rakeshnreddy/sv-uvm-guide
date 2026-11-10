@@ -1,0 +1,208 @@
+{
+  "lens": "Responsive behaviour and accessibility (verified)",
+  "summary": "Verified against the live site. The shell is solid: no sideways scroll, a working skip link, good focus rings, correct traps in the phone menu and outline drawer. One real breakage: the lab editor collapses to 5 px at every width below 1024 px (reproduced at 390, 820 and 1023; fine at 1024), so labs are unusable on phones and tablets. The search dialog's focus trap leaks to the page behind (reproduced; downgraded to P2 because it only affects keyboard users below lg). Phones have no theme control, and the site also ignores the OS light/dark preference, so a phone reader is stuck in default-dark. Other confirmed items: no way back to the TOC on long lessons, 14 px inputs that make iOS zoom, forest-dark primary contrast, small reveal/hint buttons.",
+  "strengths": [
+    "No page scrolls sideways at 360, 390, 720, 768, 820, 1024 or 1280 px; metrics.json overflowX is 0 on every record, and wide tables and code scroll inside their own boxes.",
+    "The navbar's progressive disclosure works: More covers md to xl, all six links fit at 1280, nothing overlaps, and header targets are 40 px. At 844x390 landscape the header fits on one row with the theme controls.",
+    "The mobile menu and outline drawer move focus in, trap Tab, close on Escape and return focus to the opener (keyboard-walk.txt; the menu cycle returns to Close menu, the drawer opens on the current lesson).",
+    "The skip link is the first Tab stop on learning pages, is visible on focus, and lands on the H1 past the docked outline.",
+    "Every Tab stop shows a focus ring; aria-current is used on navbar, outline, breadcrumb and TOC; landmarks are named (Main, Course outline, Breadcrumb, On this page, Previous and next lesson, Site map).",
+    "Headings have scroll-mt so TOC jumps land below the sticky header (target at 112 px, header bottom at 65 px).",
+    "Reduced motion is honoured through MotionConfig reducedMotion='user'; lessons run no animations under reduce.",
+    "The viewport meta allows zoom (width=device-width, initial-scale=1, no maximum-scale), and the page reflows at 720 px (the 200% zoom proxy).",
+    "Component scrollers use role=region with tabindex=0 and a label; waveform figures carry an sr-only data table.",
+    "Prediction radio options have full-row label targets 46 to 66 px tall.",
+    "No console errors on any page except the expected 404 resource on the not-found page (metrics.json)."
+  ],
+  "proposal": "Shell behaviour by breakpoint (keep what works, fill the gaps).\n\nPhone, under 768 px\n- Header: keep the 64 px sticky row (outline button, logo, Search, Menu). Optionally label the outline button \"Outline\" on lesson pages.\n- Menu: keep the modal panel, its focus trap, Escape and focus return. Add, outside the SITE_FEATURES.accounts gate, an Appearance block (theme select plus a light/dark switch, 40-44 px rows), a Settings link and a \"Course outline\" row that closes the menu and opens the drawer.\n- Theme default: follow the OS preference for a first visit (default-light or default-dark) instead of always default-dark.\n- Table of contents: the collapsed disclosure above the lesson stays. After the reader scrolls past it, a 44 px sticky \"On this page: <current section>\" bar under the header opens the same list as a sheet; add a back-to-top control.\n- Content: code blocks and tables scroll inside a focusable, labelled wrapper (tables keep display:table). Form inputs are 16 px text so iOS does not zoom on focus. Controls are at least 40 px tall.\n\nTablet and small laptop, 768 to 1023 px\n- Header: Start here, Curriculum, Practice, More, a search icon that opens the dialog, and the theme controls. This already fits at 768 and 820.\n- Outline: the drawer, not docked.\n- Table of contents: the same sticky bar.\n- Labs: single column with the editor at a fixed height (about 60vh, at least 420 px). Today the editor collapses to 5 px at every width below 1024, including 1023.\n\nSmall desktop, 1024 to 1279 px\n- Header: inline search, three links, More, theme controls.\n- Outline: docked at 256 px; its quick links show only what the navbar hides at that width (Labs, Interview prep, Dashboard).\n- Table of contents: the sticky bar, since the right rail does not fit.\n- Labs: the two-column layout (works today: 520 px editor at 1024).\n\nDesktop, 1280 px and wider\n- As today: all links, inline search, docked outline (quick links can go), sticky TOC rail.\n\nLanding page, all widths\n- A slim header with a skip link, logo, primary links, search and theme control; below md it becomes the phone pattern.\n\nCross-cutting\n- One modal hook whose focus trap counts only elements with tabIndex >= 0 (today a[href] with tabindex=-1 search options are counted as the last stop, so Tab escapes the search dialog; the menu and drawer are fine today).\n- A search index that covers lessons, sections, labs, exercises, visualisations and interview banks.\n- A token test that checks every theme for 4.5:1 text and 3:1 input borders.\n- Every page gets its own title, including the 404.\n- Every CSS animation and hover transform is gated by motion-safe.\n\nEvidence: scripts and output in scratchpad/site-review/extra/responsive-a11y/ (original reviewer) and extra/verify-responsive-a11y/ (v1.cjs, v2.cjs, v3.cjs).",
+  "findings": [
+    {
+      "id": "responsive-a11y-1", "p": "P1", "type": "defect", "verdict": "corrected",
+      "title": "Lab code editor collapses to 5 px tall at every width below 1024 px, so labs are unusable on phones and tablets",
+      "where": "/practice/lab/* at every width from 0 to 1023 px",
+      "evidence": "Reproduced with extra/verify-responsive-a11y/v1.cjs on /practice/lab/basics-1: 390 {monaco:true,h:5,lines:1}, 820 {h:5,lines:1}, 1023 {h:5,lines:1}, 1024 {h:520,lines:22}. Screenshot extra/responsive-a11y/lab-editor.w390.png shows the step text, a thin line and an empty dark block. Cause: src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx lines 430-434: wrapper `min-h-[520px] flex-1` inside the section `flex min-w-0 flex-1 flex-col` (line 425); below lg the page is a column with no fixed height, so CodeEditor's `height=\"100%\"` (CodeEditor.tsx line 358 sets style height) resolves to auto and Monaco measures about 0.",
+      "impact": "About 35 labs are the main hands-on practice. On a phone, a portrait or landscape tablet, or a laptop window under 1024 px, the learner sees no starter code and cannot edit.",
+      "fix": "In LabClientPage.tsx give the editor wrapper a definite height below lg, e.g. `h-[60vh] min-h-[420px] lg:h-auto lg:min-h-[520px] lg:flex-1`, or pass a px/vh height to CodeEditor below lg via a min-width hook. Add a Playwright check at 390 and 820 that `.monaco-editor` is at least 300 px tall.",
+      "files": ["src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx", "src/components/ui/CodeEditor.tsx", "tests/e2e/labs.spec.ts"],
+      "effort": "S",
+      "tests": ["tests/components/LabClientPage.test.tsx", "tests/app/lab-page.test.tsx", "tests/components/CodeEditor.test.tsx", "tests/e2e/labs.spec.ts"]
+    },
+    {
+      "id": "responsive-a11y-2", "p": "P2", "type": "defect", "verdict": "corrected",
+      "title": "Search dialog focus trap leaks: with results showing, Tab moves focus to the page behind",
+      "where": "Search dialog below lg (phone and tablet), on every learning page",
+      "evidence": "Reproduced with extra/verify-responsive-a11y/v1.cjs at 390 on F1A: open Search, type 'phasing', Tab gives `A F1A: The Cost of Bugs inDialog:false` (the breadcrumb), then Close search, then the input. Original keyboard-walk.txt shows the same cycle. Cause: src/components/search/useModalDialog.ts lines 5-12 and 20-24: FOCUSABLE includes plain `a[href]`, and focusableWithin does not filter tabIndex, so the result options (SearchCombobox.tsx lines 286-294: Link role=option tabIndex={-1}) become the trap's `last`. Tab from the input is not intercepted. The phone menu and outline drawer use the same hook but contain no tabindex=-1 links today and trap correctly (keyboard-walk.txt).",
+      "impact": "Keyboard and switch users on tablets lose focus behind a modal they cannot see through (WCAG 2.4.3). Downgraded from P1: it affects keyboard use below lg only, and Escape still closes the dialog and restores focus.",
+      "fix": "In useModalDialog.ts focusableWithin, add `&& element.tabIndex >= 0` to the filter. Add a Vitest case with a tabindex=-1 link as the last child, and a Tab step to the search-dialog test.",
+      "files": ["src/components/search/useModalDialog.ts", "tests/search/SearchCombobox.test.tsx"],
+      "effort": "S",
+      "tests": ["tests/search/SearchCombobox.test.tsx", "tests/components/Navbar.test.tsx", "tests/e2e/mobile-navigation.spec.ts", "tests/e2e/navigation.spec.ts"]
+    },
+    {
+      "id": "responsive-a11y-3", "p": "P2", "type": "defect", "verdict": "corrected",
+      "title": "Phones in portrait have no theme or light/dark control, and Settings is not linked from the phone menu or footer",
+      "where": "Every learning page below 768 px (landscape phones at 768 px or wider do get the controls)",
+      "evidence": "Navbar.tsx: ThemeSwitcher sits in the `hidden items-center gap-1 md:flex` group (around lines 566-578). MobileMenuPanel (lines 442-488) renders only the main links; Settings comes only from `SITE_FEATURES.accounts && <MobileAccountItems/>` (line 483, links at 393-396). v1.cjs at 390: menu dialog has 0 selects, links Start here, Curriculum, Practice, Labs, Interview prep, Dashboard, and only the Close menu button. grep finds no /settings in src/components/Footer.tsx. Screenshot extra/responsive-a11y/lesson-f1a.landscape844x390.png shows the controls do appear at 844 px landscape.",
+      "impact": "A portrait-phone reader cannot switch to light mode for daylight reading or pick another theme, and combined with responsive-a11y-v2 they always get default-dark.",
+      "fix": "In MobileMenuPanel add an Appearance block outside the accounts gate that renders ThemeSwitcher full width with 40-44 px controls, plus a Settings link; add Settings to the Footer's site links.",
+      "files": ["src/components/Navbar.tsx", "src/components/ui/ThemeSwitcher.tsx", "src/components/Footer.tsx"],
+      "effort": "S",
+      "tests": ["tests/components/Navbar.test.tsx", "tests/e2e/mobile-navigation.spec.ts", "tests/e2e/navigation-entry-points.spec.ts", "tests/e2e/theming.spec.ts", "tests/components/ThemeSwitcher.test.tsx"]
+    },
+    {
+      "id": "responsive-a11y-v2", "p": "P2", "type": "defect", "verdict": "added",
+      "title": "First-visit theme ignores the OS light/dark preference; every new visitor gets default-dark",
+      "where": "All pages, first visit (both route groups)",
+      "evidence": "src/components/providers/ClientProviders.tsx line 27 and src/app/(public)/layout.tsx line 6: `<ThemeProvider attribute=\"data-theme\" defaultTheme=\"default-dark\" ...>` with no enableSystem; src/components/providers/ThemeProvider.tsx lines 7-18 list only the 10 named themes, no 'system'. grep finds no prefers-color-scheme handling for the site theme.",
+      "impact": "Learners who set their device to light mode (or need it for low vision or glare) get the dark theme, and on a portrait phone they have no control to change it (responsive-a11y-3).",
+      "fix": "On first visit pick default-light or default-dark from matchMedia('(prefers-color-scheme: dark)'): e.g. defaultTheme='system' with enableSystem and a mapping of 'system' to default-<resolved> in ThemeProvider/ThemeWatcher, or a small inline script before hydration that sets localStorage 'theme' when it is unset.",
+      "files": ["src/components/providers/ThemeProvider.tsx", "src/components/providers/ClientProviders.tsx", "src/app/(public)/layout.tsx", "src/components/ui/ThemeSwitcher.tsx"],
+      "effort": "M",
+      "tests": ["tests/components/ThemeSwitcher.test.tsx", "tests/e2e/theming.spec.ts", "tests/app/settings-page-client.spec.tsx"]
+    },
+    {
+      "id": "responsive-a11y-4", "p": "P2", "type": "opportunity", "verdict": "confirmed",
+      "title": "Long lessons below 1280 px have no way back to 'On this page' or to the top",
+      "where": "Lesson pages below xl, worst on phones",
+      "evidence": "metrics.json mobile docHeight: lesson-f1a 54,784 px, lesson-uvm-phasing 70,800 px (65 and 84 screens at 844 px). LessonToc.tsx line 137: the disclosure button is `xl:hidden` and static; v2.cjs confirms the only 'On this page' control on F1A and phasing at 390 has position static. No back-to-top control found.",
+      "impact": "A phone or tablet learner deep in a lesson must scroll dozens of screens back to change section.",
+      "fix": "Below xl, after the reader scrolls past the TOC, show a 44 px sticky bar under the navbar (top-16) with the current section (activeId already tracked) that opens the same list as a sheet, or a floating 'On this page' / back-to-top button. Reuse LessonToc state; keep Escape and focus return.",
+      "files": ["src/components/curriculum/LessonToc.tsx", "src/app/(learning)/curriculum/[...slug]/page.tsx"],
+      "effort": "M",
+      "tests": ["tests/components/LessonToc.test.tsx", "tests/e2e/lesson-orientation.spec.ts"]
+    },
+    {
+      "id": "responsive-a11y-5", "p": "P2", "type": "defect", "verdict": "corrected",
+      "title": "Lesson code blocks and tables that scroll sideways have no focusable labelled wrapper; tables lose table semantics",
+      "where": "Lesson MDX `pre` and tables at every width (more of them at phone width)",
+      "evidence": "v2.cjs at 390: F1A has 7 TABLE and 2 PRE scrollers with no tabindex or role, plus 2 correct `DIV[tabindex=0][role=region]`; phasing has 7 TABLE, 15 PRE, 8 correct regions. Computed `.prose table` display is block. globals.css lines 413-418 set `.prose table {display:block; max-width:100%; overflow-x:auto}`. Correction: current Chrome and Firefox make scroll containers keyboard-focusable on their own, so the keyboard gap is mainly Safari; the display:block table is the wider problem because WebKit/VoiceOver drop table semantics for it.",
+      "impact": "Safari keyboard users cannot scroll to clipped code or table columns; VoiceOver users may hear tables as plain text (WCAG 2.1.1, 1.3.1).",
+      "fix": "Add `pre` and `table` overrides after the registry spread in the lesson page's components map: wrap each in `<div role=\"region\" tabIndex={0} aria-label=\"Code sample\"|\"Table\" className=\"overflow-x-auto focus-visible:ring-2\">`. Remove display:block/overflow from `.prose table` in globals.css.",
+      "files": ["src/app/globals.css", "src/app/(learning)/curriculum/[...slug]/page.tsx", "src/components/curriculum/ScrollRegion.tsx (new)"],
+      "effort": "S",
+      "tests": ["tests/components/LessonMdxPipeline.test.tsx", "tests/curriculum/mdx-render-smoke.test.tsx", "tests/__snapshots__/"]
+    },
+    {
+      "id": "responsive-a11y-6", "p": "P2", "type": "opportunity", "verdict": "confirmed",
+      "title": "Search finds only lessons and sections, not labs, exercises, visualisations or interview banks",
+      "where": "Navbar search (inline from lg, dialog below lg)",
+      "evidence": "node: src/generated/search-index.json keys are ['version','tiers']; it contains none of 'Phase Sorter', '/practice/lab', 'interview-prep', 'knowledge-hub'. search-engine.ts lines 204 and 227 create only kind 'lesson' and 'section'. The input is labelled 'Search lessons and sections', so the scope is honest but narrow. Screenshot extra/responsive-a11y/search-results.w390.png: 'phasing' gives 1 result.",
+      "impact": "On phones, search and the six-link menu are the only navigation, so about 35 labs, exercises and interview banks cannot be found by name.",
+      "fix": "Extend scripts/generate-search-index.mjs to emit lab, exercise, visualization and interview documents with href and kind; rank them below lessons in search-engine.ts; show a kind badge; update the input label.",
+      "files": ["scripts/generate-search-index.mjs", "src/components/search/search-engine.ts", "src/components/search/SearchCombobox.tsx", "src/generated/search-index.json"],
+      "effort": "M",
+      "tests": ["tests/search/search-engine.test.ts", "tests/search/search-index-anchors.test.ts", "tests/search/SearchCombobox.test.tsx"]
+    },
+    {
+      "id": "responsive-a11y-7", "p": "P2", "type": "defect", "verdict": "confirmed",
+      "title": "forest-dark primary text fails WCAG AA (3.95:1 on the page, 3.80:1 on muted)",
+      "where": "Any page in the forest-dark theme; text-primary is used widely",
+      "evidence": "globals.css forest-dark block (lines 194-211): --background 166 91% 9%, --primary 161 94% 30%, --muted 217.2 32.6% 17.5%. Recomputed: primary/background 3.95, primary/muted 3.80, primary/card 5.20. Proposed 161 84% 40% gives 6.16, 5.93 and 7.25 for primary-foreground on primary.",
+      "impact": "Links, labels and highlighted text are hard to read for low-vision learners in that theme.",
+      "fix": "Set forest-dark --primary to about `161 84% 40%`; add a Vitest token-contrast test that parses globals.css and checks every theme's text pairs for 4.5:1.",
+      "files": ["src/app/globals.css"],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "responsive-a11y-8", "p": "P2", "type": "defect", "verdict": "confirmed",
+      "title": "Small tap targets in lesson visuals and some pages (16-28 px tall)",
+      "where": "PredictionPrompt 'Reveal without predicting', 'Need a hint?' buttons, lab step buttons, assessment and 404 inline links, header logo",
+      "evidence": "v2.cjs at 390: 'Reveal without predicting' 135x16 on F1A and phasing; 'Need a hint? (0/3)' 97x16 on phasing. PredictionPrompt.tsx lines 99-104: a bare text-xs button with no padding. metrics.json mobile tapTargets list the lab step buttons (20 px), assessment links and not-found links under 24 px.",
+      "impact": "Below the shell's own 40 px standard and the WCAG 2.5.8 24 px minimum; easy to miss with a thumb in every predict-then-reveal visual.",
+      "fix": "PredictionPrompt.tsx: add `inline-flex min-h-10 items-center px-2 text-sm`. Same for hint buttons (grep 'Need a hint'), LabClientPage step buttons (`min-h-10 py-2`), assessment and not-found links (`inline-flex min-h-10 items-center`).",
+      "files": ["src/components/visual-system/PredictionPrompt.tsx", "src/app/(learning)/practice/lab/[labId]/LabClientPage.tsx", "src/app/(learning)/assessment/AssessmentPageClient.tsx", "src/app/not-found.tsx"],
+      "effort": "M",
+      "tests": ["tests/components/visual-system.test.tsx", "tests/components/LabClientPage.test.tsx", "tests/components/DecisionLab.test.tsx"]
+    },
+    {
+      "id": "responsive-a11y-v1", "p": "P2", "type": "defect", "verdict": "added",
+      "title": "Form inputs use 14 px text on phones, so iOS Safari zooms the page when the search box is focused",
+      "where": "Search dialog input, Settings and Resources inputs and selects, below md",
+      "evidence": "extra/verify-responsive-a11y/v3.cjs at 390: computed font-size 14px for 'Search lessons and sections', the Settings 'Select theme' select and the Resources input (lab textareas are 16px). SearchCombobox.tsx line 236 uses `text-sm`; Input.tsx line 12 and Select.tsx line 22 use `text-sm`. iOS Safari auto-zooms any focused field under 16 px.",
+      "impact": "On iPhones, opening search (the main phone navigation) zooms the page in and leaves it zoomed after the dialog closes, so the reader must pinch out every time.",
+      "fix": "Use `text-base md:text-sm` on SearchCombobox's input and in the base classes of Input.tsx, Select.tsx and Textarea.tsx (and ThemeSwitcher's select).",
+      "files": ["src/components/search/SearchCombobox.tsx", "src/components/ui/Input.tsx", "src/components/ui/Select.tsx", "src/components/ui/Textarea.tsx", "src/components/ui/ThemeSwitcher.tsx"],
+      "effort": "S",
+      "tests": ["tests/search/SearchCombobox.test.tsx", "tests/__snapshots__/"]
+    },
+    {
+      "id": "responsive-a11y-9", "p": "P2", "type": "opportunity", "verdict": "confirmed",
+      "title": "The landing page has no banner, main navigation, skip link, search or theme control",
+      "where": "/ at every width",
+      "evidence": "v2.cjs at 1440: header/banner 0, nav labels ['Site map'], skip links 0, one main. src/app/(public)/layout.tsx renders ThemeProvider only; (public)/page.tsx renders main and Footer.",
+      "impact": "Returning learners cannot search or jump to Curriculum, Practice or Labs from the front door without scrolling to the footer; screen-reader users get no banner or main navigation landmark.",
+      "fix": "Add a slim public header in (public)/layout.tsx: skip link, logo, three primary links in `nav aria-label=\"Main\"`, a search button opening the existing search dialog, and ThemeSwitcher; phone pattern below md.",
+      "files": ["src/app/(public)/layout.tsx", "src/app/(public)/page.tsx", "src/components/Navbar.tsx"],
+      "effort": "M",
+      "tests": ["tests/app/home-page.test.tsx", "tests/app/legal-pages.test.tsx"]
+    },
+    {
+      "id": "responsive-a11y-10", "p": "P3", "type": "defect", "verdict": "corrected",
+      "title": "Theme controls: 'Loading...' text before mount, a vague 'Toggle theme' name, a 37 px select, unguarded icon motion",
+      "where": "Navbar at md and wider, and Settings",
+      "evidence": "ThemeSwitcher.tsx lines 57-59 render a bare `<span>` with the loading string until mount (layout shift). Lines 75-87: aria-label 'Toggle theme' with aria-pressed={mode==='dark'}; the sr-only span duplicates the label (harmless, aria-label wins). Select is 84x37 (keyboard-walk.txt). Sun/Moon use transition-all with no motion-reduce.",
+      "impact": "Minor: a header shift on every load; 'Toggle theme, pressed' does not say what is on; a slightly small select.",
+      "fix": "Render an 84x40 placeholder; rename to 'Dark mode' keeping aria-pressed; drop the sr-only span; make the select h-10; add motion-reduce:transition-none to the icons.",
+      "files": ["src/components/ui/ThemeSwitcher.tsx"],
+      "effort": "S",
+      "tests": ["tests/components/ThemeSwitcher.test.tsx", "tests/components/Navbar.test.tsx", "tests/app/settings-page-client.spec.tsx", "tests/e2e/theming.spec.ts", "tests/e2e/settings-data.spec.ts"]
+    },
+    {
+      "id": "responsive-a11y-11", "p": "P3", "type": "defect", "verdict": "confirmed",
+      "title": "Input and select borders are about 1.2-1.4:1 against their background, below the 3:1 for controls",
+      "where": "Header search field, theme select, Settings and Resources inputs, all themes",
+      "evidence": "globals.css: --input equals --border (light 214.3 31.8% 91.4%, dark 217.2 32.6% 17.5%). Recomputed: 1.23:1 on white, 1.37:1 dark on the dark card. Input.tsx line 12 and Select.tsx line 22 use `border-input`; SearchCombobox line 236 uses `border-border`.",
+      "impact": "Low-vision users can struggle to see field boundaries (WCAG 1.4.11).",
+      "fix": "Give --input a 3:1 value per theme and switch SearchCombobox to border-input; keep --border subtle for dividers.",
+      "files": ["src/app/globals.css", "src/components/search/SearchCombobox.tsx"],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "responsive-a11y-12", "p": "P3", "type": "opportunity", "verdict": "confirmed",
+      "title": "The docked outline repeats the navbar's links in compact 32 px rows",
+      "where": "Lesson pages at 1024 px and wider",
+      "evidence": "Sidebar.tsx lines 45 (OUTLINE_QUICK_LINKS), 270-298 (`min-h-8` in compact density). Screenshot extra/responsive-a11y/lesson-f1a.w1024.s0.png bottom left shows the six links in about 100 px.",
+      "impact": "Outline space is lost on short laptop screens and the duplicate links add noise.",
+      "fix": "In the docked outline show only the links the navbar hides at that width (Labs, Interview prep, Dashboard between lg and xl), none from xl; keep the full list in the drawer.",
+      "files": ["src/components/layout/Sidebar.tsx"],
+      "effort": "S",
+      "tests": ["tests/components/Sidebar.test.tsx", "tests/components/MainLayout.test.tsx"]
+    },
+    {
+      "id": "responsive-a11y-13", "p": "P3", "type": "defect", "verdict": "confirmed",
+      "title": "The 404 page has the generic site title",
+      "where": "Any unknown URL",
+      "evidence": "v1.cjs: /no-such-page-xyz returns 404 with title 'SystemVerilog & UVM Mastery'; metrics.json not-found records agree. src/app/not-found.tsx has no metadata export.",
+      "impact": "Screen-reader users and people with many tabs cannot tell the error page from the home page (WCAG 2.4.2).",
+      "fix": "Export `metadata = { title: 'Page not found' }` from src/app/not-found.tsx.",
+      "files": ["src/app/not-found.tsx"],
+      "effort": "S",
+      "tests": []
+    },
+    {
+      "id": "responsive-a11y-14", "p": "P3", "type": "opportunity", "verdict": "confirmed",
+      "title": "Phone header: the course-outline icon has no visible label and the menu has no outline entry",
+      "where": "Learning pages below 768 px",
+      "evidence": "shots/lesson-f1a.mobile.default-dark.s0.png: unlabelled PanelLeft icon (aria-label 'Course outline') left, hamburger right. v1.cjs: the menu dialog holds only the six main links.",
+      "impact": "Junior learners may not find the course outline, the main way to move between 112 lessons on a phone.",
+      "fix": "Add a 'Course outline' row at the top of MobileMenuPanel that closes the menu and opens the drawer; optionally show an 'Outline' text label beside the icon on lesson pages.",
+      "files": ["src/components/Navbar.tsx"],
+      "effort": "S",
+      "tests": ["tests/components/Navbar.test.tsx", "tests/e2e/mobile-navigation.spec.ts"]
+    },
+    {
+      "id": "responsive-a11y-15", "p": "P3", "type": "defect", "verdict": "corrected",
+      "title": "Leftover motion under reduce, and the FDIV card image clips its own subtitle at every width",
+      "where": "Home loader, skeletons, glass cards, the F1A Hall of Shame carousel",
+      "evidence": "(public)/page.tsx line 12 and ui/skeleton.tsx line 9 use plain animate-pulse; globals.css .glass-card:hover translateY(-4px) (lines 282-285) with no reduced-motion guard (globals.css has no prefers-reduced-motion block). public/visuals/pentium-fdiv.svg line 30-31: a 28 px subtitle starting at x=260 in a 1280-wide viewBox runs past the edge, so it is clipped at every width, not only 390 (extra/responsive-a11y/hall-of-shame.mobile.default-light.png shows 'costing Intel hundreds of milli'); at 390 it renders about 7 px tall.",
+      "impact": "Minor discomfort for motion-sensitive users; the image text is clipped and unreadable on phones (the HTML caption below carries the content).",
+      "fix": "Use `motion-safe:animate-pulse`; wrap the glass-card hover transform in `@media (prefers-reduced-motion: no-preference)`; shorten or wrap the SVG subtitle (or drop it, since the card text repeats it).",
+      "files": ["src/app/(public)/page.tsx", "src/components/ui/skeleton.tsx", "src/app/globals.css", "public/visuals/pentium-fdiv.svg"],
+      "effort": "S",
+      "tests": ["tests/components/HallOfShameCarousel.test.tsx", "tests/app/home-page.test.tsx"]
+    }
+  ],
+  "dropped": []
+}

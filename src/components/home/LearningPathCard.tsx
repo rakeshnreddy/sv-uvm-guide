@@ -1,7 +1,5 @@
-"use client";
 import React from 'react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
 import { ArrowRight, Compass, Crown, Wrench, type LucideIcon } from 'lucide-react';
 
 import { eyebrow, primaryAction, secondaryAction } from '@/components/curriculum/overview-ui';
@@ -28,11 +26,10 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
   const headingId = `home-route-${route.id}`;
 
   return (
-    <motion.article
+    <article
       aria-labelledby={headingId}
       data-testid={`home-route-${route.id}`}
       className="flex h-full min-w-0 flex-col rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm transition-colors hover:border-primary/60 motion-reduce:transition-none"
-      whileHover={{ y: -4 }}
     >
       <div className="flex items-center gap-3">
         <Icon aria-hidden="true" className="h-7 w-7 shrink-0 text-primary" />
@@ -63,7 +60,7 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
           See the {route.name} route
         </Link>
       </div>
-    </motion.article>
+    </article>
   );
 };
 

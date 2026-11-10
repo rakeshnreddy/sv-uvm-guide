@@ -99,7 +99,7 @@ export function PredictionPrompt({ question, options, children, resetKey, onComm
           <button
             type="button"
             onClick={() => setSkipped(true)}
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex min-h-10 items-center rounded-md px-2 text-sm text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Reveal without predicting
           </button>

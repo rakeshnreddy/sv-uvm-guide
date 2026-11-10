@@ -8,6 +8,7 @@ import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/Button";
 import { useLocale } from "@/hooks/useLocale";
 import { getString } from "@/lib/strings";
+import { cn } from "@/lib/utils";
 
 const themeOptions = [
   { key: "default", label: "Default" },
@@ -17,7 +18,30 @@ const themeOptions = [
   { key: "violet", label: "Violet" },
 ];
 
-export function ThemeSwitcher() {
+/**
+ * Where the switcher sits. "bar": the md-and-up header group. "menu": the phone
+ * menu, where the select fills the row and both controls are 44 px tall.
+ */
+export type ThemeSwitcherLayout = "bar" | "menu";
+
+const layoutClasses: Record<ThemeSwitcherLayout, { root: string; select: string; button: string; placeholder: string }> = {
+  // Below md the select is 40 px tall with 16 px text (iOS does not zoom a 16 px field); from md it keeps 14 px.
+  bar: {
+    root: "flex items-center gap-2",
+    select: "h-10 px-2 text-base md:text-sm",
+    button: "",
+    // The select (84 px), the gap and the 40 px button, so the header does not shift on mount.
+    placeholder: "inline-block h-10 w-[132px] shrink-0",
+  },
+  menu: {
+    root: "flex w-full items-center gap-2",
+    select: "h-11 min-w-0 flex-1 px-3 text-base",
+    button: "h-11 w-11 shrink-0",
+    placeholder: "block h-11 w-full",
+  },
+};
+
+export function ThemeSwitcher({ layout = "bar" }: { layout?: ThemeSwitcherLayout } = {}) {
   const { theme, setTheme } = useTheme();
   const { locale } = useLocale();
   const [currentTheme, setCurrentTheme] = useState("default");
@@ -54,17 +78,23 @@ export function ThemeSwitcher() {
 
   const label = getString(locale as any, "toggleTheme");
 
+  const classes = layoutClasses[layout];
+
   if (!mounted) {
-    return <span>{getString(locale as any, "loading")}</span>;
+    // Same size as the controls: no layout shift, and nothing for a screen reader to announce.
+    return <span aria-hidden="true" data-testid="theme-switcher-placeholder" className={classes.placeholder} />;
   }
 
   return (
-    <div className="flex items-center space-x-2">
+    <div className={classes.root}>
       <select
         value={currentTheme}
         onChange={handleSelect}
         aria-label="Select theme"
-        className="rounded-md border border-input bg-background p-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2"
+        className={cn(
+          "rounded-md border border-input bg-background focus-visible:ring-2 focus-visible:ring-offset-2",
+          classes.select,
+        )}
       >
         {themeOptions.map((t) => (
           <option key={t.key} value={t.key}>
@@ -79,10 +109,10 @@ export function ThemeSwitcher() {
         aria-label={label}
         title={label}
         aria-pressed={mode === "dark"}
-        className="focus-visible:ring-2 focus-visible:ring-offset-2"
+        className={cn("relative focus-visible:ring-2 focus-visible:ring-offset-2", classes.button)}
       >
-        <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-        <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+        <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
+        <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
         <span className="sr-only">{label}</span>
       </Button>
     </div>

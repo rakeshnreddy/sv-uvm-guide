@@ -1,0 +1,392 @@
+{
+ "lens": "Navigation and information architecture",
+ "summary": "Verified 14 reviewer findings: all hold, 7 needed corrections, none dropped. The intermittent 1102 503 reproduces (9 of 45 requests), but pages are already cache HITs, so the fix is Worker resource limits, not adding a cache. Theme is reachable on phones via Settings, only deep. Label drift, nav slot use and practice URL split were re-rated P3. Added: no in-page wayfinding on long lessons below 1280 px, and identical 'Try It Now' landing links with a mis-aimed Labs card.",
+ "strengths": [
+  "One canonical URL per lesson: tier, module, pretty and trailing forms resolve in a single 308, applied in middleware and the page (src/middleware.ts, lesson-urls.ts).",
+  "No broken internal links across 24 captured pages; the only failures are the transient 1102 errors.",
+  "Lesson orientation block ('Lesson 1 of 1 in F1A \u2026 module 1 of 14 in Tier 1', 'Builds toward', 'Before you start') always says where the learner is.",
+  "LessonPager names the boundary each step crosses and ends with an end-of-path card.",
+  "Course outline marks the current lesson with aria-current, labels electives, keeps the current lesson in view, and hides with Ctrl/Cmd+B.",
+  "The 'Your learning' tab strip (LearnerSectionNav) ties Dashboard, Review, Notebook, Self-assessment and Settings together.",
+  "The 404 page keeps the full layout and suggests matching lessons.",
+  "Accessible shell: skip link, named nav landmarks, WAI-ARIA disclosure for 'More', modal drawers with focus trap, and keyboard shortcuts.",
+  "Search is one tap away on phones and announces result counts; labs and practice items link back to their teaching lesson."
+ ],
+ "proposal": "Target information architecture (verified against the code; corrections marked).\n\nFIRST: fix the intermittent 1102 503s (navigation-1). Correction: the pages are already served from the OpenNext static-assets cache (open-next.config.ts; responses show x-opennext-cache: HIT), and /practice, which never runs middleware, also fails. Diagnose CPU versus memory in Workers observability, check the plan's CPU limit, and shrink what the Worker loads at startup. Add a sitemap probe.\n\nLANDING (/)\n- One PublicHeader in the (public) layout: logo, Curriculum, Practice, Interview prep, search, theme switch, and 'Continue: <lesson>' from browser progress. Same header on privacy and terms, replacing their custom headers.\n\nTOP NAVIGATION (one {href,label} config in site-links.ts)\n1. Curriculum\n2. Practice (disclosure: Practice Hub, Labs, Exercises, Interactive models, Waveform Studio)\n3. Interview prep\n4. Reference (disclosure: Knowledge hub, Resources, Projects, Learning strategies, History)\n5. Dashboard (Review, Notebook, Self-assessment, Settings stay in its existing tab strip)\nPlus search across lessons, labs, practice, interview questions and reference pages, and the theme switch. Remove 'Start here'. Labs must mark current on /practice/lab/* (navLinkCurrent ignores '#' links today).\n\nPHONE: one drawer behind the hamburger with 'Course' (outline tree) and 'Site' (the five items, Find your level, Settings, theme). Correction: the theme is reachable on phones today only through Dashboard > Settings; put it in the drawer. Below 1280 px, add a sticky 'On this page: <section>' bar and back-to-top on lessons (navigation-v1).\n\nSIDEBAR: tier header links to the tier destination; quick links hidden at xl where the navbar shows them all.\n\nHIERARCHY\n- /curriculum > /curriculum/<Tier> > module (first lesson) > lesson.\n- Until tier pages exist, send /curriculum/<Tier> to /curriculum#tN with a 307, not a 308, so the URL can later host the tier page without stale browser-cached redirects. Change lesson-urls.ts and canonical-redirect.ts together, and update tests/lib/lesson-urls.test.ts:32.\n- One breadcrumb component on every non-lesson page.\n\nFOOTER: Learn (Curriculum, Tiers 1-4, Find your level, Expert index); Practice (Hub, Labs, Exercises, Interactive models, Interview prep); Your learning (Dashboard, Review, Notebook, Self-assessment, Settings); Reference; About.\n\nREDIRECTS (next.config.mjs, appended to curriculumRedirects)\n- /exercises -> /practice#exercises; /labs and /practice/lab -> /practice#labs; /practice/visualizations and /visualizations -> /practice#interactive-models; /quiz -> /quiz/placement.\n- Correction: keep /exercises/<id> and /visualizations/systemverilog-3d as they are unless the 10 lesson MDX files that link them are rewritten in the same change.\n- /community/test-page exists in src/app/(learning)/community/test-page and returns 404 behind the flag; delete it.\n- One brand name, as a SITE_NAME constant (also used in the AI tutor policy string).",
+ "findings": [
+  {
+   "id": "navigation-1",
+   "p": "P1",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Live site intermittently answers 503 'error code: 1102' (Worker exceeded resource limits) on lessons, /curriculum and /practice",
+   "where": "Cloudflare Worker sv-uvm-guide (wrangler.jsonc, open-next.config.ts)",
+   "evidence": "Reviewer: 20 sequential requests each gave /curriculum 5x503, /practice 4x503, lesson F1A 6x503; retries pass (<scratch>/site-review/extra/navigation/linkcheck.txt, retry.txt). Re-run by verifier, 15 requests each: /curriculum 2x503, /practice 2x503, F1A lesson 5x503 (9 of 45, <scratch>/site-review/extra/verify-navigation/curl503.txt); the 503 body is plain text 'error code: 1102'. metrics.json recorded no 503 (its loads happened to pass). Correction: the pages are already served from the OpenNext cache: open-next.config.ts uses staticAssetsIncrementalCache with enableCacheInterception, and a 200 lesson response carries 'x-opennext-cache: HIT' and 'cache-control: s-maxage=31536000'. /practice is outside the middleware matcher (src/middleware.ts:24) and still fails. So the cause is not a missing cache or the middleware; it is the Worker isolate hitting its CPU or memory limit (likely while loading the large server bundle on a cold isolate, or the Free plan's 10 ms CPU limit).",
+   "impact": "About one load in five shows a bare, unstyled error with no navigation. Learners following a Next card or a search result hit a dead page, and crawlers see 503 on sitemap URLs.",
+   "fix": "Read Workers observability (wrangler tail --format json, outcome exceededCpu or exceededMemory) to tell CPU from memory. If on the Free plan, move to Paid and set limits.cpu_ms in wrangler.jsonc. Measure .open-next/server-functions/default bundle size and cut what loads at module init (curriculum-data, search index, MDX). Add a scheduled check of sample sitemap URLs that alerts on non-200.",
+   "files": [
+    "wrangler.jsonc",
+    "open-next.config.ts",
+    "src/lib/curriculum-data.tsx",
+    "docs/deploy/cloudflare.md"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/security-config.test.ts (only if wrangler.jsonc keys are asserted)"
+   ]
+  },
+  {
+   "id": "navigation-2",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "Landing page has no header: no navigation, search, theme or 'Continue', and every logo leads back to it",
+   "where": "/ (src/app/(public)/page.tsx, src/app/(public)/layout.tsx)",
+   "evidence": "src/app/(public)/layout.tsx wraps children in ThemeProvider only; page.tsx:31-39 renders HeroSection, LearningPathsSection, InteractiveFeaturesSection and Footer, no header. shots/home.desktop.default-dark.s0.png shows only the hero with 'Find your level' and 'Browse the curriculum' (HeroSection.tsx:103-109). nav.json pageInfo['/'].hasHeader=false. Navbar.tsx:534 links the logo to '/'. The Dashboard already computes a 'Continue with' lesson from browser data (DashboardPageClient.tsx:174-212, 715). privacy-policy/page.tsx:113-131 and terms-of-service/page.tsx have their own small header with 'Back to the curriculum'.",
+   "impact": "A visitor who wants Practice, Interview prep or their dashboard has to scroll past the whole page to the footer. A returning learner who clicks the logo lands on the sales page with no way back to their next lesson except the curriculum button.",
+   "fix": "Add one PublicHeader component to src/app/(public)/layout.tsx: logo, Curriculum, Practice, Interview prep, a search button opening SearchDialog, ThemeSwitcher, and a client 'Continue: <lesson>' button when browser progress has a last lesson. Remove the custom headers in privacy-policy and terms-of-service.",
+   "files": [
+    "src/app/(public)/layout.tsx",
+    "src/components/layout/PublicHeader.tsx (new)",
+    "src/app/(public)/privacy-policy/page.tsx",
+    "src/app/(public)/terms-of-service/page.tsx",
+    "src/app/(public)/page.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/app/home-page.test.tsx",
+    "tests/app/legal-pages.test.tsx",
+    "tests/e2e/home-links.spec.ts",
+    "tests/e2e/navigation-entry-points.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-3",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "A tier has no page, and its three entry points go to three different places",
+   "where": "Breadcrumbs, tier and module URLs, footer, course outline",
+   "evidence": "Breadcrumb tier crumb is /curriculum#t1 (lesson-context.ts:83; nav.json bc 'Tier 1: Foundations -> /curriculum#t1'). Verifier curl: /curriculum/T1_Foundational -> 308 to .../F1A_The_Cost_of_Bugs/index, and /curriculum/T1_Foundational/F1A_The_Cost_of_Bugs -> 308 to the same lesson (<scratch>/site-review/extra/verify-navigation/status.txt; lesson-urls.ts:50-60). Footer.tsx:12-16 labels each tier 'Start <tier>' and links moduleHref(first module). In the outline a tier is only a toggle (Sidebar.tsx). metrics: tier-t1 and module-f1a both load H1 'F1A: The Cost of Bugs'. The 308 is issued by middleware (canonical-redirect.ts) as well as the page.",
+   "impact": "A learner who opens a tier URL lands in lesson 1 without seeing the tier's 14 modules, audience and milestones; the tier crumb instead scrolls a long overview page. Three routes to 'the tier' give three different results.",
+   "fix": "Short term: send one-segment tier URLs to /curriculum#t1..t4 with a 307 (not 308, so the URL can later host a tier page) in lesson-urls.ts and canonical-redirect.ts; label footer links 'Tier 1: Foundations' with the anchor. Long term (L): add /curriculum/[tier] pages and point breadcrumb, footer and outline tier header at them.",
+   "files": [
+    "src/lib/curriculum/lesson-urls.ts",
+    "src/lib/curriculum/canonical-redirect.ts",
+    "src/lib/curriculum/lesson-context.ts",
+    "src/components/Footer.tsx",
+    "src/components/layout/Sidebar.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/lib/lesson-urls.test.ts (line 32 pins tier -> first lesson)",
+    "tests/lib/curriculum-middleware.test.ts",
+    "tests/lib/lesson-context.test.ts",
+    "tests/components/Breadcrumbs.test.tsx",
+    "tests/e2e/navigation-entry-points.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-4",
+   "p": "P2",
+   "type": "opportunity",
+   "verdict": "confirmed",
+   "title": "Search covers lessons and sections only: labs, exercises, tools, interview banks and reference pages cannot be found",
+   "where": "scripts/generate-search-index.mjs, src/components/search/*",
+   "evidence": "src/generated/search-index.json has only keys {version, tiers}; search-engine.ts:195-230 builds only kind 'lesson' and 'section' documents. SearchCombobox.tsx:194 says 'No lessons or sections match' and :198 the placeholder is 'Search lessons\u2026'. nav.json 'search:waveform', 'search:interview', 'search:lab' return lesson sections only; <scratch>/site-review/extra/navigation/mobile-search-noresult.png shows the empty state with no next step. The placeholder is honest, so this is a gap, not a false claim.",
+   "impact": "Practice material (labs, exercises, models, Waveform Studio, 166 interview questions) and reference pages are invisible to the one control that is on every learning page. 'AXI lab' or 'UVM interview' returns lesson fragments.",
+   "fix": "Extend scripts/generate-search-index.mjs with getPracticePages(), getAllLabs(), interview banks and reference pages; add kinds Lab, Exercise, Tool, Interview, Page in search-engine.ts and their labels; change the placeholder to 'Search lessons, labs, practice\u2026'; add Curriculum and Practice Hub links to the no-result state.",
+   "files": [
+    "scripts/generate-search-index.mjs",
+    "src/components/search/search-engine.ts",
+    "src/components/search/SearchCombobox.tsx",
+    "src/lib/practice-links.ts",
+    "src/lib/lab-registry.ts"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/search/search-engine.test.ts",
+    "tests/search/SearchCombobox.test.tsx",
+    "tests/search/search-index-anchors.test.ts",
+    "tests/components/Navbar.test.tsx (placeholder text)",
+    "tests/e2e/mobile-navigation.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-5",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "Five reference pages are reachable only from the footer",
+   "where": "/knowledge-hub, /resources, /history, /learning-strategies, /projects",
+   "evidence": "grep of src and content for links to each path finds only src/components/Footer.tsx (lines 47, 79-99) and src/app/sitemap.ts; nothing in Navbar.tsx, Sidebar.tsx OUTLINE_QUICK_LINKS, lessons or page bodies. Reviewer's live census (nav.json links) agrees: every inbound link is the footer's. They are not in search (navigation-4).",
+   "impact": "The Knowledge Hub concept map, resources and capstone projects are real content that learners will not find unless they scroll to the bottom of a 50,000-px lesson.",
+   "fix": "Add a 'Reference' disclosure to the navbar (reuse the MoreLinks pattern) and a Reference group in MobileMenuPanel listing Knowledge hub, Resources, Projects, Learning strategies, History. Link Knowledge hub and Projects from the /curriculum page and LessonPager's end-of-path card.",
+   "files": [
+    "src/components/Navbar.tsx",
+    "src/lib/site-links.ts",
+    "src/components/curriculum/LessonPager.tsx",
+    "src/app/(learning)/curriculum/page.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/Navbar.test.tsx",
+    "tests/e2e/navigation-entry-points.spec.ts",
+    "tests/e2e/mobile-navigation.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-6",
+   "p": "P2",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "On phones the header and menu have no theme control and no Settings link",
+   "where": "Navbar.tsx:566-578 (theme only in md:flex group), 442-488 (MobileMenuPanel)",
+   "evidence": "ThemeSwitcher renders only inside 'hidden md:flex' (Navbar.tsx:566-578). MobileMenuPanel lists mainNavLinks only, and MobileAccountItems renders only when SITE_FEATURES.accounts (Navbar.tsx:483). shots/lesson-f1a.mobile.default-dark.menu.png shows Start here, Curriculum, Practice, Labs, Interview prep, Dashboard and nothing else. Correction: the theme can be changed on phones, but only at /settings (SettingsPageClient.tsx:88-93), which is reached through Dashboard's 'Your learning' tab strip (LearnerSectionNav.tsx:15-19); Alt+T also toggles it but needs a keyboard.",
+   "impact": "A phone reader who wants light mode for a long lesson must guess that it lives under Dashboard, then Settings, two pages away; export, import and reset of their own data are equally hidden.",
+   "fix": "In MobileMenuPanel, below the main links, add an 'Appearance' row with ThemeSwitcher and a 'Your data' group (Settings, Self-assessment, Find your level), regardless of the accounts flag.",
+   "files": [
+    "src/components/Navbar.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/Navbar.test.tsx",
+    "tests/components/ThemeSwitcher.test.tsx",
+    "tests/e2e/mobile-navigation.spec.ts",
+    "tests/e2e/theming.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-v1",
+   "p": "P2",
+   "type": "opportunity",
+   "verdict": "added",
+   "title": "Below 1280 px, 'On this page' is only a disclosure above the lesson; long lessons have no in-page wayfinding once scrolled",
+   "where": "src/app/(learning)/curriculum/[...slug]/page.tsx:110-128, src/components/curriculum/LessonToc.tsx:127-160",
+   "evidence": "The page comment and grid (page.tsx:110-128) make the TOC sticky only from xl ('xl:sticky xl:top-24'); below xl, LessonToc renders a button 'On this page' with 'xl:hidden' (LessonToc.tsx:137) placed once above the article. shots/lesson-f1a.mobile.default-dark.s0.png shows 'On this page 27 sections, 6 expert' above Quick Take; s1.png, one screen later, shows only the header. metrics.json mobile docHeight: lesson-f1a 54,784 px, lesson-uvm-phasing 70,800 px (65 and 84 phone screens). grep finds no back-to-top control in src. The keyboard shortcuts ([ ] and others) do not help on touch.",
+   "impact": "On phones, tablets and laptops under 1280 px, a learner deep in a 27-section lesson cannot see which section they are in or jump to another without scrolling back up dozens of screens.",
+   "fix": "Below xl, render a compact sticky bar under the navbar ('On this page: <current section>') that reuses LessonToc's active-heading tracking (LessonToc.tsx:~107) and opens the TOC as a sheet; add a back-to-top button after the first screen.",
+   "files": [
+    "src/components/curriculum/LessonToc.tsx",
+    "src/app/(learning)/curriculum/[...slug]/page.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/LessonToc.test.tsx",
+    "tests/e2e/lesson-orientation.spec.ts",
+    "tests/e2e/navigation.spec.ts",
+    "tests/e2e/regression-gates.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-7",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Destinations go by different names in the navbar, outline, footer, H1 and title",
+   "where": "Navbar.tsx:41-51, Sidebar.tsx:45-52, Footer.tsx, page H1s",
+   "evidence": "Curriculum: navbar 'Curriculum', outline and footer 'Curriculum overview', H1 'Learning Curriculum' (curriculum/page.tsx:43). Practice: navbar 'Practice', outline and footer 'Practice hub', breadcrumb 'Practice Hub' (interview-prep/page.tsx:218). Dashboard: navbar 'Dashboard', page title 'Your learning' (dashboard/page.tsx:13). Exercises: title 'Learning Exercises', H1 'Interactive Learning Exercises' (exercises/page.tsx:10,20). Footer 'Start Tier 1: Foundations' opens lesson F1A. Correction: these are near-synonyms that point to the same URL, so it is polish, not a P2 confusion problem.",
+   "impact": "Learners may wonder whether 'Practice hub' and 'Practice' are the same place, and casing drift ('Practice hub' vs 'Practice Hub') looks unedited.",
+   "fix": "Define {href,label} once per destination in src/lib/site-links.ts ('Curriculum', 'Practice', 'Labs', 'Interview prep', 'Dashboard', 'Knowledge hub') and use it in Navbar, Sidebar quick links, Footer, breadcrumbs and metadata titles; H1s start with the label and may add a subtitle.",
+   "files": [
+    "src/lib/site-links.ts",
+    "src/components/Navbar.tsx",
+    "src/components/layout/Sidebar.tsx",
+    "src/components/Footer.tsx",
+    "src/app/(learning)/curriculum/page.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/Sidebar.test.tsx",
+    "tests/app/home-page.test.tsx",
+    "tests/components/MainLayout.test.tsx",
+    "tests/components/CurriculumOverview.test.tsx",
+    "tests/e2e/navigation-entry-points.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-8",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "corrected",
+   "title": "'Start here' takes a primary nav slot and is never marked current; Labs never marks current; Labs, Interview prep, Dashboard sit under 'More' below 1280 px",
+   "where": "Navbar.tsx:41-51, 82-87, 116-168; site-links.ts:8",
+   "evidence": "START_HERE_HREF is '/curriculum#routes' (site-links.ts:8), the same page as 'Curriculum'. navLinkCurrent returns undefined for any href containing '#' (Navbar.tsx:83), so 'Start here' and 'Labs' (/practice#labs) never highlight; on a lab page 'Practice' is highlighted (shots/lab-basics.desktop.default-dark.s0.png). wideOnly links show only from xl (Navbar.tsx:548); <scratch>/site-review/extra/navigation/header-1024-more.png and header-1279.png show 'More'. Correction: at 1280 px and up (most laptop windows, including the 1440 capture) all six links are visible, so 'most laptops' overstated it; the cost falls on tablets and narrow windows.",
+   "impact": "On tablets and windows under 1280 px, labs, interview prep and the dashboard take an extra click while a duplicate link keeps a slot; the current-page marker is wrong on lab pages.",
+   "fix": "Remove 'Start here' from mainNavLinks (hero, /curriculum top and outline already offer the route chooser) and drop wideOnly from Labs. Give Labs a real page or make navLinkCurrent treat /practice/lab/* as current for Labs instead of Practice.",
+   "files": [
+    "src/components/Navbar.tsx",
+    "src/lib/site-links.ts",
+    "src/components/layout/Sidebar.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/Navbar.test.tsx",
+    "tests/components/Sidebar.test.tsx",
+    "tests/e2e/navigation.spec.ts",
+    "tests/e2e/navigation-entry-points.spec.ts",
+    "tests/e2e/mobile-navigation.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-9",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "corrected",
+   "title": "Practice URLs are split: /exercises duplicates a hub section, the array sandbox sits outside /practice, parent URLs 404",
+   "where": "src/app/(learning)/exercises/*, src/app/(learning)/visualizations/systemverilog-3d, practice/*",
+   "evidence": "exercises/page.tsx:17 renders getPracticePages() filtered to 'exercise', the same registry as the Practice Hub. practice-links.ts:137 points the sandbox at /visualizations/systemverilog-3d while siblings use /practice/visualizations/*. Verifier curl: /labs, /practice/visualizations, /practice/lab, /visualizations, /quiz all 404; /exercises and /visualizations/systemverilog-3d 200 (<scratch>/site-review/extra/verify-navigation/status.txt). Correction: 10 lesson MDX files under content/curriculum link /exercises/<id> or systemverilog-3d, so moving those URLs is a content change too; and editing URLs upward is rare, so this is P3.",
+   "impact": "The same content has two homes and the URL does not say where the learner is; trimming a URL hits a 404.",
+   "fix": "Keep the item URLs. Add redirects in next.config.mjs redirects(), appended to curriculumRedirects: /exercises -> /practice#exercises, /labs and /practice/lab -> /practice#labs, /practice/visualizations and /visualizations -> /practice#interactive-models, /quiz -> /quiz/placement. Point Footer and InteractiveFeaturesSection at the hub anchors. Move the sandbox only if the 10 MDX links are rewritten in the same change.",
+   "files": [
+    "next.config.mjs",
+    "src/components/Footer.tsx",
+    "src/components/home/InteractiveFeaturesSection.tsx",
+    "src/app/(learning)/exercises/page.tsx",
+    "src/app/sitemap.ts"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/app/sitemap.test.ts",
+    "tests/lib/curriculum-redirects.test.ts",
+    "tests/e2e/home-links.spec.ts",
+    "tests/e2e/systemverilog-3d-deep-linking.spec.ts",
+    "tests/components/PracticeHub.test.tsx"
+   ]
+  },
+  {
+   "id": "navigation-10",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "Breadcrumbs have three looks and are missing from most non-lesson pages",
+   "where": "src/components/layout/Breadcrumbs.tsx, interview-prep/page.tsx:214-224, curriculum/expert-index/page.tsx:125-135",
+   "evidence": "Lessons use the chevron card trail (shots/lesson-f1a.desktop.default-dark.s0.png). interview-prep/page.tsx:214 and expert-index/page.tsx:125 each hand-write a slash-separated <nav aria-label='Breadcrumb'>. nav.json pageInfo bc=[] for /practice/lab/basics-1, /practice/visualizations/uvm-phasing, /practice/waveform-studio, /exercises, /dashboard, /knowledge-hub and reference pages. Interview prep's crumb places it under Practice Hub while the navbar shows it as a top-level peer.",
+   "impact": "Outside lessons a learner cannot see or climb the hierarchy, and the hierarchy shown on interview prep contradicts the navbar.",
+   "fix": "Generalise Breadcrumbs.tsx to take [{label, href}] and use it on interview prep, expert index, lab, visualization, Waveform Studio and dashboard sub-pages (Practice > Labs > <lab>). Decide whether Interview prep sits under Practice and make the navbar agree.",
+   "files": [
+    "src/components/layout/Breadcrumbs.tsx",
+    "src/app/(learning)/interview-prep/page.tsx",
+    "src/app/(learning)/curriculum/expert-index/page.tsx",
+    "src/app/(learning)/practice/lab/[labId]/page.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/Breadcrumbs.test.tsx",
+    "tests/components/MainLayout.test.tsx",
+    "tests/e2e/navigation.spec.ts",
+    "tests/e2e/curriculum-navigation-comprehensive.spec.ts",
+    "tests/e2e/regression-gates.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-11",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "confirmed",
+   "title": "Course outline repeats the six navbar links, and phones get two separate menu buttons",
+   "where": "Sidebar.tsx:45-52, 271-299, 340; Navbar.tsx:522-533, 587-607",
+   "evidence": "OUTLINE_QUICK_LINKS (Sidebar.tsx:45-52) render at the bottom of the docked outline (Sidebar.tsx:340) and the drawer. At 1440 px they duplicate the six visible navbar links (shots/lesson-f1a.desktop.default-dark.s0.png, bottom left, about 100 px). On phones the header has the outline button on the left and the hamburger on the right (shots/lesson-f1a.mobile.default-dark.s0.png); both drawers end in the same links (<scratch>/site-review/extra/navigation/mobile-practice-outline.png). The code comment (Sidebar.tsx:36-40) says the quick links exist because the navbar hides links below xl, which is true from lg to xl.",
+   "impact": "At xl the duplicate block shrinks the visible outline, and on phones two similar icons make learners guess which drawer holds what.",
+   "fix": "Render OutlineQuickLinks with 'xl:hidden' in the docked outline (keep it in the drawer until navigation-8 lands). On phones, merge the outline and main menu into one drawer with 'Course' and 'Site' sections behind the hamburger.",
+   "files": [
+    "src/components/layout/Sidebar.tsx",
+    "src/components/Navbar.tsx"
+   ],
+   "effort": "M",
+   "tests": [
+    "tests/components/Sidebar.test.tsx",
+    "tests/components/Navbar.test.tsx",
+    "tests/e2e/mobile-navigation.spec.ts",
+    "tests/e2e/navigation.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-12",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "The site is 'SV/UVM Hub' in the wordmark and footer, and 'SV/UVM Mastery' in every page title",
+   "where": "src/app/layout.tsx:11-19, src/components/ui/Logo.tsx:10,20, Navbar.tsx:534, Footer.tsx:125",
+   "evidence": "layout.tsx:11-19 sets default 'SystemVerilog & UVM Mastery', template '%s | SV/UVM Mastery', siteName 'SV/UVM Mastery'. Logo.tsx:20 renders 'SV/UVM Hub'; aria-label 'SV/UVM Hub home' in Navbar.tsx:534, privacy-policy/page.tsx:117, terms-of-service/page.tsx:122; Footer.tsx:125 '\u00a9 SV/UVM Hub'. src/server/ai/index.ts:12 calls the tutor 'SV/UVM Mastery'.",
+   "impact": "Browser tabs, bookmarks and search results name a different product from the one on the page.",
+   "fix": "Pick one name, export SITE_NAME from src/lib/site-links.ts, and use it in layout.tsx metadata, Logo.tsx, the logo aria-labels (Navbar, privacy, terms), Footer.tsx and the AI tutor policy string.",
+   "files": [
+    "src/lib/site-links.ts",
+    "src/app/layout.tsx",
+    "src/components/ui/Logo.tsx",
+    "src/components/Navbar.tsx",
+    "src/components/Footer.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/Navbar.test.tsx",
+    "tests/app/legal-pages.test.tsx"
+   ]
+  },
+  {
+   "id": "navigation-13",
+   "p": "P3",
+   "type": "opportunity",
+   "verdict": "confirmed",
+   "title": "Practice tool pages are near dead ends: one in-page link and no way back to the hub section or on to the next item",
+   "where": "/practice/visualizations/*, /visualizations/systemverilog-3d, /practice/waveform-studio",
+   "evidence": "nav.json pageInfo mainLinks: /practice/visualizations/uvm-phasing 1, /visualizations/systemverilog-3d 1, /practice/waveform-studio 2, /practice/lab/basics-1 3. The single link is LearnInLesson's 'Learn this in <lesson>'. Labs show 'Back to lesson' (shots/lab-basics.desktop.default-dark.s0.png).",
+   "impact": "After using a model the only way on is the navbar; there is no 'next model' and no return to the Practice Hub section the learner came from.",
+   "fix": "Add a shared PracticePager below practice items: 'Back to Practice Hub \u203a <section>' (anchor) plus previous/next within the same kind in getPracticePages() order, styled like LessonPager.",
+   "files": [
+    "src/lib/practice-links.ts",
+    "src/components/practice/PracticePager.tsx (new)",
+    "src/components/practice/LearnInLesson.tsx",
+    "src/app/(learning)/practice/waveform-studio/page.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/lib/practice-links.test.ts",
+    "tests/components/LearnInLesson.test.tsx",
+    "tests/e2e/practice-linkage.spec.ts",
+    "tests/e2e/visualizations.spec.ts"
+   ]
+  },
+  {
+   "id": "navigation-14",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "confirmed",
+   "title": "Footer site map leaves out Labs, Dashboard, Settings, Find your level and the Expert index",
+   "where": "src/components/Footer.tsx:30-118",
+   "evidence": "Footer groups: Learn (Curriculum overview, four 'Start <tier>' links, Knowledge hub), Practice (Practice hub, Exercises, Interview prep, Self-assessment), Reference (Resources, Learning strategies, History, Projects), About (Shortcuts, Privacy, Terms). No /practice#labs, /dashboard, /settings, /quiz/placement or /curriculum/expert-index; grep shows EXPERT_INDEX_HREF is linked only from learning-paths.ts route data.",
+   "impact": "The footer is the only route to several pages (navigation-5), yet it is not a complete site map.",
+   "fix": "Footer groups: Learn (Curriculum, Tiers 1-4, Find your level, Expert index); Practice (Practice Hub, Labs, Exercises, Interactive models, Interview prep); Your learning (Dashboard, Review, Notebook, Self-assessment, Settings); Reference (Knowledge hub, Resources, Projects, Learning strategies, History); About.",
+   "files": [
+    "src/components/Footer.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/components/MainLayout.test.tsx",
+    "tests/app/home-page.test.tsx",
+    "tests/app/legal-pages.test.tsx"
+   ]
+  },
+  {
+   "id": "navigation-v2",
+   "p": "P3",
+   "type": "defect",
+   "verdict": "added",
+   "title": "Landing feature cards: four identical 'Try It Now' links, and 'Guided Labs' opens the top of /practice",
+   "where": "src/components/home/InteractiveFeaturesSection.tsx:14-57",
+   "evidence": "shots/home.desktop.default-dark.s2.png shows four cards each ending in 'Try It Now'. InteractiveFeaturesSection.tsx:56-57 renders the same text for every card with no aria-label; the hrefs are a lesson (:14), /practice/visualizations/uvm-architecture (:20), /exercises (:26, the duplicate page in navigation-9) and /practice (:32) for 'Guided Labs' instead of LABS_HREF.",
+   "impact": "A screen-reader link list reads 'Try It Now' four times, and a visitor who picks 'Guided Labs' lands at the top of a 173-link hub and must find the labs section.",
+   "fix": "Use specific link text ('Step through the scheduler', 'Open the architecture map', 'Try an exercise', 'Browse the labs') and point Guided Labs at LABS_HREF and exercises at /practice#exercises.",
+   "files": [
+    "src/components/home/InteractiveFeaturesSection.tsx"
+   ],
+   "effort": "S",
+   "tests": [
+    "tests/app/home-page.test.tsx",
+    "tests/e2e/home-links.spec.ts"
+   ]
+  }
+ ],
+ "dropped": []
+}

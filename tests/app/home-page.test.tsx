@@ -3,6 +3,9 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import HomePage from '@/app/(public)/page';
+import { getHomeStats } from '@/components/home/home-stats';
+import { curriculumData } from '@/lib/curriculum-data';
+import { getAllLabs } from '@/lib/lab-registry';
 
 vi.mock('next/link', async () => {
   const ReactModule = await import('react');
@@ -19,14 +22,18 @@ vi.mock('next/link', async () => {
 // The sections have their own tests; stubs keep this one about the page frame.
 vi.mock('@/components/home/HeroSection', () => ({
   __esModule: true,
-  default: () => <section aria-label="Hero" />,
+  default: ({ lessonCount, tierCount, labCount }: { lessonCount: number; tierCount: number; labCount: number }) => (
+    <section aria-label="Hero" data-stats={`${lessonCount}/${tierCount}/${labCount}`} />
+  ),
 }));
-vi.mock('next/dynamic', () => ({
+// Imported directly, not through next/dynamic, so the server HTML holds every section (landing-16).
+vi.mock('@/components/home/LearningPathsSection', () => ({
   __esModule: true,
-  default: () =>
-    function SectionStub() {
-      return <section aria-label="Below the fold" />;
-    },
+  default: () => <section aria-label="Routes" />,
+}));
+vi.mock('@/components/home/InteractiveFeaturesSection', () => ({
+  __esModule: true,
+  default: () => <section aria-label="Features" />,
 }));
 
 afterEach(() => {
@@ -34,11 +41,21 @@ afterEach(() => {
 });
 
 describe('home page', () => {
-  it('keeps the sections in the main landmark', () => {
+  it('keeps the sections in the main landmark, in order', () => {
     render(<HomePage />);
     const main = screen.getByRole('main');
-    expect(within(main).getByRole('region', { name: 'Hero' })).toBeInTheDocument();
-    expect(within(main).getAllByRole('region', { name: 'Below the fold' })).toHaveLength(2);
+    expect(within(main).getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual([
+      'Hero',
+      'Routes',
+      'Features',
+    ]);
+    expect(screen.queryByText('Loading Section...')).not.toBeInTheDocument();
+  });
+
+  it('passes the hero counts taken from the curriculum and the lab registry (landing-2)', () => {
+    render(<HomePage />);
+    const { lessonCount, tierCount, labCount } = getHomeStats(curriculumData, getAllLabs());
+    expect(screen.getByRole('region', { name: 'Hero' })).toHaveAttribute('data-stats', `${lessonCount}/${tierCount}/${labCount}`);
   });
 
   it('ends with the site footer, which links to the Privacy Policy and the Terms', () => {
@@ -48,6 +65,14 @@ describe('home page', () => {
     const siteMap = within(footer).getByRole('navigation', { name: 'Site map' });
     expect(within(siteMap).getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy-policy');
     expect(within(siteMap).getByRole('link', { name: 'Terms of Service' })).toHaveAttribute('href', '/terms-of-service');
+    expect(within(siteMap).getByRole('link', { name: 'Labs' })).toHaveAttribute('href', '/practice#labs');
+    // The project is MIT licensed, so the footer says so and links the source (landing-2).
+    expect(footer).toHaveTextContent('MIT licensed');
+    expect(footer).not.toHaveTextContent(/All rights reserved/i);
+    expect(within(footer).getByRole('link', { name: 'Source on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/rakeshnreddy/sv-uvm-guide',
+    );
     // The shortcuts dialog lives in the learning layout, so the home page does not offer it.
     expect(within(footer).queryByRole('button', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
   });

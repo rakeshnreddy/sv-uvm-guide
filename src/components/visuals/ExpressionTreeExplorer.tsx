@@ -344,7 +344,7 @@ function PrecedenceRound({ preset }: { preset: PrecedencePreset }) {
               onTap={setTapped}
             />
             {!revealed ? (
-              <button type="button" onClick={() => setSkipped(true)} className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => setSkipped(true)} className="mt-3 -ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 Reveal without predicting
               </button>
             ) : (

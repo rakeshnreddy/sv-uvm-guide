@@ -4,7 +4,9 @@ import Link from 'next/link';
 import manifest from '../../content/curriculum/curriculum.manifest.json';
 import ShortcutsHelpButton from '@/components/search/ShortcutsHelpButton';
 import { moduleHref } from '@/lib/curriculum-data';
-import { INTERVIEW_PREP_HREF } from '@/lib/site-links';
+import { INTERVIEW_PREP_HREF, LABS_HREF } from '@/lib/site-links';
+
+export const SOURCE_REPO_URL = 'https://github.com/rakeshnreddy/sv-uvm-guide';
 
 const linkClass =
   'rounded px-1 py-0.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -56,6 +58,11 @@ const Footer = ({ showShortcuts = false }: FooterProps) => {
               <li>
                 <Link href="/practice" className={linkClass}>
                   Practice hub
+                </Link>
+              </li>
+              <li>
+                <Link href={LABS_HREF} className={linkClass}>
+                  Labs
                 </Link>
               </li>
               <li>
@@ -122,7 +129,10 @@ const Footer = ({ showShortcuts = false }: FooterProps) => {
           </div>
         </nav>
         <p className="mt-8 border-t border-border pt-6 text-xs">
-          &copy; {currentYear} SV/UVM Hub · SystemVerilog &amp; UVM learning. All rights reserved.
+          &copy; {currentYear} SV/UVM Hub · SystemVerilog &amp; UVM learning. MIT licensed.{' '}
+          <a href={SOURCE_REPO_URL} className={`${linkClass} underline underline-offset-2`}>
+            Source on GitHub
+          </a>
         </p>
       </div>
     </footer>

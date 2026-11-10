@@ -202,6 +202,15 @@ describe("LabClientPage (local mode)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("gives the editor a definite height below lg and the step buttons a 40 px tap target", async () => {
+    await renderLab("basics-1");
+    // Below lg the page is one column, so the frame needs its own height or the editor collapses.
+    expect(screen.getByTestId("lab-editor-frame")).toHaveClass("h-[60vh]", "min-h-[420px]", "lg:h-auto", "lg:min-h-[520px]", "lg:flex-1");
+    for (const step of within(screen.getByRole("list", { name: "Steps" })).getAllByRole("button")) {
+      expect(step).toHaveClass("min-h-10");
+    }
+  });
+
   it("saves nothing before a learner edit, then autosaves the edit", async () => {
     await renderLab("basics-1");
     await wait(LAB_AUTOSAVE_DELAY_MS + 150);
@@ -296,6 +305,9 @@ describe("LabClientPage (local mode)", () => {
     await click(check);
     await waitFor(() => expect(screen.getByRole("button", { name: "Check solution" })).toBeEnabled());
     expect(document.querySelector("pre[aria-live]")?.textContent).toContain("task automatic drive_sequence");
+    // Failure text uses the readable danger token, not the destructive fill (1.46:1 on muted in dark themes).
+    expect(document.querySelector("pre[aria-live]")).toHaveClass("text-danger");
+    expect(document.querySelector("pre[aria-live]")).not.toHaveClass("text-destructive");
     expect(screen.getByRole("heading", { name: "Step 2: Write task automatic drive_sequence" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /work\/tb_counter_unrefactored\.sv/ }));
@@ -535,7 +547,7 @@ describe("LabClientPage (local mode)", () => {
   it("explains an account progress load failure without showing its code", async () => {
     mocks.target = "server";
     await renderLab("basics-1");
-    expect(await screen.findByText(LOAD_ERROR_MESSAGE)).toBeInTheDocument();
+    expect(await screen.findByText(LOAD_ERROR_MESSAGE)).toHaveClass("text-danger");
     expect(document.body.textContent).not.toContain("LAB_PROGRESS_UNAVAILABLE");
   });
 

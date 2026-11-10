@@ -163,7 +163,7 @@ export default function RaceDebugChallenge() {
               <button
                 type="button"
                 onClick={() => setHints((h) => h + 1)}
-                className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {hints === 0 ? "Need a hint?" : "Another hint"} ({hints}/{hintText.length})
               </button>

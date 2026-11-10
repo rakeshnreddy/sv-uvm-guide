@@ -46,6 +46,14 @@ export interface AssessmentPageClientProps {
 const card = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
 const panel = 'min-w-0 rounded-2xl border border-border bg-background p-4';
 const muted = 'text-sm text-muted-foreground';
+/** Standalone links are at least 40 px tall, so they are easy to tap on a phone. */
+const tapTarget = 'inline-flex min-h-10 items-center';
+/**
+ * Links inside running text keep their look and line height; an invisible
+ * box above and below the text makes the tap area at least 40 px tall. The
+ * link never wraps, so that box stays one clean rectangle on narrow screens.
+ */
+const inlineTapTarget = "relative whitespace-nowrap after:absolute after:inset-x-0 after:-inset-y-3 after:content-['']";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
@@ -124,7 +132,7 @@ function OverviewChart({ tracks }: { tracks: readonly TrackSummary[] }) {
           {tracks.map((track) => (
             <li key={track.id} className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm">
-                <a href={`#track-${track.id}`} className={textLink}>
+                <a href={`#track-${track.id}`} className={cn(textLink, tapTarget)}>
                   {track.name}
                 </a>
                 <span className="text-muted-foreground">
@@ -211,7 +219,7 @@ function PlacementSection({
             You haven&apos;t taken the placement quiz in this browser. Its ten questions cover SystemVerilog, UVM
             and debug and coverage habits; AMBA and the expert topics are not part of it.
           </p>
-          <Link href="/quiz/placement" className={cn(textLink, 'mt-2 inline-block text-sm')}>
+          <Link href="/quiz/placement" className={cn(textLink, tapTarget, 'mt-1 text-sm')}>
             Find your level
           </Link>
         </div>
@@ -244,7 +252,7 @@ function RecommendationList({ items, trackName }: { items: readonly Recommendati
     <ol className="space-y-3" aria-label={`Next steps in ${trackName}`}>
       {items.map((item) => (
         <li key={`${item.kind}:${item.href}`} className="min-w-0 text-sm">
-          <Link href={item.href} className={cn(textLink, '[overflow-wrap:anywhere]')}>
+          <Link href={item.href} className={cn(textLink, tapTarget, '[overflow-wrap:anywhere]')}>
             {item.label}
           </Link>
           <p className="mt-0.5 text-xs text-muted-foreground">{item.reason}</p>
@@ -351,7 +359,7 @@ function TrackSection({
               <ul className="mt-2 space-y-1">
                 {startedLabs.map((lab) => (
                   <li key={lab.id} className="flex min-w-0 flex-wrap justify-between gap-x-3">
-                    <Link href={lab.href} className={cn(textLink, '[overflow-wrap:anywhere]')}>
+                    <Link href={lab.href} className={cn(textLink, tapTarget, '[overflow-wrap:anywhere]')}>
                       {lab.title}
                     </Link>
                     <span className="text-muted-foreground">
@@ -370,7 +378,7 @@ function TrackSection({
               <ul className="mt-2 space-y-1">
                 {quizzes.weak.map((weak) => (
                   <li key={weak.lessonPath} className="flex min-w-0 flex-wrap justify-between gap-x-3">
-                    <Link href={weak.lessonPath} className={cn(textLink, '[overflow-wrap:anywhere]')}>
+                    <Link href={weak.lessonPath} className={cn(textLink, tapTarget, '[overflow-wrap:anywhere]')}>
                       {weak.lessonName}
                     </Link>
                     <span className="text-muted-foreground">Best {percentText(weak.lowestFraction)}</span>
@@ -409,7 +417,7 @@ function EmptyState() {
       </div>
       <p className="mt-5 text-sm text-muted-foreground">
         Moving from another browser?{' '}
-        <Link href="/settings#data" className={inlineLink}>
+        <Link href="/settings#data" className={cn(inlineLink, inlineTapTarget)}>
           Import a backup
         </Link>{' '}
         in Settings.
@@ -492,11 +500,11 @@ export default function AssessmentPageClient({
         ))}
         <p className={muted}>
           These numbers come only from this browser. Download a backup in{' '}
-          <Link href="/settings#data" className={inlineLink}>
+          <Link href="/settings#data" className={cn(inlineLink, inlineTapTarget)}>
             Settings
           </Link>{' '}
           to keep them, or see everything else on{' '}
-          <Link href="/dashboard" className={inlineLink}>
+          <Link href="/dashboard" className={cn(inlineLink, inlineTapTarget)}>
             your dashboard
           </Link>
           .

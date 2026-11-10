@@ -9,6 +9,7 @@ import LessonPager from "@/components/curriculum/LessonPager";
 import { LessonPractice, type LessonPracticeProps } from "@/components/curriculum/LessonPractice";
 import LessonToc from "@/components/curriculum/LessonToc";
 import LessonVisitTracker from "@/components/curriculum/LessonVisitTracker";
+import { lessonScrollRegionComponents } from "@/components/curriculum/ScrollRegion";
 import Breadcrumbs from "@/components/layout/Breadcrumbs";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
 import { lessonHref } from "@/lib/curriculum-overview";
@@ -77,6 +78,8 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   const toc: TocEntry[] = [];
   const components = {
     ...getMdxComponents(frontmatter.components, { lessonSlug: normalizedSlug }),
+    // Wide code blocks and tables scroll in a focusable, labelled box (WCAG 2.1.1, 1.3.1).
+    ...lessonScrollRegionComponents,
     [LESSON_PRACTICE_SLOT]: (props: Pick<LessonPracticeProps, "level">) => (
       <LessonPractice
         level={props.level}
