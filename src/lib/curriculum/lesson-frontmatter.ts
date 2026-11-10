@@ -13,8 +13,8 @@ export const lessonFrontmatterSchema = z.object({
   description: z.string().trim().min(1).optional(),
   flashcardId: z.string().trim().min(1).optional(),
   flashcards: z.string().trim().min(1).optional(),
-  // Automatic concept links are off unless a lesson opts in: the knowledge graph
-  // behind them is a 15-node placeholder with wrong tiers (G30 request 10).
+  // Automatic concept links are off unless a lesson opts in. When on, the first
+  // mention of each key term (getLinkableConcepts) links to its concept dialog.
   conceptLinking: z.boolean().default(false),
   components: z.array(z.string().trim().min(1)).default([]),
   order: z.number().int().positive().optional(),

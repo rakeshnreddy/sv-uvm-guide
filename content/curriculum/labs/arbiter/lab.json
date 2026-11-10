@@ -1,20 +1,104 @@
 {
   "id": "arbiter-1",
-  "version": "1",
-  "title": "Arbiter Verification",
-  "description": "Verify a synchronous round-robin arbiter.",
-  "owningModule": "I-UVM-2A",
+  "version": "2",
+  "title": "Verify a Round-Robin Arbiter with UVM",
+  "description": "Build a small UVM environment for a synchronous round-robin arbiter from its specification: an agent that drives request vectors through a clocking block, a monitor that publishes one decision per cycle, a scoreboard with a grant predictor and a fairness bound, and coverage of grant patterns. Then prove it catches a planted starvation bug that a single-requester smoke test lets through.",
+  "owningModule": "I-UVM-3C",
   "routeSlug": "arbiter-1",
-  "status": "coming_soon",
+  "status": "available",
   "labPrerequisites": [
-    "simple-dut-1"
+    "uvm-mini-capstone"
   ],
-  "modulePrerequisites": [],
-  "steps": [],
+  "modulePrerequisites": [
+    "I-UVM-2A",
+    "I-UVM-2B",
+    "I-UVM-3A",
+    "I-SV-3A"
+  ],
+  "steps": [
+    {
+      "id": "run-starter",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 1: Read the specification and run the starter",
+      "instructions": "Read rules R1 to R5 and the fairness bound in the README. Compile uvm_pkg, work/arb_if.sv, work/arb_pkg.sv, work/rr_arbiter.sv and work/tb_top.sv, and run with no plusargs. The log ends with ARB_SUMMARY cycles=0 grants=0 ... and UVM_ERROR : 0. Before you open the README's answer, explain why that run is not a pass.",
+      "starterCode": ""
+    },
+    {
+      "id": "agent",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 2: Driver, monitor and agent",
+      "instructions": "In work/arb_pkg.sv, write the driver's run_phase (wait for a drv_cb edge with rst_n at 1, then for each item drive vif.drv_cb.req <= req.req and wait @(vif.drv_cb), req.cycles times, then item_done), the monitor's run_phase (one NEW arb_txn per mon_cb edge with the sampled rst_n at 1, published on ap), and the agent's build and connect: the monitor always, the sequencer and driver only when get_is_active() == UVM_ACTIVE, and mon.ap promoted to the agent's ap.",
+      "starterCode": ""
+    },
+    {
+      "id": "scoreboard",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 3: Scoreboard: grant predictor, fairness bound and accounting",
+      "instructions": "Write the scoreboard from the specification, not from the RTL: start the model's last winner at ARB_N-1 (R5); predict() returns the first requester after the last winner, wrapping; write() counts the cycle and the grant, reports ARB_PROTOCOL for a grant that is not zero or one-hot or goes to a non-requester (R1), reports ARB_MISMATCH when gnt !== predict(req) (R2, R3), moves the model's last winner to its own prediction (R4), and reports ARB_STARVED once when a requester has waited ARB_N cycles (the bound is ARB_N-1). check_phase reports ARB_NO_TRAFFIC when no grant was seen. Connect agent.ap to the scoreboard in the env.",
+      "starterCode": ""
+    },
+    {
+      "id": "coverage-plan",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 4: Sequences from the plan and grant-pattern coverage",
+      "instructions": "Write arb_smoke_seq and arb_load_seq from the README's plan table with send(). Complete the covergroup: cp_gnt (one bin per winner), cp_load (one, some, all), cp_wait (one bin per wait 0 to ARB_N-1) and the cross x_gnt_load. In write(), sample on a one-hot grant with the winner, the number of requesters and the winner's wait, then update every wait count. Connect agent.ap to the coverage subscriber in the env.",
+      "starterCode": ""
+    },
+    {
+      "id": "clean-run",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: The clean regression",
+      "instructions": "Run arb_regress_test (the default) on the correct DUT. Expect ARB_SUMMARY cycles=30 grants=24 mismatches=0 protocol=0 starved=0, grant-pattern coverage = 100.00%, UVM_ERROR : 0 and UVM_FATAL : 0. Then run +UVM_TESTNAME=arb_smoke_test and arb_load_test alone and explain from the bins which plan rows each one leaves uncovered.",
+      "starterCode": ""
+    },
+    {
+      "id": "prove-it-fails",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6: Plant the starvation bug and watch the environment catch it",
+      "instructions": "Predict, then run with +define+ARB_BUG=1 (the pointer does not move when requester 3 wins): arb_smoke_test passes and arb_regress_test ends ARB_SUMMARY cycles=30 grants=24 mismatches=8 protocol=0 starved=4. Rerun with +ARB_FAIRNESS_ONLY: the fairness bound alone still reports starved=4. Then try +define+ARB_BUG=2 and your own bug (search from last instead of last + 1), compare with the README's table, and finish with a clean run.",
+      "starterCode": ""
+    }
+  ],
   "assets": [
     {
-      "path": "lab1_simple_tb/test_arbiter.sv",
-      "role": "reference",
+      "path": "README.md",
+      "role": "guide",
+      "language": "markdown",
+      "editable": false
+    },
+    {
+      "path": "work/rr_arbiter.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/arb_if.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "work/arb_pkg.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/tb_top.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "solution/arb_pkg.sv",
+      "role": "solution",
       "language": "systemverilog",
       "editable": false
     }

@@ -1,107 +1,203 @@
-import { notFound } from 'next/navigation';
+import React from 'react';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
 import { InfoPage } from '@/components/templates/InfoPage';
-import { SITE_FEATURES } from '@/lib/site-features';
+import { LABS_HREF } from '@/lib/site-links';
+
+import { resolveProjects, type ResolvedProject } from './resolve-projects';
 
 /*
- * A draft page: its content is still placeholder text, so it is hidden
- * (404, unlinked and out of the sitemap) unless draft pages are switched on
- * for a preview build (SITE_FEATURES.draftPages).
+ * Project briefs, one per milestone on the ladder (M0-M8). The page is public
+ * and listed in the sitemap and the footer.
+ *
+ * The page is static: there is no learner-store repository for projects, so
+ * it keeps no progress.
  */
-export default async function ProjectsPage() {
-  if (!SITE_FEATURES.draftPages) {
-    notFound();
-  }
 
-  const { CodeBlock } = await import('@/components/ui/CodeBlock');
+export const metadata: Metadata = {
+  title: 'Projects',
+  description:
+    'Nine testbench projects, one for each milestone from a self-checking directed testbench to a subsystem capstone: the design under test, required features, acceptance criteria, preparing lessons and labs, and an honest effort estimate.',
+};
 
-  const pageContent = (
-    <>
-      <p className="lead mb-6">
-        [Placeholder: Introduction to the importance of hands-on projects for applying learned concepts and building a portfolio, from blueprint].
+const linkClass =
+  'rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+const sectionHeading = 'mt-12 mb-3 text-2xl font-semibold';
+const subHeading = 'mt-6 mb-2 text-lg font-semibold';
+
+function ProjectSection({ project }: { project: ResolvedProject }) {
+  const headingId = `${project.anchor}-heading`;
+  return (
+    <section id={project.anchor} aria-labelledby={headingId} className="scroll-mt-24">
+      <h2 id={headingId} className={sectionHeading}>
+        <span className="mr-2 font-mono text-primary">{project.milestone}</span>
+        {project.name}
+      </h2>
+      <dl className="not-prose grid gap-x-6 gap-y-1 text-sm text-foreground/80 sm:grid-cols-[auto_1fr]">
+        <dt className="font-semibold text-foreground">Effort</dt>
+        <dd>{project.effort}</dd>
+        <dt className="font-semibold text-foreground">Tools</dt>
+        <dd>{project.tools}</dd>
+      </dl>
+
+      <p className="mt-4">
+        <strong>Goal.</strong> {project.goal}
       </p>
 
-      <section>
-        <h2 className="mt-6 mb-3 text-2xl font-semibold">Project Ideas</h2>
-        <p>[Placeholder: General guidance on selecting or defining projects suitable for different skill levels, from blueprint].</p>
+      <h3 className={subHeading}>Design under test: {project.dut.name}</h3>
+      <p>{project.dut.description}</p>
 
-        <div className="mt-4 space-y-5">
-          <div>
-            <h3 className="text-xl font-semibold">1. Simple DUT Verification (e.g., FIFO, ALU, Arbiter)</h3>
-            <p className="mt-1">
-              [Placeholder: Description of a project involving verifying a relatively simple DUT. Key learning objectives: basic testbench structure, driving stimulus, checking outputs, simple coverage/assertions, from blueprint].
-            </p>
-            <p className="text-sm text-foreground/70">
-              [Placeholder: Suggested features to implement, complexity scaling, from blueprint].
-            </p>
-          </div>
+      <h3 className={subHeading}>Required features</h3>
+      <ul>
+        {project.requiredFeatures.map((feature) => (
+          <li key={feature}>{feature}</li>
+        ))}
+      </ul>
 
-          <div>
-            <h3 className="text-xl font-semibold">2. Bus Protocol Agent (e.g., APB, simple custom bus)</h3>
-            <p className="mt-1">
-              [Placeholder: Description of a project focused on developing a UVM agent for a bus protocol. Key learning objectives: UVM components (driver, monitor, sequencer, agent), transaction definition, TLM communication, sequence development, from blueprint].
-            </p>
-            <p className="text-sm text-foreground/70">
-              [Placeholder: Suggested protocol features, agent capabilities, from blueprint].
-            </p>
-          </div>
+      <h3 className={subHeading}>Acceptance criteria</h3>
+      <ol>
+        {project.acceptance.map((criterion) => (
+          <li key={criterion}>{criterion}</li>
+        ))}
+      </ol>
 
-          <div>
-            <h3 className="text-xl font-semibold">3. Integrating a Register Model (RAL)</h3>
-            <p className="mt-1">
-              [Placeholder: Description of a project that involves creating or integrating a RAL model for a DUT with several registers. Key learning objectives: RAL concepts, adapter development, frontdoor/backdoor access, register test sequences, from blueprint].
-            </p>
-            <p className="text-sm text-foreground/70">
-              [Placeholder: Example DUT register map complexity, types of register tests to implement, from blueprint].
-            </p>
-          </div>
+      <h3 className={subHeading}>Prepare with</h3>
+      <p className="mb-1 text-sm font-semibold uppercase tracking-wide text-foreground/70">Lessons</p>
+      <ul>
+        {project.lessonLinks.map((lesson) => (
+          <li key={lesson.ref}>
+            <Link href={lesson.href} className={linkClass}>
+              {lesson.code}: {lesson.isModuleIndex ? lesson.moduleTitle : `${lesson.moduleTitle}, ${lesson.title}`}
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="mb-1 text-sm font-semibold uppercase tracking-wide text-foreground/70">Labs</p>
+      <ul>
+        {project.labItems.map((lab) => (
+          <li key={lab.id}>
+            {lab.href ? (
+              <Link href={lab.href} className={linkClass}>
+                {lab.title}
+              </Link>
+            ) : (
+              <span>
+                {lab.title} <span className="text-foreground/70">(lab coming soon)</span>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
 
-          <div>
-            <h3 className="text-xl font-semibold">4. Advanced Coverage-Driven Verification</h3>
-            <p className="mt-1">
-              [Placeholder: Description of a project focusing on developing a comprehensive functional coverage model and using it to guide constrained random verification. Key learning objectives: advanced coverage techniques, cross coverage, coverage closure, from blueprint].
-            </p>
-            <p className="text-sm text-foreground/70">
-              [Placeholder: Example DUT complexity, types of coverage points to define, from blueprint].
-            </p>
-          </div>
+      <h3 className={subHeading}>Stretch goals</h3>
+      <ul>
+        {project.stretch.map((goal) => (
+          <li key={goal}>{goal}</li>
+        ))}
+      </ul>
 
-          <div>
-            <h3 className="text-xl font-semibold">5. [Placeholder: Another Project Idea Title from Blueprint]</h3>
-            <p className="mt-1">
-              [Placeholder: Description, learning objectives, and suggested features for another project, from blueprint].
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="mt-10 mb-3 text-2xl font-semibold">Case Studies (If Applicable)</h2>
-        <p>[Placeholder: Introduction to any case studies of real-world or illustrative verification projects, if provided in the blueprint].</p>
-      </section>
-
-      <section>
-        <h2 className="mt-10 mb-3 text-2xl font-semibold">Setting up Your Project Environment</h2>
-        <p>
-          [Placeholder: General advice on setting up a local environment for these projects – choice of simulator (open source options like Icarus Verilog + GTKWave, or commercial tools if the user has access), directory structure, version control (Git), from blueprint].
-        </p>
-        <CodeBlock
-          code={`# Placeholder: Example of basic directory structure
-# my_sv_project/
-# |-- dut/
-# |   -- my_dut.sv
-# |-- tb/
-# |   -- test_top.sv
-# |   -- my_interface.sv
-# |   -- my_pkg.sv (if using classes)
-# |-- sim/
-# |   -- Makefile (or run script)
-# |-- README.md`}
-          language="bash"
-          fileName="project_setup_example.txt"
-        />
-      </section>
-    </>
+      {project.sources && project.sources.length > 0 ? (
+        <>
+          <h3 className={subHeading}>Specification references</h3>
+          <ul className="text-sm">
+            {project.sources.map((source) => (
+              <li key={source}>{source}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
   );
+}
 
-  return <InfoPage title="Practical Projects & Case Studies">{pageContent}</InfoPage>;
+export default function ProjectsPage() {
+  const projects = resolveProjects();
+
+  return (
+    <InfoPage
+      title="Projects"
+      description="One testbench project for each milestone, from a self-checking directed testbench to a subsystem capstone."
+    >
+      <p className="lead">
+        Lessons and labs teach one idea at a time. A project asks you to put several together with no starter code:
+        you write the design under test (DUT), the testbench (TB) and the checks, then prove the TB works by breaking
+        the DUT on purpose and watching it fail.
+      </p>
+
+      <section aria-labelledby="how-to-use">
+        <h2 id="how-to-use" className={sectionHeading}>
+          How to use these briefs
+        </h2>
+        <ul>
+          <li>
+            Each project matches one milestone on the ladder used by the learning routes. Do the lessons and labs listed
+            under <strong>Prepare with</strong> first.
+          </li>
+          <li>
+            Nothing on this site runs or grades a project. You check your own work against the{' '}
+            <strong>acceptance criteria</strong>, so treat each one as a test you must be able to show passing.
+          </li>
+          <li>
+            Most briefs list mutants: small bugs you plant in the DUT or the TB. A TB that passes the clean DUT but
+            misses a mutant is not done.
+          </li>
+          <li>
+            Effort estimates assume you have finished the preparing lessons. Expect to spend longer the first time
+            you set up a simulator.
+          </li>
+          <li>
+            Later projects reuse earlier ones (the M2 agent returns in M5, the M3 scoreboard in M4 and M8), so keep
+            each one in version control.
+          </li>
+        </ul>
+        <p>
+          The labs are on the <Link href={LABS_HREF} className={linkClass}>Practice Hub</Link>; a lab marked coming
+          soon cannot be opened yet.
+        </p>
+      </section>
+
+      <nav aria-labelledby="milestone-ladder" className="not-prose mt-10">
+        <h2 id="milestone-ladder" className="mb-3 text-2xl font-semibold">
+          The milestone ladder
+        </h2>
+        <ol className="space-y-2">
+          {projects.map((project) => (
+            <li key={project.milestone} className="flex flex-wrap items-baseline gap-x-3">
+              <span className="w-8 shrink-0 font-mono text-sm font-semibold text-primary">{project.milestone}</span>
+              <a href={`#${project.anchor}`} className={linkClass}>
+                {project.name}
+              </a>
+              <span className="text-sm text-foreground/70">{project.effort}</span>
+            </li>
+          ))}
+        </ol>
+      </nav>
+
+      {projects.map((project) => (
+        <ProjectSection key={project.milestone} project={project} />
+      ))}
+
+      <section aria-labelledby="project-layout">
+        <h2 id="project-layout" className={sectionHeading}>
+          A layout that works for every project
+        </h2>
+        <p>
+          Keep the DUT, the TB and the mutants apart so that one command can run the clean DUT and every mutant:
+        </p>
+        <pre>
+          <code>{`my-project/
+  dut/        the design under test
+  mutants/    one file (or define) per planted bug
+  tb/         interface, packages, top module tb_top
+  sim/        run script: clean run, then each mutant
+  README.md   goal, how to run, results, what you learned`}</code>
+        </pre>
+        <p>
+          Record each run in the README: the command, the seed and the final summary line. That log is your evidence
+          that the acceptance criteria pass.
+        </p>
+      </section>
+    </InfoPage>
+  );
 }

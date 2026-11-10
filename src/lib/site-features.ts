@@ -26,9 +26,15 @@ export interface SiteFeatureSwitches {
   aiTutor: boolean;
   /** Server-side simulation. It needs a job queue, so accounts too. */
   simulation: boolean;
-  /** Draft pages with placeholder content (/resources, /projects, /history, /knowledge-hub). Off in production. */
+  /**
+   * Pages still in review. Off in production. None is gated at the moment:
+   * /resources, /history, /knowledge-hub and /projects were rebuilt and are public.
+   */
   draftPages: boolean;
-  /** The assessment center at /assessment, mostly mock content. Off in production. */
+  /**
+   * The self-assessment at /assessment: lessons, quizzes, labs, reviews and the
+   * placement result per track, built only from data kept in this browser.
+   */
   assessmentCenter: boolean;
 }
 
@@ -42,7 +48,7 @@ export const SITE_FEATURES: Readonly<SiteFeatureSwitches> = Object.freeze({
   aiTutor: isFeatureEnabled('aiTutor') && ACCOUNTS_ENABLED,
   simulation: isFeatureEnabled('simulation') && ACCOUNTS_ENABLED,
   draftPages: isFeatureEnabled('personalization'),
-  assessmentCenter: isFeatureEnabled('tracking'),
+  assessmentCenter: true,
 });
 
 export type SiteFeature = keyof typeof SITE_FEATURES;

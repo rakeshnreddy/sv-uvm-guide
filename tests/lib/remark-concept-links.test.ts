@@ -50,4 +50,23 @@ describe("remarkConceptLinks", () => {
     expect(tree.children[2].value).toBe("Data Types");
     expect(tree.children[3].children[0].children[0].value).toBe("Data Types");
   });
+
+  it("links only the first occurrence of each concept in a lesson", () => {
+    const tree: any = {
+      type: "root",
+      children: [
+        { type: "paragraph", children: [{ type: "text", value: "Data Types first, then data types again." }] },
+        { type: "paragraph", children: [{ type: "text", value: "More Data Types here." }] },
+      ],
+    };
+
+    remarkConceptLinks({ concepts })(tree);
+
+    const links = conceptLinks(tree);
+    expect(links).toHaveLength(1);
+    expect(links[0].children[0].value).toBe("Data Types");
+    const text = (node: any): string => node.value ?? (node.children ?? []).map(text).join("");
+    expect(text(tree.children[0])).toBe("Data Types first, then data types again.");
+    expect(text(tree.children[1])).toBe("More Data Types here.");
+  });
 });

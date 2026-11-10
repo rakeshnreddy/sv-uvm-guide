@@ -117,7 +117,7 @@ describe('W8 labs platform audit', () => {
         }
 
         const source = fs.readFileSync(readmes[0], 'utf8');
-        const referencedModule = source.match(/\b(?:F\d[A-Z]?|I-[A-Z]+-\d[A-Z]?|E-[A-Z]+-\d[A-Z]?)\b/)?.[0];
+        const referencedModule = source.match(/\b(?:F\d[A-Z]?|[IAE]-[A-Z]+-\d[A-Z]?)\b/)?.[0];
 
         if (!referencedModule || referencedModule === lab.owningModule) {
           return [];

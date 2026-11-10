@@ -163,7 +163,7 @@ describe('Navbar landmarks and links', () => {
       const hrefs = within(banner)
         .getAllByRole('link', { hidden: true })
         .map((link) => link.getAttribute('href'));
-      for (const hidden of ['/community', '/notifications', '/resources', '/projects', '/history', '/assessment']) {
+      for (const hidden of ['/community', '/notifications']) {
         expect(hrefs).not.toContain(hidden);
       }
       expect(fetch).not.toHaveBeenCalled();

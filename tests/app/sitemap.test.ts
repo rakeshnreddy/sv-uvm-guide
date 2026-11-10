@@ -12,7 +12,10 @@ const APP_DIR = path.resolve(__dirname, "../../src/app");
 const LEARNING_DIR = path.join(APP_DIR, "(learning)");
 
 /** Pages hidden behind a switch: they answer 404 by default and stay out of the sitemap. */
-const HIDDEN_PAGES = ["/notifications", "/resources", "/projects", "/history", "/knowledge-hub", "/assessment", "/community"];
+const HIDDEN_PAGES = ["/notifications", "/community"];
+
+/** Learner pages: they show this browser's data, so they stay out of the sitemap and robots.txt disallows them. */
+const LEARNER_PAGES = ["/dashboard", "/settings", "/assessment"];
 
 /** Static child routes of a folder under (learning), for example /exercises/<name>. */
 function childRoutes(segments: string[], skip: string[] = []): string[] {
@@ -76,8 +79,8 @@ describe("sitemap", () => {
     }
   });
 
-  it("lists the placement quiz and the legal pages, which explain browser storage", () => {
-    for (const route of ["/", "/quiz/placement", "/privacy-policy", "/terms-of-service"]) {
+  it("lists the placement quiz, the legal pages and the reference pages", () => {
+    for (const route of ["/", "/quiz/placement", "/privacy-policy", "/terms-of-service", "/knowledge-hub", "/resources", "/history"]) {
       expect(PUBLIC_PAGES as readonly string[]).toContain(route);
     }
   });
@@ -113,7 +116,7 @@ describe("sitemap", () => {
 
   it("leaves out learner pages and hidden pages", () => {
     const paths = urls.map((url) => new URL(url).pathname);
-    for (const route of ["/dashboard", "/settings", ...HIDDEN_PAGES]) {
+    for (const route of [...LEARNER_PAGES, ...HIDDEN_PAGES]) {
       expect(paths, `${route} is in the sitemap`).not.toContain(route);
       expect(PUBLIC_PAGES as readonly string[]).not.toContain(route);
     }
@@ -135,6 +138,6 @@ describe("sitemap", () => {
     const rules = robots();
     expect(rules.sitemap).toMatch(/\/sitemap\.xml$/);
     const disallow = ([] as string[]).concat(...[rules.rules].flat().map((rule) => [rule.disallow ?? []].flat()));
-    expect(disallow).toEqual(expect.arrayContaining(["/dashboard", "/settings"]));
+    expect(disallow).toEqual(expect.arrayContaining(LEARNER_PAGES));
   });
 });

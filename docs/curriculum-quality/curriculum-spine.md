@@ -234,7 +234,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   - predict tasks on the three visuals;
   - a kata: a packed-struct bus transaction printed with `%p`;
   - an "X masked by 2-state" debug challenge (not built).
-  - Lab `common-1` (coming soon; structs, enums, arrays) belongs here, not to F2C.
+  - Lab `common-1` (available; structs, enums, arrays) is owned here and launched from F2A/structs-unions-enums.
 - **Assessment focus:** quiz must include `4'b10x1 == 4'b10x1` vs `===`; the result width of `a + b` assigned to a narrower and to a wider target; which declaration accepts two continuous drivers. Misconceptions:
   1. a `logic` variable can take two `assign` drivers and resolve like a wire;
   2. `bit`/`int` show X before reset;
@@ -530,7 +530,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** region definitions (F3B); race theory (F3C); UVM agents (I-UVM-2A); SVA clocking (I-SV-4A).
 - **Prerequisites:** F3C, F4B.
 - **Feeds milestone:** M1 (gate).
-- **Hands-on that should exist:** **LAB-M1 "Race-Free Pipeline TB"** (not built). Lab `constructs-1` (coming soon; it already has `lab1_race_condition`) should be re-owned here; F3C's RaceDebugChallenge is the pre-lab gate. Also the skew-visualizer predictions.
+- **Hands-on that should exist:** **LAB-M1** is built: lab `constructs-1` (available, owned here, "Before the lab" links it) rebuilds the Make It Work bench for `rot_pipe`; F3C's RaceDebugChallenge is the pre-lab gate. Also the skew-visualizer predictions.
 - **Assessment focus:** misconceptions:
   1. clocking-block outputs change in Active or NBA;
   2. `@(cb)` and `@(posedge clk)` resume at the same point;
@@ -734,7 +734,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** repetition, `throughout/within/intersect/first_match`, local variables, multiclock, `until/s_eventually`, strong/weak (I-SV-4B); checkers and bind (I-SV-4C); formal (E-INT-1); routing SVA into UVM reports (A-UVM-7, I-UVM-1D).
 - **Prerequisites:** F3B, F4C.
 - **Feeds milestone:** M6 (protocol checks); M1 and M2 (interface and VIP assertions).
-- **Hands-on that should exist:** kata P5 (audit appendix B §4): a valid/ready SVA with `disable iff`, `$stable` payload, bounded `##[1:N]` and a cover, then debug 4 failing traces. Lab `assertions-1` (coming soon) is owned here: a valid/ready register-slice lab (valid hold, stable payload, a bounded-ready assume, two covers, a seeded payload bug). It uses no local variables; the injected "Hands-on practice" section on this module's pages shows it as a planned card from the lab registry, so the MDX need not repeat it.
+- **Hands-on that should exist:** kata P5 (audit appendix B §4): a valid/ready SVA with `disable iff`, `$stable` payload, bounded `##[1:N]` and a cover, then debug 4 failing traces. Lab `assertions-1` (available) is owned here: a valid/ready register-slice lab (valid hold, stable payload, a bounded-ready assume, two covers, a seeded payload bug, and a step 6 that drops valid to prove a check fails). It uses no local variables; the module page links it after its kata, and the injected "Hands-on practice" section lists it from the lab registry.
 - **Assessment focus:** misconceptions:
   1. concurrent assertions see values updated at the edge;
   2. `|->` and `|=>` differ only in style;
@@ -936,7 +936,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** UVM APIs (I-UVM-1A onward); running a test (I-UVM-1D, I-UVM-3C).
 - **Prerequisites:** I-SV-1, I-SV-2A, I-SV-3A, I-SV-5, F4C.
 - **Feeds milestone:** M2 (bridge).
-- **Hands-on that should exist:** the **bridge capstone** (kata P8): a class-based layered SV bench for a FIFO with 0 mismatches over 1k random transactions, coverage ≥90%, and bound assertions. Re-scope lab `fifo-1` (coming soon) for it. Add a readiness self-check quiz.
+- **Hands-on that should exist:** the **bridge capstone** (kata P8): a class-based layered SV bench for a FIFO with 0 mismatches over 1k random transactions, coverage ≥90%, and bound assertions. Lab `fifo-1` (available) is now I-SV-1's class-based FIFO bench and is linked from here; the P8 capstone still needs a lab of its own. Add a readiness self-check quiz.
 - **Assessment focus:** misconceptions:
   1. UVM is a language or a simulator feature;
   2. UVM makes simulation faster;
@@ -1066,7 +1066,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Hands-on that should exist:**
   - `/exercises/uvm-agent-builder`;
   - a kata: active and passive instances of one agent, with `print_topology` compared.
-  - Lab `arbiter-1` (coming soon) fits as the independent variant of I-UVM-3C.
+  - Lab `arbiter-1` (available) is the independent variant of I-UVM-3C and is owned there.
 - **Assessment focus:** misconceptions:
   1. a passive agent still needs a sequencer, or has an idle driver;
   2. a monitor may reuse one object for every sample;
@@ -1463,7 +1463,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Out of scope here (covered in):** virtual-sequence mechanics (I-UVM-3B owns them; link instead of re-teaching); VIP construction (A-UVM-7); SoC strategy (E-SOC-1); reset strategy (A-UVM-9).
 - **Prerequisites:** I-UVM-3B, A-UVM-7, I-SV-5.
 - **Feeds milestone:** M5 (gate).
-- **Hands-on that should exist:** **LAB-M5** (not built): config agent plus data agent, with an ordering assertion and a hidden mutant virtual sequence. `I-UVM-3B/coordinated-attack-lab` is the pre-lab.
+- **Hands-on that should exist:** **LAB-M5** is built: lab `multi-agent-vseq` (available, owned here) has a configuration agent and a data agent ordered by a virtual sequence, two cross-interface assertions, three mutant tests and two planted DUT bugs. `I-UVM-3B/coordinated-attack-lab` is the pre-lab.
 - **Assessment focus:** misconceptions:
   1. `fork…join` with a `forever` background sequence lets the virtual sequence finish;
   2. a passive agent's sequencer can run sequences;
@@ -2042,7 +2042,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Feeds milestone:** M8 (gate).
 - **Hands-on that should exist:**
   - Labs `soc-vip-reuse` and `soc-strategy-capstone` (owned; `soc-vip-reuse` lists lab prerequisite `uvm-mini-capstone`);
-  - **LAB-M8**, the DMA code capstone: re-own `dma-1` (coming soon) here.
+  - **LAB-M8**, the code capstone, still needs a lab: `dma-1` was built in phase 6a as I-UVM-3B's lab towards M5.
 - **Assessment focus:** misconceptions:
   1. auto-predict keeps the mirror right when firmware writes;
   2. block scoreboards transfer to SoC unchanged;
@@ -2096,7 +2096,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 | A-UVM-7, A-UVM-8 (and I-UVM-2A) use APB examples | APB protocol | none | B-APB-1 (added in the quality program), or define the APB subset inline |
 | B-AHB-1..3 before B-AMBA-1/2; B-AMBA-F1/F2/F3 before any B-AXI | family intro; AXI | B-AMBA-1/2; B-AXI-* | Honour frontmatter `order` (PLAT-2) |
 | E-AI-1 (nav first in T4) requires E-PYUVM-1; E-EMU-1 (nav before E-PERF-1) says to optimize simulation first | — | — | Intended T4 order (§3.4) |
-| Six available UVM labs list `simple-dut-1` (coming soon; owner "F4", not a module id; README is a non-UVM first TB) as a lab prerequisite | — | — | Done: `simple-dut-1` is F2E's M0 lab (available, owner F2E); no available lab lists it any more, only `arbiter-1` (coming soon) does (Appendix B) |
+| Six available UVM labs list `simple-dut-1` (coming soon; owner "F4", not a module id; README is a non-UVM first TB) as a lab prerequisite | — | — | Done: `simple-dut-1` is F2E's M0 lab (available, owner F2E); `constructs-1` and `fifo-1` list it as their lab prerequisite (Appendix B); `arbiter-1` now lists `uvm-mini-capstone` |
 
 ### 3.2 Duplicated coverage and owners
 
@@ -2749,19 +2749,20 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | Lab id | Status | Manifest owner | Recommended owner | Notes |
 |---|---|---|---|---|
 | `basics-1` | available | F2D | F2D/tasks-functions | Steps and grader do not match the README (token match); LAB-M0 |
-| `simple-dut-1` | available | F2E | F2E (M0) | Milestone M0's lab: a non-UVM directed self-checking bench (registered saturating adder) with a grader; module prerequisites F2B, F2D; no available lab lists it, only `arbiter-1` (coming soon) |
-| `common-1` | coming soon | F2C | F2A | structs, enums, arrays |
-| `constructs-1` | coming soon | F2B | F4C (LAB-M1) | Contains `lab1_race_condition` |
-| `fifo-1` | coming soon | I-SV-1 | I-SV-9 (bridge capstone P8) | Layered class-based SV TB |
-| `assertions-1` | coming soon | I-SV-4A | I-SV-4A | Valid/ready register-slice lab (lab.json v2): valid hold, stable payload, bounded-ready assume, covers, seeded payload bug; no local variables, so not I-SV-4B |
+| `simple-dut-1` | available | F2E | F2E (M0) | Milestone M0's lab: a non-UVM directed self-checking bench (registered saturating adder) with a grader; module prerequisites F2B, F2D; `constructs-1` and `fifo-1` list it as their lab prerequisite |
+| `common-1` | available | F2A | F2A | Packet-decoder bench (lab.json v2): enums, packed structs, dynamic and associative arrays; module prerequisite F2B; launched from F2A/structs-unions-enums |
+| `constructs-1` | available | F4C | F4C (LAB-M1) | LAB-M1, built in phase 6a: `rot_pipe` bench with clocking blocks, value and arrival-cycle checks, planted bugs and `tb_racy`; seven structural steps (grader `sv-clocking-v1`); lab prerequisite `simple-dut-1`; F3C is the pre-lab gate |
+| `fifo-1` | available | I-SV-1 | I-SV-1 | Class-based bench for a synchronous FIFO (lab.json v2): copy/clone/convert2string, a generator that clones its blueprint; lab prerequisite `simple-dut-1`; launched from I-SV-1/copying-and-cloning and linked from I-SV-9. The P8 bridge capstone still needs its own lab |
+| `assertions-1` | available | I-SV-4A | I-SV-4A | Valid/ready register-slice lab (lab.json v2): valid hold, stable payload, bounded-ready assume, covers, seeded payload bug; no local variables, so not I-SV-4B |
 | `randomization-advanced-1` | available | I-SV-2B | I-SV-2B | Premise to fix |
 | `coverage-advanced-1` | available | I-SV-3B | I-SV-3B | Cannot close as written |
 | `ipc-deadlock` | available | I-SV-5 | I-SV-5 | `modulePrerequisites` F2C, I-SV-1 (valid ids); four steps |
 | `scoreboard-decoupling` | available | I-UVM-2B | I-UVM-2B | Starter already solved; false premise |
 | `config-debug` | available | I-UVM-2C | I-UVM-2C | Bug labelled in the starter |
-| `arbiter-1` | coming soon | I-UVM-2A | I-UVM-3C (independent variant) | Lab prerequisite `simple-dut-1` |
+| `arbiter-1` | available | I-UVM-3C | I-UVM-3C (independent variant) | Round-robin arbiter from a spec and skeleton, fairness bound, planted starvation bug; lab prerequisite `uvm-mini-capstone` |
 | `uvm-mini-capstone` | available | I-UVM-3C | I-UVM-3C (LAB-T2-ENV) | LAB-T2-ENV: monitor sampling fixed (LAB-C1/C2); lab prerequisite `scoreboard-decoupling` only, no T3 prerequisites; four steps |
-| `dma-1` | coming soon | I-UVM-3B | E-SOC-1 (LAB-M8) | M8 DMA capstone |
+| `dma-1` | available | I-UVM-3B | I-UVM-3B | Built in phase 6a as a three-to-four-hour step towards M5 (lab.json v2): `dma_copy` with a translation sequence and a virtual sequence; lab prerequisite `uvm-mini-capstone`, module prerequisite I-UVM-3A. LAB-M8 needs a separate lab |
+| `multi-agent-vseq` | available | A-UVM-8 | A-UVM-8 (LAB-M5) | LAB-M5, built in phase 6a: `key_stream` with a configuration agent, a data agent, a virtual sequence, a passive output agent, two cross-interface assertions, three mutant tests and two planted DUT bugs; lab prerequisite `uvm-mini-capstone` |
 | `scoreboard-reference-model` | available | A-UVM-6 | A-UVM-6 (M3) | Accounting fix (LAB-S1) |
 | `callbacks-driver-behavior` | available | A-UVM-5 | A-UVM-5 | Null-handle registration in the solution |
 | `ral-mirror-bug` | available | A-UVM-4B | A-UVM-4B | Fix printed in comments |
@@ -2778,4 +2779,4 @@ The 2026-10-18 additions are the clauses that the wave-6 author logs (`reviews/L
 | `soc-vip-reuse` | available | E-SOC-1 | E-SOC-1 | Lab prerequisite `uvm-mini-capstone` (no longer `simple-dut-1`) |
 | `soc-strategy-capstone` | available | E-SOC-1 | E-SOC-1 | Document capstone; M8 code capstone is `dma-1` |
 
-Milestone labs that do not exist yet: LAB-M1 (`constructs-1`), LAB-M2, LAB-M3 mutants, LAB-M5, LAB-M6 extension, LAB-M7 (Build-a-RAL), LAB-M8. See [`improvement-plan.md`](../audit/2026-10-03-learning-outcomes/improvement-plan.md).
+Milestone labs that do not exist yet: LAB-M2, LAB-M3 mutants, LAB-M6 extension, LAB-M7 (Build-a-RAL), LAB-M8. LAB-M1 is `constructs-1` and LAB-M5 is `multi-agent-vseq`, both built in phase 6a. See [`improvement-plan.md`](../audit/2026-10-03-learning-outcomes/improvement-plan.md).

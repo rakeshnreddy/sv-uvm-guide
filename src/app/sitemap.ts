@@ -10,12 +10,11 @@ import { getPracticePages } from "@/lib/practice-links";
  * labs and the practice pages (exercises, visualizations and tools) are public
  * static pages too and are listed separately (lessonPaths, labPaths,
  * practicePaths). Left out on purpose:
- * - learner pages (/dashboard, its review and notebook pages, /settings):
- *   they show data kept in the visitor's browser, and robots.txt disallows
- *   /dashboard and /settings;
- * - hidden pages, which answer 404 unless a switch turns them on (draft pages
- *   such as /resources, /projects, /history and /knowledge-hub; /assessment;
- *   /notifications; /community).
+ * - learner pages (/dashboard, its review and notebook pages, /settings,
+ *   /assessment): they show data kept in the visitor's browser, and robots.txt
+ *   disallows /dashboard, /settings and /assessment;
+ * - hidden pages, which answer 404 unless a switch turns them on
+ *   (/notifications; /community).
  */
 export const PUBLIC_PAGES = [
   "/",
@@ -26,6 +25,10 @@ export const PUBLIC_PAGES = [
   "/interview-prep",
   "/exercises",
   "/learning-strategies",
+  "/knowledge-hub",
+  "/resources",
+  "/history",
+  "/projects",
   "/privacy-policy",
   "/terms-of-service",
 ] as const;

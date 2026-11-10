@@ -436,3 +436,374 @@ describe("sva-model: text helpers", () => {
     expect(plainText("`req ##2 ack` matched")).toBe("req ##2 ack matched");
   });
 });
+
+describe("sva-model: status wording (§16.14.8)", () => {
+  it("§16.14.8: a vacuous evaluation is named a vacuous success, never a pass", async () => {
+    const { statusText } = await import("@/lib/sva-model");
+    expect(statusText.VACUOUS).toBe("vacuous success");
+    expect(statusText.VACUOUS).not.toMatch(/pass/);
+  });
+});
+
+describe("sva-model: lesson presets, modes and renaming", () => {
+  it("§16.12.7, §16.14.8: req-gnt-2 gives the F1C outcomes (A1 passes at 3, A4 fails at 6, six vacuous successes)", async () => {
+    const { reqGnt2Scenario } = await import("@/lib/sva-model");
+    const e = run(reqGnt2Scenario.property, scenarioTrace(reqGnt2Scenario));
+    expect(e.attempts).toHaveLength(8);
+    expect(at(e, 1)).toMatchObject({ status: "PASS", end: 3 });
+    expect(at(e, 4)).toMatchObject({ status: "FAIL", end: 6 });
+    expect(statuses(e).filter((s) => s === "VACUOUS")).toHaveLength(6);
+    expect(e.counts.PENDING).toBe(0);
+  });
+
+  it("§16.7: the early-grant challenge is met only when a failing attempt has gnt = 1 one edge before its check edge", async () => {
+    const { reqGnt2Scenario, gradeEarlyGrantChallenge } = await import("@/lib/sva-model");
+    const challenge = reqGnt2Scenario.challenge!;
+    const base = scenarioTrace(reqGnt2Scenario);
+    const start = gradeEarlyGrantChallenge(run(reqGnt2Scenario.property, base), base, challenge);
+    expect(start.met).toBe(false);
+    expect(start.message).toBe("Attempt A4 fails at edge 6, but gnt is 0 at edge 5. Set gnt to 1 at edge 5 and leave it 0 at edge 6.");
+
+    const early = tr({ req: "01001000", gnt: "00010100" });
+    const met = gradeEarlyGrantChallenge(run(reqGnt2Scenario.property, early), early, challenge);
+    expect(met).toMatchObject({ met: true, attempt: 4 });
+    expect(met.message).toMatch(/gnt is 1 at edge 5: one edge early/);
+
+    const none = tr({ req: "00000000", gnt: "00000000" });
+    expect(gradeEarlyGrantChallenge(run(reqGnt2Scenario.property, none), none, challenge).message).toMatch(/^No attempt fails yet/);
+  });
+
+  it("normalizeModes keeps known modes in order and falls back to all three", async () => {
+    const { normalizeModes } = await import("@/lib/sva-model");
+    expect(normalizeModes(["write", "learn"])).toEqual(["learn", "write"]);
+    expect(normalizeModes(["learn"])).toEqual(["learn"]);
+    expect(normalizeModes([])).toEqual(["learn", "debug", "write"]);
+    expect(normalizeModes(["bogus"])).toEqual(["learn", "debug", "write"]);
+    expect(normalizeModes(undefined)).toEqual(["learn", "debug", "write"]);
+  });
+
+  it("renameScenario renames whole identifiers in the property, rows and sentences, and rejects bad targets", async () => {
+    const { renameScenario } = await import("@/lib/sva-model");
+    const fixed = svaLearnScenarios.find((s) => s.id === "fixed-delay")!;
+    const { scenario, ignored } = renameScenario(fixed, { ack: "gnt" });
+    expect(ignored).toEqual([]);
+    expect(scenario.id).toBe("fixed-delay");
+    expect(scenario.property).toBe("req |-> ##2 gnt");
+    expect(scenario.signals).toEqual(["req", "gnt"]);
+    expect(scenario.rows.gnt).toEqual(fixed.rows.ack);
+    expect(scenario.focus).not.toMatch(/\back\b/);
+    // Same outcomes after renaming.
+    expect(statuses(run(scenario.property, scenarioTrace(scenario)))).toEqual(statuses(run(fixed.property, scenarioTrace(fixed))));
+
+    expect(renameScenario(fixed, { ack: "req" }).ignored).toEqual(["ack -> req"]);
+    expect(renameScenario(fixed, { ack: "and" }).ignored).toEqual(["ack -> and"]);
+    expect(renameScenario(fixed, { ack: "9x" }).ignored).toEqual(["ack -> 9x"]);
+    expect(renameScenario(fixed, { nothere: "zz" }).scenario).toBe(fixed);
+
+    const rose = svaLearnScenarios.find((s) => s.id === "rose-repeat")!;
+    expect(renameScenario(rose, { req: "start" }).scenario.property).toBe("$rose(start) |=> ack[*2]");
+  });
+
+  it("findTracePreset knows every trace-lab preset id, and the sampling id is separate", async () => {
+    const { findTracePreset, svaPresetIds, SAMPLING_PRESET_ID } = await import("@/lib/sva-model");
+    for (const id of svaPresetIds.filter((i) => i !== SAMPLING_PRESET_ID)) expect(findTracePreset(id)?.id).toBe(id);
+    expect(findTracePreset(SAMPLING_PRESET_ID)).toBeUndefined();
+    expect(findTracePreset("nope")).toBeUndefined();
+  });
+});
+
+describe("sva-model: sampling lab (§16.5.1, §4.4.2.5, §4.4.2.6, §16.9.3, §16.12, §16.14.1)", () => {
+  const load = () => import("@/lib/sva-model");
+
+  it("§16.5.1: the property reads the Preponed sample, so the edge where the flop copies d = 1 still passes and the first failure is one edge later", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset } = await load();
+    const r = evaluateSamplingLab(flopOutputLowPreset);
+    expect(r.qRow).toEqual([0, 0, 0, 1, 1, 0]);
+    expect(r.edges.map((e) => e.verdict)).toEqual(["PASS", "PASS", "PASS", "FAIL", "FAIL", "PASS"]);
+    expect(r.edges[2]).toMatchObject({ sampledQ: 0, currentQ: 1 });
+  });
+
+  it("§4.4.2.6, §16.9.3: the pass statement runs in Reactive with current values, so q and $sampled(q) disagree at the copy edge", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset } = await load();
+    const r = evaluateSamplingLab(flopOutputLowPreset);
+    expect(r.edges[2].printed).toBe("pass: $sampled(q)=0 q=1");
+    expect(r.edges[2].disagree).toBe(true);
+    expect(r.edges[0].printed).toBe("pass: $sampled(q)=0 q=0");
+    expect(r.edges.filter((e) => e.disagree).map((e) => e.edge)).toEqual([2]);
+  });
+
+  it("§16.14.1: a failing attempt with no else clause calls $error, and its pass message does not print", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset } = await load();
+    const e = evaluateSamplingLab(flopOutputLowPreset).edges[3];
+    expect(e.printed).toBeNull();
+    expect(e.reactive).toMatch(/\$error \(§16\.14\.1\)/);
+  });
+
+  it("§16.12: disable iff reads rst's current value, so the edge where rst rises (sample 0) is disabled and runs no action block", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset } = await load();
+    const r = evaluateSamplingLab({ ...flopOutputLowPreset, disableOnRst: true });
+    expect(r.edges.map((e) => e.verdict)).toEqual(["PASS", "PASS", "PASS", "DISABLED", "DISABLED", "DISABLED"]);
+    expect(r.edges[3]).toMatchObject({ sampledRst: 0, currentRst: 1, printed: null });
+    expect(r.edges[3].reason).toMatch(/Its sample is 0, but `disable iff` reads the current value, 1/);
+    expect(r.code[4]).toBe("  @(posedge clk) disable iff (rst) q == 1'b0)");
+  });
+
+  it("§16.12: when rst falls at an edge its sample is 1 but its current value is 0, so that attempt is not disabled", async () => {
+    const { evaluateSamplingLab } = await load();
+    const r = evaluateSamplingLab({ d: [1, 1, 1, 1, 1, 1], rst: [0, 0, 1, 0, 0, 0], qInit: 0, disableOnRst: true });
+    // rst rises at edge 1 (current 1) and falls at edge 2 (current 0).
+    expect(r.edges[1].verdict).toBe("DISABLED");
+    expect(r.edges[2]).toMatchObject({ sampledRst: 1, currentRst: 0 });
+    expect(r.edges[2].verdict).toBe("FAIL"); // q sampled at 2 = d at edge 1 = 1: the flop read rst = 0 at edge 1
+  });
+
+  it("§16.6, §16.9.3: an x sample makes q == 1'b0 x, which is false, and $sampled(q) prints x", async () => {
+    const { evaluateSamplingLab, gradeSamplingPrediction } = await load();
+    const r = evaluateSamplingLab({ d: [0, 0, 0, 0, 0, 0], rst: [0, 0, 0, 0, 0, 0], qInit: "x", disableOnRst: false });
+    expect(r.edges[0]).toMatchObject({ sampledQ: "x", expression: "x", verdict: "FAIL" });
+    expect(r.edges[0].reason).toMatch(/counts as false \(§16\.6\)/);
+    expect(r.edges[1]).toMatchObject({ sampledQ: 0, verdict: "PASS", printed: "pass: $sampled(q)=0 q=0" });
+    expect(gradeSamplingPrediction(r.edges[0], { verdict: "PASS", sampled: "x", current: 0 }).verdictCorrect).toBe(false);
+  });
+
+  it("the last edge's current rst is its sample (rst holds after the trace), and edges stay in step with the rows", async () => {
+    const { evaluateSamplingLab } = await load();
+    const r = evaluateSamplingLab({ d: [0, 0, 0], rst: [0, 0, 1], qInit: 0, disableOnRst: true });
+    expect(r.edges).toHaveLength(3);
+    expect(r.edges[2]).toMatchObject({ sampledRst: 1, currentRst: 1, verdict: "DISABLED" });
+    expect(r.edges[1]).toMatchObject({ sampledRst: 0, currentRst: 1, verdict: "DISABLED" });
+  });
+
+  it("grading explains the one-edge lag, the Reactive print and the disable condition", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset, gradeSamplingPrediction } = await load();
+    const r = evaluateSamplingLab(flopOutputLowPreset);
+    const lagWrong = gradeSamplingPrediction(r.edges[2], { verdict: "FAIL" });
+    expect(lagWrong).toMatchObject({ correct: false, verdictCorrect: false, printCorrect: null });
+    expect(lagWrong.message).toMatch(/reads the Preponed sample q = 0 \(§16\.5\.1\), so it passes/);
+
+    const printWrong = gradeSamplingPrediction(r.edges[2], { verdict: "PASS", sampled: 0, current: 0 });
+    expect(printWrong).toMatchObject({ correct: false, verdictCorrect: true, printCorrect: false });
+    expect(printWrong.message).toMatch(/q prints 1, the value the flop wrote in NBA\. \$sampled\(q\) returns the value the property used, 0 \(§16\.9\.3\)/);
+
+    const right = gradeSamplingPrediction(r.edges[2], { verdict: "PASS", sampled: 0, current: 1 });
+    expect(right).toMatchObject({ correct: true, printCorrect: true });
+    expect(right.message).toBe('Correct: it prints "pass: $sampled(q)=0 q=1". The two values disagree because the action block runs after the flop\'s write.');
+
+    const d = evaluateSamplingLab({ ...flopOutputLowPreset, disableOnRst: true });
+    expect(gradeSamplingPrediction(d.edges[3], { verdict: "FAIL" }).message).toMatch(/disable iff` reads the current value, 1, in Observed \(§16\.12\)/);
+    expect(gradeSamplingPrediction(d.edges[2], { verdict: "DISABLED" }).message).toBe("rst is 0 in Observed, so the attempt is not disabled.");
+  });
+
+  it("region markers and the summary are generated from the result", async () => {
+    const { evaluateSamplingLab, flopOutputLowPreset, regionMarkers, summarizeSampling } = await load();
+    const r = evaluateSamplingLab(flopOutputLowPreset);
+    expect(regionMarkers(r.edges[2], false)).toEqual({
+      preponed: "▼ Preponed: q sampled = 0",
+      observed: "✓ Observed: q == 1'b0 is 1 (true) on the sample: pass",
+      reactive: 'Reactive: the pass statement prints "pass: $sampled(q)=0 q=1" (§4.4.2.6)',
+    });
+    expect(summarizeSampling(r)).toBe("4 passes · 2 fails · 0 disabled; the pass message prints q different from $sampled(q) at edge 2");
+  });
+});
+
+describe("sva-model: vacuity follows the recursive rules of §16.14.8", () => {
+  it("§16.14.8 i and j: the reason names item i for |-> and item j for |=>, never item h (if-else)", () => {
+    const viaOverlap = run("a |-> (b |-> c)", tr({ a: "1", b: "0", c: "0" }));
+    expect(at(viaOverlap, 0)).toMatchObject({ status: "VACUOUS", vacuity: "consequent" });
+    expect(at(viaOverlap, 0).reason).toMatch(/§16\.14\.8 i\)/);
+    const viaNext = run("a |=> (b |-> c)", tr({ a: "10", b: "00", c: "00" }));
+    expect(at(viaNext, 0)).toMatchObject({ status: "VACUOUS", vacuity: "consequent" });
+    expect(at(viaNext, 0).reason).toMatch(/§16\.14\.8 j\)/);
+    expect(at(run("a |-> b", tr({ a: "0", b: "0" })), 0).reason).toMatch(/§16\.14\.8 i\)/);
+    expect(at(run("a |=> b", tr({ a: "0", b: "0" })), 0)).toMatchObject({ status: "VACUOUS", vacuity: "antecedent" });
+    expect(at(run("a |=> b", tr({ a: "0", b: "0" })), 0).reason).toMatch(/§16\.14\.8 j\)/);
+    for (const e of [viaOverlap, viaNext]) expect(at(e, 0).reason).not.toMatch(/16\.14\.8 h/);
+  });
+
+  it("§16.14.8 d: `not not (a |-> b)` with a false is a vacuous success, not a pass", () => {
+    const e = run("not not (a |-> b)", tr({ a: "0", b: "0" }));
+    expect(at(e, 0)).toMatchObject({ status: "VACUOUS", vacuity: "not" });
+    expect(e.counts.PASS).toBe(0);
+    // With a true, the inner attempt is nonvacuous, so `not not` is a real pass or a real fail.
+    expect(at(run("not not (a |-> b)", tr({ a: "1", b: "1" })), 0)).toMatchObject({ status: "PASS" });
+    const realFail = at(run("not not (a |-> b)", tr({ a: "1", b: "0" })), 0);
+    expect(realFail.status).toBe("FAIL");
+    expect(realFail.vacuity).toBeUndefined();
+  });
+
+  it("§16.14.8 d: `not (a |-> b)` with a false is false but vacuous, and the reason records that reporting is up to the tool", () => {
+    const a0 = at(run("not (a |-> b)", tr({ a: "0", b: "0" })), 0);
+    expect(a0).toMatchObject({ status: "FAIL", vacuity: "not" });
+    expect(a0.reason).toMatch(/§16\.12\.3/);
+    expect(a0.reason).toMatch(/vacuous by §16\.14\.8 d\)/);
+    expect(a0.reason).toMatch(/fail action runs \(§16\.14\.1\)/);
+    expect(a0.reason).toMatch(/up to the tool/);
+    // A nonvacuous `not`: the antecedent matched and the consequent held.
+    expect(at(run("not (a |-> b)", tr({ a: "1", b: "1" })), 0).vacuity).toBeUndefined();
+  });
+
+  it("§16.14.8 e and f: `and` / `or` are vacuous only when both operands are", () => {
+    const both = tr({ a: "0", b: "0", c: "0" });
+    expect(at(run("(a |-> b) and (a |-> c)", both), 0)).toMatchObject({ status: "VACUOUS", vacuity: "and" });
+    expect(at(run("(a |-> b) or (a |-> c)", both), 0)).toMatchObject({ status: "VACUOUS", vacuity: "or" });
+    // One operand is vacuously true, the other is false but also vacuous: still vacuous (e), never a pass.
+    expect(at(run("(not (a |-> b)) or (a |-> c)", both), 0)).toMatchObject({ status: "VACUOUS", vacuity: "or" });
+    // `and` with a vacuous false operand and a vacuous true one is false and vacuous (f).
+    expect(at(run("(not (a |-> b)) and (a |-> c)", both), 0)).toMatchObject({ status: "FAIL", vacuity: "and" });
+    // One nonvacuous operand makes the whole attempt nonvacuous.
+    const mixed = tr({ a: "0", b: "0", d: "1" });
+    expect(at(run("(a |-> b) and d", mixed), 0)).toMatchObject({ status: "PASS" });
+    expect(at(run("(a |-> b) and d", mixed), 0).vacuity).toBeUndefined();
+  });
+});
+
+describe("sva-model: an operand's vacuity is never reported as the attempt's", () => {
+  const t = tr({ a: "0", b: "1", c: "1", d: "0" });
+
+  it("`(not (a |-> b)) and (c |-> b)`: a nonvacuous fail whose reason does not call the attempt vacuous (§16.14.8 f)", () => {
+    const a0 = at(run("(not (a |-> b)) and (c |-> b)", t), 0);
+    expect(a0.status).toBe("FAIL");
+    expect(a0.vacuity).toBeUndefined();
+    expect(a0.reason).not.toMatch(/attempt (as a whole )?is vacuous/i);
+    expect(a0.reason).not.toMatch(/up to the tool/);
+    expect(a0.reason).toMatch(/`\(not \(a \|-> b\)\)` is false \(§16\.12\.3\) and is itself evaluated vacuously \(§16\.14\.8 d\)/);
+    expect(a0.reason).toMatch(/`\(c \|-> b\)` was evaluated nonvacuously, so .* is nonvacuous \(§16\.14\.8 f\)/);
+  });
+
+  it("`(not (a |-> b)) or (c |-> d)`: a nonvacuous fail whose reason does not call the attempt vacuous (§16.14.8 e)", () => {
+    const a0 = at(run("(not (a |-> b)) or (c |-> d)", t), 0);
+    expect(a0.status).toBe("FAIL");
+    expect(a0.vacuity).toBeUndefined();
+    expect(a0.reason).not.toMatch(/attempt (as a whole )?is vacuous/i);
+    expect(a0.reason).toMatch(/`\(c \|-> d\)` was evaluated nonvacuously, so .* is nonvacuous \(§16\.14\.8 e\)/);
+  });
+
+  it("the attempt-level note names the top operator's item and appears once", () => {
+    const both = tr({ a: "0", b: "0", c: "0" });
+    const andV = at(run("(not (a |-> b)) and (a |-> c)", both), 0);
+    expect(andV).toMatchObject({ status: "FAIL", vacuity: "and" });
+    expect(andV.reason).toMatch(/attempt as a whole is vacuous by §16\.14\.8 f\)/);
+    expect(andV.reason.match(/up to the tool/g)).toHaveLength(1);
+    const notV = at(run("not (a |-> b)", both), 0);
+    expect(notV.reason.match(/up to the tool/g)).toHaveLength(1);
+    // Wrapped in a further `not`, the operand reason makes no fail-action claim.
+    const outer = at(run("not ((not (a |-> b)) and (c |-> b))", t), 0);
+    expect(outer.status).toBe("PASS");
+    expect(outer.reason).not.toMatch(/fail action runs/);
+  });
+
+  it("diagnoseAttempt: predicting PASS for a false but vacuous attempt names §16.14.8 d)", () => {
+    const parsed = parseSva("not (a |-> b)", ["a", "b"]);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const trace = tr({ a: "0", b: "0" });
+    const attempt = at(evaluateSva(parsed.spec, trace), 0);
+    const d = diagnoseAttempt(parsed.spec, attempt, "PASS");
+    expect(d.correct).toBe(false);
+    expect(d.message).toMatch(/^It fails at edge 0\. The operand of `not` was evaluated vacuously, and `not` keeps that \(§16\.14\.8 d\)/);
+    expect(d.message).toMatch(/not a pass or a vacuous success/);
+    // A nonvacuous failure keeps the short message.
+    const real = parseSva("a |-> b", ["a", "b"]);
+    if (!real.ok) throw new Error(real.error.message);
+    const ra = at(evaluateSva(real.spec, tr({ a: "1", b: "0" })), 0);
+    expect(diagnoseAttempt(real.spec, ra, "PASS").message).not.toMatch(/vacuous/);
+  });
+});
+
+describe("sva-model: diagnostics name the real cause of a vacuous attempt", () => {
+  const diag = (source: string, trace: SvaTrace, predicted: AttemptStatus) => {
+    const parsed = parseSva(source, Object.keys(trace.signals));
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const e = evaluateSva(parsed.spec, trace);
+    return { attempt: at(e, 0), d: diagnoseAttempt(parsed.spec, at(e, 0), predicted) };
+  };
+
+  it("nested `c |-> (a |-> b)`: the antecedent matched, so the message does not say it did not", () => {
+    const t = tr({ c: "1", a: "0", b: "0" });
+    for (const predicted of ["PASS", "FAIL"] as const) {
+      const { attempt, d } = diag("c |-> (a |-> b)", t, predicted);
+      expect(attempt.status).toBe("VACUOUS");
+      expect(d.correct).toBe(false);
+      expect(d.message).toMatch(/The antecedent matched, but every consequent attempt it started was itself vacuous \(§16\.14\.8 i, j\)/);
+      expect(d.message).not.toMatch(/antecedent did not match/);
+    }
+    expect(diag("c |-> (a |-> b)", t, "PASS").d.message).toMatch(/only a vacuous success/);
+  });
+
+  it("`(a |-> b) and (a |-> c)`: the message cites §16.14.8 f, not a missing antecedent", () => {
+    const { d } = diag("(a |-> b) and (a |-> c)", tr({ a: "0", b: "0", c: "0" }), "FAIL");
+    expect(d.message).toMatch(/Both operands of `and` were evaluated vacuously \(§16\.14\.8 f\)/);
+    expect(d.message).not.toMatch(/antecedent did not match/);
+    expect(diag("(a |-> b) or (a |-> c)", tr({ a: "0", b: "0", c: "0" }), "PASS").d.message).toMatch(/§16\.14\.8 e\)/);
+    expect(diag("not not (a |-> b)", tr({ a: "0", b: "0" }), "PASS").d.message).toMatch(/§16\.14\.8 d\)/);
+  });
+
+  it("a plain implication with a false antecedent still says so", () => {
+    const { d } = diag("a |-> b", tr({ a: "0", b: "0" }), "FAIL");
+    expect(d.message).toMatch(/^The antecedent did not match, so the consequent was never checked \(§16\.14\.8 i, j\)/);
+  });
+
+  it("predicting VACUOUS for a vacuous but false `not` explains that a vacuous success needs a true result", () => {
+    const { attempt, d } = diag("not (a |-> b)", tr({ a: "0", b: "0" }), "VACUOUS");
+    expect(attempt.status).toBe("FAIL");
+    expect(d.message).toMatch(/the attempt is vacuous, but the property is false/);
+    expect(d.message).toMatch(/does not say how a tool reports a vacuous failure/);
+  });
+
+  it("attemptStatusPhrase is built from statusText", async () => {
+    const { attemptStatusPhrase, statusText } = await import("@/lib/sva-model");
+    expect(attemptStatusPhrase({ status: "VACUOUS", end: 3 })).toBe(statusText.VACUOUS);
+    expect(attemptStatusPhrase({ status: "FAIL", end: 8 })).toBe("fail at edge 8");
+    expect(attemptStatusPhrase({ status: "FAIL", end: 0, vacuity: "not" })).toBe("fail at edge 0 (vacuous evaluation)");
+    expect(attemptStatusPhrase({ status: "PASS", end: 2 })).toBe("pass at edge 2");
+  });
+});
+
+describe("sva-model: renaming checks reserved keywords and every preset (§5.6.2, Annex B)", () => {
+  it("SV_RESERVED_KEYWORDS holds the 248 words of Table B.1", async () => {
+    const { SV_RESERVED_KEYWORDS } = await import("@/lib/sva-model");
+    expect(SV_RESERVED_KEYWORDS.size).toBe(248);
+    for (const w of ["always", "if", "until", "first_match", "s_eventually", "property", "sequence", "assert", "logic", "wire", "int", "begin", "and", "xor"]) {
+      expect(SV_RESERVED_KEYWORDS.has(w), w).toBe(true);
+    }
+    expect(SV_RESERVED_KEYWORDS.has("gnt")).toBe(false);
+  });
+
+  it("{req: 'always'} and {req: 'logic'} are ignored, so the preset keeps parsing as legal SystemVerilog", async () => {
+    const { renameScenario } = await import("@/lib/sva-model");
+    const fixed = svaLearnScenarios.find((s) => s.id === "fixed-delay")!;
+    for (const kw of ["always", "logic", "if", "until", "first_match", "s_eventually", "property", "sequence", "assert", "wire", "int", "begin"]) {
+      const r = renameScenario(fixed, { req: kw });
+      expect(r.ignored, kw).toEqual([`req -> ${kw}`]);
+      expect(r.scenario).toBe(fixed);
+    }
+  });
+
+  it("one map is checked against every preset: {req: 'busy'} clashes in goto-throughout, so it is ignored everywhere", async () => {
+    const { renameTracePresets } = await import("@/lib/sva-model");
+    const r = renameTracePresets({ req: "busy" });
+    expect(r.ignored).toEqual(["req -> busy"]);
+    expect(r.learn.find((s) => s.id === "fixed-delay")!.property).toBe("req |-> ##2 ack");
+    expect(r.learn.find((s) => s.id === "goto-throughout")!.signals).toContain("req");
+
+    const ok = renameTracePresets({ ack: "gnt" });
+    expect(ok.ignored).toEqual([]);
+    expect(ok.learn.find((s) => s.id === "fixed-delay")!.property).toBe("req |-> ##2 gnt");
+    expect(ok.debug.every((c) => !c.signals.includes("ack"))).toBe(true);
+    expect(ok.reqGnt2.property).toBe("req |-> ##2 gnt");
+
+    expect(renameTracePresets({ ackk: "x" }).ignored).toEqual(["ackk -> x"]);
+  });
+
+  it("renaming rewrites the article before the name and the challenge prompt names the signal", async () => {
+    const { renameTracePresets } = await import("@/lib/sva-model");
+    const r = renameTracePresets({ ack: "gnt" });
+    const labels = r.debug.flatMap((c) => c.options.map((o) => o.label)).join(" | ");
+    expect(labels).toMatch(/so a gnt at exactly \+2/);
+    expect(labels).not.toMatch(/\ban gnt\b/);
+
+    const g = renameTracePresets({ gnt: "ack" });
+    expect(g.reqGnt2.challenge!.prompt).toBe("Make the assertion fail while ack is 1 at some edge: set ack to 1 one edge early.");
+    expect(g.reqGnt2.challenge!.prompt).not.toMatch(/grant/);
+    expect(g.reqGnt2.challenge!.consequent).toBe("ack");
+  });
+});

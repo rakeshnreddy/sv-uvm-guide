@@ -35,11 +35,17 @@ one does not update them.
   KeywordSetExplorer, CounterBenchLab, RunEndingExplorer, FileReadCursorVisualizer, the container-lab extensions, XCheckLab,
   TimingControlExplorer), and their embeds in ten T1 lessons. 19 of 48 components are built. Measured: about 1.5M worker
   tokens per new component (101 agents for 8), and none escalated.
+- checkpoint-21: components batch 4 (FixPathDecisionLab, IpcSmellClinic, ArraySelectExplorer, ExpressionTreeExplorer, the
+  SvaSequenceWaveformVisualizer and LogicStateDiagram extensions) and their embeds in eight T1 lessons. 25 of 48 built.
+  The same checkpoint carries the extras (`phase6a-extras.js`): /resources, /history, /knowledge-hub, /assessment and
+  /projects rebuilt with real content and unhidden, and seven labs made available (constructs-1, common-1, fifo-1,
+  assertions-1, arbiter-1, dma-1, and the new M5 lab multi-agent-vseq). /projects needed one closing pass. The lab links
+  the integration added to lessons were reviewed separately (`extras-closeout`), because the item reviews do not cover them.
 
 **Held:** nothing. `components/finish-2026-11-10` holds the finish-pass history only; everything on it is released.
 
-**Next order:** the extras (`phase6a-extras.js`, run `wf_93a61217-ede` started 2026-11-10), components batch 4 from
-`make-workflow-args.py components N` (29 left; build with `make-finish-held.py --build`, then `make-6a-run.py --embed`), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
+**Next order:** components batch 5 (net-driver-legality, verification-methods-explorer and closure-budget-lab were building on
+`components/batch3-2026-11-10` at the time of writing), then the rest from `make-workflow-args.py components N` (20 left after it; build with `make-finish-held.py --build`, then `make-6a-run.py --embed`), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
 
 ## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
 

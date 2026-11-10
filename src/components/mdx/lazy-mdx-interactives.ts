@@ -100,6 +100,10 @@ export const lazyMdxInteractiveNames = [
   "FileReadCursorVisualizer",
   "XCheckLab",
   "TimingControlExplorer",
+  "FixPathDecisionLab",
+  "IpcSmellClinic",
+  "ArraySelectExplorer",
+  "ExpressionTreeExplorer",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];

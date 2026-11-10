@@ -4,6 +4,7 @@ import Link from 'next/link';
 import manifest from '../../content/curriculum/curriculum.manifest.json';
 import ShortcutsHelpButton from '@/components/search/ShortcutsHelpButton';
 import { moduleHref } from '@/lib/curriculum-data';
+import { INTERVIEW_PREP_HREF } from '@/lib/site-links';
 
 const linkClass =
   'rounded px-1 py-0.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -26,7 +27,7 @@ const Footer = ({ showShortcuts = false }: FooterProps) => {
   return (
     <footer className="border-t border-border bg-muted/40 text-sm text-muted-foreground">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
-        <nav aria-label="Site map" className="grid gap-8 sm:grid-cols-3">
+        <nav aria-label="Site map" className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">Learn</h2>
             <ul className="mt-3 space-y-2">
@@ -42,6 +43,11 @@ const Footer = ({ showShortcuts = false }: FooterProps) => {
                   </Link>
                 </li>
               ))}
+              <li>
+                <Link href="/knowledge-hub" className={linkClass}>
+                  Knowledge hub
+                </Link>
+              </li>
             </ul>
           </div>
           <div>
@@ -55,6 +61,41 @@ const Footer = ({ showShortcuts = false }: FooterProps) => {
               <li>
                 <Link href="/exercises" className={linkClass}>
                   Exercises
+                </Link>
+              </li>
+              <li>
+                <Link href={INTERVIEW_PREP_HREF} className={linkClass}>
+                  Interview prep
+                </Link>
+              </li>
+              <li>
+                <Link href="/assessment" className={linkClass}>
+                  Self-assessment
+                </Link>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">Reference</h2>
+            <ul className="mt-3 space-y-2">
+              <li>
+                <Link href="/resources" className={linkClass}>
+                  Resources
+                </Link>
+              </li>
+              <li>
+                <Link href="/learning-strategies" className={linkClass}>
+                  Learning strategies
+                </Link>
+              </li>
+              <li>
+                <Link href="/history" className={linkClass}>
+                  History of SystemVerilog and UVM
+                </Link>
+              </li>
+              <li>
+                <Link href="/projects" className={linkClass}>
+                  Projects
                 </Link>
               </li>
             </ul>
