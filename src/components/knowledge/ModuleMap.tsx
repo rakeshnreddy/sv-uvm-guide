@@ -99,7 +99,7 @@ export default function ModuleMap({ graph, tier, onTierChange, selectedId, onSel
       >
         {lanes.map((lane) => (
           <div key={lane.lane} className="min-w-0">
-            <h3 lang="en" className="mb-2 min-h-8 hyphens-auto break-words text-[11px] font-semibold uppercase leading-tight tracking-wider text-muted-foreground">
+            <h3 lang="en" className="mb-2 min-h-8 hyphens-auto break-words text-label text-foreground">
               {lane.lane}
             </h3>
             <ul className="space-y-2">
@@ -121,7 +121,7 @@ export default function ModuleMap({ graph, tier, onTierChange, selectedId, onSel
                       onClick={() => onSelect(node)}
                       onFocus={() => setFocusId(node.id)}
                       className={cn(
-                        'flex min-h-11 w-full min-w-0 flex-col items-start rounded-md border bg-card px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
+                        'flex min-h-11 w-full min-w-0 flex-col items-start rounded-lg border bg-card px-2 py-1.5 text-left transition-colors duration-150 ease-bench focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
                         isSelected
                           ? 'border-2 border-cyan-600 bg-cyan-500/15 dark:border-cyan-400'
                           : isPrerequisite
@@ -137,12 +137,12 @@ export default function ModuleMap({ graph, tier, onTierChange, selectedId, onSel
                         {node.name.slice((node.code?.length ?? 0) + 2)}
                       </span>
                       {isPrerequisite && (
-                        <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                        <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
                           <span aria-hidden="true">▲ </span>first<span className="sr-only">: needed before {selected?.code}</span>
                         </span>
                       )}
                       {isDependent && (
-                        <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                        <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
                           <span aria-hidden="true">▼ </span>next<span className="sr-only">: builds on {selected?.code}</span>
                         </span>
                       )}
@@ -183,7 +183,7 @@ export function ModuleDetails({ graph, module, onSelect }: ModuleDetailsProps) {
     <button
       type="button"
       onClick={() => onSelect(node)}
-      className="min-h-10 w-full rounded-md border border-border px-3 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="min-h-10 w-full rounded-lg border border-border px-3 py-1.5 text-left text-sm transition-colors duration-150 ease-bench hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {node.name}
       {node.tier !== module.tier && <span className="text-muted-foreground"> ({node.tier})</span>}
@@ -191,12 +191,12 @@ export function ModuleDetails({ graph, module, onSelect }: ModuleDetailsProps) {
   );
 
   return (
-    <section aria-labelledby={headingId} className="rounded-lg border border-border bg-card p-4 sm:p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <section aria-labelledby={headingId} className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5">
+      <p className="text-xs font-medium text-subtle">
         {module.tier} · {module.lane}
         {module.track === 'elective' ? ' · elective' : ''}
       </p>
-      <h3 id={headingId} className="mt-1 text-xl font-bold">
+      <h3 id={headingId} className="mt-1 text-h3 text-foreground">
         {module.name}
       </h3>
       <p className="mt-2 text-muted-foreground">{module.description}</p>
@@ -273,7 +273,7 @@ export function ModuleDetails({ graph, module, onSelect }: ModuleDetailsProps) {
                   type="button"
                   aria-haspopup="dialog"
                   onClick={() => setActiveConcept(term)}
-                  className="min-h-10 rounded-full border border-border px-3 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-h-10 rounded border border-border bg-muted px-3 text-sm text-foreground transition-colors duration-150 ease-bench hover:border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {term.name}
                 </button>

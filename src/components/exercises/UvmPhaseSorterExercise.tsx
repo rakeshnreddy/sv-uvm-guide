@@ -58,6 +58,13 @@ export function evaluatePhaseOrder(items: Phase[]): boolean {
   return items.every((item, i) => i === 0 || items[i - 1].correctOrder <= item.correctOrder);
 }
 
+/** The phase name never overflows: it grows into the free width, keeps at least 9rem before the controls wrap below, and breaks anywhere as a last resort. */
+export const PHASE_NAME_CLASS =
+  "min-w-0 flex-1 basis-[9rem] font-mono text-[12px] leading-5 [font-variant-ligatures:none] [overflow-wrap:anywhere]";
+/** Direction and move buttons: 40 px square targets. */
+export const PHASE_CONTROL_CLASS =
+  "inline-flex h-10 min-w-10 items-center justify-center rounded-md border px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 const laneOf = (items: Phase[], lane: Lane) => items.filter((p) => p.lane === lane);
 
 function SortableRow({
@@ -85,7 +92,7 @@ function SortableRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex flex-wrap items-center gap-2 rounded-lg border bg-card px-2 py-1.5 text-sm text-foreground",
+        "flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border bg-card px-2 py-1.5 text-sm text-foreground",
         isDragging && "opacity-70 shadow-lg",
         mark === "ok" && "border-emerald-500/60",
         mark === "bad" && "border-rose-500/60",
@@ -97,42 +104,44 @@ function SortableRow({
         {...attributes}
         {...listeners}
         aria-label={`Drag ${phase.name}`}
-        className="inline-flex h-9 w-8 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex h-10 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <GripVertical size={16} aria-hidden />
       </button>
-      <span className="min-w-0 flex-1 font-mono text-[12px] [font-variant-ligatures:none]">
+      {/* The name takes the row's free width; when it cannot fit beside the controls they wrap onto their own line. */}
+      <span data-testid="phase-name" className={PHASE_NAME_CLASS}>
         {mark === "ok" ? <span aria-label="in order">✓ </span> : mark === "bad" ? <span aria-label="out of order">✕ </span> : null}
         {phase.name}
       </span>
-      {isRun ? (
-        <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-[11px]">∥ task</span>
-      ) : onDirection ? (
-        <span role="group" aria-label={`Direction of ${phase.name}`} className="inline-flex gap-1">
-          {(["top-down", "bottom-up"] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={direction === d}
-              aria-label={`${phase.name} runs ${d}`}
-              onClick={() => onDirection(d)}
-              className={cn(
-                "inline-flex h-9 min-w-9 items-center justify-center rounded-md border px-2 text-[13px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                direction === d ? "border-cyan-500 bg-cyan-500/15" : "border-border/70 text-muted-foreground hover:bg-muted",
-              )}
-            >
-              {d === "top-down" ? "↓" : "↑"}
-            </button>
-          ))}
-        </span>
-      ) : null}
-      <span className="inline-flex gap-1">
+      <span data-testid="phase-controls" className="ml-auto inline-flex shrink-0 items-center gap-1">
+        {isRun ? (
+          <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-xs">∥ task</span>
+        ) : onDirection ? (
+          <span role="group" aria-label={`Direction of ${phase.name}`} className="inline-flex gap-1">
+            {(["top-down", "bottom-up"] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={direction === d}
+                aria-label={`${phase.name} runs ${d}`}
+                onClick={() => onDirection(d)}
+                className={cn(
+                  PHASE_CONTROL_CLASS,
+                  "text-[13px] font-semibold",
+                  direction === d ? "border-cyan-500 bg-cyan-500/15" : "border-input text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {d === "top-down" ? "↓" : "↑"}
+              </button>
+            ))}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={() => onMove(-1)}
           disabled={index === 0}
           aria-label={`Move ${phase.name} up`}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
+          className={cn(PHASE_CONTROL_CLASS, "border-input hover:bg-muted disabled:opacity-30")}
         >
           <ArrowUp size={14} aria-hidden />
         </button>
@@ -141,7 +150,7 @@ function SortableRow({
           onClick={() => onMove(1)}
           disabled={index === count - 1}
           aria-label={`Move ${phase.name} down`}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
+          className={cn(PHASE_CONTROL_CLASS, "border-input hover:bg-muted disabled:opacity-30")}
         >
           <ArrowDown size={14} aria-hidden />
         </button>

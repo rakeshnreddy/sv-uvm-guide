@@ -35,7 +35,7 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
         <Icon aria-hidden="true" className="h-7 w-7 shrink-0 text-primary" />
         <p className={eyebrow}>{route.name} route</p>
       </div>
-      <h3 id={headingId} className="mt-3 text-2xl font-bold text-foreground">
+      <h3 id={headingId} className="mt-3 text-h3 text-foreground">
         {route.tagline}
       </h3>
       <p className="mt-2 text-sm text-muted-foreground">{route.audience}</p>
@@ -52,7 +52,8 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
       </ol>
 
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-6">
-        <Link href={route.cta.href} className={primaryAction}>
+        {/* One filled accent action across the three cards: the Junior route's. */}
+        <Link href={route.cta.href} className={route.id === 'junior' ? primaryAction : secondaryAction}>
           {route.cta.label}
           <ArrowRight aria-hidden="true" className="h-4 w-4" />
         </Link>

@@ -14,9 +14,28 @@ function firstLessonHref(): string {
   return tier && section && topic ? lessonPath([tier.slug, section.slug, topic.slug]) : "/curriculum";
 }
 
-/** At least 40 px tall, so each link is an easy tap target on a phone. */
-const linkClass =
-  "inline-flex min-h-10 items-center font-semibold text-foreground underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
+/** The shared accent link style: the accent colour, underlined on hover. */
+const accentLinkClass =
+  "rounded-sm font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/**
+ * A link that stands on its own line: a block whose padding makes it at least
+ * 40 px tall (an easy tap target on a phone), so the line height of the text
+ * around it never changes.
+ */
+export const BLOCK_LINK_CLASS = `block w-fit max-w-full py-2.5 leading-5 ${accentLinkClass}`;
+
+/** One way back: a block link on its own line, then what it leads to. */
+function WayBack({ href, label, description }: { href: string; label: string; description: string }) {
+  return (
+    <li>
+      <Link href={href} className={BLOCK_LINK_CLASS}>
+        {label}
+      </Link>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </li>
+  );
+}
 
 /**
  * "Find your way back": the curriculum overview, the first lesson and the
@@ -26,26 +45,11 @@ const linkClass =
 export function FindYourWayBack() {
   return (
     <div className="mt-6">
-      <h2 className="text-lg font-semibold text-foreground">Find your way back</h2>
-      <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-        <li>
-          <Link href="/curriculum" className={linkClass}>
-            Curriculum overview
-          </Link>
-          : every tier, module and lesson in order.
-        </li>
-        <li>
-          <Link href={firstLessonHref()} className={linkClass}>
-            Start at the first lesson
-          </Link>{" "}
-          if you are new to verification.
-        </li>
-        <li>
-          <Link href="/practice" className={linkClass}>
-            Practice hub
-          </Link>
-          : labs, exercises and interactive models.
-        </li>
+      <h2 className="text-h3 text-foreground">Find your way back</h2>
+      <ul className="mt-2 space-y-3">
+        <WayBack href="/curriculum" label="Curriculum overview" description="Every tier, module and lesson in order." />
+        <WayBack href={firstLessonHref()} label="Start at the first lesson" description="If you are new to verification." />
+        <WayBack href="/practice" label="Practice hub" description="Labs, exercises and interactive models." />
       </ul>
     </div>
   );
@@ -69,12 +73,14 @@ export default function CurriculumNotFound() {
 
   return (
     <section aria-labelledby="not-found-title" className="mx-auto w-full max-w-3xl py-6" data-testid="not-found">
-      <div className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-sm sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Error 404</p>
-        <h1 id="not-found-title" className="mt-2 text-3xl font-bold text-foreground">
+      <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
+        <p data-testid="not-found-eyebrow" className="text-label text-subtle">
+          Error 404
+        </p>
+        <h1 id="not-found-title" className="mt-2 text-h1 text-foreground">
           Page not found
         </h1>
-        <p className="mt-3 text-base text-muted-foreground">This page could not be found.</p>
+        <p className="mt-3 text-lead text-muted-foreground">This page could not be found.</p>
         {pathname ? (
           <p className="mt-1 break-all text-sm text-muted-foreground">
             Requested address: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{pathname}</code>
@@ -83,11 +89,11 @@ export default function CurriculumNotFound() {
 
         {suggestions.length > 0 ? (
           <div className="mt-6">
-            <h2 className="text-lg font-semibold text-foreground">Did you mean</h2>
-            <ul className="mt-2 space-y-2">
+            <h2 className="text-h3 text-foreground">Did you mean</h2>
+            <ul className="mt-2">
               {suggestions.map((suggestion) => (
                 <li key={suggestion.href}>
-                  <Link href={suggestion.href} className={linkClass}>
+                  <Link href={suggestion.href} className={BLOCK_LINK_CLASS}>
                     {suggestion.title.startsWith(`${suggestion.code}:`)
                       ? suggestion.title
                       : `${suggestion.code}: ${suggestion.title}`}
@@ -101,7 +107,7 @@ export default function CurriculumNotFound() {
         <FindYourWayBack />
 
         <div className="mt-6">
-          <h2 className="text-lg font-semibold text-foreground">Search tips</h2>
+          <h2 className="text-h3 text-foreground">Search tips</h2>
           <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
               Search by module code, such as <kbd className="font-mono">I-SV-5</kbd>, or by a term the lesson teaches, such as{" "}

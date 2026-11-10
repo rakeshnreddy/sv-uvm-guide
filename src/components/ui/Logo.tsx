@@ -1,25 +1,21 @@
-import React from 'react';
+import React from "react";
 
+/**
+ * The wordmark, set in live text: "SV/UVM" in the mono face (like a signal
+ * name) and "Hub" in the sans face, 17 px on one line. The links that wrap it
+ * carry their own name ("SV/UVM Hub home"); the image role keeps the
+ * wordmark's own name, "SV/UVM Hub logo".
+ */
 const Logo = () => {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 100 20"
-      className="text-accent w-full max-w-[150px] h-auto"
+    <span
       role="img"
       aria-label="SV/UVM Hub logo"
+      className="inline-flex items-baseline gap-[0.3em] whitespace-nowrap text-[17px] leading-6"
     >
-      <text
-        x="0"
-        y="15"
-        fontFamily="var(--font-cal-sans)"
-        fontSize="16"
-        fill="hsl(var(--primary))"
-        className="font-bold"
-      >
-        SV/UVM Hub
-      </text>
-    </svg>
+      <span className="font-mono font-semibold text-foreground">SV/UVM</span>
+      <span className="font-sans font-medium text-muted-foreground">Hub</span>
+    </span>
   );
 };
 

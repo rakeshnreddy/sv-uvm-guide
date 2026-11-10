@@ -54,16 +54,17 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
     <article
       aria-labelledby={titleId}
       className={cn(
-        'flex h-full min-w-0 flex-col rounded-2xl border bg-card p-4 text-card-foreground shadow-sm',
-        elective ? 'border-2 border-dashed border-border' : 'border-border',
-        here && 'ring-2 ring-primary',
+        'flex h-full min-w-0 flex-col rounded-xl border border-border p-4 text-card-foreground shadow-card',
+        elective && 'border-2 border-dashed',
+        // The module the learner is in: the raised surface with a 2 px accent edge.
+        here ? 'border-l-2 border-l-primary bg-muted' : 'bg-card',
       )}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="font-mono font-semibold text-muted-foreground">{module.code}</span>
+        <span className="font-mono text-label text-subtle">{module.code}</span>
         {elective && <span className={cn(chip, 'border-dashed border-border text-muted-foreground')}>Elective</span>}
         {here ? (
-          <span className={cn(chip, 'border-primary bg-primary text-primary-foreground')}>
+          <span className={cn(chip, 'border-primary bg-card text-foreground')}>
             <MapPin className="h-3.5 w-3.5" aria-hidden="true" /> You are here
           </span>
         ) : (
@@ -75,11 +76,11 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
         )}
       </div>
 
-      <Heading id={titleId} className="mt-2 text-base font-semibold leading-snug text-foreground">
+      <Heading id={titleId} className="mt-2 text-h4 text-foreground">
         <Link
           href={module.href}
           aria-current={here ? 'location' : undefined}
-          className={cn('rounded-sm underline-offset-4 hover:text-primary hover:underline [overflow-wrap:anywhere]', focusRing)}
+          className={cn('rounded-sm underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline motion-reduce:transition-none [overflow-wrap:anywhere]', focusRing)}
         >
           <span className="sr-only">{module.code}: </span>
           {module.displayTitle}
@@ -124,7 +125,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
             <dd>
               <ul className="flex flex-wrap gap-1.5">
                 {module.milestones.map((id) => (
-                  <li key={id} className={cn(chip, 'border-border font-mono text-foreground')} title={milestoneNames[id]}>
+                  <li key={id} className={cn(chip, 'border-border font-mono text-muted-foreground')} title={milestoneNames[id]}>
                     {id}
                     {milestoneNames[id] && <span className="sr-only">: {milestoneNames[id]}</span>}
                   </li>
@@ -159,7 +160,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
             aria-controls={lessonsId}
             onClick={() => setShowLessons((open) => !open)}
             className={cn(
-              'inline-flex min-h-[40px] items-center gap-1 rounded-md px-1 text-sm font-medium text-primary hover:underline',
+              'inline-flex min-h-[40px] items-center gap-1 rounded-lg px-1 text-sm font-medium text-primary underline-offset-4 hover:underline',
               focusRing,
             )}
           >

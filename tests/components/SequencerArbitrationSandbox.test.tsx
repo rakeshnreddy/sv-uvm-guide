@@ -74,4 +74,14 @@ describe("SequencerArbitrationSandbox", () => {
     expect(screen.getByRole("radio", { name: "UVM_SEQ_ARB_WEIGHTED" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText(/each request's chance is its priority divided by the sum/)).toBeInTheDocument();
   });
+
+  it("draws every select with an opaque fill and the input boundary", () => {
+    const { container } = render(<SequencerArbitrationSandbox />);
+    const selects = Array.from(container.querySelectorAll("select"));
+    expect(selects.length).toBeGreaterThan(0);
+    for (const select of selects) {
+      expect(select).toHaveClass("border-input", "bg-background");
+      expect(select.className).not.toMatch(/bg-background\/|border-border/);
+    }
+  });
 });

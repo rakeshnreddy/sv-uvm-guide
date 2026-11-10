@@ -8,14 +8,14 @@ import SequencerArbitrationSandbox from '@/components/exercises/SequencerArbitra
 const practice = requirePracticePage('/exercises/sequencer-arbitration');
 
 export const metadata = {
-  title: 'Sequencer Arbitration Sandbox',
+  title: practice.title,
   description:
     'Predict UVM sequencer grants: the five arbitration modes, priorities, lock() and grab(), checked against a model of uvm-core 2020.3.1.',
 };
 
 const SequencerArbitrationPage: React.FC = () => {
   return (
-    <InfoPage title="Sequencer Arbitration Sandbox">
+    <InfoPage gutter={false} title={practice.title}>
       <LearnInLesson item={practice} />
       <p className="mb-6 text-muted-foreground">
         Three sequences share one driver. Choose a scenario or edit the sequences, predict which one the sequencer grants, then read the
@@ -23,7 +23,9 @@ const SequencerArbitrationPage: React.FC = () => {
         driver calls <code>get_next_item()</code>, a <code>lock()</code> is held until <code>unlock()</code>, and <code>grab()</code> jumps to
         the front of the queue.
       </p>
-      <SequencerArbitrationSandbox />
+      <div className="not-prose">
+        <SequencerArbitrationSandbox />
+      </div>
     </InfoPage>
   );
 };

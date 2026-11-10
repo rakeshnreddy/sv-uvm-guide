@@ -16,19 +16,20 @@ export const metadata: Metadata = {
 
 export default function SystemVerilog3DVisualizationPage() {
   return (
-    <div className="min-h-screen bg-background">
+    // One container for the header and the sandbox, so their edges line up.
+    <div className="mx-auto w-full max-w-6xl pb-8">
       {/* Rendered on the server: only the sandbox reads the ?scene= parameter, so only it waits for the client. */}
-      <div className="container mx-auto px-4 pt-6">
-        <h1 className="text-2xl font-semibold text-foreground">{practice.title}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+      <header data-testid="sv3d-header">
+        <h1 className="text-h1 text-foreground">{practice.title}</h1>
+        <p className="mt-2 max-w-2xl text-lead text-muted-foreground">
           Run real array, queue and associative-array operations and see the resulting state in 3D or as text.
         </p>
         {/* "Learn this in": the lesson that teaches these structures, from the practice map (G30-PRAC-02). */}
         <LearnInLesson item={practice} className="mb-4 mt-4" />
-      </div>
+      </header>
       <Suspense
         fallback={
-          <div className="container mx-auto px-4 py-4" aria-hidden="true">
+          <div className="py-4" aria-hidden="true">
             <div className="h-96 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />
           </div>
         }

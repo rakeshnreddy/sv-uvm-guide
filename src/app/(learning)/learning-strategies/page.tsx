@@ -27,15 +27,15 @@ function GuideLink({ href, children }: { href: string; children: React.ReactNode
   );
 }
 
-const sectionHeading = "mt-10 mb-3 text-2xl font-semibold";
+const sectionHeading = "mt-10 mb-3 text-h2 text-foreground";
 
 const LearningStrategiesPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title="Learning strategies"
       description="A short guide to studying SystemVerilog and UVM so it stays with you, and to the study tools on this site."
     >
-      <p className="lead">
+      <p className="lead text-lead text-muted-foreground">
         Reading a lesson feels productive, but most of what you read once fades within days. Two habits make the
         difference: pulling ideas back out of memory instead of rereading them, and coming back to them over several
         days instead of in one sitting. Every lesson here ends with tools for both.

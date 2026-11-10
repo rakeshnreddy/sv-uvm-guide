@@ -30,6 +30,7 @@ import {
   UNTITLED_NOTE,
 } from '@/lib/notebook-export';
 import { cn } from '@/lib/utils';
+import { inlineLink } from '@/components/curriculum/overview-ui';
 
 /** Edits are saved this long after the learner stops typing. */
 export const NOTEBOOK_AUTOSAVE_DELAY_MS = 600;
@@ -39,12 +40,13 @@ const PREVIEW_CHARS = 160;
 
 const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background';
-const textLink = cn('rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80', focusRing);
-const panelClass = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
+/** The accent link style, the same as the review page's. */
+const textLink = inlineLink;
+const panelClass = 'min-w-0 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
 const fieldClass =
-  'w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
-const errorText = 'font-medium text-red-700 dark:text-red-300';
-const warningText = 'font-medium text-amber-800 dark:text-amber-200';
+  'w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+const errorText = 'font-medium text-danger';
+const warningText = 'font-medium text-warning';
 
 const formatCount = (value: number) => value.toLocaleString('en-US');
 
@@ -216,10 +218,10 @@ function NoteEditor({ entry, titleInputRef, onDeleted }: NoteEditorProps) {
 
   return (
     <div aria-labelledby={headingId} role="region" className={panelClass}>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="text-xs font-medium text-subtle">
         {NOTEBOOK_KIND_LABELS[entry.kind]}
       </p>
-      <h2 id={headingId} className="mt-1 text-xl font-semibold text-foreground [overflow-wrap:anywhere]">
+      <h2 id={headingId} className="mt-1 text-h3 text-foreground [overflow-wrap:anywhere]">
         {title.trim() || UNTITLED_NOTE}
       </h2>
       {lessonHref ? (
@@ -283,7 +285,7 @@ function NoteEditor({ entry, titleInputRef, onDeleted }: NoteEditorProps) {
                 type="button"
                 size="sm"
                 onClick={confirmDelete}
-                className="bg-red-700 text-white hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-700"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 Yes, delete entry
               </Button>
@@ -434,7 +436,7 @@ export default function NotebookPageClient() {
           {!hydrated ? (
             <p className="mt-4 text-sm text-muted-foreground">Loading the entries saved in this browser…</p>
           ) : entries.length === 0 ? (
-            <div className="mt-4 rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+            <div className="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
               <p>Explanations you save in a lesson's “Teach it back” section appear here.</p>
               <p className="mt-2">
                 <Link href="/curriculum" className={textLink}>
@@ -453,15 +455,15 @@ export default function NotebookPageClient() {
                   <li
                     key={entry.id}
                     className={cn(
-                      'relative min-w-0 rounded-2xl border p-4 transition-colors motion-reduce:transition-none',
-                      isSelected ? 'border-primary bg-primary/5' : 'border-border bg-background/60 hover:bg-muted/50',
+                      'relative min-w-0 rounded-xl border p-4 transition-colors duration-150 ease-bench motion-reduce:transition-none',
+                      isSelected ? 'border-border border-l-2 border-l-primary bg-muted' : 'border-border bg-background hover:bg-muted',
                     )}
                   >
                     <button
                       type="button"
                       onClick={() => openEntry(entry.id)}
                       aria-current={isSelected ? 'true' : undefined}
-                      className="block w-full rounded-sm text-left font-semibold text-foreground [overflow-wrap:anywhere] after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
+                      className="block w-full rounded-sm text-left font-semibold text-foreground [overflow-wrap:anywhere] after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
                     >
                       {notebookEntryTitle(entry)}
                     </button>

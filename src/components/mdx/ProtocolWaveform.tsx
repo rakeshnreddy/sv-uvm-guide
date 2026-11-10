@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { WaveDromSurfaceStyle } from './WaveDromSurfaceStyle';
 import {
   createWaveDromIndex,
   parseWaveDromSource,
@@ -70,21 +71,29 @@ export function ProtocolWaveform({
   return (
     <figure
       className={cn(
-        'not-prose my-6 overflow-hidden rounded-2xl border border-border/60 bg-card/80 shadow-sm',
+        'not-prose my-6 overflow-hidden rounded-2xl border border-border bg-card shadow-card',
         className,
       )}
       data-testid="protocol-waveform"
     >
       {title && (
-        <div className="border-b border-border/50 px-5 py-4">
-          <h3 id={titleId} className="text-base font-semibold text-foreground sm:text-lg">
+        <div className="border-b border-border px-5 py-4">
+          <h3 id={titleId} className="text-h4 font-semibold text-foreground">
             {title}
           </h3>
         </div>
       )}
 
       <div className="px-5 py-5">
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 shadow-inner shadow-slate-200/60">
+        <WaveDromSurfaceStyle />
+        <div
+          data-wavedrom-surface=""
+          className={cn(
+            'overflow-x-auto rounded-xl border border-border p-4',
+            // The error note sits on the card; the drawn diagram sits on the always-dark code surface.
+            errorMessage ? 'bg-card' : 'bg-code-surface',
+          )}
+        >
           <div
             ref={outputRef}
             aria-describedby={describedBy}
@@ -100,22 +109,22 @@ export function ProtocolWaveform({
           {errorMessage && (
             <div
               aria-live="polite"
-              className="min-w-[20rem] rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"
+              className="min-w-[20rem] rounded-lg border border-warning bg-warning-subtle p-4 text-sm text-foreground"
               data-testid="protocol-waveform-error"
               role="status"
             >
-              <p className="font-semibold">{FALLBACK_HEADING}</p>
-              <p className="mt-1 text-amber-900">
+              <p className="font-semibold text-foreground">{FALLBACK_HEADING}</p>
+              <p className="mt-1 text-muted-foreground">
                 Check the WaveDrom spec and try again.
               </p>
-              <p className="mt-3 font-mono text-xs text-amber-800">{errorMessage}</p>
+              <p className="mt-3 font-mono text-label text-foreground">{errorMessage}</p>
             </div>
           )}
         </div>
       </div>
 
       {(caption || legend || notes) && (
-        <figcaption className="border-t border-border/50 px-5 py-4 text-sm text-muted-foreground">
+        <figcaption className="border-t border-border px-5 py-4 text-sm text-muted-foreground">
           {caption && (
             <p id={captionId} className="leading-6">
               {caption}
@@ -126,11 +135,11 @@ export function ProtocolWaveform({
             <div
               id={legendId}
               className={cn(
-                'rounded-xl border border-border/50 bg-muted/35 p-3',
+                'rounded-lg border border-border bg-muted p-3',
                 caption ? 'mt-3' : undefined,
               )}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/90">
+              <p className="text-label font-medium text-subtle">
                 Legend
               </p>
               <div className="mt-2 text-sm text-foreground">{legend}</div>
@@ -141,11 +150,11 @@ export function ProtocolWaveform({
             <div
               id={notesId}
               className={cn(
-                'rounded-xl border border-border/50 bg-muted/35 p-3',
+                'rounded-lg border border-border bg-muted p-3',
                 caption || legend ? 'mt-3' : undefined,
               )}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/90">
+              <p className="text-label font-medium text-subtle">
                 Notes
               </p>
               <div className="mt-2 text-sm text-foreground">{notes}</div>

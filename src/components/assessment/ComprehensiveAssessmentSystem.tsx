@@ -40,8 +40,8 @@ export const ComprehensiveAssessmentSystem = () => {
       case 'overview':
         return (
           <div className="p-4">
-            <h3 className="text-xl font-semibold text-primary mb-2">Welcome to the Assessment Center</h3>
-            <p className="text-foreground/80">
+            <h3 className="text-h3 mb-2 text-foreground">Welcome to the Assessment Center</h3>
+            <p className="text-muted-foreground">
               Here you can test your knowledge, evaluate complex projects, visualize your skills, and track your progress towards certification.
               Select a tab above to begin.
             </p>
@@ -63,9 +63,9 @@ export const ComprehensiveAssessmentSystem = () => {
   };
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Comprehensive Assessment System</h2>
-      <div className="mb-4 border-b border-white/20">
+    <div className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="text-h2 mb-4 text-foreground">Comprehensive Assessment System</h2>
+      <div className="mb-4 border-b border-border">
         <nav className="flex space-x-2">
           {TABS.map((tab) => (
             <Button

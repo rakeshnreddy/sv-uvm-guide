@@ -53,6 +53,7 @@ vi.mock('@/lib/persistence/target', () => ({
 }));
 
 import DashboardPage, * as dashboardModule from '@/app/(learning)/dashboard/page';
+import { continuePrimary } from '@/app/(learning)/dashboard/DashboardPageClient';
 
 const NOW = new Date(2026, 9, 18, 10, 0).getTime();
 const HOUR = 60 * 60 * 1000;
@@ -200,6 +201,21 @@ describe('/dashboard', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('gives "Back to" the accent when no route is chosen, and nothing else', () => {
+    seedStore();
+    render(<DashboardPage />);
+    const continueCard = screen.getByRole('region', { name: 'Continue' });
+    expect(within(continueCard).getByRole('link', { name: /^Back to F1A: The Cost of Bugs/ })).toHaveClass('bg-primary');
+    expect(document.querySelectorAll('a.bg-primary, button.bg-primary')).toHaveLength(1);
+  });
+
+  it('picks the next route lesson, then the last lesson opened, for the accent', () => {
+    expect(continuePrimary(true, true)).toBe('next');
+    expect(continuePrimary(false, true)).toBe('next');
+    expect(continuePrimary(true, false)).toBe('last');
+    expect(continuePrimary(false, false)).toBeNull();
+  });
+
   it('shows the real counts from a seeded store and links each area', () => {
     seedStore();
     localStorage.setItem('svuvm.learningRoute', 'junior');
@@ -249,7 +265,7 @@ describe('/dashboard', () => {
     expect(quizzes).toHaveTextContent('best 1 of 4 (25%)');
 
     const exercises = screen.getByRole('region', { name: 'Exercises' });
-    expect(within(exercises).getByRole('link', { name: 'UVM Phase Sorter' })).toHaveAttribute('href', '/exercises/uvm-phase-sorter');
+    expect(within(exercises).getByRole('link', { name: 'UVM phase sorter' })).toHaveAttribute('href', '/exercises/uvm-phase-sorter');
     expect(exercises).toHaveTextContent('best 80% · 2 attempts');
 
     const streak = screen.getByRole('region', { name: 'Streak and the last 7 days' });
@@ -261,6 +277,11 @@ describe('/dashboard', () => {
 
     const data = screen.getByRole('region', { name: 'Your data' });
     expect(within(data).getByRole('link', { name: 'Back up or reset your data' })).toHaveAttribute('href', '/settings#data');
+    // One filled accent action per view: the next lesson on the route; backup and "Back to" are secondary.
+    expect(within(data).getByRole('link', { name: 'Back up or reset your data' })).not.toHaveClass('bg-primary');
+    expect(within(continueCard).getByRole('link', { name: /^Continue with / })).toHaveClass('bg-primary');
+    expect(within(continueCard).getByRole('link', { name: /^Back to F1A/ })).not.toHaveClass('bg-primary');
+    expect(document.querySelectorAll('a.bg-primary, button.bg-primary')).toHaveLength(1);
     expect(data).toHaveTextContent("You haven't downloaded a backup yet.");
     expect(data).toHaveTextContent("Some browsers clear site data for sites they haven't seen for a while.");
 

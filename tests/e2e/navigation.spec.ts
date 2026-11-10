@@ -281,7 +281,11 @@ test.describe('Tablet layout (768 px)', () => {
     test.skip(await accountUiEnabled(page), 'accountUI is on for this server; this checks the default build.');
 
     const banner = page.getByRole('banner');
-    await expect(banner.getByRole('combobox', { name: 'Select theme' })).toBeVisible();
+    // The one theme control: a menu button named "Theme" with Light, Dark and System as radio items.
+    const theme = banner.getByRole('button', { name: 'Theme', exact: true });
+    await expect(theme).toBeVisible();
+    await expect(theme).toHaveAttribute('aria-haspopup', 'menu');
+    await expect(banner.getByRole('combobox', { name: 'Select theme' })).toHaveCount(0);
     expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 

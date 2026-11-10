@@ -8,13 +8,13 @@ import { requirePracticePage } from '@/lib/practice-links';
 const practice = requirePracticePage('/exercises/scoreboard-connector');
 
 const ScoreboardConnectorPage: React.FC = () => {
-  const pageTitle = "Exercise: Scoreboard Connector";
+  const pageTitle = `Exercise: ${practice.title}`;
 
   const content = (
     <>
       <LearnInLesson item={practice} />
       <section className="mb-6">
-        <h2 className="text-2xl font-semibold text-primary mb-2">Wire the checking side of an agent environment</h2>
+        <h2 className="text-h2 mb-2 text-foreground">Wire the checking side of an agent environment</h2>
         <p className="text-muted-foreground mb-1">
           The env holds an agent, a predictor, a scoreboard with an expected and an actual analysis FIFO, and a coverage subscriber.
           Write the env&apos;s connect_phase so the monitor&apos;s stream and the predictor&apos;s output each reach the right place.
@@ -25,12 +25,12 @@ const ScoreboardConnectorPage: React.FC = () => {
         </p>
       </section>
 
-      <div className="my-8">
+      <div className="not-prose my-8">
         <ScoreboardConnectorExercise />
       </div>
 
       <section className="mt-6">
-        <h3 className="text-xl font-semibold text-primary mb-2">Learning objectives</h3>
+        <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
         <ul className="list-disc list-inside text-muted-foreground space-y-1">
           <li>Choose the caller and the argument of connect() for analysis connections, including imps named &quot;analysis_export&quot;.</li>
           <li>Explain why a missing analysis connection passes elaboration silently, and what it does to the scoreboard.</li>
@@ -42,7 +42,7 @@ const ScoreboardConnectorPage: React.FC = () => {
   );
 
   return (
-    <InfoPage title={pageTitle}>
+    <InfoPage gutter={false} title={pageTitle}>
       {content}
     </InfoPage>
   );
@@ -52,7 +52,7 @@ export default ScoreboardConnectorPage;
 
 export async function generateMetadata() {
   return {
-    title: "Exercise: Scoreboard Connector",
+    title: `Exercise: ${practice.title}`,
     description: "Wire a monitor, predictor, scoreboard FIFOs and coverage in a UVM env's connect_phase, graded by a model of uvm-core's connection rules.",
   };
 }

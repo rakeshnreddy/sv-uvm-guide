@@ -24,13 +24,13 @@ const testCode =
   'endclass'.trim();
 
 const testExplanationSteps: ExplanationStep[] = [
-  { target: '2-11', title: 'Test Sequence', explanation: 'A simple test sequence.' },
+  { target: '2-11', title: 'Test sequence', explanation: 'A simple test sequence.' },
 ];
 
 export default function TestPageClient() {
   return (
     <div className="p-8">
-      <h1 className="mb-4 text-2xl font-bold">Component Test Page</h1>
+      <h1 className="mb-4 text-h1 text-foreground">Component test page</h1>
       <InteractiveCode language="systemverilog" explanationSteps={testExplanationSteps} fileName="test.sv">
         {testCode}
       </InteractiveCode>

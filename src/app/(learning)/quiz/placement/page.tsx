@@ -15,17 +15,17 @@ export const metadata: Metadata = {
 
 const quizSections = [
   {
-    title: 'SystemVerilog Foundations',
+    title: 'SystemVerilog foundations',
     description: 'Data types, procedural blocks, interfaces and modports, and constraints.',
     sample: ['Four-state data types', 'Combinational blocks without latches', 'Interfaces and modports', 'Weighted constraints'],
   },
   {
-    title: 'Verification Methodology',
+    title: 'Verification methodology',
     description: 'UVM agents, configuration and the sequencer-driver handshake.',
     sample: ['Active and passive agents', 'The configuration database', 'Sequencer-driver handshake'],
   },
   {
-    title: 'Debug & Coverage Habits',
+    title: 'Debug and coverage habits',
     description: 'Coverage closure, end-of-test control and failure triage.',
     sample: ['Closing coverage on error paths', 'Who owns the objection', 'Reproducing a failure from its seed'],
   },
@@ -47,9 +47,9 @@ export default function PlacementQuizPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-10 pb-16">
       <header>
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Skill placement</p>
-        <h1 className="mt-2 text-3xl font-bold text-foreground sm:text-4xl">Find your level</h1>
-        <p className="mt-3 max-w-3xl text-base text-muted-foreground">
+        <p className="text-xs font-medium text-subtle">Skill placement</p>
+        <h1 className="mt-2 text-h1 text-foreground">Find your level</h1>
+        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
           Answer ten questions to find where to start. Your result is a starting lesson on one of the three{' '}
           <Link href="/curriculum#routes" className={inlineLink}>
             learning routes
@@ -61,7 +61,7 @@ export default function PlacementQuizPage() {
       <PlacementQuiz plans={plans} />
 
       <section aria-labelledby="placement-coverage-heading">
-        <h2 id="placement-coverage-heading" className="text-xl font-semibold text-foreground">
+        <h2 id="placement-coverage-heading" className="text-h3 text-foreground">
           What the quiz covers
         </h2>
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -69,11 +69,11 @@ export default function PlacementQuizPage() {
             <article
               key={section.title}
               aria-labelledby={`placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`}
-              className="rounded-2xl border border-border bg-card p-5 shadow-sm"
+              className="rounded-xl border border-border bg-card p-5 shadow-card"
             >
               <h3
                 id={`placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`}
-                className="text-base font-semibold text-foreground"
+                className="text-h4 text-foreground"
               >
                 {section.title}
               </h3>
@@ -88,8 +88,8 @@ export default function PlacementQuizPage() {
         </div>
       </section>
 
-      <section aria-labelledby="placement-skip-heading" className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h2 id="placement-skip-heading" className="text-lg font-semibold text-foreground">
+      <section aria-labelledby="placement-skip-heading" className="rounded-xl border border-border bg-card p-5 shadow-card">
+        <h2 id="placement-skip-heading" className="text-h3 text-foreground">
           Rather choose for yourself?
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">

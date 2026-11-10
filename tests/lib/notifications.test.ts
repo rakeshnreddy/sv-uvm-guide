@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { deriveNotificationsFromEngagement, resolveNotificationPreferences } from '@/lib/notifications';
+import {
+  NOTIFICATION_CATEGORY_META,
+  deriveNotificationsFromEngagement,
+  resolveNotificationPreferences,
+} from '@/lib/notifications';
 import type { EngagementResponse } from '@/lib/engagement';
 
 const BASE_TIME = new Date('2024-05-01T12:00:00.000Z');
@@ -129,5 +133,12 @@ describe('deriveNotificationsFromEngagement', () => {
     const notifications = deriveNotificationsFromEngagement(engagement, preferences, { limit: 2 });
 
     expect(notifications).toHaveLength(2);
+  });
+
+  it('colours every category badge with the role tokens, not raw palette classes', () => {
+    for (const meta of Object.values(NOTIFICATION_CATEGORY_META)) {
+      expect(meta.badgeClass).not.toMatch(/\b(?:bg|text)-(?:violet|purple|indigo|slate|gray|zinc)-\d/);
+      expect(meta.badgeClass).not.toMatch(/\bdark:/);
+    }
   });
 });

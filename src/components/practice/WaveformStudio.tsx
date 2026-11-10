@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { VisualFrame } from '@/components/visual-system';
+import { WaveDromSurfaceStyle } from '@/components/mdx/WaveDromSurfaceStyle';
 import { createWaveDromIndex, renderWaveDromToElement } from '@/lib/wavedrom';
 import { CHANNEL_ORDER } from '@/lib/axi-channel-model';
 import { STUDIO_SAMPLES, analyzeSource, formatSource, parseStudioSource } from '@/lib/waveform-studio';
@@ -76,7 +77,7 @@ export default function WaveformStudio() {
               id={selectId}
               value={sampleId}
               onChange={(e) => loadSample(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {STUDIO_SAMPLES.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -112,7 +113,7 @@ export default function WaveformStudio() {
               onChange={(e) => setText(e.target.value)}
               spellCheck={false}
               rows={14}
-              className="w-full resize-y rounded-md border border-border bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-100 [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full resize-y rounded-md border border-input bg-code-surface p-3 font-mono text-xs leading-relaxed text-code-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {parsed.ok && parsed.relaxed ? (
               <p className="text-xs text-muted-foreground">Relaxed WaveJSON accepted (bare keys, single quotes or trailing commas).</p>
@@ -123,18 +124,19 @@ export default function WaveformStudio() {
         <div className="min-w-0 space-y-3">
           <figure className="space-y-2">
             <figcaption className="text-sm font-medium text-foreground">Waveform</figcaption>
-            <div className="overflow-x-auto rounded-md border border-border bg-white p-2">
+            <WaveDromSurfaceStyle />
+            <div data-wavedrom-surface="" data-testid="studio-waveform-surface" className="overflow-x-auto rounded-xl border border-border bg-code-surface p-4">
               <div ref={outputRef} data-testid="studio-waveform" aria-hidden="true" />
             </div>
           </figure>
 
           {!parsed.ok ? (
-            <p role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-800 dark:text-red-200">
+            <p role="alert" className="rounded-md border border-danger bg-danger-subtle p-3 text-sm text-danger">
               <span aria-hidden="true">✕ </span>
               {parsed.error}
             </p>
           ) : renderError ? (
-            <p role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-800 dark:text-red-200">
+            <p role="alert" className="rounded-md border border-danger bg-danger-subtle p-3 text-sm text-danger">
               <span aria-hidden="true">✕ </span>
               {renderError}
             </p>
@@ -152,14 +154,14 @@ export default function WaveformStudio() {
               ) : (
                 <div className="space-y-2 text-sm">
                   {analysis.violations.length === 0 ? (
-                    <p className="font-medium text-emerald-700 dark:text-emerald-300">
+                    <p className="font-medium text-success">
                       <span aria-hidden="true">✓ </span>No handshake or dependency violations in {analysis.edges} edges.
                     </p>
                   ) : (
                     <ul className="space-y-2">
                       {analysis.violations.map((v, i) => (
-                        <li key={`${v.rule}-${v.channel}-${v.edge}-${i}`} className="rounded border border-red-500/40 bg-red-500/5 p-2">
-                          <p className="font-medium text-red-800 dark:text-red-200">
+                        <li key={`${v.rule}-${v.channel}-${v.edge}-${i}`} className="rounded border border-danger bg-danger-subtle p-2">
+                          <p className="font-medium text-danger">
                             <span aria-hidden="true">✕ </span>
                             {v.channel} channel, edge {v.edge} <span className="font-normal text-muted-foreground">({v.clause})</span>
                           </p>

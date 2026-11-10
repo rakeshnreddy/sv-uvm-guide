@@ -78,6 +78,17 @@ describe('route chooser', () => {
     expect(screen.getByRole('link', { name: 'Expert layers' })).toHaveAttribute('href', '/curriculum/expert-index');
   });
 
+  it('fills only the Junior call to action with the accent; the other routes use the secondary style', () => {
+    renderOverview();
+    const routes = screen.getByRole('region', { name: 'Choose your route' });
+    const filled = Array.from(routes.querySelectorAll('a, button')).filter((el) => el.classList.contains('bg-primary'));
+    expect(filled.map((el) => el.textContent)).toEqual(['Begin the Junior route']);
+    for (const name of ['Find your level', 'Expert layers']) {
+      expect(screen.getByRole('link', { name })).toHaveClass('bg-muted', 'border-border', 'text-foreground');
+    }
+    expect(screen.getByRole('link', { name: 'Begin the Junior route' })).toHaveClass('forced-colors:border-[ButtonText]');
+  });
+
   it('shows the ordered steps of a followed route and remembers the choice', () => {
     renderOverview();
     const follow = screen.getByRole('button', { name: 'Follow the Junior route' });
@@ -247,6 +258,12 @@ describe('pick up where you left off', () => {
     expect(within(resume).getByRole('link', { name: 'F2D: Interprocess Communication' })).toBeInTheDocument();
     const here = within(document.getElementById('t1-panel')!).getByRole('link', { name: /^F2D:/, current: 'location' });
     expect(here.closest('article')).toHaveTextContent('You are here');
+    // The continue action now holds the one accent fill; the Junior call to action steps down.
+    const filled = Array.from(document.querySelectorAll('a, button')).filter((el) =>
+      el.classList.contains('bg-primary'),
+    );
+    expect(filled.map((el) => el.textContent)).toEqual([expect.stringMatching(/^Continue with F2E: /)]);
+    expect(screen.getByRole('link', { name: 'Begin the Junior route' })).toHaveClass('bg-muted');
   });
 
   it('shows the next lesson on the followed route once, and marks the current step', async () => {

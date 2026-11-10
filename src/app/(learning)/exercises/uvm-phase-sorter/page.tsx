@@ -8,13 +8,13 @@ import { requirePracticePage } from '@/lib/practice-links';
 const practice = requirePracticePage('/exercises/uvm-phase-sorter');
 
 const UvmPhaseSorterPage: React.FC = () => {
-  const pageTitle = "Exercise: UVM Phase Sorter";
+  const pageTitle = `Exercise: ${practice.title}`;
 
   const content = (
     <>
       <LearnInLesson item={practice} />
       <section className="mb-6">
-        <h2 className="text-2xl font-semibold text-primary mb-2">Order the UVM Phases</h2>
+        <h2 className="text-h2 mb-2 text-foreground">Order the UVM phases</h2>
         <p className="text-muted-foreground mb-1">
           Put each lane in execution order: the common phases from build to final, and the twelve run-time phases that run beside run_phase.
           Then mark every function phase top-down or bottom-up.
@@ -24,12 +24,12 @@ const UvmPhaseSorterPage: React.FC = () => {
         </p>
       </section>
 
-      <div className="my-8 flex justify-center">
+      <div className="not-prose my-8 flex justify-center">
         <UvmPhaseSorterExercise />
       </div>
 
       <section className="mt-6">
-        <h3 className="text-xl font-semibold text-primary mb-2">Learning objectives</h3>
+        <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
         <ul className="list-disc list-inside text-muted-foreground space-y-1">
           <li>Recall the standard UVM runtime phases.</li>
           <li>See that run_phase runs alongside the twelve runtime phases, while function phases run top-down or bottom-up.</li>
@@ -41,7 +41,7 @@ const UvmPhaseSorterPage: React.FC = () => {
   );
 
   return (
-    <InfoPage title={pageTitle}>
+    <InfoPage gutter={false} title={pageTitle}>
       {content}
     </InfoPage>
   );
@@ -51,7 +51,7 @@ export default UvmPhaseSorterPage;
 
 export async function generateMetadata() {
   return {
-    title: "Exercise: UVM Phase Sorter",
+    title: `Exercise: ${practice.title}`,
     description: practice.description,
   };
 }

@@ -27,9 +27,9 @@ const engagementData = [
 ];
 
 const StatCard = ({ label, value }: { label: string; value: string }) => (
-  <div className="bg-white/10 p-4 rounded-lg text-center">
+  <div className="bg-muted p-4 rounded-lg text-center">
     <p className="text-sm text-muted-foreground">{label}</p>
-    <p className="text-2xl font-bold text-primary">{value}</p>
+    <p className="text-h2 tabular-nums text-foreground">{value}</p>
   </div>
 );
 
@@ -89,8 +89,8 @@ export const ProgressAnalytics = () => {
   }, []);
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Progress Analytics</h2>
+    <div className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="text-h2 mb-4 text-foreground">Progress Analytics</h2>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="Time Spent" value="12h 45m" />
@@ -101,14 +101,14 @@ export const ProgressAnalytics = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
-          <h3 className="text-lg font-semibold mb-2">Module Completion</h3>
-          <div className="bg-white/5 p-2 rounded-lg">
+          <h3 className="text-h3 mb-2 text-foreground">Module Completion</h3>
+          <div className="bg-muted p-2 rounded-lg">
             <svg ref={barChartRef} viewBox={`0 0 350 200`}></svg>
           </div>
         </div>
         <div>
-          <h3 className="text-lg font-semibold mb-2">Daily Engagement (minutes)</h3>
-          <div className="bg-white/5 p-2 rounded-lg">
+          <h3 className="text-h3 mb-2 text-foreground">Daily Engagement (minutes)</h3>
+          <div className="bg-muted p-2 rounded-lg">
             <svg ref={lineChartRef} viewBox={`0 0 350 200`}></svg>
           </div>
         </div>

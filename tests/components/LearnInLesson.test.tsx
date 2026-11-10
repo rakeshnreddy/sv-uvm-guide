@@ -11,7 +11,7 @@ describe('LearnInLesson', () => {
   it('links a practice page back to its teaching lesson, then related lessons', () => {
     const item = requirePracticePage('/practice/visualizations/coverage-analyzer');
     render(<LearnInLesson item={item} />);
-    const nav = screen.getByRole('navigation', { name: 'Lessons for Coverage Closure Lab' });
+    const nav = screen.getByRole('navigation', { name: 'Lessons for Coverage closure lab' });
     const links = within(nav).getAllByRole('link');
     expect(links.map((link) => link.getAttribute('href'))).toEqual(item.lessons.map((lesson) => lesson.href));
     expect(links[0]).toHaveTextContent('I-SV-3A');

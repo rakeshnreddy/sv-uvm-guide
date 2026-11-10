@@ -219,6 +219,20 @@ describe('docked course outline on a lesson page', () => {
     expect(list.querySelector('[aria-current]')).toBeNull();
   });
 
+  it('leaves the quick links to the navbar from xl up in the docked column (layout-15)', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    expect(within(nav).getByRole('list', { name: 'Quick links' })).toHaveClass('xl:hidden');
+  });
+
+  it('marks the current lesson with a raised row and a 2 px accent edge, not an accent fill', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    const current = nav.querySelector('[aria-current="page"]');
+    expect(current).toHaveClass('bg-muted', 'border-l-2', 'border-primary', 'font-medium', 'text-foreground');
+    expect(current?.className).not.toMatch(/bg-primary/);
+  });
+
   it('shows no authoring-status badges or placeholder bookmarks', () => {
     render(<Sidebar />);
     for (const text of ['Draft', 'In Review', 'Complete', 'Bookmarks', 'Quick Access']) {
@@ -330,6 +344,8 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
       ['Dashboard', '/dashboard'],
     ]);
     expect(quickLinks.some((link) => link.hasAttribute('aria-current'))).toBe(false);
+    // The drawer keeps them at every width.
+    expect(within(dialog).getByRole('list', { name: 'Quick links' })).not.toHaveClass('xl:hidden');
   });
 
   it('links the dashboard from the quick links without marking it current, even on the dashboard', () => {

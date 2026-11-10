@@ -69,13 +69,13 @@ export function LabProgressBadge({ labId, version, stepCount, title, stepIds, cl
   return (
     <p
       className={cn(
-        'm-0 inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-0.5 text-xs font-semibold text-foreground',
+        'm-0 inline-flex items-center gap-1.5 rounded border border-border bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-foreground',
         className,
       )}
       data-testid="lab-progress-badge"
       data-lab-progress={record.status}
     >
-      <Icon aria-hidden="true" className={cn('h-3.5 w-3.5 shrink-0', completed ? 'text-primary' : 'text-muted-foreground')} />
+      <Icon aria-hidden="true" className={cn('h-3.5 w-3.5 shrink-0', completed ? 'text-success' : 'text-muted-foreground')} />
       <span className="sr-only">{title}: </span>
       {labProgressLabel(record, stepCount, stepIds)}
     </p>

@@ -93,7 +93,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/exercises/uvm-phase-sorter',
     kind: 'exercise',
-    title: 'UVM Phase Sorter',
+    title: 'UVM phase sorter',
     description:
       'Place each phase in its lane, with run_phase beside the twelve run-time phases, and mark each function phase top-down or bottom-up.',
     lessons: ['I-UVM-1C_UVM_Phasing/index'],
@@ -101,7 +101,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/exercises/uvm-agent-builder',
     kind: 'exercise',
-    title: 'UVM Agent Builder',
+    title: 'UVM agent builder',
     description:
       'Choose active or passive, then build the agent: sequencer, driver and monitor, or the monitor alone.',
     lessons: ['I-UVM-2A_Component_Roles/index', 'A-UVM-7_VIP_Construction/index'],
@@ -109,7 +109,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/exercises/scoreboard-connector',
     kind: 'exercise',
-    title: 'Scoreboard Connector',
+    title: 'Scoreboard connector',
     description:
       "Wire a monitor, predictor, scoreboard FIFOs and coverage in an env's connect_phase, graded by uvm-core's connection rules.",
     lessons: ['I-UVM-2B_TLM_Connections/index', 'A-UVM-6_Scoreboards_and_Reference_Models/index'],
@@ -117,7 +117,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/exercises/sequencer-arbitration',
     kind: 'exercise',
-    title: 'Sequencer Arbitration Sandbox',
+    title: 'Sequencer arbitration sandbox',
     description:
       'Predict which sequence the sequencer grants: arbitration modes, priorities, lock() and grab(), checked against a model of uvm-core 2020.3.1.',
     lessons: [
@@ -128,7 +128,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/systemverilog-data-types',
     kind: 'interactive',
-    title: 'SystemVerilog Data Types',
+    title: 'SystemVerilog data types',
     description:
       'Cycle 2-state and 4-state values, watch X and Z propagate, and run dynamic-array, queue and associative-array operations, including what new[N] really does.',
     lessons: ['F2A_Core_Data_Types/index', 'F2B_Dynamic_Structures/index'],
@@ -136,7 +136,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/visualizations/systemverilog-3d',
     kind: 'interactive',
-    title: 'SystemVerilog Array Sandbox',
+    title: 'SystemVerilog array sandbox',
     description:
       'Run dynamic-array, queue and associative-array operations and see the resulting state in 3D or as text.',
     lessons: ['F2B_Dynamic_Structures/index'],
@@ -144,7 +144,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/procedural-blocks',
     kind: 'interactive',
-    title: 'Procedural Blocks Simulator',
+    title: 'Procedural blocks simulator',
     description:
       'Predict when initial, always and final blocks run, and where <= updates land, on a tested process model.',
     lessons: ['F2C_Procedural_Code_and_Flow_Control/index'],
@@ -152,7 +152,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/concurrency',
     kind: 'interactive',
-    title: 'Fork/Join Lab',
+    title: 'Fork/join lab',
     description:
       'One lane per process for join, join_any, join_none, disable fork and wait fork. Predict when the parent resumes.',
     lessons: [
@@ -164,7 +164,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/state-machine-designer',
     kind: 'interactive',
-    title: 'State Machine Designer',
+    title: 'State machine designer',
     description:
       'Build a small finite state machine, choose its state encoding and reset style, and step through its transitions.',
     lessons: [
@@ -176,7 +176,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/interface-signal-flow',
     kind: 'interactive',
-    title: 'Interface Signal Flow',
+    title: 'Interface signal flow',
     description:
       'Follow a signal from a class to the pins through an interface, a modport, a virtual interface and a clocking block, and predict which accesses compile and run.',
     lessons: [
@@ -188,7 +188,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/randomization-explorer',
     kind: 'interactive',
-    title: 'Constraint Solution Space',
+    title: 'Constraint solution space',
     description:
       'Exact probabilities for dist, soft and solve…before, plus the minimal conflicting set when randomize() fails.',
     lessons: [
@@ -199,7 +199,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/coverage-analyzer',
     kind: 'interactive',
-    title: 'Coverage Closure Lab',
+    title: 'Coverage closure lab',
     description:
       'Build bins and crosses with ignore and illegal bins, predict samples to closure, and hunt the holes.',
     lessons: [
@@ -211,7 +211,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/assertion-builder',
     kind: 'interactive',
-    title: 'SVA Trace Lab',
+    title: 'SVA trace lab',
     description:
       'Edit a trace, predict each attempt (pass, fail, vacuous), then evaluate with Preponed sampling.',
     lessons: ['I-SV-4A_SVA_Fundamentals/index', 'I-SV-4B_Advanced_Temporal_Logic/index'],
@@ -219,7 +219,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/uvm-architecture',
     kind: 'diagram',
-    title: 'Interactive UVM Architecture',
+    title: 'Interactive UVM architecture',
     description:
       'Explore how tests, environments, agents, drivers, monitors and scoreboards fit together, then jump to the lesson for each layer.',
     lessons: ['I-SV-9_Why_UVM/index', 'I-UVM-1A_Components/index', 'I-UVM-2A_Component_Roles/index'],
@@ -227,7 +227,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/uvm-phasing',
     kind: 'diagram',
-    title: 'UVM Phasing and Objections',
+    title: 'UVM phasing and objections',
     description:
       'Map every UVM phase (function or task, top-down or bottom-up) and watch objections keep run_phase alive.',
     lessons: ['I-UVM-1C_UVM_Phasing/index'],
@@ -235,7 +235,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/uvm-component-relationships',
     kind: 'diagram',
-    title: 'UVM Component Relationships',
+    title: 'UVM component relationships',
     description:
       'Predict what an agent builds in active and passive mode, then inject the two classic agent bugs and watch the build log.',
     lessons: ['I-UVM-2A_Component_Roles/index'],
@@ -243,7 +243,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/visualizations/data-type-comparison',
     kind: 'chart',
-    title: 'Data Type Comparison',
+    title: 'Data type comparison',
     description:
       'Compare 2-state and 4-state types, widths, signedness and default values, then predict what each declaration holds.',
     lessons: ['F2A_Core_Data_Types/index'],
@@ -251,7 +251,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
   {
     href: '/practice/waveform-studio',
     kind: 'tool',
-    title: 'Waveform Studio',
+    title: 'Waveform studio',
     description:
       'Edit AXI and AHB timing diagrams and get AXI handshake violations, with spec clauses, as you type. Includes two debug samples.',
     lessons: ['B-AXI-1_AXI_Channel_Architecture/index', 'B-AHB-1_AHB_Design_Timing_Mechanics/index'],
@@ -611,7 +611,7 @@ export function getLabLessons(lab: LabLike): LessonLink[] {
 
 export interface LabBackLink {
   href: string;
-  /** Visible start of the link text: "Back to module" (index lesson), "Back to lesson" (sub-lesson) or "Back to the Practice Hub". */
+  /** Visible start of the link text: "Back to module" (index lesson), "Back to lesson" (sub-lesson) or "Back to the Practice hub". */
   label: string;
   /** The lesson the link returns to; absent only when the lab names no real module. */
   lesson?: LessonLink;
@@ -621,7 +621,7 @@ export interface LabBackLink {
 export function getLabBackLink(lab: LabLike): LabBackLink {
   const [lesson] = getLabLessons(lab);
   if (lesson) return { href: lesson.href, label: lesson.isModuleIndex ? 'Back to module' : 'Back to lesson', lesson };
-  return { href: '/practice#labs', label: 'Back to the Practice Hub' };
+  return { href: '/practice#labs', label: 'Back to the Practice hub' };
 }
 
 export interface LabPrerequisite {

@@ -1,8 +1,6 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { useTheme } from 'next-themes';
-import { cn } from '@/lib/utils';
 import { Button } from './Button';
 import { CodeEditor } from './CodeEditor';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
@@ -342,12 +340,6 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   showHeuristicAnalysis = false,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
-  const { theme, resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const effectiveTheme = mounted ? ((theme === 'system' ? resolvedTheme : theme) ?? 'dark') : 'dark';
-  // Site themes are named like "default-dark"; "system" resolves to "dark"/"light".
-  const isDarkMode = effectiveTheme === 'dark' || effectiveTheme.endsWith('-dark');
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
@@ -541,21 +533,12 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   return (
     <div
       data-testid="interactive-code"
-      className={cn(
-        'interactive-code my-6 rounded-lg border p-4 shadow-md backdrop-blur-lg transition-colors',
-        isDarkMode
-          ? 'border-white/20 bg-white/10 text-[rgba(230,241,255,0.85)]'
-          : 'border-slate-300/60 bg-slate-950/5 text-slate-800'
-      )}
+      className="interactive-code my-6 rounded-xl border bg-card p-4 text-card-foreground shadow-card"
     >
-      <div
-        className={cn(
-          'code-section relative mb-4 overflow-hidden rounded-md border transition-colors',
-          isDarkMode ? 'border-white/20 bg-transparent' : 'border-slate-200/80 bg-white'
-        )}
-      >
+      {/* The editor is dark in both modes (DESIGN.md section 3), so its frame uses the code-surface roles. */}
+      <div className="code-section relative mb-4 overflow-hidden rounded-lg border border-code-border bg-code-surface">
         {fileName && (
-          <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
+          <div className="border-b border-code-border px-4 py-1 font-mono text-label text-code-muted">{fileName}</div>
         )}
         <CodeEditor
           height="400px"
@@ -585,7 +568,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             }
           }}
           beforeMount={defineSiteMonacoThemes}
-          theme={isDarkMode ? SITE_MONACO_THEME.dark : SITE_MONACO_THEME.light}
+          theme={SITE_MONACO_THEME.dark}
           options={{
             domReadOnly: !isEditable,
             minimap: { enabled: true },
@@ -648,7 +631,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 
       {hasExplanations && (
         <>
-          <div className="explanation-section p-4 bg-white/10 dark:bg-black/10 rounded min-h-[100px]">
+          <div className="explanation-section min-h-[100px] rounded-lg bg-muted p-4">
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentStepIndex}
@@ -657,7 +640,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.3 }}
               >
-                {explanationSteps[currentStepIndex]?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{explanationSteps[currentStepIndex].title}</h4>}
+                {explanationSteps[currentStepIndex]?.title && <h4 className="mb-2 text-h4 text-foreground">{explanationSteps[currentStepIndex].title}</h4>}
                 {plainTargetLines ? (
                   <p className="mb-1 text-xs font-semibold text-foreground" data-testid="interactive-code-target-lines">
                     {plainTargetLines}

@@ -34,6 +34,7 @@ Two modes, one brand. Values are HSL triplets for the existing `hsl(var(--x))` p
 | `--destructive` / `--destructive-foreground` | `0 62% 45%` / white | `0 72% 45%` / white | destructive fills |
 | `--info` | same as primary | same as primary | notes |
 | `--code-surface` (new) | `226 40% 5%` | `226 40% 5%` | code blocks, editors, traces: always dark, the deepest surface |
+| `--code-foreground`, `--code-muted`, `--code-border` (new) | `220 20% 93%`, `220 10% 68%`, `220 14% 20%` | same as dark | chrome that sits on the code surface (file names, copy buttons, hairlines); never slate classes or arbitrary `hsl()` there |
 
 Each status role also gets a `-subtle` background: the role colour at 12% opacity over the surface.
 
@@ -42,7 +43,7 @@ Rules:
 1. Headings and body text use `text-foreground`. A heading is never set in the accent or a status colour.
 2. The accent marks what is clickable or current. One filled accent button per view; every other button is the secondary style (raised surface, hairline border, primary text).
 3. A current or selected item is a raised surface with a 2 px accent marker on its leading edge and primary text. This is the same in the outline, the menus, the table of contents and tabs.
-4. No hue gradients, gradient text, glass panels, colour washes, glows or coloured shadows anywhere in the chrome. Dark mode has no shadows; depth comes from the surface steps and hairlines. Light mode may use `0 1px 2px rgb(16 24 40 / 0.05)`.
+4. No hue gradients, gradient text, glass panels, colour washes, glows or coloured shadows anywhere in the chrome. Dark mode has no shadows; depth comes from the surface steps and hairlines. Light mode may use `0 1px 2px rgb(16 24 40 / 0.05)`. Use `shadow-card` where a shadow class is needed (in dark mode it is a transparent zero shadow, so it still composes with a focus ring), never `shadow-lg`, `shadow-xl` or `shadow-2xl` in the chrome.
 5. Mint is retired from the chrome. Progress and "done" use `--success`.
 6. Text contrast is at least 4.5:1, large text and control boundaries at least 3:1, in both modes. A unit test enforces this from `globals.css`.
 
@@ -70,7 +71,7 @@ Scale (size / line height in px):
 | Token | Size | Weight | Tracking | Use |
 |---|---|---|---|---|
 | `display` | clamp 40 to 60 / 1.05 | 500 | -0.025em | landing headline only |
-| `h1` | 32/40, 28/36 on phones | 600 | -0.015em | page title, one per page |
+| `h1` | 32/40, 28/36 on phones | 500 | -0.015em | page title, one per page |
 | `h2` | 24/32 | 600 | -0.01em | section |
 | `h3` | 19/28 | 600 | 0 | subsection |
 | `h4` | 16/24 | 600 | 0 | minor heading |
@@ -90,7 +91,7 @@ Rules:
 ## 5. Shape, space and width
 
 - Radius by size: tags 4, controls and rows 8, cards 12, panels and dialogs 16. An inner radius is the outer radius minus the padding between them, never less than 4. Pills only for true toggles and chips that the visual language defines as round.
-- Borders are 1 px hairlines in `--border`.
+- Borders are 1 px hairlines in `--border`; a bare `border` class draws one. Form field boundaries use `--input` (`border-input`), never the hairline.
 - Spacing on a 4 px scale. Cards pad 20 to 24, compact panels 16, page gutters 16 on phones, 24 on tablets, 32 on desktop.
 - Three page widths: reading 768 px, content 1152 px, wide 1280 px. A page uses one.
 - Controls are 40 px tall, 44 px for primary actions on phones.
@@ -106,7 +107,7 @@ Rules:
 ## 7. Theme mechanics
 
 - The `data-theme` attribute takes two values, `light` and `dark`. Tailwind's dark variant keys on `[data-theme="dark"]`, so dark styles apply before hydration and no client effect adds a class.
-- `next-themes` runs with `enableSystem`, default `system`, and falls back to dark when the device states no preference. Old stored values (`default-dark`, `ocean-light` and the other eight) keep working: they map to the matching mode through the provider's value map, and learner-data backups that contain an old id import cleanly.
+- `next-themes` runs with `enableSystem`, default `system`, and falls back to dark when the device states no preference. (Browser limitation: Chromium reports no preference as light, so in that case the page and the system choice resolve to light. The CSS default on :root is dark, which holds wherever the browser does not match prefers-color-scheme: light.) Old stored values (`default-dark`, `ocean-light` and the other eight) keep working: they map to the matching mode through the provider's value map, and learner-data backups that contain an old id import cleanly.
 - `color-scheme` is set per mode, and the viewport exports a `themeColor` per mode.
 - Print uses the light values, hides the navbar, outline, table of contents and footer, and prints code with a light background.
 - One theme control everywhere: a menu button with Light, Dark and System as radio items, 40 px target, used in the navbar, the phone menu and the public header. The palette picker is removed from Settings.

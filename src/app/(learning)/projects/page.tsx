@@ -23,18 +23,18 @@ export const metadata: Metadata = {
 
 const linkClass =
   'rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background';
-const sectionHeading = 'mt-12 mb-3 text-2xl font-semibold';
-const subHeading = 'mt-6 mb-2 text-lg font-semibold';
+const sectionHeading = 'mt-12 mb-3 text-h2 text-foreground';
+const subHeading = 'mt-6 mb-2 text-h3 text-foreground';
 
 function ProjectSection({ project }: { project: ResolvedProject }) {
   const headingId = `${project.anchor}-heading`;
   return (
     <section id={project.anchor} aria-labelledby={headingId} className="scroll-mt-24">
       <h2 id={headingId} className={sectionHeading}>
-        <span className="mr-2 font-mono text-primary">{project.milestone}</span>
+        <span className="mr-2 font-mono font-medium text-muted-foreground [font-variant-ligatures:none]">{project.milestone}</span>
         {project.name}
       </h2>
-      <dl className="not-prose grid gap-x-6 gap-y-1 text-sm text-foreground/80 sm:grid-cols-[auto_1fr]">
+      <dl className="not-prose grid gap-x-6 gap-y-1 text-sm text-muted-foreground sm:grid-cols-[auto_1fr]">
         <dt className="font-semibold text-foreground">Effort</dt>
         <dd>{project.effort}</dd>
         <dt className="font-semibold text-foreground">Tools</dt>
@@ -63,7 +63,7 @@ function ProjectSection({ project }: { project: ResolvedProject }) {
       </ol>
 
       <h3 className={subHeading}>Prepare with</h3>
-      <p className="mb-1 text-sm font-semibold uppercase tracking-wide text-foreground/70">Lessons</p>
+      <p className="mb-1 text-xs font-medium text-subtle">Lessons</p>
       <ul>
         {project.lessonLinks.map((lesson) => (
           <li key={lesson.ref}>
@@ -73,7 +73,7 @@ function ProjectSection({ project }: { project: ResolvedProject }) {
           </li>
         ))}
       </ul>
-      <p className="mb-1 text-sm font-semibold uppercase tracking-wide text-foreground/70">Labs</p>
+      <p className="mb-1 text-xs font-medium text-subtle">Labs</p>
       <ul>
         {project.labItems.map((lab) => (
           <li key={lab.id}>
@@ -83,7 +83,7 @@ function ProjectSection({ project }: { project: ResolvedProject }) {
               </Link>
             ) : (
               <span>
-                {lab.title} <span className="text-foreground/70">(lab coming soon)</span>
+                {lab.title} <span className="text-muted-foreground">(lab coming soon)</span>
               </span>
             )}
           </li>
@@ -115,11 +115,11 @@ export default function ProjectsPage() {
   const projects = resolveProjects();
 
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title="Projects"
       description="One testbench project for each milestone, from a self-checking directed testbench to a subsystem capstone."
     >
-      <p className="lead">
+      <p className="text-muted-foreground">
         Lessons and labs teach one idea at a time. A project asks you to put several together with no starter code:
         you write the design under test (DUT), the testbench (TB) and the checks, then prove the TB works by breaking
         the DUT on purpose and watching it fail.
@@ -152,23 +152,23 @@ export default function ProjectsPage() {
           </li>
         </ul>
         <p>
-          The labs are on the <Link href={LABS_HREF} className={linkClass}>Practice Hub</Link>; a lab marked coming
+          The labs are on the <Link href={LABS_HREF} className={linkClass}>Practice hub</Link>; a lab marked coming
           soon cannot be opened yet.
         </p>
       </section>
 
       <nav aria-labelledby="milestone-ladder" className="not-prose mt-10">
-        <h2 id="milestone-ladder" className="mb-3 text-2xl font-semibold">
+        <h2 id="milestone-ladder" className="mb-3 text-h2 text-foreground">
           The milestone ladder
         </h2>
         <ol className="space-y-2">
           {projects.map((project) => (
             <li key={project.milestone} className="flex flex-wrap items-baseline gap-x-3">
-              <span className="w-8 shrink-0 font-mono text-sm font-semibold text-primary">{project.milestone}</span>
+              <span className="w-8 shrink-0 font-mono text-sm font-medium tabular-nums text-muted-foreground">{project.milestone}</span>
               <a href={`#${project.anchor}`} className={linkClass}>
                 {project.name}
               </a>
-              <span className="text-sm text-foreground/70">{project.effort}</span>
+              <span className="text-sm text-muted-foreground">{project.effort}</span>
             </li>
           ))}
         </ol>

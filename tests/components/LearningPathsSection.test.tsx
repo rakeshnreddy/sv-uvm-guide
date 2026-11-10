@@ -47,6 +47,13 @@ describe('home page route cards (G30-PATH-05; NB2 request 3)', () => {
     expect(within(section).getAllByRole('listitem').filter((item) => item.parentElement?.tagName === 'UL')).toHaveLength(3);
   });
 
+  it('fills only the Junior call to action with the accent', () => {
+    render(<LearningPathsSection routes={routes} />);
+    const section = screen.getByRole('region', { name: 'Choose your route' });
+    const filled = Array.from(section.querySelectorAll('a')).filter((el) => el.classList.contains('bg-primary'));
+    expect(filled.map((el) => el.textContent)).toEqual(['Begin the Junior route']);
+  });
+
   it('sends Junior to F1A, Practitioner to the placement quiz and Expert to the expert index', () => {
     render(<LearningPathsSection routes={routes} />);
     const card = (name: string) => screen.getByRole('article', { name });

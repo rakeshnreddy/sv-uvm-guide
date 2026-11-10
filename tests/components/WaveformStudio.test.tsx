@@ -61,4 +61,16 @@ describe('WaveformStudio', () => {
     expect(screen.getByText(/ERROR takes two cycles/)).toBeInTheDocument();
     expect(within(check()).getByText(/No AXI VALID\/READY pairs found/)).toBeInTheDocument();
   });
+
+  it("draws the waveform on the dark trace surface and the source on the code surface", () => {
+    render(<WaveformStudio />);
+    const surface = screen.getByTestId('studio-waveform-surface');
+    expect(surface).toHaveAttribute('data-wavedrom-surface');
+    expect(surface).toHaveClass('bg-code-surface', 'rounded-xl', 'border-border');
+    expect(surface.className).not.toMatch(/bg-white/);
+    expect(document.querySelector('style[data-wavedrom-skin]')).not.toBeNull();
+    const source = screen.getByLabelText('WaveJSON source');
+    expect(source).toHaveClass('bg-code-surface', 'text-code-foreground', 'border-input');
+    expect(screen.getByLabelText('Sample')).toHaveClass('border-input', 'bg-background');
+  });
 });

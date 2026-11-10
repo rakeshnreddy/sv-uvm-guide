@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     "A sourced timeline of hardware verification languages and methodologies: Verilog (IEEE 1364), the Accellera SystemVerilog releases, IEEE 1800 from 2005 to 2023, e, and the path from VMM, AVM and OVM to UVM and IEEE 1800.2, with why each step happened.",
 };
 
-const sectionHeading = "mt-10 mb-3 text-2xl font-semibold text-foreground";
+const sectionHeading = "mt-10 mb-3 text-h2 text-foreground";
 const linkClass =
   "rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
@@ -25,15 +25,15 @@ export default function HistoryPage() {
   return (
     <article className="mx-auto max-w-3xl">
       <header className="mb-6">
-        <h1 className="text-3xl font-bold text-foreground sm:text-4xl">History of SystemVerilog and UVM</h1>
-        <p className="mt-2 text-base text-muted-foreground sm:text-lg">
+        <h1 className="text-h1 text-foreground">History of SystemVerilog and UVM</h1>
+        <p className="mt-2 text-lead text-muted-foreground">
           How a design language became a verification language, and how competing testbench libraries became one IEEE
           standard. Each step solved a specific problem, and most of those problems still shape how you write a
           testbench today.
         </p>
       </header>
 
-      <div className="prose prose-slate max-w-none dark:prose-invert">
+      <div className="prose max-w-none">
         <section aria-labelledby="history-short-version">
           <h2 id="history-short-version" className={sectionHeading}>
             The short version
@@ -66,7 +66,7 @@ export default function HistoryPage() {
 
       <HistoryTimeline />
 
-      <div className="prose prose-slate max-w-none dark:prose-invert">
+      <div className="prose max-w-none">
         <section aria-labelledby="history-keywords">
           <h2 id="history-keywords" className={sectionHeading}>
             What each edition added, in reserved words
@@ -81,18 +81,18 @@ export default function HistoryPage() {
 
       <ul className="not-prose mt-4 space-y-3" aria-label="Reserved words by edition" data-testid="history-keywords">
         {KEYWORD_EDITIONS.map((edition) => (
-          <li key={edition.edition} className="rounded-xl border border-border/70 bg-card/40 p-3 sm:p-4">
+          <li key={edition.edition} className="rounded-xl border border-border bg-card p-3 sm:p-4">
             <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <span className="font-semibold text-foreground">{edition.edition}</span>
               <span className="text-xs text-muted-foreground">IEEE 1800-2023 {edition.table}</span>
             </p>
-            <p className="mt-1 text-sm text-foreground/90">{edition.takeaway}</p>
+            <p className="mt-1 text-sm text-foreground">{edition.takeaway}</p>
             {edition.examples.length > 0 ? (
               <p className="mt-2 flex flex-wrap gap-1.5" aria-label={edition.complete ? "All added words" : "Some of the added words"}>
                 {edition.examples.map((word) => (
                   <code
                     key={word}
-                    className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-xs text-slate-100 [font-variant-ligatures:none]"
+                    className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-medium text-foreground [font-variant-ligatures:none]"
                   >
                     {word}
                   </code>
@@ -104,7 +104,7 @@ export default function HistoryPage() {
         ))}
       </ul>
 
-      <div className="prose prose-slate max-w-none dark:prose-invert">
+      <div className="prose max-w-none">
         <section aria-labelledby="history-why-it-matters">
           <h2 id="history-why-it-matters" className={sectionHeading}>
             Why this matters when you write a testbench

@@ -22,7 +22,7 @@ const LearningPathsSection = ({ routes }: LearningPathsSectionProps) => {
     <section aria-labelledby="learning-paths-heading" className="w-full bg-background py-20">
       <div className="container mx-auto px-4">
         <div className="mx-auto mb-12 max-w-3xl text-center">
-          <h2 id="learning-paths-heading" className="mb-4 text-4xl font-bold text-foreground md:text-5xl">
+          <h2 id="learning-paths-heading" className="mb-4 text-h2 text-foreground">
             Choose your route
           </h2>
           <p className="text-lg text-muted-foreground">

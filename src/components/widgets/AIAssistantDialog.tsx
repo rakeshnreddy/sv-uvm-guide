@@ -172,12 +172,12 @@ export default function AIAssistantDialog({ onClose }: AIAssistantDialogProps) {
         initial={{ opacity: 0, y: 32, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 32, scale: 0.96 }}
-        className="fixed bottom-0 right-0 z-[9999] flex h-full w-full flex-col overflow-hidden border border-border/50 bg-card/95 shadow-2xl backdrop-blur-xl sm:bottom-6 sm:right-6 sm:h-[min(600px,calc(100%-6rem))] sm:w-[380px] sm:rounded-xl"
+        className="fixed bottom-0 right-0 z-[9999] flex h-full w-full flex-col overflow-hidden border border-border bg-card shadow-card sm:bottom-6 sm:right-6 sm:h-[min(600px,calc(100%-6rem))] sm:w-[380px] sm:rounded-2xl"
         aria-modal="true"
         role="dialog"
         aria-labelledby="ai-assistant-title"
       >
-        <header className="flex items-center justify-between border-b border-border/50 bg-background/50 p-3">
+        <header className="flex items-center justify-between border-b border-border bg-muted p-3">
           <div className="flex items-center">
             <Bot aria-hidden="true" className="mr-2 text-primary" size={20} />
             <h2 id="ai-assistant-title" className="font-semibold">AI Assistant</h2>
@@ -207,7 +207,7 @@ export default function AIAssistantDialog({ onClose }: AIAssistantDialogProps) {
           <div ref={messagesEndRef} />
         </div>
 
-        <form onSubmit={sendMessage} className="border-t border-border/50 bg-background/50 p-3">
+        <form onSubmit={sendMessage} className="border-t border-border bg-muted p-3">
           <div className="flex items-end gap-2">
             <Textarea
               ref={inputRef}

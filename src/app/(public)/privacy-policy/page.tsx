@@ -4,7 +4,6 @@ import Link from 'next/link';
 
 import Footer from '@/components/Footer';
 import InfoPage from '@/components/templates/InfoPage';
-import Logo from '@/components/ui/Logo';
 
 /*
  * OWNER SIGN-OFF NEEDED (GD23): this wording was rewritten in October 2026 for
@@ -23,7 +22,7 @@ const settingsLink = (
 
 const sections = [
   {
-    heading: 'Information We Collect',
+    heading: 'Information we collect',
     body: (
       <ul>
         <li>This site has no accounts yet. You don&apos;t sign up, and we don&apos;t ask for your name, email address or any other personal details.</li>
@@ -42,7 +41,7 @@ const sections = [
     ),
   },
   {
-    heading: 'How We Use Your Data',
+    heading: 'How we use your data',
     body: (
       <ul>
         <li>
@@ -56,7 +55,7 @@ const sections = [
     ),
   },
   {
-    heading: 'Retention & Control',
+    heading: 'Retention and control',
     body: (
       <ul>
         <li>
@@ -76,7 +75,7 @@ const sections = [
     ),
   },
   {
-    heading: 'Cookies & Third Parties',
+    heading: 'Cookies and third parties',
     body: (
       <ul>
         <li>There are no cookies for signing in, because there is nothing to sign in to.</li>
@@ -91,10 +90,10 @@ const sections = [
     ),
   },
   {
-    heading: 'Questions or Requests',
+    heading: 'Questions or requests',
     body: (
       <p>
-        Contact <a href="mailto:privacy@sv-uvm-guide.dev" className="text-primary hover:underline">privacy@sv-uvm-guide.dev</a> with
+        Contact <a href="mailto:privacy@sv-uvm-guide.dev" className="text-primary underline underline-offset-4 hover:no-underline">privacy@sv-uvm-guide.dev</a> with
         questions about this policy. Your learning data never leaves your browser, so you can view, export or delete
         it yourself in {settingsLink}.
       </p>
@@ -109,37 +108,18 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/"
-            aria-label="SV/UVM Hub home"
-            className="block w-32 shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[150px]"
-          >
-            <Logo />
-          </Link>
-          <nav aria-label="Main">
-            <Link
-              href="/curriculum"
-              className="inline-flex min-h-10 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Back to the curriculum
-            </Link>
-          </nav>
-        </div>
-      </header>
+    <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
-          title="Privacy Policy"
+          title="Privacy policy"
           description="There are no accounts on this site, and your learning data stays in your browser."
         >
           <div className="space-y-10">
-            <p className="text-sm text-foreground/80">Last updated: October 2026</p>
+            <p className="text-xs font-medium text-subtle">Last updated: October 2026</p>
             {sections.map((section) => (
               <section key={section.heading} className="space-y-4">
-                <h2 className="text-2xl font-semibold text-primary">{section.heading}</h2>
-                <div className="prose max-w-none text-foreground/90 dark:prose-invert">{section.body}</div>
+                <h2 className="text-h2 text-foreground">{section.heading}</h2>
+                <div className="prose max-w-none">{section.body}</div>
               </section>
             ))}
           </div>

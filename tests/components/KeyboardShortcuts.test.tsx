@@ -268,12 +268,12 @@ describe('KeyboardShortcuts', () => {
     render(<KeyboardShortcuts />);
     const mac = press({ key: '†', code: 'KeyT', altKey: true });
     expect(setTheme).toHaveBeenCalledTimes(1);
-    expect(setTheme).toHaveBeenCalledWith('ocean-light');
+    expect(setTheme).toHaveBeenCalledWith('light');
     expect(mac.defaultPrevented).toBe(true);
     setTheme.mockReset();
     const elsewhere = press({ key: 't', code: 'KeyT', altKey: true });
     expect(setTheme).toHaveBeenCalledTimes(1);
-    expect(setTheme).toHaveBeenCalledWith('ocean-light');
+    expect(setTheme).toHaveBeenCalledWith('light');
     expect(elsewhere.defaultPrevented).toBe(true);
   });
 

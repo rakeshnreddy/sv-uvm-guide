@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmPhasingDiagramPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       diagrams={[<UvmPhaseTimelineVisualizer key="uvm-phase-map" />, <UvmPhasingDiagram key="uvm-phasing" />]}

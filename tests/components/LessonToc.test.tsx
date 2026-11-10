@@ -80,7 +80,11 @@ describe("<LessonToc />", () => {
     act(() => {
       callback([{ target: heading, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
     });
-    expect(screen.getByRole("link", { name: "Expert: Push Further", hidden: true })).toHaveAttribute("aria-current", "location");
+    const current = screen.getByRole("link", { name: "Expert: Push Further", hidden: true });
+    expect(current).toHaveAttribute("aria-current", "location");
+    // The current entry is a raised row with a 2 px accent edge, not an accent fill.
+    expect(current).toHaveClass("bg-muted", "border-l-2", "border-primary", "font-medium", "text-foreground");
+    expect(current.className).not.toMatch(/bg-primary/);
     heading.remove();
   });
 

@@ -17,8 +17,8 @@ export const metadata: Metadata = {
 const focusRing =
   'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 const inlineLink = `font-medium text-primary underline underline-offset-4 hover:no-underline ${focusRing}`;
-const listLink = `font-medium text-primary underline-offset-4 hover:underline ${focusRing}`;
-const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const listLink = `font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none ${focusRing}`;
+const eyebrow = 'text-label text-subtle';
 
 function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -30,15 +30,15 @@ function TaggedModule({ module }: { module: ExpertIndexModule }) {
   return (
     <article
       aria-labelledby={`expert-${module.id}`}
-      className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5"
+      className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5"
     >
-      <h3 id={`expert-${module.id}`} className="text-base font-semibold text-foreground sm:text-lg">
-        <span className="mr-2 font-mono text-sm text-muted-foreground">{module.code}</span>
+      <h3 id={`expert-${module.id}`} className="text-h4 text-foreground">
+        <span className="mr-2 font-mono text-label text-subtle">{module.code}</span>
         <Link href={module.href} className={listLink}>
           {module.displayTitle}
         </Link>
         {module.track === 'elective' && (
-          <span className="ml-2 rounded-full border border-dashed border-border px-2 py-0.5 align-middle text-xs font-medium text-muted-foreground">
+          <span className="ml-2 rounded border border-dashed border-border px-2 py-0.5 align-middle text-xs font-medium text-muted-foreground">
             Elective
           </span>
         )}
@@ -76,18 +76,18 @@ function UntaggedModules({ tier, modules }: { tier: ExpertIndexTier; modules: Ex
   const allUntagged = modules.length === tier.modules.length;
   return (
     <div className="mt-6">
-      <h3 id={`${tier.anchor}-untagged`} className="text-base font-semibold text-foreground">
+      <h3 id={`${tier.anchor}-untagged`} className="text-h4 text-foreground">
         {allUntagged ? 'No expert topics tagged in this tier yet' : `Not tagged yet (${modules.length})`}
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
         Authors are adding <code className="rounded bg-muted px-1 font-mono text-[0.9em]">Expert:</code> subsections as
         lessons are revised. Until then, go deeper through each module&apos;s Push Further section where it has one.
       </p>
-      <ul aria-labelledby={`${tier.anchor}-untagged`} className="mt-3 divide-y divide-border rounded-2xl border border-border bg-card">
+      <ul aria-labelledby={`${tier.anchor}-untagged`} className="mt-3 divide-y divide-border rounded-xl border border-border bg-card">
         {modules.map((module) => (
           <li key={module.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
             <span className="min-w-0">
-              <span className="mr-2 font-mono text-xs text-muted-foreground">{module.code}</span>
+              <span className="mr-2 font-mono text-label text-subtle">{module.code}</span>
               <Link href={module.href} className={`${listLink} [overflow-wrap:anywhere]`}>
                 {module.displayTitle}
               </Link>
@@ -138,10 +138,10 @@ export default function ExpertIndexPage() {
         </ol>
       </nav>
 
-      <header className="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8">
+      <header className="rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
         <p className={eyebrow}>Expert layers</p>
-        <h1 className="mt-2 text-3xl font-bold text-foreground sm:text-4xl">Expert index</h1>
-        <p className="mt-3 max-w-3xl text-base text-muted-foreground">
+        <h1 className="mt-2 text-h1 text-foreground">Expert index</h1>
+        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
           Every <strong className="font-semibold text-foreground">Expert:</strong> subsection in the lessons, linked to
           the heading itself: standard corner cases, tool-dependent behaviour, methodology trade-offs, scale and
           performance, and staff-level interview questions. Every module on the{' '}
@@ -167,7 +167,7 @@ export default function ExpertIndexPage() {
             <li key={tier.id}>
               <a
                 href={`#${tier.anchor}`}
-                className={`flex min-h-[44px] items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2 hover:border-primary ${focusRing}`}
+                className={`flex min-h-[44px] items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none ${focusRing}`}
               >
                 <span className="font-medium text-foreground">{tier.title}</span>
                 <span className="text-xs text-muted-foreground">{plural(tier.topicCount, 'topic')}</span>
@@ -182,7 +182,7 @@ export default function ExpertIndexPage() {
         const untagged = tier.modules.filter((m) => m.topicCount === 0);
         return (
           <section key={tier.id} id={tier.anchor} aria-labelledby={`${tier.anchor}-heading`} className="mt-10 scroll-mt-24">
-            <h2 id={`${tier.anchor}-heading`} className="text-2xl font-semibold text-foreground">
+            <h2 id={`${tier.anchor}-heading`} className="text-h2 text-foreground">
               {tier.title}
             </h2>
             {tier.audience && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{tier.audience}</p>}

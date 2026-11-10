@@ -174,7 +174,7 @@ describe('resolved routes', () => {
       expect(item.kindLabel, item.href).toBe(PRACTICE_MAP_KIND_LABELS[page.kind]);
     }
     const sandbox = resolved.find((item) => item.href === '/visualizations/systemverilog-3d');
-    expect(sandbox).toMatchObject({ label: 'SystemVerilog Array Sandbox', kindLabel: 'Interactive model' });
+    expect(sandbox).toMatchObject({ label: 'SystemVerilog array sandbox', kindLabel: 'Interactive model' });
   });
 
   it('report and refuse a practice page that is not in the practice map', () => {

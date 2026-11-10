@@ -7,9 +7,9 @@ interface AlertProps {
 }
 
 const Alert: React.FC<AlertProps> = ({ children, type = 'info' }) => {
-  const color = type === 'warning' ? 'bg-yellow-500/10 border-yellow-500' : 'bg-blue-500/10 border-blue-500';
+  const color = type === 'warning' ? 'bg-warning-subtle border-warning' : 'bg-info-subtle border-info';
   return (
-    <div className={`my-4 p-4 border-l-4 ${color} rounded`}> {children} </div>
+    <div className={`my-4 rounded-lg border-l-4 p-4 text-foreground ${color}`}> {children} </div>
   );
 };
 

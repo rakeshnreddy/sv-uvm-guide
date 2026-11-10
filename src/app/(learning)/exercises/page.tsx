@@ -7,7 +7,7 @@ import { PracticeCardGrid } from '@/components/practice/PracticeHub';
 import { getPracticePages } from '@/lib/practice-links';
 
 export const metadata: Metadata = {
-  title: 'Learning Exercises',
+  title: "Learning exercises",
   description:
     'Interactive SystemVerilog and UVM exercises with instant feedback: sort the UVM phases, build an agent, wire a scoreboard and predict sequencer arbitration.',
 };
@@ -17,7 +17,7 @@ const ExercisesLandingPage: React.FC = () => {
   const exercises = getPracticePages().filter((item) => item.kind === 'exercise');
 
   return (
-    <InfoPage title="Interactive Learning Exercises">
+    <InfoPage gutter={false} title="Interactive learning exercises">
       <section className="mb-8">
         <p className="mb-4">
           Each exercise checks your answer straight away and explains what is wrong. Your best score is kept in this browser.
@@ -25,12 +25,12 @@ const ExercisesLandingPage: React.FC = () => {
         </p>
         <p>
           For guided labs, interactive models and interview questions, see the{' '}
-          <Link href="/practice">Practice Hub</Link>.
+          <Link href="/practice">Practice hub</Link>.
         </p>
       </section>
 
       <section>
-        <h2 className="mb-4 text-2xl font-semibold text-primary">Available exercises</h2>
+        <h2 className="mb-4 text-h2 text-foreground">Available exercises</h2>
         <PracticeCardGrid items={exercises} />
       </section>
     </InfoPage>

@@ -19,7 +19,7 @@ interface ResourceLibraryProps {
 
 type GroupFilter = ResourceGroupId | 'all';
 
-const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const eyebrow = 'text-xs font-medium text-subtle';
 
 /** Hostname shown next to each link, so learners see where it goes before they click. */
 function hostOf(href: string): string {
@@ -36,21 +36,21 @@ function ResourceCard({ resource }: { resource: ResolvedResource }) {
     <article
       aria-labelledby={headingId}
       data-resource-id={resource.id}
-      className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-background/60 p-4 sm:p-5"
+      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-card sm:p-5"
     >
       <header className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] font-semibold text-muted-foreground [font-variant-ligatures:none]">
+          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-xs font-medium text-muted-foreground [font-variant-ligatures:none]">
             {resource.tag}
           </span>
           <span className="text-xs text-muted-foreground">{RESOURCE_COST_LABELS[resource.cost]}</span>
         </div>
-        <h3 id={headingId} className="text-lg font-semibold leading-snug text-foreground">
+        <h3 id={headingId} className="text-h3 text-foreground">
           <a
             href={resource.href}
             target="_blank"
             rel="noopener noreferrer"
-            className={cn('rounded-sm text-primary underline-offset-4 hover:underline', focusRing)}
+            className={cn('rounded-sm text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:decoration-current', focusRing)}
           >
             {resource.name}
             <span className="sr-only"> (opens in a new tab)</span>
@@ -111,10 +111,10 @@ export default function ResourceLibrary({ groups, resources }: ResourceLibraryPr
         aria-pressed={active}
         onClick={() => setGroup(id)}
         className={cn(
-          'rounded-full border px-3 py-1 text-sm font-medium transition-colors',
+          'min-h-10 rounded-lg border px-3 py-1 text-sm font-medium text-foreground transition-colors duration-150 ease-bench',
           active
-            ? 'border-primary bg-primary text-primary-foreground'
-            : 'border-border bg-background text-foreground hover:bg-muted',
+            ? 'border-border border-b-2 border-b-primary bg-muted'
+            : 'border-border bg-card hover:bg-muted',
           focusRing,
         )}
       >
@@ -137,7 +137,7 @@ export default function ResourceLibrary({ groups, resources }: ResourceLibraryPr
           placeholder="For example: AXI, UVM, Python, 4-state"
           aria-describedby={statusId}
           className={cn(
-            'w-full max-w-xl rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground',
+            'min-h-10 w-full max-w-xl rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-subtle',
             focusRing,
           )}
         />
@@ -164,7 +164,7 @@ export default function ResourceLibrary({ groups, resources }: ResourceLibraryPr
         return (
           <section key={g.id} aria-labelledby={`group-${g.id}`} className="flex flex-col gap-4">
             <div>
-              <h2 id={`group-${g.id}`} className="text-2xl font-semibold text-foreground">
+              <h2 id={`group-${g.id}`} className="text-h2 text-foreground">
                 {g.title}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">{g.purpose}</p>

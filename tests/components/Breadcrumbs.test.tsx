@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import Breadcrumbs from '@/components/layout/Breadcrumbs';
+import Breadcrumbs, { crumbItemClass, crumbLinkClass } from '@/components/layout/Breadcrumbs';
 import { lessonBreadcrumbs } from '@/lib/curriculum/lesson-context';
 
 type MockNextLinkProps = React.PropsWithChildren<
@@ -37,6 +37,23 @@ describe('Breadcrumbs', () => {
       `/curriculum/T2_Intermediate/${IUVM3B}/virtual-sequences`,
     ]);
     expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, null, null, 'page']);
+  });
+
+  it('lets the current crumb take the free room on the row and truncate only when the row is full', () => {
+    render(<Breadcrumbs slug={['T2_Intermediate', IUVM3B, 'virtual-sequences']} />);
+    const links = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('link');
+    const current = links[links.length - 1];
+    expect(current).toHaveClass('max-w-full', 'min-w-0');
+    expect(current.className).not.toMatch(/max-w-\[(15|20)rem\]/);
+    expect(current.parentElement).toHaveClass('min-w-0', 'flex-auto');
+    expect(current.querySelector('span')).toHaveClass('truncate');
+    // Ancestors keep their own width, with their caps.
+    for (const link of links.slice(0, -1)) {
+      expect(link).toHaveClass('max-w-[15rem]', 'sm:max-w-[20rem]');
+      expect(link.parentElement).not.toHaveClass('flex-auto');
+    }
+    expect(crumbItemClass(false)).not.toMatch(/flex-auto/);
+    expect(crumbLinkClass(true)).not.toMatch(/max-w-\[/);
   });
 
   it('ends on the module crumb on a module page and links canonical URLs from a pretty slug', () => {

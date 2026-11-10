@@ -18,7 +18,7 @@ export default function ShortcutsHelpButton({ className }: { className?: string 
       aria-expanded={open}
       aria-keyshortcuts="?"
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg px-2 py-1 text-left hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "inline-flex items-center gap-2 rounded-lg px-2 py-1 text-left underline-offset-4 transition-colors duration-150 ease-bench hover:text-foreground hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >

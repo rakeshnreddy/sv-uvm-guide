@@ -44,8 +44,8 @@ const FeatureCard = ({ feature }: { feature: Feature }) => (
       <feature.icon className="w-12 h-12 text-primary/70" />
     </div>
     <div className="p-6 flex flex-col flex-grow">
-      <h3 className="text-xl font-bold text-primary mb-2">{feature.title}</h3>
-      <p className="text-foreground/80 mb-6 flex-grow">{feature.description}</p>
+      <h3 className="text-h3 text-foreground mb-2">{feature.title}</h3>
+      <p className="text-muted-foreground mb-6 flex-grow">{feature.description}</p>
       <Button asChild variant="outline" className="mt-auto">
         <Link href={feature.href}>
           {feature.linkLabel}
@@ -61,8 +61,8 @@ const InteractiveFeaturesSection = () => {
     <section className="w-full py-20 bg-background/70">
       <div className="container mx-auto px-4">
         <div className="text-center mb-12">
-          <h2 className="text-4xl md:text-5xl font-bold text-primary mb-4">Experience Interactive Learning</h2>
-          <p className="text-lg text-foreground/80 max-w-3xl mx-auto">
+          <h2 className="text-h2 text-foreground mb-4">Experience Interactive Learning</h2>
+          <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
             Interactives say whether they are illustrations or tested models, and many ask you to predict an outcome before they reveal it.
           </p>
         </div>

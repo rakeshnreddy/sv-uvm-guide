@@ -13,7 +13,7 @@ import { useModalDialog } from "./useModalDialog";
 function Key({ label }: { label: string }) {
   const spoken = SPOKEN_KEY_NAMES[label];
   return (
-    <kbd className="inline-flex min-w-[1.75rem] items-center justify-center rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-foreground">
+    <kbd className="inline-flex min-w-[1.75rem] items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-medium text-foreground">
       {spoken ? (
         <>
           <span aria-hidden="true">{label}</span>
@@ -64,7 +64,7 @@ function ShortcutsHelpPanel() {
 
   return (
     <div className={`fixed inset-0 ${MODAL_LAYER} flex items-start justify-center overflow-y-auto px-4 py-6 sm:py-[10vh]`}>
-      <div aria-hidden="true" className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={shellStore.closeHelp} />
+      <div aria-hidden="true" className="fixed inset-0 bg-background/80" onClick={shellStore.closeHelp} />
       <div
         ref={panelRef}
         role="dialog"
@@ -72,7 +72,7 @@ function ShortcutsHelpPanel() {
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="relative w-full max-w-lg rounded-2xl border border-border bg-card text-card-foreground shadow-2xl focus:outline-none"
+        className="relative w-full max-w-lg rounded-2xl border border-border bg-card text-card-foreground shadow-card focus:outline-none"
       >
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 id={titleId} className="text-lg font-semibold text-foreground">
@@ -82,7 +82,7 @@ function ShortcutsHelpPanel() {
             type="button"
             onClick={shellStore.closeHelp}
             aria-label="Close keyboard shortcuts"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors duration-150 ease-bench hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
           >
             <X aria-hidden="true" className="h-5 w-5" />
           </button>
@@ -94,7 +94,7 @@ function ShortcutsHelpPanel() {
           </p>
           {groups.map((group) => (
             <table key={group.title} className="w-full border-collapse text-left text-sm">
-              <caption className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <caption className="pb-2 text-left text-label text-subtle">
                 {group.title}
               </caption>
               <thead className="sr-only">

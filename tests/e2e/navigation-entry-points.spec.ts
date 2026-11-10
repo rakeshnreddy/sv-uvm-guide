@@ -63,7 +63,7 @@ test.describe('navbar entry points at 1280 px', () => {
     await expect(mainNav(page).getByRole('link', { name: 'Interview prep', exact: true })).toHaveAttribute('aria-current', 'page');
   });
 
-  test('the course outline lists the same quick links, and a lesson page docks them under the outline', async ({ page }) => {
+  test('the course outline lists the same quick links; a lesson page docks them below xl and leaves them to the navbar from xl up', async ({ page }) => {
     await page.goto('/practice');
     await waitForShell(page);
     await page.getByRole('button', { name: 'Course outline', exact: true }).click();
@@ -80,7 +80,14 @@ test.describe('navbar entry points at 1280 px', () => {
 
     await page.goto(MAILBOXES);
     await waitForShell(page);
-    const docked = page.getByRole('navigation', { name: 'Course outline' }).getByRole('list', { name: 'Quick links' });
+    const outline = page.getByRole('navigation', { name: 'Course outline' });
+    // From xl (1280) up the navbar carries these links, so the docked outline hides its copy.
+    await expect(outline.locator('ul[aria-label="Quick links"]')).toBeHidden();
+    await expect(mainNav(page).getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
+
+    // Below xl the docked outline still lists them.
+    await page.setViewportSize({ width: 1024, height: 800 });
+    const docked = outline.getByRole('list', { name: 'Quick links' });
     await expect(docked.getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
   });
 });
@@ -141,8 +148,8 @@ test('Alt/Option+T switches light and dark exactly once per press (NB3 request 4
   await waitForShell(page);
   const html = page.locator('html');
   const before = await html.getAttribute('data-theme');
-  expect(before).toMatch(/-(light|dark)$/);
-  const flipped = before!.endsWith('-dark') ? before!.replace(/-dark$/, '-light') : before!.replace(/-light$/, '-dark');
+  expect(before).toMatch(/^(light|dark)$/);
+  const flipped = before === 'dark' ? 'light' : 'dark';
 
   await page.keyboard.press('Alt+KeyT');
   await expect(html).toHaveAttribute('data-theme', flipped);

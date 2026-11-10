@@ -282,7 +282,7 @@ describe('public reference pages (no switch, session or stored preferences)', ()
   const publicRoutes = [
     { name: 'history', module: '@/app/(learning)/history/page', heading: 'History of SystemVerilog and UVM' },
     { name: 'resources', module: '@/app/(learning)/resources/page', heading: 'Resources' },
-    { name: 'knowledge-hub', module: '@/app/(learning)/knowledge-hub/page', heading: 'Knowledge Hub' },
+    { name: 'knowledge-hub', module: '@/app/(learning)/knowledge-hub/page', heading: 'Knowledge hub' },
     { name: 'projects', module: '@/app/(learning)/projects/page', heading: 'Projects' },
   ];
 

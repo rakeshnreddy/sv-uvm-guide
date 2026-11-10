@@ -24,7 +24,7 @@ export default function ClientProviders({ children }: { children: React.ReactNod
   );
 
   return (
-    <ThemeProvider attribute="data-theme" defaultTheme="default-dark" disableTransitionOnChange>
+    <ThemeProvider>
       {ACCOUNTS_ENABLED ? <SessionProvider>{content}</SessionProvider> : content}
     </ThemeProvider>
   );

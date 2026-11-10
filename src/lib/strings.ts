@@ -1,10 +1,8 @@
 export const strings = {
   en: {
-    toggleTheme: "Toggle theme",
     loading: "Loading..."
   },
   es: {
-    toggleTheme: "Cambiar tema",
     loading: "Cargando..."
   }
 } as const;

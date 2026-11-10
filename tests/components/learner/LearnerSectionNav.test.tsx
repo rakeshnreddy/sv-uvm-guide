@@ -51,6 +51,16 @@ describe('LearnerSectionNav', () => {
     }
   });
 
+  it('marks the current page with the raised surface and an accent underline, not an accent fill', () => {
+    render(<LearnerSectionNav current="review" />);
+
+    const current = screen.getByRole('link', { name: 'Review' });
+    expect(current).toHaveClass('bg-muted', 'border-b-2', 'border-b-primary', 'text-foreground');
+    expect(current.className).not.toMatch(/(^|\s)bg-primary(\s|$)/);
+    expect(current.className).not.toContain('text-primary-foreground');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveClass('bg-muted');
+  });
+
   it('renders on the server without hooks', () => {
     const html = renderToString(<LearnerSectionNav current="settings" />);
 

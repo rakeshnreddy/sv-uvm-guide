@@ -4,6 +4,9 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, XCircle, HelpCircle, AlertTriangle, Lightbulb } from "lucide-react";
 
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
+
 export interface PlaygroundOption {
   id: string;
   label: string | React.ReactNode;
@@ -39,8 +42,39 @@ export const normalizePlaygroundOptions = (options: (PlaygroundOption | Authored
     };
   });
 
+/**
+ * Classes for one answer option. A selected option before submit is the raised
+ * surface with a 2 px accent marker on its leading edge; after submit the correct
+ * option reads as success and a wrong pick as danger.
+ */
+export function optionClassName({
+  isSelected,
+  hasSubmitted,
+  showSuccess,
+  showFailure,
+  isCorrect,
+}: {
+  isSelected: boolean;
+  hasSubmitted: boolean;
+  showSuccess: boolean;
+  showFailure: boolean;
+  isCorrect: boolean;
+}): string {
+  return cn(
+    "relative flex w-full items-center justify-between overflow-hidden rounded-lg border border-l-2 p-4 text-left transition-colors duration-150 ease-bench focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    showSuccess
+      ? "border-success border-l-success bg-success-subtle"
+      : showFailure
+        ? "border-danger border-l-danger bg-danger-subtle"
+        : isSelected && !hasSubmitted
+          ? "border-border border-l-primary bg-muted"
+          : "border-border border-l-border bg-card hover:bg-muted",
+    hasSubmitted && !isSelected && !isCorrect && "opacity-60",
+  );
+}
+
 export default function InterviewQuestionPlayground({
-  title = "Interview Pitfall",
+  title = "Interview pitfall",
   question,
   options: authoredOptions,
 }: InterviewQuestionPlaygroundProps) {
@@ -75,19 +109,15 @@ export default function InterviewQuestionPlayground({
   const isCorrect = selectedOption?.isCorrect;
 
   return (
-    <div className="my-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="mb-6 flex items-center gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-          <HelpCircle size={24} />
+    <div data-testid="interview-playground" className="my-8 rounded-xl border border-border bg-card p-6 text-card-foreground shadow-card">
+      <div className="mb-6 flex items-center gap-3 border-b border-border pb-4">
+        <div data-testid="interview-playground-icon" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <HelpCircle size={22} aria-hidden />
         </div>
-        <h3 className="m-0 text-xl font-semibold text-slate-800 dark:text-slate-100">
-          {title}
-        </h3>
+        <h3 className="m-0 text-h3 text-foreground">{title}</h3>
       </div>
 
-      <div className="mb-6 text-slate-700 dark:text-slate-300 prose-p:my-2 prose-code:text-sm">
-        {question}
-      </div>
+      <div className="mb-6 text-foreground prose-p:my-2 prose-code:text-sm">{question}</div>
 
       <motion.div
         className="flex flex-col gap-3"
@@ -102,57 +132,32 @@ export default function InterviewQuestionPlayground({
           return (
             <motion.button
               key={option.id}
+              type="button"
               onClick={() => handleSelect(option.id)}
               disabled={hasSubmitted}
-              whileHover={!hasSubmitted ? { scale: 1.01 } : {}}
+              aria-pressed={isSelected}
               whileTap={!hasSubmitted ? { scale: 0.99 } : {}}
-              className={`relative flex items-center justify-between overflow-hidden rounded-lg border p-4 text-left transition-all ${
-                isSelected && !hasSubmitted
-                  ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500 dark:bg-blue-900/20"
-                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600 dark:hover:bg-slate-800/80"
-              } ${
-                showSuccess
-                  ? "border-green-500 bg-green-50 dark:border-green-800 dark:bg-green-900/20"
-                  : ""
-              } ${
-                showFailure
-                  ? "border-rose-500 bg-rose-50 dark:border-rose-800 dark:bg-rose-900/20"
-                  : ""
-              } ${
-                hasSubmitted && !isSelected && !option.isCorrect
-                  ? "opacity-50 grayscale"
-                  : ""
-              }`}
+              className={optionClassName({ isSelected, hasSubmitted, showSuccess, showFailure, isCorrect: option.isCorrect })}
             >
               <span
-                className={`flex-1 font-medium ${
-                  showSuccess
-                    ? "text-green-800 dark:text-green-300"
-                    : showFailure
-                    ? "text-rose-800 dark:text-rose-300"
-                    : "text-slate-700 dark:text-slate-200"
-                }`}
+                className={cn(
+                  // Long simulator switches have no break points; let them wrap, not clip.
+                  "min-w-0 flex-1 font-medium [overflow-wrap:anywhere]",
+                  showSuccess ? "text-success" : showFailure ? "text-danger" : "text-foreground",
+                )}
               >
                 {option.label}
               </span>
 
               <AnimatePresence>
                 {showSuccess && (
-                  <motion.div
-                    initial={{ scale: 0, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="ml-4 text-green-500"
-                  >
-                    <CheckCircle size={24} />
+                  <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="ml-4 shrink-0 text-success">
+                    <CheckCircle size={24} aria-label="Correct answer" />
                   </motion.div>
                 )}
                 {showFailure && (
-                  <motion.div
-                    initial={{ scale: 0, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="ml-4 text-rose-500"
-                  >
-                    <XCircle size={24} />
+                  <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="ml-4 shrink-0 text-danger">
+                    <XCircle size={24} aria-label="Your answer, incorrect" />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -162,25 +167,15 @@ export default function InterviewQuestionPlayground({
       </motion.div>
 
       <div className="mt-6 flex items-center justify-between">
+        {/* Secondary style: a lesson holds several of these cards, and the contract allows one filled accent button per view. */}
         {!hasSubmitted ? (
-          <button
-            onClick={handleSubmit}
-            disabled={!selectedId}
-            className={`rounded-lg px-6 py-2.5 font-medium transition-colors ${
-              selectedId
-                ? "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-                : "cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
-            }`}
-          >
-            Submit Answer
-          </button>
+          <Button type="button" variant="secondary" onClick={handleSubmit} disabled={!selectedId}>
+            Submit answer
+          </Button>
         ) : (
-          <button
-            onClick={handleReset}
-            className="rounded-lg border border-slate-200 bg-white px-6 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            Try Again
-          </button>
+          <Button type="button" variant="secondary" onClick={handleReset}>
+            Try again
+          </Button>
         )}
       </div>
 
@@ -192,26 +187,26 @@ export default function InterviewQuestionPlayground({
             className="mt-6 overflow-hidden"
           >
             <div
-              className={`rounded-lg border p-4 ${
-                isCorrect
-                  ? "border-green-200 bg-green-50 text-green-900 dark:border-green-900/50 dark:bg-green-900/20 dark:text-green-200"
-                  : "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200"
-              }`}
+              data-testid="interview-playground-feedback"
+              className={cn(
+                "rounded-lg border p-4 text-foreground",
+                isCorrect ? "border-success bg-success-subtle" : "border-danger bg-danger-subtle",
+              )}
             >
-              <div className="mb-2 flex items-center gap-2 font-bold">
+              <div className={cn("mb-2 flex items-center gap-2 font-semibold", isCorrect ? "text-success" : "text-danger")}>
                 {isCorrect ? (
                   <>
-                    <Lightbulb size={20} />
-                    <span>Correct Analysis</span>
+                    <Lightbulb size={20} aria-hidden />
+                    <span>Correct analysis</span>
                   </>
                 ) : (
                   <>
-                    <AlertTriangle size={20} />
-                    <span>Watch Out!</span>
+                    <AlertTriangle size={20} aria-hidden />
+                    <span>Watch out</span>
                   </>
                 )}
               </div>
-              <div className="text-sm leading-relaxed opacity-90 prose-code:font-mono prose-code:bg-black/5 prose-code:px-1 prose-code:rounded dark:prose-code:bg-white/10">
+              <div className="text-sm leading-relaxed prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:font-mono">
                 {selectedOption.explanation}
               </div>
             </div>

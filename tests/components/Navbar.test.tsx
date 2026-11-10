@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import Navbar, { LEARNER_MENU_LINKS, mainNavLinks, navLinkCurrent, signInHref } from '@/components/Navbar';
+import Navbar, { LEARNER_MENU_LINKS, MOBILE_GROUP_HEADING_CLASS, mainNavLinks, navLinkCurrent, signInHref } from '@/components/Navbar';
 import Sidebar, { OUTLINE_DRAWER_ID } from '@/components/layout/Sidebar';
 import { shellStore } from '@/components/search/shell-store';
 
@@ -44,11 +44,18 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/components/ui/ThemeSwitcher', () => ({
-  ThemeSwitcher: ({ layout = 'bar' }: { layout?: 'bar' | 'menu' }) => (
-    <button type="button" aria-label="Toggle theme" data-layout={layout}>
-      theme
-    </button>
-  ),
+  ThemeSwitcher: ({ layout = 'bar' }: { layout?: 'bar' | 'menu' }) =>
+    layout === 'menu' ? (
+      <div role="radiogroup" aria-label="Theme" data-layout={layout}>
+        <button type="button" role="radio" aria-checked="true">
+          Dark
+        </button>
+      </div>
+    ) : (
+      <button type="button" aria-label="Theme" aria-haspopup="menu" data-layout={layout}>
+        theme
+      </button>
+    ),
 }));
 
 const MAIN_HREFS = ['/curriculum#routes', '/curriculum', '/practice', '/practice#labs', '/interview-prep', '/dashboard'];
@@ -142,6 +149,43 @@ describe('Navbar landmarks and links', () => {
     expect(navLinkCurrent('/practices', '/practice')).toBeUndefined();
   });
 
+  it('marks the current link with weight 500 and a 2 px accent underline, never an accent fill (R5, R8)', () => {
+    nav.pathname = '/curriculum';
+    render(<Navbar />);
+    const main = screen.getAllByRole('navigation', { name: 'Main' })[0];
+    const current = within(main).getByRole('link', { name: 'Curriculum' });
+    expect(current).toHaveClass('border-b-2', 'border-primary', 'font-medium', 'text-foreground', 'duration-150', 'ease-bench');
+    expect(current).not.toHaveClass('font-semibold', 'bg-primary', 'text-primary');
+    const other = within(main).getByRole('link', { name: 'Practice' });
+    expect(other).toHaveClass('border-transparent', 'font-medium', 'text-muted-foreground', 'hover:text-foreground');
+    // Every link is set at weight 500, so moving between pages never shifts the row.
+    for (const link of within(main).getAllByRole('link')) {
+      expect(link).toHaveClass('font-medium');
+      expect(link).not.toHaveClass('font-semibold', 'font-normal');
+    }
+    expect(within(main).getByRole('button', { name: 'More' })).toHaveClass('font-medium');
+  });
+
+  it('is an opaque sticky bar with a hairline: no blur and no translucent background', () => {
+    render(<Navbar />);
+    const banner = screen.getByRole('banner');
+    expect(banner).toHaveClass('sticky', 'top-0', 'border-b', 'border-border', 'bg-background');
+    expect(banner.className).not.toMatch(/backdrop-blur|bg-background\/|supports-\[backdrop-filter\]/);
+  });
+
+  it('gives every header icon button one style: 40 px, rounded-lg, bordered card surface, hover raised', () => {
+    render(<Navbar />);
+    const banner = screen.getByRole('banner');
+    const names = ['Course outline', 'Search', 'Open main menu'];
+    for (const name of names) {
+      for (const button of within(banner).getAllByRole('button', { name })) {
+        expect(button).toHaveClass('h-10', 'w-10', 'rounded-lg', 'border', 'border-border', 'bg-card', 'hover:bg-muted', 'duration-150', 'ease-bench');
+        expect(button).not.toHaveClass('rounded-xl', 'bg-background', 'transition-all');
+        expect(button.querySelector('svg')).toHaveClass('h-[18px]', 'w-[18px]');
+      }
+    }
+  });
+
   it('links Start here, Labs, Interview prep and Dashboard in order (G30-SIDE-05, G30-PATH-07)', () => {
     render(<Navbar />);
     const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
@@ -209,7 +253,7 @@ describe('Navbar landmarks and links', () => {
       expect(within(main).getByRole('link', { name })).toHaveClass('px-2', 'lg:px-3');
     }
     expect(within(main).getByRole('button', { name: 'More' })).toHaveClass('px-2', 'lg:px-3');
-    const controls = within(banner).getByRole('button', { name: 'Toggle theme' }).parentElement!;
+    const controls = within(banner).getByRole('button', { name: 'Theme' }).parentElement!;
     expect(controls).toHaveClass('gap-1', 'lg:gap-2');
     const divider = controls.querySelector('span[aria-hidden="true"]');
     expect(divider).toHaveClass('hidden', 'lg:block');
@@ -494,10 +538,49 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
       const { menu } = await openPhoneMenu(user);
       const appearance = within(menu).getByRole('region', { name: 'Appearance' });
       expect(within(appearance).getByRole('heading', { name: 'Appearance', level: 3 })).toBeInTheDocument();
-      expect(within(appearance).getByRole('button', { name: 'Toggle theme' })).toHaveAttribute('data-layout', 'menu');
+      // The same three choices as a segmented radio group, not a nested popup.
+      expect(within(appearance).getByRole('radiogroup', { name: 'Theme' })).toHaveAttribute('data-layout', 'menu');
+      expect(within(appearance).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
       unmount();
       shellStore.reset();
     }
+  });
+
+  it('dims the page behind the phone menu without blur, and keeps shadows to shadow-card', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu } = await openPhoneMenu(user);
+    const backdrop = screen.getByTestId('mobile-menu-backdrop');
+    expect(backdrop).toHaveClass('bg-background/80');
+    expect(backdrop.className).not.toMatch(/blur/);
+    expect(menu).toHaveClass('shadow-card');
+    expect(menu.className).not.toMatch(/shadow-(lg|xl|2xl)/);
+  });
+
+  it('sets the phone menu group headings in the label style (12/16, weight 500, sentence case)', async () => {
+    accountsOnSignedOut();
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu } = await openPhoneMenu(user);
+    const headings = within(menu).getAllByRole('heading', { level: 3 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(['Appearance', 'Your learning', 'Account']);
+    for (const heading of headings) {
+      expect(heading).toHaveClass('text-label', 'text-muted-foreground');
+      expect(heading).not.toHaveClass('text-sm', 'font-semibold', 'uppercase');
+    }
+    expect(MOBILE_GROUP_HEADING_CLASS).toContain('text-label');
+  });
+
+  it('marks the current phone menu row with the raised surface and a 2 px leading accent, at the same weight as the others', async () => {
+    nav.pathname = '/practice';
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu } = await openPhoneMenu(user);
+    const main = within(menu).getByRole('navigation', { name: 'Main' });
+    const current = within(main).getByRole('link', { name: 'Practice' });
+    expect(current).toHaveClass('border-l-2', 'border-primary', 'bg-muted', 'font-medium');
+    const other = within(main).getByRole('link', { name: 'Curriculum' });
+    expect(other).toHaveClass('border-l-2', 'border-transparent', 'font-medium');
   });
 
   it('lists Settings, Self-assessment and Find your level under Your learning as 44 px rows, marking the current page', async () => {
@@ -533,7 +616,7 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
       'Labs',
       'Interview prep',
       'Dashboard',
-      'Toggle theme',
+      'Dark',
       'Settings',
       'Self-assessment',
       'Find your level',

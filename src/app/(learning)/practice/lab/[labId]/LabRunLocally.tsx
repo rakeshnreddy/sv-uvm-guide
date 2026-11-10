@@ -12,7 +12,7 @@ const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 export const labActionButtonClass = cn(
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60",
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60",
   focusRing,
 );
 
@@ -99,9 +99,9 @@ export function LabRunLocally({ archive, guide, onOpenGuide, className }: LabRun
   return (
     <section
       aria-labelledby={headingId}
-      className={cn("mt-4 rounded-lg border border-border bg-card p-4 text-card-foreground", className)}
+      className={cn("mt-4 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-card", className)}
     >
-      <h2 id={headingId} className="text-base font-bold">Run it on your simulator</h2>
+      <h2 id={headingId} className="text-h4 text-foreground">Run it on your simulator</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This site does not compile or simulate your code. Download the workspace, unzip it, and run it with your
         own SystemVerilog simulator.

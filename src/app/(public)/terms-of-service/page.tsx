@@ -4,7 +4,6 @@ import Link from 'next/link';
 
 import Footer from '@/components/Footer';
 import InfoPage from '@/components/templates/InfoPage';
-import Logo from '@/components/ui/Logo';
 
 /*
  * OWNER SIGN-OFF NEEDED (GD23): this wording was rewritten in October 2026 for
@@ -23,7 +22,7 @@ const settingsLink = (
 
 const commitments: { heading: string; points: { id: string; content: React.ReactNode }[] }[] = [
   {
-    heading: 'Using the Platform',
+    heading: 'Using the platform',
     points: [
       {
         id: 'personal-use',
@@ -50,7 +49,7 @@ const commitments: { heading: string; points: { id: string; content: React.React
     ],
   },
   {
-    heading: 'Contributor Responsibilities',
+    heading: 'Contributor responsibilities',
     points: [
       { id: 'style', content: 'Follow the style guide and Definition of Done before submitting pull requests.' },
       {
@@ -64,7 +63,7 @@ const commitments: { heading: string; points: { id: string; content: React.React
     ],
   },
   {
-    heading: 'Availability & Updates',
+    heading: 'Availability and updates',
     points: [
       {
         id: 'as-is',
@@ -114,37 +113,18 @@ export const metadata: Metadata = {
 
 export default function TermsOfServicePage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/"
-            aria-label="SV/UVM Hub home"
-            className="block w-32 shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[150px]"
-          >
-            <Logo />
-          </Link>
-          <nav aria-label="Main">
-            <Link
-              href="/curriculum"
-              className="inline-flex min-h-10 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Back to the curriculum
-            </Link>
-          </nav>
-        </div>
-      </header>
+    <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
-          title="Terms of Service"
+          title="Terms of service"
           description="Guidelines for using the SystemVerilog &amp; UVM learning site."
         >
           <div className="space-y-10">
-            <p className="text-sm text-foreground/80">Last updated: October 2026</p>
+            <p className="text-xs font-medium text-subtle">Last updated: October 2026</p>
             {commitments.map((section) => (
               <section key={section.heading} className="space-y-4">
-                <h2 className="text-2xl font-semibold text-primary">{section.heading}</h2>
-                <ul className="list-disc space-y-2 pl-6 text-foreground/90">
+                <h2 className="text-h2 text-foreground">{section.heading}</h2>
+                <ul className="list-disc space-y-2 pl-6 text-foreground">
                   {section.points.map((item) => (
                     <li key={item.id}>{item.content}</li>
                   ))}

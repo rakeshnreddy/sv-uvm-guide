@@ -289,13 +289,13 @@ describe('exerciseSummaries', () => {
         { exerciseId: 'mystery', progress: { bestScore: 40, attempts: 2 } },
       ],
       [
-        { id: 'uvm-phase-sorter', title: 'UVM Phase Sorter', href: '/exercises/uvm-phase-sorter' },
-        { id: 'scoreboard-connector', title: 'Scoreboard Connector', href: '/exercises/scoreboard-connector' },
+        { id: 'uvm-phase-sorter', title: 'UVM phase sorter', href: '/exercises/uvm-phase-sorter' },
+        { id: 'scoreboard-connector', title: 'Scoreboard connector', href: '/exercises/scoreboard-connector' },
       ],
     );
     expect(result.map((entry) => [entry.id, entry.title, entry.bestScore, entry.attempts, entry.href])).toEqual([
-      ['scoreboard-connector', 'Scoreboard Connector', 100, 1, '/exercises/scoreboard-connector'],
-      ['uvm-phase-sorter', 'UVM Phase Sorter', 88, 3, '/exercises/uvm-phase-sorter'],
+      ['scoreboard-connector', 'Scoreboard connector', 100, 1, '/exercises/scoreboard-connector'],
+      ['uvm-phase-sorter', 'UVM phase sorter', 88, 3, '/exercises/uvm-phase-sorter'],
       ['mystery', 'mystery', 40, 2, undefined],
     ]);
   });

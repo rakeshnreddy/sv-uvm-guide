@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 // ConcurrencyVisualizer is no longer routed: it modelled process priorities, which SystemVerilog does not have.
 const ConcurrencyVisualizerPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description="Predict when each process starts, waits and ends, then step through simulation time."
       diagrams={[<ForkJoinVisualizer key="fork-join" />]}

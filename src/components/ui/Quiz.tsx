@@ -195,7 +195,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
     const saveMessage = quizSaveMessage(saveOutcome);
     return (
       <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm" role="status" aria-live="polite">
-        <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
+        <h3 className="text-h3 text-foreground">Quiz complete</h3>
         <p className="mt-2 text-foreground">
           You answered {score} of {total} correctly{score === total ? '.' : '. Review the explanations, then try again.'}
         </p>
@@ -217,7 +217,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   return (
     <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-label tabular-nums text-muted-foreground" data-testid="quiz-counter">
           Question {currentQuestionIndex + 1} of {parsedQuestions.length}
         </p>
         {objective !== undefined ? (
@@ -229,7 +229,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
           </span>
         ) : null}
       </div>
-      <h3 className="text-xl font-bold text-primary mb-4">{question}</h3>
+      <h3 className="mb-4 text-h3 text-foreground">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (
           <Button

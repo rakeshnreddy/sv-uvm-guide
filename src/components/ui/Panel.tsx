@@ -9,9 +9,9 @@ interface PanelProps {
 
 const Panel: React.FC<PanelProps> = ({ href, title, description }) => {
   return (
-    <Link href={href} className="p-6 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg transition-all hover:shadow-xl transform hover:-translate-y-1">
-      <h3 className="text-xl font-semibold text-primary mb-2">{title}</h3>
-      <p className="text-sm text-foreground/80">{description}</p>
+    <Link href={href} className="block rounded-xl border border-border bg-card p-6 shadow-card transition-colors duration-150 ease-bench hover:border-input hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <h3 className="mb-2 text-h3 text-foreground">{title}</h3>
+      <p className="text-ui text-muted-foreground">{description}</p>
     </Link>
   );
 };

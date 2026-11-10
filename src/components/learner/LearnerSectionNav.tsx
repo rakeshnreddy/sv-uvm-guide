@@ -20,7 +20,7 @@ export const LEARNER_SECTION_LINKS: readonly LearnerSectionLink[] = Object.freez
 ]);
 
 const linkBase =
-  "inline-flex min-h-[2.75rem] items-center rounded-full border px-4 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+  "inline-flex min-h-[2.75rem] items-center rounded-lg border px-4 text-sm font-medium text-foreground transition-colors duration-150 ease-bench motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 export interface LearnerSectionNavProps {
   /** The page this nav is on; its link gets aria-current="page". */
@@ -47,8 +47,9 @@ export function LearnerSectionNav({ current, className }: LearnerSectionNavProps
                 className={cn(
                   linkBase,
                   isCurrent
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card text-foreground hover:bg-muted",
+                    ? // DESIGN.md section 2 rule 3: the current item is the raised surface with an accent marker, not a fill.
+                      "border-border border-b-2 border-b-primary bg-muted"
+                    : "border-border bg-card hover:bg-muted",
                 )}
               >
                 {link.label}

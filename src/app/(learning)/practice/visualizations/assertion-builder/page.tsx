@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const AssertionBuilderPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description="Predict what every attempt of a concurrent assertion reports, then check it against a tested model of IEEE 1800-2023 clause 16."
     >

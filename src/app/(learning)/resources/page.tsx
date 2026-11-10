@@ -23,10 +23,10 @@ function formatDate(iso: string): string {
 
 export default function ResourcesPage() {
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-8">
+    <div className="mx-auto w-full max-w-6xl pb-16">
       <header className="mb-8 max-w-3xl">
-        <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Resources</h1>
-        <p className="mt-3 text-lg leading-relaxed text-foreground/90">
+        <h1 className="text-h1 text-foreground">Resources</h1>
+        <p className="mt-3 text-lead text-muted-foreground">
           The standards, specifications and free tools the lessons rely on, grouped by what you need them for. Each
           entry says what it covers, when to reach for it and which lessons use it.
         </p>

@@ -212,7 +212,7 @@ const toneClass: Record<Tone, string> = {
 };
 
 const inputClass =
-  "h-10 w-20 rounded-md border border-border bg-background px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-10 w-20 rounded-md border border-input bg-background px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function NumberField({ label, value, onChange, min, max }: { label: string; value: number; onChange: (n: number) => void; min?: number; max?: number }) {
   return (

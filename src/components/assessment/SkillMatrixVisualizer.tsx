@@ -96,9 +96,9 @@ export const SkillMatrixVisualizer = () => {
   }, []);
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Skill Matrix Visualizer</h2>
-      <p className="text-foreground/80 mb-4">
+    <div className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="text-h2 mb-4 text-foreground">Skill Matrix Visualizer</h2>
+      <p className="text-muted-foreground mb-4">
         This radar chart visualizes your current skill levels across key areas.
       </p>
       <div className="flex justify-center">

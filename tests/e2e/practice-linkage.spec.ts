@@ -30,7 +30,7 @@ test.describe('Practice linkage', () => {
 
   test('the Practice Hub names a lesson for each item and never links a coming-soon lab', async ({ page }) => {
     await page.goto('/practice');
-    await expect(page.getByRole('heading', { level: 1, name: 'Practice Hub' })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByRole('heading', { level: 1, name: 'Practice hub' })).toBeVisible({ timeout: 60000 });
     const comingSoon = page.getByRole('region', { name: 'Coming soon', exact: true });
     await expect(comingSoon.getByRole('heading', { level: 4 }).first()).toBeVisible();
     // Coming-soon titles are text; only their "Planned for" lesson links remain.

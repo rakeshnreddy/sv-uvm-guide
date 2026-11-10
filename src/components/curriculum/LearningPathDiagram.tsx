@@ -78,7 +78,7 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
 
   return (
     <div role="group" aria-labelledby="curriculum-map-heading" className="mt-6">
-      <h3 id="curriculum-map-heading" className="text-lg font-semibold text-foreground">
+      <h3 id="curriculum-map-heading" className="text-h3 text-foreground">
         Curriculum map
       </h3>
       <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -87,16 +87,16 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
       </p>
 
       <ul aria-label="Map legend" className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <li className="rounded-md border border-border bg-background px-2 py-1">Core module</li>
-        <li className="rounded-md border-2 border-dashed border-border bg-background px-2 py-1">Elective (labelled)</li>
-        <li className="rounded-md border border-dotted border-muted-foreground bg-muted px-2 py-1">Planned: not published yet</li>
-        <li className="inline-flex items-center gap-1 rounded-md border border-primary px-2 py-1 text-foreground">
+        <li className="rounded border border-border bg-background px-2 py-1">Core module</li>
+        <li className="rounded border-2 border-dashed border-border bg-background px-2 py-1">Elective (labelled)</li>
+        <li className="rounded border border-dotted border-muted-foreground bg-muted px-2 py-1">Planned: not published yet</li>
+        <li className="inline-flex items-center gap-1 rounded border border-primary px-2 py-1 text-foreground">
           <MapPin className="h-3.5 w-3.5" aria-hidden="true" /> You are here
         </li>
-        <li className="inline-flex items-center gap-1 rounded-md border-2 border-primary px-2 py-1 text-foreground">
+        <li className="inline-flex items-center gap-1 rounded border-2 border-primary px-2 py-1 text-foreground">
           <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> Needed first
         </li>
-        <li className="inline-flex items-center gap-1 rounded-md border-2 border-foreground/70 px-2 py-1 text-foreground">
+        <li className="inline-flex items-center gap-1 rounded border-2 border-foreground/70 px-2 py-1 text-foreground">
           <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /> Builds on it
         </li>
       </ul>
@@ -114,7 +114,7 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
           <section
             key={tier.id}
             aria-labelledby={`map-${tier.anchor}`}
-            className="min-w-0 rounded-2xl border border-border bg-card p-3"
+            className="min-w-0 rounded-xl border border-border bg-card p-3"
           >
             <h4 id={`map-${tier.anchor}`} className="text-sm font-semibold text-foreground">
               {tier.title}
@@ -136,9 +136,9 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
                         return (
                           <li key={`planned-${p.code}`} className="min-w-0">
                             <div className="flex min-h-[44px] flex-col justify-center rounded-lg border border-dotted border-muted-foreground bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
-                              <span className="font-mono font-semibold">{p.code}</span>
+                              <span className="font-mono font-medium">{p.code}</span>
                               <span className="[overflow-wrap:anywhere]">{p.title}</span>
-                              <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide">Planned</span>
+                              <span className="mt-0.5 font-medium">Planned</span>
                             </div>
                           </li>
                         );
@@ -160,7 +160,7 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
                             onMouseEnter={() => setActiveId(m.id)}
                             onMouseLeave={() => setActiveId((current) => (current === m.id ? null : current))}
                             className={cn(
-                              'flex min-h-[44px] flex-col justify-center rounded-lg bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors motion-reduce:transition-none hover:border-primary',
+                              'flex min-h-[44px] flex-col justify-center rounded-lg bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors duration-150 ease-bench motion-reduce:transition-none hover:border-primary',
                               focusRing,
                               m.track === 'elective' ? 'border-2 border-dashed border-border' : 'border border-border',
                               here && 'border-primary',
@@ -169,13 +169,13 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
                               isActive && 'ring-2 ring-primary',
                             )}
                           >
-                            <span className="flex items-center gap-1 font-mono font-semibold">
+                            <span className="flex items-center gap-1 font-mono font-medium">
                               {m.code}
                               {here && <MapPin className="h-3.5 w-3.5 text-primary" aria-hidden="true" />}
                             </span>
                             <span className="[overflow-wrap:anywhere]">{m.displayTitle}</span>
                             {(here || m.track === 'elective' || isNeed || isUnlock) && (
-                              <span className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <span className="mt-0.5 flex flex-wrap gap-x-2 font-medium text-muted-foreground">
                                 {here && <span className="text-primary">You are here</span>}
                                 {m.track === 'elective' && <span>Elective</span>}
                                 {isNeed && (

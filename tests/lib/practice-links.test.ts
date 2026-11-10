@@ -248,7 +248,7 @@ describe('lab back link', () => {
   it('falls back to the Practice Hub labs, not /curriculum, when the owning module does not exist', () => {
     expect(getLabBackLink({ id: 'example', owningModule: 'F4' })).toEqual({
       href: '/practice#labs',
-      label: 'Back to the Practice Hub',
+      label: 'Back to the Practice hub',
     });
   });
 });

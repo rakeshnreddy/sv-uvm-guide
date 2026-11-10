@@ -247,7 +247,8 @@ export function PlainCodeEditor({ value, onChange, ariaLabel, readOnly = false, 
         autoComplete="off"
         autoCorrect="off"
         className={cn(
-          "block min-h-0 w-full flex-1 resize-none border-0 bg-background p-3 font-mono text-sm leading-6 text-foreground [tab-size:2]",
+          // The code surface stays dark in both modes (DESIGN.md section 3), so the text is the code-surface role.
+          "block min-h-0 w-full flex-1 resize-none border-0 bg-code-surface p-3 font-mono text-sm leading-6 text-code-foreground [tab-size:2]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         )}
       />
@@ -365,7 +366,7 @@ export function CodeEditor({
             type="button"
             onClick={() => dispatch({ type: "switch" })}
             className={cn(
-              "inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-accent hover:text-accent-foreground",
+              "inline-flex min-h-11 items-center justify-center rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground",
               focusRing,
             )}
           >

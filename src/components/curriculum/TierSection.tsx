@@ -60,21 +60,21 @@ export const TierSection: React.FC<TierSectionProps> = ({
     });
 
   return (
-    <section id={tier.anchor} aria-labelledby={headingId} className="scroll-mt-24 rounded-3xl border border-border bg-card/60">
-      <h3 id={headingId} className="text-xl font-semibold text-foreground sm:text-2xl">
+    <section id={tier.anchor} aria-labelledby={headingId} className="scroll-mt-24 rounded-2xl border border-border">
+      <h3 id={headingId} className="text-h3 text-foreground">
         <button
           type="button"
           aria-expanded={open}
           aria-controls={panelId}
           onClick={onToggle}
           className={cn(
-            'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-3xl px-4 pt-4 text-left sm:px-6 sm:pt-5',
+            'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-2xl px-4 pt-4 text-left sm:px-6 sm:pt-5',
             focusRing,
           )}
         >
           <span>{tier.title}</span>
           <ChevronDown
-            className={cn('h-6 w-6 shrink-0 transition-transform motion-reduce:transition-none', open && 'rotate-180')}
+            className={cn('h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')}
             aria-hidden="true"
           />
         </button>
@@ -85,7 +85,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
             <span className="font-semibold text-foreground">Who it is for:</span> {tier.audience}
           </p>
         )}
-        <p className="mt-1 text-xs text-muted-foreground">{countLine(tier, modules.length, searching)}</p>
+        <p className="mt-1 text-xs text-subtle">{countLine(tier, modules.length, searching)}</p>
       </div>
       <div id={panelId} hidden={!open} className="px-4 pb-5 sm:px-6">
         {open && (

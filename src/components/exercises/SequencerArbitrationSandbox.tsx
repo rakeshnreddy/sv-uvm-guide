@@ -320,8 +320,12 @@ function GrantTimeline({ run, scenario }: { run: SequencerRun; scenario: Sequenc
   );
 }
 
+/** Selects in the sequence editor: opaque fill and a 3:1 control boundary. */
+export const SANDBOX_FIELD_CLASS =
+  "h-10 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 function SequenceEditor({ id, form, onChange }: { id: string; form: SeqForm; onChange: (f: SeqForm) => void }) {
-  const field = "h-10 w-full rounded-md border border-border/70 bg-background/70 px-2 text-sm text-foreground";
+  const field = SANDBOX_FIELD_CLASS;
   const labelCls = "flex flex-col gap-1 text-xs text-muted-foreground";
   return (
     <fieldset className="min-w-0 rounded-xl border border-border/70 p-3">
@@ -542,7 +546,7 @@ const SequencerArbitrationSandbox: React.FC = () => {
                 max={99999}
                 value={seed}
                 onChange={(e) => setSeed(Math.max(1, Number(e.target.value) || 1))}
-                className="h-10 w-24 rounded-md border border-border/70 bg-background/70 px-2 font-mono text-sm"
+                className="h-10 w-24 rounded-md border border-input bg-background px-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <button

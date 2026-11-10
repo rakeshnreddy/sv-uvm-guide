@@ -43,16 +43,16 @@ export interface PlacementQuizProps {
   plans: Readonly<Record<number, PlacementPlan>>;
 }
 
-const panel = "rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-8";
-const eyebrow = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+const panel = "rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-8";
+const eyebrow = "text-xs font-medium text-subtle";
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 const primaryLink = cn(
-  "inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90",
+  "inline-flex min-h-[44px] items-center justify-center rounded-lg border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText]",
   focusRing,
 );
 const secondaryLink = cn(
-  "inline-flex min-h-[44px] items-center justify-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:border-primary",
+  "inline-flex min-h-[44px] items-center justify-center rounded-lg border border-border bg-muted px-4 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card",
   focusRing,
 );
 const textLink = cn("rounded-sm font-medium text-primary underline-offset-4 hover:underline", focusRing);
@@ -300,7 +300,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
       lastAttempt.scoringVersion === PLACEMENT_SCORING_VERSION;
     return (
       <section aria-labelledby="placement-start-heading" className={panel}>
-        <h2 id="placement-start-heading" className="text-2xl font-semibold text-foreground">
+        <h2 id="placement-start-heading" className="text-h2 text-foreground">
           Ten questions, about six minutes
         </h2>
         <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
@@ -313,7 +313,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
           .
         </p>
         {lastAttempt && (
-          <div className="mt-5 rounded-2xl border border-border bg-background p-4 text-sm" data-testid="placement-last-result">
+          <div className="mt-5 rounded-xl border border-border bg-background p-4 text-sm" data-testid="placement-last-result">
             {lastIsCurrent ? (
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <div className="min-w-0">
@@ -369,7 +369,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
             id="placement-results-heading"
             ref={resultsHeadingRef}
             tabIndex={-1}
-            className="mt-2 text-2xl font-semibold text-foreground focus:outline-none sm:text-3xl"
+            className="mt-2 text-h2 text-foreground focus:outline-none"
           >
             Start in {recommendation.label}
           </h2>
@@ -397,11 +397,11 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
           </dl>
 
           {plan && (
-            <div className="mt-6 rounded-2xl border border-primary/50 bg-background p-4 sm:p-5">
+            <div className="mt-6 rounded-xl border border-border border-l-2 border-l-primary bg-background p-4 sm:p-5">
               <p className={eyebrow}>
                 {plan.routeName} route · step {plan.startStepNumber} of {plan.stepCount}
               </p>
-              <h3 className="mt-1 text-lg font-semibold text-foreground">{plan.startStepTitle}</h3>
+              <h3 className="mt-1 text-h3 text-foreground">{plan.startStepTitle}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{recommendation.focus}</p>
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <Link href={plan.startHref} className={primaryLink}>
@@ -438,7 +438,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
         </section>
 
         <section aria-labelledby="placement-areas-heading">
-          <h2 id="placement-areas-heading" className="text-xl font-semibold text-foreground">
+          <h2 id="placement-areas-heading" className="text-h3 text-foreground">
             Your score by area
           </h2>
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -449,12 +449,12 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
                   key={category.id}
                   aria-labelledby={`placement-area-${category.id}`}
                   className={cn(
-                    "rounded-2xl border bg-card p-5 shadow-sm",
+                    "rounded-xl border bg-card p-5 shadow-card",
                     needsReview ? "border-primary/60" : "border-border",
                   )}
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 id={`placement-area-${category.id}`} className="text-base font-semibold text-foreground">
+                    <h3 id={`placement-area-${category.id}`} className="text-h4 text-foreground">
                       {category.title}
                     </h3>
                     <span className="text-sm font-semibold text-foreground">{formatPercent(category.percent)} correct</span>
@@ -487,7 +487,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
               Go to dashboard
             </Link>
           </div>
-          <p role="status" aria-live="polite" className="text-sm font-medium text-amber-800 dark:text-amber-200">
+          <p role="status" aria-live="polite" className="text-sm font-medium text-warning">
             {saveMessage}
           </p>
         </div>
@@ -514,7 +514,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
             id="placement-question-heading"
             ref={questionHeadingRef}
             tabIndex={-1}
-            className="mt-2 text-lg font-semibold text-foreground [overflow-wrap:anywhere] focus:outline-none sm:text-xl"
+            className="mt-2 text-h3 text-foreground [overflow-wrap:anywhere] focus:outline-none"
           >
             <InlineCode text={currentQuestion.prompt} />
           </h2>
@@ -541,7 +541,7 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
         className="mt-6 h-2.5 w-full rounded-full bg-muted"
       >
         <div
-          className="h-2.5 rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
+          className="h-2.5 rounded-full bg-success transition-[width] duration-300 ease-bench motion-reduce:transition-none"
           style={{ width: `${progressPercent}%` }}
         />
       </div>
@@ -559,12 +559,12 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
                 key={option.id}
                 htmlFor={inputId}
                 className={cn(
-                  "flex min-h-[44px] items-start justify-between gap-3 rounded-2xl border px-4 py-3 text-left text-sm text-foreground",
-                  "transition-colors motion-reduce:transition-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background",
-                  feedback ? "cursor-default" : "cursor-pointer hover:border-primary/70",
-                  isSelected ? "border-primary bg-primary/10" : "border-border bg-background",
-                  isCorrect && "border-2 border-emerald-700 dark:border-emerald-400",
-                  isWrongPick && "border-2 border-dashed border-rose-700 dark:border-rose-400",
+                  "flex min-h-[44px] items-start justify-between gap-3 rounded-lg border px-4 py-3 text-left text-sm text-foreground",
+                  "transition-colors duration-150 ease-bench motion-reduce:transition-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background",
+                  feedback ? "cursor-default" : "cursor-pointer hover:bg-muted",
+                  isSelected ? "border-border border-l-2 border-l-primary bg-muted font-medium" : "border-border bg-background",
+                  isCorrect && "border-2 border-success",
+                  isWrongPick && "border-2 border-dashed border-danger",
                 )}
               >
                 <span className="flex min-w-0 items-start gap-3">
@@ -583,12 +583,12 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
                   </span>
                 </span>
                 {isCorrect && (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-success">
                     <Check className="h-4 w-4" aria-hidden="true" /> Correct answer
                   </span>
                 )}
                 {isWrongPick && (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-rose-800 dark:text-rose-300">
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-danger">
                     <X className="h-4 w-4" aria-hidden="true" /> Your answer
                   </span>
                 )}
@@ -618,15 +618,15 @@ export const PlacementQuiz: React.FC<PlacementQuizProps> = ({ plans }) => {
         {feedback && (
           <div
             className={cn(
-              "rounded-2xl border bg-background px-4 py-3 text-sm",
-              feedback.status === "correct" ? "border-emerald-700 dark:border-emerald-400" : "border-rose-700 dark:border-rose-400",
+              "rounded-lg border bg-background px-4 py-3 text-sm",
+              feedback.status === "correct" ? "border-success" : "border-danger",
             )}
           >
             <p className="flex items-center gap-2 font-semibold text-foreground">
               {feedback.status === "correct" ? (
-                <Check className="h-4 w-4 text-emerald-800 dark:text-emerald-300" aria-hidden="true" />
+                <Check className="h-4 w-4 text-success" aria-hidden="true" />
               ) : (
-                <X className="h-4 w-4 text-rose-800 dark:text-rose-300" aria-hidden="true" />
+                <X className="h-4 w-4 text-danger" aria-hidden="true" />
               )}
               {feedback.status === "correct" ? "Correct." : "Not quite."}
             </p>

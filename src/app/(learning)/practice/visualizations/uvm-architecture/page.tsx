@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmArchitecturePage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       diagrams={[<InteractiveUvmArchitectureDiagram key="uvm-arch" />]}

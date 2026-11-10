@@ -2,7 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import DataTypeComparisonChart from "@/components/charts/DataTypeComparisonChart";
+import DataTypeComparisonChart, { WIDTH_CHART_LAYOUT } from "@/components/charts/DataTypeComparisonChart";
 
 const rowFor = (declaration: string) => screen.getByRole("rowheader", { name: declaration }).closest("tr") as HTMLElement;
 
@@ -66,5 +66,19 @@ describe("DataTypeComparisonChart", () => {
     fireEvent.click(screen.getByLabelText("-1"));
     fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
     expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+  });
+
+  it("reserves room after the longest bar for its value label", () => {
+    const { W, labelW, labelGap, barMax, labelRoom } = WIDTH_CHART_LAYOUT;
+    expect(labelW + barMax + labelRoom).toBe(W);
+    render(<DataTypeComparisonChart />);
+    const values = screen.getAllByTestId("width-chart-value");
+    expect(values.length).toBeGreaterThan(0);
+    for (const value of values) {
+      // About 0.6 em per character at 10.5 viewBox units is a safe upper bound for Plex Sans.
+      const estimatedWidth = (value.textContent ?? "").length * 10.5 * 0.6;
+      expect(Number(value.getAttribute("x")) + estimatedWidth, value.textContent ?? "").toBeLessThanOrEqual(W);
+    }
+    expect(labelGap).toBeGreaterThan(0);
   });
 });

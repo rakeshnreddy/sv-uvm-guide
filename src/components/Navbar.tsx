@@ -10,6 +10,7 @@ import SearchCombobox from "@/components/search/SearchCombobox";
 import SearchDialog from "@/components/search/SearchDialog";
 import { MODAL_LAYER, shellStore, useMinWidth, useShellState } from "@/components/search/shell-store";
 import { useModalDialog } from "@/components/search/useModalDialog";
+import { headerFocusRing, iconButtonClass, iconButtonIconClass } from "@/components/ui/icon-button-class";
 import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useAuth } from "@/contexts/AuthContext";
@@ -75,16 +76,29 @@ export const LEARNER_MENU_LINKS: readonly NavLink[] = [
 
 const MD_MIN_WIDTH = 768;
 
-const focusRing =
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+const focusRing = headerFocusRing;
 
-const iconButton = cn(
-  "relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted motion-reduce:transition-none",
-  focusRing,
-);
+/** Every header icon button (and the theme control) shares this style. */
+const iconButton = iconButtonClass;
+
+/** Phone-menu group headings (Appearance, Your learning, Account): the label style, 12/16 at weight 500. */
+export const MOBILE_GROUP_HEADING_CLASS = "px-3 text-label text-muted-foreground";
+
+/**
+ * A main-nav link in the bar (and the "More" button). Every link is set at
+ * weight 500, so the row never moves between pages; the current one is marked
+ * only by the primary text colour and the 2 px accent underline.
+ */
+export function barLinkClass(current: boolean): string {
+  return cn(
+    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-2 text-sm font-medium transition-colors duration-150 ease-bench motion-reduce:transition-none lg:px-3",
+    current ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+    focusRing,
+  );
+}
 
 const popoverPanel =
-  "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-xl";
+  "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-card";
 
 /**
  * aria-current for a navbar link: "page" on the page itself, "true" inside its
@@ -143,11 +157,7 @@ function MoreLinks({ pathname, links }: { pathname: string | null; links: readon
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-controls={panelId}
-        className={cn(
-          "inline-flex h-10 shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2 text-sm transition-colors motion-reduce:transition-none lg:px-3",
-          active ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-          focusRing,
-        )}
+        className={cn("inline-flex gap-1", barLinkClass(active))}
       >
         More
         <ChevronDown aria-hidden="true" className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", open && "rotate-180")} />
@@ -163,8 +173,8 @@ function MoreLinks({ pathname, links }: { pathname: string | null; links: readon
                   aria-current={current}
                   onClick={close}
                   className={cn(
-                    "block rounded-lg px-3 py-2 text-sm",
-                    current ? "bg-muted font-semibold text-foreground" : "text-foreground hover:bg-muted",
+                    "block rounded-lg border-l-2 px-3 py-2 text-sm text-foreground",
+                    current ? "border-primary bg-muted font-medium" : "border-transparent hover:bg-muted",
                     focusRing,
                   )}
                 >
@@ -209,7 +219,7 @@ function UserMenu({ pathname }: { pathname: string | null }) {
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
       >
-        <UserCircle aria-hidden="true" className="h-5 w-5" />
+        <UserCircle aria-hidden="true" className={iconButtonIconClass} />
       </button>
       {open && (
         <div id={panelId} className={cn(popoverPanel, "w-64 p-3")}>
@@ -313,9 +323,9 @@ function NotificationCenter() {
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
       >
-        <Bell aria-hidden="true" className="h-5 w-5" />
+        <Bell aria-hidden="true" className={iconButtonIconClass} />
         {hasUnread && (
-          <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-primary" />
+          <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-card bg-primary" />
         )}
       </button>
       {open && (
@@ -327,7 +337,7 @@ function NotificationCenter() {
             {!loading && !error && items.length === 0 && (
               <div className="p-4 text-sm text-muted-foreground">
                 <p className="mb-1 font-semibold text-foreground">You’re all caught up</p>
-                <p className="text-xs">We’ll nudge you when new activity arrives.</p>
+                <p className="text-label">We’ll nudge you when new activity arrives.</p>
               </div>
             )}
             {!loading && !error && items.length > 0 && (
@@ -342,16 +352,16 @@ function NotificationCenter() {
                             {notification.unread && <span className="sr-only">Unread: </span>}
                             {notification.title}
                           </p>
-                          <p className="mt-1 text-xs text-muted-foreground">{notification.description}</p>
+                          <p className="mt-1 text-label text-muted-foreground">{notification.description}</p>
                         </div>
-                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-label text-muted-foreground">
                           {meta?.label ?? "Update"}
                         </span>
                       </div>
-                      <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+                      <div className="mt-3 flex items-center justify-between text-label text-muted-foreground">
                         <span>{formatTimestamp(notification.timestamp)}</span>
                         {notification.href && (
-                          <Link href={notification.href} className="text-xs font-medium text-foreground underline-offset-2 hover:underline">
+                          <Link href={notification.href} className="text-label text-foreground underline-offset-2 hover:underline">
                             Open
                           </Link>
                         )}
@@ -363,7 +373,7 @@ function NotificationCenter() {
             )}
           </div>
           <div className="border-t border-border p-2 text-center">
-            <Link href="/notifications" className="text-xs font-medium text-foreground underline-offset-2 hover:underline">
+            <Link href="/notifications" className="text-label text-foreground underline-offset-2 hover:underline">
               View all
             </Link>
           </div>
@@ -376,8 +386,8 @@ function NotificationCenter() {
 /** A full-width, 44 px row in the phone menu, marked while it is the current page. */
 function mobileRowClass(current?: "page" | "true") {
   return cn(
-    "flex min-h-11 items-center rounded-xl border-l-4 px-3 text-lg",
-    current ? "border-primary bg-muted font-semibold text-foreground" : "border-transparent text-foreground hover:bg-muted",
+    "flex min-h-11 items-center rounded-lg border-l-2 px-3 text-lg font-medium text-foreground",
+    current ? "border-primary bg-muted" : "border-transparent hover:bg-muted",
     focusRing,
   );
 }
@@ -407,7 +417,7 @@ function MobileAccountItems({ pathname }: { pathname: string | null }) {
 
   return (
     <div data-testid="mobile-account" className="mt-4 border-t border-border pt-4">
-      <h3 className="px-3 text-sm font-semibold text-muted-foreground">Account</h3>
+      <h3 className={MOBILE_GROUP_HEADING_CLASS}>Account</h3>
       <p aria-live="polite" className="mt-1 break-words px-3 text-sm text-foreground">
         {mobileAccountStatus(user, status)}
       </p>
@@ -458,7 +468,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
 
   return (
     <div className={cn("fixed inset-0 md:hidden", MODAL_LAYER)}>
-      <div aria-hidden="true" className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={shellStore.closeMenu} />
+      <div aria-hidden="true" data-testid="mobile-menu-backdrop" className="absolute inset-0 bg-background/80" onClick={shellStore.closeMenu} />
       <div
         ref={panelRef}
         id="mobile-menu"
@@ -467,14 +477,14 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid="mobile-menu"
-        className="absolute inset-y-0 right-0 flex w-4/5 max-w-sm flex-col border-l border-border bg-background text-foreground shadow-2xl focus:outline-none"
+        className="absolute inset-y-0 right-0 flex w-4/5 max-w-sm flex-col border-l border-border bg-background text-foreground shadow-card focus:outline-none"
       >
         <div className="flex items-center justify-between gap-3 border-b border-border p-4">
           <h2 id={titleId} className="text-lg font-semibold">
             Menu
           </h2>
           <button type="button" onClick={shellStore.closeMenu} className={iconButton} aria-label="Close menu">
-            <X aria-hidden="true" className="h-5 w-5" />
+            <X aria-hidden="true" className={iconButtonIconClass} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -504,7 +514,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
             </ul>
           </nav>
           <section aria-labelledby={appearanceId} data-testid="mobile-appearance" className="mt-4 border-t border-border pt-4">
-            <h3 id={appearanceId} className="px-3 text-sm font-semibold text-muted-foreground">
+            <h3 id={appearanceId} className={MOBILE_GROUP_HEADING_CLASS}>
               Appearance
             </h3>
             <div className="mt-2 px-3">
@@ -512,7 +522,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
             </div>
           </section>
           <nav aria-labelledby={learningId} data-testid="mobile-learning" className="mt-4 border-t border-border pt-4">
-            <h3 id={learningId} className="px-3 text-sm font-semibold text-muted-foreground">
+            <h3 id={learningId} className={MOBILE_GROUP_HEADING_CLASS}>
               Your learning
             </h3>
             <ul className="mt-2 space-y-1">
@@ -566,7 +576,7 @@ const Navbar = () => {
 
   return (
     <>
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-background/95 text-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+      <header className="sticky top-0 z-40 w-full border-b border-border bg-background text-foreground">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:px-6 lg:px-8">
           <button
             type="button"
@@ -578,7 +588,7 @@ const Navbar = () => {
             aria-controls={outline.controls}
             aria-keyshortcuts="Control+B Meta+B"
           >
-            <PanelLeft aria-hidden="true" className="h-5 w-5" />
+            <PanelLeft aria-hidden="true" className={iconButtonIconClass} />
           </button>
           <Link href="/" aria-label="SV/UVM Hub home" className={cn("block w-32 shrink-0 rounded-lg sm:w-[150px]", focusRing)}>
             <Logo />
@@ -598,12 +608,7 @@ const Navbar = () => {
                   key={link.href}
                   href={link.href}
                   aria-current={current}
-                  className={cn(
-                    link.wideOnly ? "hidden xl:inline-flex" : "inline-flex",
-                    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-2 text-sm transition-colors motion-reduce:transition-none lg:px-3",
-                    current ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-                    focusRing,
-                  )}
+                  className={cn(link.wideOnly ? "hidden xl:inline-flex" : "inline-flex", barLinkClass(Boolean(current)))}
                 >
                   {link.label}
                 </Link>
@@ -621,7 +626,7 @@ const Navbar = () => {
               aria-haspopup="dialog"
               aria-expanded={searchOpen}
             >
-              <Search aria-hidden="true" className="h-5 w-5" />
+              <Search aria-hidden="true" className={iconButtonIconClass} />
             </button>
             <span aria-hidden="true" className="mx-1 hidden h-6 border-l border-border lg:block" />
             <ThemeSwitcher />
@@ -642,7 +647,7 @@ const Navbar = () => {
               aria-haspopup="dialog"
               aria-expanded={searchOpen}
             >
-              <Search aria-hidden="true" className="h-5 w-5" />
+              <Search aria-hidden="true" className={iconButtonIconClass} />
             </button>
             <button
               type="button"
@@ -652,7 +657,7 @@ const Navbar = () => {
               aria-haspopup="dialog"
               aria-expanded={menuOpen}
             >
-              <Menu aria-hidden="true" className="h-5 w-5" />
+              <Menu aria-hidden="true" className={iconButtonIconClass} />
             </button>
           </div>
         </div>

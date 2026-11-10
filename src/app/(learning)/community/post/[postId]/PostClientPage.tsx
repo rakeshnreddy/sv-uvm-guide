@@ -51,20 +51,20 @@ export default function PostClientPage({ post }: PostClientPageProps) {
 
   return (
     <div>
-      <h1 className="text-3xl font-bold mb-4">{post.title}</h1>
+      <h1 className="text-h1 mb-4 text-foreground">{post.title}</h1>
       <p className="mb-8">{post.content}</p>
       <hr />
-      <h2 className="text-2xl font-bold my-4">Comments</h2>
+      <h2 className="text-h2 my-4 text-foreground">Comments</h2>
       {user && (
         <form onSubmit={handleAddComment} className="mb-8">
           <textarea
             placeholder="Add a comment"
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            className="w-full p-2 mb-2 border border-border rounded bg-background"
+            className="mb-2 w-full rounded-lg border border-input bg-background p-2"
           />
-          <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded">
-            Add Comment
+          <button type="submit" className="rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText]">
+            Add comment
           </button>
         </form>
       )}

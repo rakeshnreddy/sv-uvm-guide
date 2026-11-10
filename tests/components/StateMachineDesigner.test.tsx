@@ -38,4 +38,11 @@ describe("StateMachineDesigner", () => {
     expect(screen.getByTestId("fsm-analysis")).toHaveTextContent("Unreachable from reset (IDLE): STATE_4");
     expect(screen.getByTestId("encoding-summary")).toHaveTextContent("Encoding width: 2 flip-flops for 4 states.");
   });
+
+  it("gives the source and target selects the input boundary", () => {
+    render(<StateMachineDesigner />);
+    for (const label of ["Source", "Target"]) {
+      expect(screen.getByLabelText(label)).toHaveClass("border-input", "bg-background");
+    }
+  });
 });

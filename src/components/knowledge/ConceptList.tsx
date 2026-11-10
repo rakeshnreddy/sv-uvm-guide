@@ -70,7 +70,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
   return (
     <div className="space-y-4">
       <div>
-        <label htmlFor={inputId} className="mb-1 block text-sm font-semibold">
+        <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-foreground">
           Search concepts
         </label>
         <input
@@ -79,7 +79,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
           value={query}
           onChange={(event) => resetLimit(setQuery)(event.target.value)}
           placeholder="For example: clocking block, objection, 4KB"
-          className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <SegmentedControl<KindFilter>
@@ -108,15 +108,18 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
 
       <ul className="space-y-3">
         {shown.map((node) => (
-          <li key={node.id} className="rounded-lg border border-border bg-card p-3 sm:p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <li key={node.id} className="rounded-xl border border-border bg-card p-3 shadow-card sm:p-4">
+            <p className="text-xs font-medium text-subtle">
               {KIND_LABEL[node.kind ?? 'term']} · {node.tier}
               {node.kind === 'term' && node.code ? ` · first taught in ${node.code}` : ''}
               {node.track === 'elective' ? ' · elective' : ''}
             </p>
-            <h3 className="mt-1 break-words text-base font-semibold">
+            <h3 className="mt-1 break-words text-h4 text-foreground">
               {node.kind !== 'term' && node.href ? (
-                <Link href={node.href} className="text-primary underline underline-offset-2 hover:no-underline">
+                <Link
+                  href={node.href}
+                  className="text-foreground underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline"
+                >
                   {node.name}
                 </Link>
               ) : (
@@ -141,7 +144,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
               <button
                 type="button"
                 onClick={() => onShowOnMap(node)}
-                className="mt-2 min-h-10 rounded-md border border-border px-3 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="mt-2 min-h-10 rounded-lg border border-border bg-muted px-3 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Show {node.code} on the map
               </button>
@@ -154,7 +157,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
         <button
           type="button"
           onClick={() => setLimit((current) => current + PAGE_SIZE)}
-          className="min-h-11 w-full rounded-md border border-border px-4 text-sm font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-h-11 w-full rounded-lg border border-border bg-muted px-4 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Show {Math.min(PAGE_SIZE, results.length - shown.length)} more
         </button>

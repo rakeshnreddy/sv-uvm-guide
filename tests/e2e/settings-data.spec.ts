@@ -71,8 +71,13 @@ test.describe('settings: learning data in this browser', () => {
     await waitForShell(page);
 
     const appearance = page.getByRole('region', { name: 'Appearance' });
-    await expect(appearance.getByRole('combobox', { name: 'Select theme' })).toBeVisible();
-    await expect(appearance.getByRole('button', { name: 'Toggle theme' })).toBeVisible();
+    // One light/dark control; the palette select is gone (DESIGN.md section 7).
+    await expect(appearance.getByRole('combobox', { name: 'Select theme' })).toHaveCount(0);
+    await expect(appearance.getByRole('button', { name: 'Theme' })).toBeVisible();
+    await expect(appearance.getByRole('group', { name: 'Light, dark or system' })).toBeVisible();
+    await expect(
+      appearance.getByText('Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.'),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Download a backup (JSON)' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete all learning data in this browser' })).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -94,6 +99,8 @@ test.describe('settings: learning data in this browser', () => {
     );
     await page.reload();
     await waitForShell(page);
+    // An old stored theme name still works: it shows its mode and is not rewritten.
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     const data = page.locator('section#data');
 
     // Back up.

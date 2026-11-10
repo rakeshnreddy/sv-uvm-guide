@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 // Samples come from the AXI and AHB lesson models (src/lib/waveform-studio.ts).
 export default function WaveformStudioPage() {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description="Read, edit and debug protocol timing diagrams. The checker uses the same AXI model as the B-AXI-1 lesson figures."
       diagrams={[<WaveformStudio key="waveform-studio" />]}

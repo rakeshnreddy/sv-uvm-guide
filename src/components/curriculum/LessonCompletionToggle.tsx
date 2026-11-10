@@ -14,7 +14,7 @@ export interface LessonCompletionToggleProps {
 }
 
 const buttonBase =
-  "inline-flex min-h-[44px] max-w-full items-center justify-center gap-2 rounded-md border px-4 py-2 text-left text-sm font-semibold transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+  "inline-flex min-h-[44px] max-w-full items-center justify-center gap-2 rounded-lg border px-4 py-2 text-left text-sm font-medium transition-colors duration-150 ease-bench motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /** The toggle's one accessible name; aria-pressed carries the state (WAI-ARIA APG toggle button). */
 export const LESSON_DONE_LABEL = "Lesson done";
@@ -50,15 +50,15 @@ export function LessonCompletionToggle({ moduleId, lessonSlug, className }: Less
         className={cn(
           buttonBase,
           done
-            ? "border-primary bg-primary/10 text-foreground hover:bg-primary/15"
-            : "border-border bg-background text-foreground hover:border-primary",
+            ? "border-success bg-success-subtle text-foreground"
+            : "border-border bg-muted text-foreground hover:bg-border/70",
         )}
       >
         <span
           aria-hidden="true"
           className={cn(
             "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 text-xs leading-none",
-            done ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground bg-background",
+            done ? "border-success bg-success text-primary-foreground" : "border-input bg-card",
           )}
         >
           {done ? "✓" : null}
@@ -70,7 +70,7 @@ export function LessonCompletionToggle({ moduleId, lessonSlug, className }: Less
         aria-live="polite"
         className={cn(
           "text-sm font-medium",
-          message ? "text-amber-800 dark:text-amber-200" : "text-muted-foreground",
+          message ? "text-warning" : "text-muted-foreground",
         )}
       >
         {status ? <span className="mt-2 block">{status}</span> : null}

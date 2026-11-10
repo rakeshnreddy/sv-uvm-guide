@@ -358,7 +358,7 @@ describe('/assessment', () => {
     expect(placement).toHaveTextContent('50% weighted score (harder questions count more), which places you in Tier 2 on the Junior route');
     const areas = within(placement).getByRole('list', { name: 'Score by area' });
     expect(within(areas).getAllByRole('listitem')).toHaveLength(3);
-    expect(areas).toHaveTextContent('Debug & Coverage Habits0% correct, under 75%');
+    expect(areas).toHaveTextContent('Debug and coverage habits0% correct, under 75%');
     expect(within(placement).getByRole('link', { name: /^Placement start: / }).getAttribute('href')).toMatch(/^\/curriculum\//);
     expect(placement).not.toHaveTextContent('The placement quiz has changed');
 
@@ -370,7 +370,7 @@ describe('/assessment', () => {
     expect(sva).toHaveTextContent('1 in progress');
     expect(sva).toHaveTextContent('1 of 3 well known');
     expect(sva).toHaveTextContent('2 rated, 1 due today');
-    expect(sva).toHaveTextContent('Debug & Coverage Habits');
+    expect(sva).toHaveTextContent('Debug and coverage habits');
     const steps = within(sva).getByRole('list', { name: 'Next steps in Assertions and coverage' });
     const links = within(steps).getAllByRole('link');
     expect(links[0]).toHaveTextContent(/^Reread and retake the quiz in I-SV-4A/);

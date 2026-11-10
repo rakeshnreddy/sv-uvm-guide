@@ -9,8 +9,7 @@ import python from "react-syntax-highlighter/dist/languages/python";
 import shell from "react-syntax-highlighter/dist/languages/shell";
 import typescript from "react-syntax-highlighter/dist/languages/typescript";
 import verilog from "react-syntax-highlighter/dist/languages/verilog";
-import { useTheme } from "next-themes";
-import { lightTheme, darkTheme } from "@/lib/code-theme";
+import { CODE_SURFACE_TEXT, codeSurfaceHljsStyle } from "@/lib/code-surface-hljs";
 import { Copy, Check } from "lucide-react";
 import { Button } from "./Button";
 
@@ -22,6 +21,16 @@ registerLanguage("json", json);
 registerLanguage("python", python);
 registerLanguage("typescript", typescript);
 registerLanguage("verilog", verilog);
+
+// Code panels stay dark in both modes (DESIGN.md section 3), so the chrome on the
+// code surface uses the code-surface roles, which are the same in both modes.
+export const CODE_BLOCK_CHROME = {
+  text: "text-code-foreground",
+  secondary: "text-code-muted",
+  hairline: "border-code-border",
+  copyButton: "text-code-muted hover:bg-code-border hover:text-code-foreground",
+} as const;
+const { text: surfaceText, secondary: surfaceSecondary, hairline: surfaceHairline, copyButton } = CODE_BLOCK_CHROME;
 
 interface CodeBlockProps {
   code: string;
@@ -41,7 +50,6 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
   lineProps,
   customStyle,
 }) => {
-  const { theme } = useTheme();
   const [isCopied, setIsCopied] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -61,24 +69,22 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
 
   if (!isMounted) {
     return (
-      <div className="bg-secondary text-secondary-foreground p-4 rounded-md shadow-md my-4">
+      <div className={`my-4 rounded-xl border ${surfaceHairline} bg-code-surface p-4 ${surfaceText}`}>
         <pre><code>Loading code...</code></pre>
       </div>
     );
   }
 
-  const codeTheme = theme === "dark" ? darkTheme : lightTheme;
-
   return (
-    <div data-testid="code-block" className="my-4 rounded-lg shadow-lg overflow-hidden bg-white/10 backdrop-blur-lg border border-white/20">
+    <div data-testid="code-block" className={`my-4 overflow-hidden rounded-xl border ${surfaceHairline} bg-code-surface ${surfaceText}`}>
       {fileName && (
-        <div className="flex justify-between items-center px-4 py-2 bg-white/10 border-b border-white/20">
-          <span className="text-xs font-mono text-muted-foreground">{fileName}</span>
+        <div className={`flex justify-between items-center px-4 py-2 border-b ${surfaceHairline}`}>
+          <span className={`text-xs font-mono ${surfaceSecondary}`}>{fileName}</span>
           <Button
             variant="ghost"
             size="sm"
             onClick={handleCopy}
-            className="text-muted-foreground hover:text-foreground"
+            className={copyButton}
             aria-label="Copy code to clipboard"
           >
             {isCopied ? (
@@ -86,7 +92,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
             ) : (
               <Copy className="w-4 h-4 mr-1" />
             )}
-            {isCopied ? "Copied!" : "Copy"}
+            {isCopied ? "Copied" : "Copy"}
           </Button>
         </div>
       )}
@@ -96,7 +102,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
                 variant="ghost"
                 size="sm"
                 onClick={handleCopy}
-                className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
+                className={`absolute top-2 right-2 ${copyButton}`}
                 aria-label="Copy code to clipboard"
             >
                 {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
@@ -106,9 +112,9 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
       <div className="overflow-x-auto">
         <SyntaxHighlighter
           language={language.toLowerCase() === "systemverilog" ? "verilog" : language}
-          style={codeTheme as any}
+          style={codeSurfaceHljsStyle}
           showLineNumbers={showLineNumbers}
-          lineNumberStyle={{ color: "var(--muted-foreground)", fontSize: "0.8em", marginRight: "1em" }}
+          lineNumberStyle={{ color: CODE_SURFACE_TEXT.secondary, fontSize: "12px", marginRight: "1em" }}
           wrapLines={true}
           lineProps={lineProps}
           customStyle={{

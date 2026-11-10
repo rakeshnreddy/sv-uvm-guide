@@ -116,8 +116,8 @@ describe('MainLayout', () => {
     expect(within(siteMap).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
     expect(within(siteMap).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
     expect(within(siteMap).getByRole('link', { name: 'Exercises' })).toHaveAttribute('href', '/exercises');
-    expect(within(siteMap).getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy-policy');
-    expect(within(siteMap).getByRole('link', { name: 'Terms of Service' })).toHaveAttribute('href', '/terms-of-service');
+    expect(within(siteMap).getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', '/privacy-policy');
+    expect(within(siteMap).getByRole('link', { name: 'Terms of service' })).toHaveAttribute('href', '/terms-of-service');
     expect(footer).toHaveTextContent('MIT licensed');
 
     // One "Start" link per tier, each to that tier's first lesson.

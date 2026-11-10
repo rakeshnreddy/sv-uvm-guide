@@ -49,9 +49,9 @@ const mockCertifications: Certification[] = [
 const StatusIcon = ({ status }: { status: CertificationStatus }) => {
   switch (status) {
     case 'Completed':
-      return <Award className="h-8 w-8 text-yellow-400" />;
+      return <Award className="h-8 w-8 text-warning" />;
     case 'In Progress':
-      return <Clock className="h-8 w-8 text-blue-400" />;
+      return <Clock className="h-8 w-8 text-info" />;
     case 'Locked':
       return <Lock className="h-8 w-8 text-gray-500" />;
   }
@@ -59,20 +59,20 @@ const StatusIcon = ({ status }: { status: CertificationStatus }) => {
 
 export const CompetencyCertification = () => {
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Competency Certification</h2>
-      <p className="text-foreground/80 mb-6">
+    <div className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="text-h2 mb-4 text-foreground">Competency Certification</h2>
+      <p className="text-muted-foreground mb-6">
         Achieve industry-recognized certifications to validate your skills and advance your career.
       </p>
 
       <div className="space-y-6">
         {mockCertifications.map((cert) => (
-          <div key={cert.id} className="flex items-center gap-6 p-4 bg-white/5 rounded-lg">
+          <div key={cert.id} className="flex items-center gap-6 p-4 bg-muted rounded-lg">
             <div className="flex-shrink-0">
               <StatusIcon status={cert.status} />
             </div>
             <div className="flex-grow">
-              <h3 className="text-lg font-semibold text-primary">{cert.title}</h3>
+              <h3 className="text-h3 text-foreground">{cert.title}</h3>
               <p className="text-sm text-muted-foreground mb-2">{cert.description}</p>
               {cert.status !== 'Locked' && (
                 <>

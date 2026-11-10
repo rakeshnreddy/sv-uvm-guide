@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import PracticeHub from '@/components/practice/PracticeHub';
 
 export const metadata: Metadata = {
-  title: 'Practice Hub',
+  title: 'Practice hub',
   description:
     'Labs, exercises, interactive models, tools and interview questions for SystemVerilog and UVM, in curriculum order, each linked to the lesson that teaches it.',
 };

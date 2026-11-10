@@ -44,22 +44,22 @@ const KnowledgeHubClient = () => {
     <KnowledgeContextProvider>
       <div className="mx-auto max-w-5xl">
         <header className="mb-8">
-          <h1 className="text-3xl font-bold sm:text-4xl">Knowledge Hub</h1>
-          <p className="mt-2 text-lg text-muted-foreground">
+          <h1 className="text-h1 text-foreground">Knowledge hub</h1>
+          <p className="mt-2 text-lead text-muted-foreground">
             How the {moduleCount} modules and {lessonCount} lessons of the curriculum build on each other, and where each of{' '}
             {termCount} key terms is taught.
           </p>
         </header>
 
         <section aria-labelledby="module-map-heading" className="mb-10">
-          <h2 id="module-map-heading" className="mb-3 text-2xl font-bold">
+          <h2 id="module-map-heading" className="mb-3 text-h2 text-foreground">
             Module map
           </h2>
           <ModuleMap graph={conceptGraph} tier={tier} onTierChange={setTier} selectedId={selectedId} onSelect={select} />
         </section>
 
         <section aria-labelledby="concept-list-heading">
-          <h2 id="concept-list-heading" className="mb-1 text-2xl font-bold">
+          <h2 id="concept-list-heading" className="mb-1 text-h2 text-foreground">
             Every concept
           </h2>
           <p className="mb-4 text-muted-foreground">

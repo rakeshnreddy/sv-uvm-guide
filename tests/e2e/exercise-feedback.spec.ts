@@ -5,7 +5,7 @@ type AgentBuilderTestApi = {
 };
 
 test.describe('Exercise Feedback Flow', () => {
-  test('UVM Phase Sorter provides feedback and retry', async ({ page }) => {
+  test('UVM phase sorter provides feedback and retry', async ({ page }) => {
     await page.goto('/exercises/uvm-phase-sorter');
     await page.getByRole('button', { name: 'Check Order' }).click();
     const feedback = page.getByTestId('exercise-feedback');
@@ -14,7 +14,7 @@ test.describe('Exercise Feedback Flow', () => {
     await expect(feedback).toHaveCount(0);
   });
 
-  test('Scoreboard Connector passes when connections are correct and can retry', async ({ page }) => {
+  test('Scoreboard connector passes when connections are correct and can retry', async ({ page }) => {
     await page.goto('/exercises/scoreboard-connector');
     // Endpoint buttons are named "<reference in bus_env> (<role>, <type>)".
     const endpoint = (ref: string) =>
@@ -40,7 +40,7 @@ test.describe('Exercise Feedback Flow', () => {
     await expect(feedback).toHaveCount(0);
   });
 
-  test('UVM Agent Builder evaluates components and resets on retry', async ({ page }) => {
+  test('UVM agent builder evaluates components and resets on retry', async ({ page }) => {
     await page.goto('/exercises/uvm-agent-builder');
     const agentDrop = page.locator('#agent-droppable');
     await expect(agentDrop).toBeVisible();

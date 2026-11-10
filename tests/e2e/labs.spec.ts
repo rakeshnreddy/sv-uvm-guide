@@ -39,7 +39,9 @@ test.describe('Interactive lab framework (anonymous)', () => {
     await test.step('The graded step checks the starter in the browser and fails', async () => {
       await expect(page.getByText('Structural check in your browser: it does not compile or simulate.')).toBeVisible();
       await page.getByRole('button', { name: 'Check solution' }).click();
-      await expect(page.locator('pre[aria-live]')).toContainText('task automatic drive_sequence');
+      const result = page.getByTestId('lab-check-result');
+      await expect(result).toContainText('Check failed');
+      await expect(result.getByTestId('lab-check-message')).toContainText('task automatic drive_sequence');
       await expect(page.getByRole('heading', { name: 'Step 2: Write task automatic drive_sequence' })).toBeVisible();
     });
 

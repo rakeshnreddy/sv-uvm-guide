@@ -80,8 +80,8 @@ export interface DashboardPageClientProps {
 const NO_EXERCISES: readonly StoredExerciseProgress[] = Object.freeze([]);
 const serverRoute = () => null;
 
-const card = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
-const panel = 'min-w-0 rounded-2xl border border-border bg-background p-4';
+const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+const panel = 'min-w-0 rounded-lg border border-border bg-background p-4';
 const muted = 'text-sm text-muted-foreground';
 const listItem = 'flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm';
 
@@ -145,7 +145,7 @@ function DashboardCard({
 }) {
   return (
     <section aria-labelledby={id} className={cn(card, className)}>
-      <h2 id={id} className="text-lg font-semibold text-foreground sm:text-xl">
+      <h2 id={id} className="text-h3 text-foreground">
         {title}
       </h2>
       <div className="mt-3">{children}</div>
@@ -157,7 +157,7 @@ function DashboardCard({
 function Bar({ percent }: { percent: number }) {
   return (
     <div aria-hidden="true" className="mt-2 h-2 w-full rounded-full bg-muted">
-      <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+      <div className="h-2 rounded-full bg-success" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   );
 }
@@ -171,6 +171,16 @@ interface LastOpened {
   at: number;
 }
 
+/**
+ * Which Continue link carries the view's one filled accent: the next lesson on
+ * the learner's route when there is one, otherwise the last lesson opened.
+ */
+export function continuePrimary(hasLast: boolean, hasNext: boolean): 'next' | 'last' | null {
+  if (hasNext) return 'next';
+  if (hasLast) return 'last';
+  return null;
+}
+
 function ContinueCard({
   last,
   route,
@@ -182,6 +192,7 @@ function ContinueCard({
 }) {
   const position = route ? nextOnRoute(route.sequence, progress) : null;
   const next = route && position && position.status !== 'complete' ? route.sequence[position.index] : undefined;
+  const primary = continuePrimary(Boolean(last), Boolean(next));
 
   return (
     <DashboardCard id="dashboard-continue-heading" title="Continue" className="md:col-span-2">
@@ -190,7 +201,10 @@ function ContinueCard({
           <p className={eyebrow}>Last opened</p>
           {last ? (
             <>
-              <Link href={last.lesson.href} className={cn(secondaryAction, 'mt-3 max-w-full')}>
+              <Link
+                href={last.lesson.href}
+                className={cn(primary === 'last' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}
+              >
                 <span className="[overflow-wrap:anywhere]">
                   Back to {labelWithCode(last.lesson.moduleCode, last.lesson.title)}
                 </span>
@@ -348,7 +362,7 @@ function ReviewCard({ due, tracked }: { due: number; tracked: number }) {
   return (
     <DashboardCard id="dashboard-review-heading" title="Review">
       <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold">{due}</strong> {due === 1 ? 'card' : 'cards'} due today
+        <strong className="text-2xl font-semibold tabular-nums">{due}</strong> {due === 1 ? 'card' : 'cards'} due today
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         {tracked > 0
@@ -370,7 +384,7 @@ function NotebookCard({ entries }: { entries: readonly NotebookEntry[] }) {
   return (
     <DashboardCard id="dashboard-notebook-heading" title="Notebook">
       <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold">{entries.length}</strong> {entries.length === 1 ? 'note' : 'notes'}
+        <strong className="text-2xl font-semibold tabular-nums">{entries.length}</strong> {entries.length === 1 ? 'note' : 'notes'}
       </p>
       {latest ? (
         <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
@@ -521,7 +535,7 @@ function StreakCard({ streak, days }: { streak: number; days: readonly ActivityD
   return (
     <DashboardCard id="dashboard-streak-heading" title="Streak and the last 7 days" className="md:col-span-2">
       <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold">{streak}</strong> {streak === 1 ? 'day' : 'days'} in a row
+        <strong className="text-2xl font-semibold tabular-nums">{streak}</strong> {streak === 1 ? 'day' : 'days'} in a row
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         A day counts when you open a lesson, finish a lab step, review flashcards, take a quiz or write a note, by
@@ -534,12 +548,12 @@ function StreakCard({ streak, days }: { streak: number; days: readonly ActivityD
           return (
             <li key={day.dayKey} className="flex min-w-0 flex-col items-center gap-1">
               <span aria-hidden="true" className="flex h-16 w-full items-end overflow-hidden rounded-md bg-muted">
-                <span className="block w-full rounded-md bg-primary" style={{ height: `${height}%` }} />
+                <span className="block w-full rounded bg-success" style={{ height: `${height}%` }} />
               </span>
               <span aria-hidden="true" className="text-xs font-semibold text-foreground">
                 {day.total}
               </span>
-              <span aria-hidden="true" className="text-[11px] text-muted-foreground">
+              <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
                 {weekdayShort.format(date)}
               </span>
               <span className="sr-only">
@@ -561,7 +575,7 @@ function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
         another browser.
       </p>
       {remind && (
-        <p className="mt-3 rounded-2xl border border-amber-700/50 bg-amber-50 p-3 text-sm font-medium text-amber-900 dark:border-amber-300/50 dark:bg-amber-950/40 dark:text-amber-100">
+        <p className="mt-3 rounded-lg border border-warning/50 bg-warning-subtle p-3 text-sm font-medium text-foreground">
           {meta.lastExportAt
             ? `Your last backup is from ${formatDate(meta.lastExportAt)}, more than ${BACKUP_REMINDER_DAYS} days ago.`
             : "You haven't downloaded a backup yet."}{' '}
@@ -574,7 +588,7 @@ function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
       <p className="mt-2 text-xs text-muted-foreground">
         Some browsers clear site data for sites they haven&apos;t seen for a while.
       </p>
-      <Link href="/settings#data" className={cn(primaryAction, 'mt-4')}>
+      <Link href="/settings#data" className={cn(secondaryAction, 'mt-4')}>
         Back up or reset your data
       </Link>
     </DashboardCard>
@@ -584,7 +598,7 @@ function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
 function EmptyState() {
   return (
     <section aria-labelledby="dashboard-empty-heading" className={cn(card, 'sm:p-8')}>
-      <h2 id="dashboard-empty-heading" className="text-xl font-semibold text-foreground sm:text-2xl">
+      <h2 id="dashboard-empty-heading" className="text-h3 text-foreground">
         Nothing recorded in this browser yet
       </h2>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -613,7 +627,7 @@ function EmptyState() {
 function AccountNotice() {
   return (
     <section aria-labelledby="dashboard-account-heading" className={card}>
-      <h2 id="dashboard-account-heading" className="text-xl font-semibold text-foreground">
+      <h2 id="dashboard-account-heading" className="text-h3 text-foreground">
         Your progress is saved to your account
       </h2>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -731,8 +745,8 @@ export default function DashboardPageClient({
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Your learning</h1>
-          <p className="mt-2 max-w-3xl text-base text-muted-foreground">
+          <h1 className="text-h1 text-foreground">Your learning</h1>
+          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             The lessons, labs, reviews, notes and quiz results recorded in this browser, and what to do next.
           </p>
         </div>

@@ -259,7 +259,7 @@ export const placementTierRecommendations: readonly PlacementTierRecommendation[
 
 const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
   foundations: {
-    title: 'SystemVerilog Foundations',
+    title: 'SystemVerilog foundations',
     summary: 'Reinforce data types, procedural blocks, interfaces and constraints so RTL corner cases stay controlled.',
     resources: [
       { label: 'F2A: Core Data Types', href: '/curriculum/T1_Foundational/F2A_Core_Data_Types/index' },
@@ -275,11 +275,11 @@ const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
         label: 'I-SV-2A: Constrained Randomization Fundamentals',
         href: '/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index',
       },
-      { label: 'Interactive: SystemVerilog Data Types', href: '/practice/visualizations/systemverilog-data-types' },
+      { label: 'Interactive: SystemVerilog data types', href: '/practice/visualizations/systemverilog-data-types' },
     ],
   },
   methodology: {
-    title: 'Verification Methodology',
+    title: 'Verification methodology',
     summary: 'Deepen your UVM fluency across agent roles, configuration and the sequencer-driver handshake.',
     resources: [
       {
@@ -291,11 +291,11 @@ const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
         href: '/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index',
       },
       { label: 'I-UVM-3A: Basic UVM Sequences and Items', href: '/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index' },
-      { label: 'Exercise: Sequencer Arbitration Sandbox', href: '/exercises/sequencer-arbitration' },
+      { label: 'Exercise: Sequencer arbitration sandbox', href: '/exercises/sequencer-arbitration' },
     ],
   },
   debug: {
-    title: 'Debug & Coverage Habits',
+    title: 'Debug and coverage habits',
     summary: 'Sharpen coverage closure, end-of-test control and failure triage so regressions converge faster.',
     resources: [
       {
@@ -307,7 +307,7 @@ const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
         label: 'E-DBG-1: Advanced UVM Debug Methodologies',
         href: '/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index',
       },
-      { label: 'Interactive: Coverage Closure Lab', href: '/practice/visualizations/coverage-analyzer' },
+      { label: 'Interactive: Coverage closure lab', href: '/practice/visualizations/coverage-analyzer' },
     ],
   },
 };

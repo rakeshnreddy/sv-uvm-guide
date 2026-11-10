@@ -111,11 +111,14 @@ describe('isEditableTarget', () => {
 });
 
 describe('theme and route helpers', () => {
-  it('switches light and dark within the current theme family', () => {
-    expect(toggledThemeName('default-dark')).toBe('default-light');
-    expect(toggledThemeName('ocean-light')).toBe('ocean-dark');
-    expect(toggledThemeName(undefined)).toBe('default-light');
-    expect(toggledThemeName('system')).toBe('default-light');
+  it('switches to the other of the two modes, counting old stored names as their mode', () => {
+    expect(toggledThemeName('dark')).toBe('light');
+    expect(toggledThemeName('light')).toBe('dark');
+    expect(toggledThemeName('default-dark')).toBe('light');
+    expect(toggledThemeName('ocean-light')).toBe('dark');
+    // Nothing known counts as dark, the site default.
+    expect(toggledThemeName(undefined)).toBe('light');
+    expect(toggledThemeName('system')).toBe('light');
   });
 
   it('only routes to a section while it is on', () => {

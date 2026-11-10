@@ -16,6 +16,7 @@ import type { LabBackLink as LabBackLinkData, LabPrerequisites, LessonLink } fro
 import { cn } from "@/lib/utils";
 import type { LabFileDto, LabPolicyInput, LearnerLabDto } from "@/types/lab";
 
+import { InlineCodeText, LabCheckResult } from "./LabCheckResult";
 import { LabBackLink, LabLessonContext } from "./LabNavigation";
 import { LabRunLocally, downloadLabWorkspace, labActionButtonClass, labWorkspaceZipName } from "./LabRunLocally";
 import { useLabWorkspace } from "./useLabWorkspace";
@@ -64,11 +65,11 @@ export const COMPLETION_NOT_SAVED_MESSAGE = "Your completion was not saved.";
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 const primaryButtonClass = cn(
-  "mb-4 rounded bg-primary px-4 py-2 font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60",
+  "mb-4 inline-flex min-h-11 items-center rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 forced-colors:border-[ButtonText]",
   focusRing,
 );
 const dangerButtonClass = cn(
-  "inline-flex min-h-11 items-center justify-center rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-destructive-foreground hover:bg-destructive/90",
+  "inline-flex min-h-11 items-center justify-center rounded-lg border border-transparent bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-colors duration-150 ease-bench hover:bg-destructive/90 forced-colors:border-[ButtonText]",
   focusRing,
 );
 
@@ -96,7 +97,7 @@ function InlineConfirm({ prompt, confirmLabel, onConfirm, onCancel }: InlineConf
     <div
       role="group"
       aria-labelledby={promptId}
-      className="mt-2 rounded-md border border-destructive/50 bg-background p-3"
+      className="mt-2 rounded-lg border border-destructive/50 bg-background p-3"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
@@ -131,7 +132,7 @@ function OlderVersionNotice({ labId, older, onDelete }: OlderVersionNoticeProps)
     <div
       role="group"
       aria-label={`Saved work from version ${older.version}`}
-      className="mt-3 rounded-md border border-border bg-background p-3 text-sm"
+      className="mt-3 rounded-lg border border-border bg-background p-3 text-sm"
     >
       <p className="text-foreground">
         You have saved work from version {older.version} of this lab{saved ? ` (last saved ${saved})` : ""}. This
@@ -194,6 +195,8 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
   const [consoleOutput, setConsoleOutput] = useState("");
   const [diagnostics, setDiagnostics] = useState<GraderDiagnostic[]>([]);
   const [isSuccess, setIsSuccess] = useState<boolean | null>(null);
+  /** The label in the result box ("Check passed", "Not saved"); null uses the default for the tone. */
+  const [resultLabel, setResultLabel] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
@@ -240,7 +243,7 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
     return (
       <div className="flex min-h-[60vh] items-center justify-center text-center">
         <div>
-          <h1 className="text-3xl font-bold">{lab.title}</h1>
+          <h1 className="text-h1 text-foreground">{lab.title}</h1>
           <p className="mt-3 text-muted-foreground">This lab does not yet have a learner workflow.</p>
           <LabBackLink backLink={backLink} className="mt-4" />
         </div>
@@ -264,12 +267,14 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
     setConsoleOutput("Checking workspace…");
     setDiagnostics([]);
     setIsSuccess(null);
+    setResultLabel(null);
     setIsChecking(true);
     const wasCompleted = progress.status === "completed";
     try {
       const response = await storeActions.checkGradedStep(currentStep.id);
       if (!response.ok) {
         setIsSuccess(false);
+        setResultLabel(response.outcome ? "Not saved" : "Check failed");
         setConsoleOutput(
           response.outcome
             // The check passed but storing the step failed; the save message below says why.
@@ -279,13 +284,15 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
         return;
       }
       const { result } = response;
-      const hint = result.hint ?? (result.success ? "Correct!" : "The workspace needs another pass.");
+      const hint = result.hint ?? (result.success ? "Your workspace passes this check." : "The workspace needs another pass.");
       const completedNow = !wasCompleted && response.progress?.status === "completed";
       setIsSuccess(result.success);
+      setResultLabel(result.success ? "Check passed" : "Check failed");
       setConsoleOutput(completedNow ? `${hint}\nLab completed.` : hint);
       setDiagnostics(result.diagnostics.filter((diagnostic) => diagnostic.message !== result.hint));
     } catch {
       setIsSuccess(false);
+      setResultLabel("Check failed");
       setConsoleOutput(labErrorMessage("LAB_GRADING_UNAVAILABLE"));
     } finally {
       setIsChecking(false);
@@ -296,20 +303,24 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
     if (currentStep.completion !== "self_attested" || isCompleting || !loaded) return;
     setIsCompleting(true);
     setIsSuccess(null);
+    setResultLabel(null);
     setDiagnostics([]);
     setConsoleOutput("Recording your completion…");
     try {
       const response = await storeActions.completeSelfAttestedStep(currentStep.id);
       if (!response.ok) {
         setIsSuccess(false);
+        setResultLabel("Not saved");
         // With a save outcome, the save message below says why; otherwise the policy refused the step.
         setConsoleOutput(response.outcome ? COMPLETION_NOT_SAVED_MESSAGE : labErrorMessage(response.code));
         return;
       }
       setConsoleOutput(isLastStep ? "Lab completed." : "Step completed. Continue when ready.");
       setIsSuccess(true);
+      setResultLabel(isLastStep ? "Lab complete" : "Step complete");
     } catch {
       setIsSuccess(false);
+      setResultLabel("Not saved");
       setConsoleOutput("Your completion could not be recorded. Try again.");
     } finally {
       setIsCompleting(false);
@@ -340,13 +351,13 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
     <div className="flex min-h-screen flex-col bg-background text-foreground lg:flex-row">
       <aside
         aria-label="Lab guide"
-        className="flex w-full shrink-0 flex-col border-b border-border bg-secondary p-4 text-secondary-foreground lg:w-80 lg:border-b-0 lg:border-r"
+        className="flex w-full shrink-0 flex-col border-b border-border bg-card p-4 text-card-foreground lg:w-80 lg:border-b-0 lg:border-r"
       >
         <LabBackLink backLink={backLink} className="mb-3" />
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <p className="font-mono text-xs font-medium text-muted-foreground [font-variant-ligatures:none]">
           {backLink.lesson?.code ?? lab.owningModule}
         </p>
-        <h1 className="mb-2 text-xl font-bold [overflow-wrap:anywhere]">{lab.title}</h1>
+        <h1 className="mb-2 text-h2 text-foreground [overflow-wrap:anywhere]">{lab.title}</h1>
         <p className="mb-2 text-sm text-muted-foreground">{lab.description}</p>
         {mode === "local" ? (
           <StorageStatusNote savedLabel="Your progress is saved in this browser." className="mb-3" />
@@ -368,12 +379,12 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
         <p role="status" aria-live="polite" className="text-xs text-muted-foreground">{olderStatus}</p>
         <LabLessonContext lessons={lessons} prerequisites={prerequisites} className="mb-5 mt-3" />
 
-        <h2 id={stepsHeadingId} className="mb-2 text-sm font-semibold uppercase tracking-wide">Steps</h2>
+        <h2 id={stepsHeadingId} className="mb-2 text-h3 text-foreground">Steps</h2>
         <ol aria-labelledby={stepsHeadingId} className="space-y-2">
           {lab.steps.map((step, index) => {
             const done = progress.completedSteps.includes(step.id);
             return (
-              <li key={step.id} className={`rounded border px-3 text-sm ${currentStepIndex === index ? "border-primary bg-primary/10 font-semibold" : "border-border"}`}>
+              <li key={step.id} className={`rounded-lg border px-3 text-sm transition-colors duration-150 ease-bench ${currentStepIndex === index ? "border-border border-l-2 border-l-primary bg-muted font-medium text-foreground" : "border-border hover:bg-muted"}`}>
                 <button
                   type="button"
                   className={cn("flex min-h-10 w-full items-start gap-2 rounded-sm py-2 text-left disabled:cursor-not-allowed disabled:opacity-60", focusRing)}
@@ -384,7 +395,7 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
                   <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{step.title}</span>
                   {done ? (
                     <>
-                      <Check aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
+                      <Check aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                       <span className="sr-only"> (completed)</span>
                     </>
                   ) : null}
@@ -396,8 +407,8 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
 
         {visibleFiles.length > 0 && (
           <div className="mt-6">
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide">Lab files</h2>
-            <p role="status" aria-live="polite" className={cn("text-sm font-medium text-emerald-800 dark:text-emerald-200", solutionsRevealed && "mb-2")}>
+            <h2 className="mb-2 text-h3 text-foreground">Lab files</h2>
+            <p role="status" aria-live="polite" className={cn("text-sm font-medium text-success", solutionsRevealed && "mb-2")}>
               {solutionsRevealed ? "Solutions unlocked. They are listed with the lab files." : null}
             </p>
             <div className="space-y-1">
@@ -407,7 +418,7 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
                   type="button"
                   aria-pressed={selectedPath === file.path}
                   className={cn(
-                    `w-full rounded border px-3 py-2 text-left text-sm ${selectedPath === file.path ? "border-primary bg-primary/10" : "border-border hover:bg-background"}`,
+                    `w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors duration-150 ease-bench ${selectedPath === file.path ? "border-border border-l-2 border-l-primary bg-muted text-foreground" : "border-border hover:bg-muted"}`,
                     focusRing,
                   )}
                   onClick={() => setSelectedPath(file.path)}
@@ -424,7 +435,7 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
       {/* A section, not <main>: the learning layout already provides the page's main landmark. */}
       <section aria-label="Lab workspace" aria-busy={!loaded} className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-border bg-card p-4 text-card-foreground">
-          <h2 className="text-lg font-bold">{currentStep.title}</h2>
+          <h2 className="text-h3 text-foreground">{currentStep.title}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{currentStep.instructions}</p>
         </div>
         {/* Below lg the page is one column with no fixed height, so the editor needs its own height or 100% resolves to 0. */}
@@ -443,7 +454,8 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
             options={{ minimap: { enabled: false }, wordWrap: "on" }}
           />
         </div>
-        <div className="border-t border-border bg-muted p-4">
+        {/* bg-card, not bg-muted: the "Run it on your simulator" card inside must never sit darker than its parent. */}
+        <div data-testid="lab-editor-footer" className="border-t border-border bg-card p-4">
           {hasAutomatedGrader ? (
             <div className="mb-4">
               <button type="button" onClick={checkSolution} disabled={!loaded || isChecking} className={cn(primaryButtonClass, "mb-2")}>
@@ -465,19 +477,24 @@ export default function LabClientPage({ lab, policy, files, solutions, backLink,
                 : "This step is complete. Your progress and workspace edits are saved to your account."}
             </p>
           )}
-          <pre aria-live="polite" className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isSuccess === true ? "text-emerald-800 dark:text-emerald-200" : isSuccess === false ? "text-danger" : ""}`}>{consoleOutput}</pre>
-          {diagnostics.length > 0 ? (
-            <ul aria-label="Check details" className="mt-2 list-disc space-y-1 pl-5 text-sm text-danger">
-              {diagnostics.map((diagnostic, index) => (
-                <li key={`${diagnostic.code}-${index}`} className="[overflow-wrap:anywhere]">
-                  {diagnostic.file ? `${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""}: ` : ""}
-                  {diagnostic.message}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          <LabCheckResult
+            tone={isSuccess === true ? "success" : isSuccess === false ? "danger" : null}
+            label={resultLabel}
+            message={consoleOutput}
+          >
+            {diagnostics.length > 0 ? (
+              <ul aria-label="Check details" className="mt-2 list-disc space-y-1 pl-5 text-ui text-foreground">
+                {diagnostics.map((diagnostic, index) => (
+                  <li key={`${diagnostic.code}-${index}`} className="[overflow-wrap:anywhere]">
+                    {diagnostic.file ? `${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""}: ` : ""}
+                    <InlineCodeText text={diagnostic.message} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </LabCheckResult>
           {outcomeMessage ? (
-            <p role="status" className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200">{outcomeMessage}</p>
+            <p role="status" className="mt-2 text-sm font-medium text-warning">{outcomeMessage}</p>
           ) : null}
 
           <div className="mt-4 flex flex-wrap gap-2">

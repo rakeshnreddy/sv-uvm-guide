@@ -59,7 +59,7 @@ export function lessonNeighbourHref(pathname: string | null, direction: "prev" |
 export default function KeyboardShortcuts() {
   const router = useRouter();
   const pathname = usePathname();
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
 
   // Navigating closes the search, help, outline drawer and menu.
   useEffect(() => {
@@ -80,7 +80,8 @@ export default function KeyboardShortcuts() {
           return true;
         case "toggle-theme":
           // The only Alt/Option+T handler: ThemeSwitcher no longer listens for it.
-          setTheme(toggledThemeName(theme ?? resolvedTheme));
+          // resolvedTheme is the mode on screen, also when the choice is "system".
+          setTheme(toggledThemeName(resolvedTheme));
           return true;
         case "toc":
           return currentLessonSlug(pathname) !== null && focusLessonToc();
@@ -116,7 +117,7 @@ export default function KeyboardShortcuts() {
       window.removeEventListener("keydown", onKeyDown);
       document.documentElement.removeAttribute("data-shortcuts-ready");
     };
-  }, [pathname, router, theme, resolvedTheme, setTheme]);
+  }, [pathname, router, resolvedTheme, setTheme]);
 
   useEffect(() => {
     activeShortcutIslands += 1;

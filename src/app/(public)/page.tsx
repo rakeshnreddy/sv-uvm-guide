@@ -17,10 +17,10 @@ export default function HomePage() {
   const stats = getHomeStats(curriculumData, labs);
 
   // The site footer, as on the privacy and terms pages: its site map links a first-time visitor to the
-  // Privacy Policy and Terms, which explain what this site keeps in the browser.
+  // privacy policy and terms, which explain what this site keeps in the browser.
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <main className="flex flex-col items-center w-full flex-1 bg-background">
+      <main id="main-content" tabIndex={-1} className="flex flex-col items-center w-full flex-1 bg-background focus:outline-none">
         <HeroSection {...stats} />
 
         <LearningPathsSection routes={routes} />

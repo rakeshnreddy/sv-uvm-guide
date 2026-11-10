@@ -2,8 +2,13 @@ import React from 'react';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import PublicHeader from '@/components/layout/PublicHeader';
 import PrivacyPolicyPage from '@/app/(public)/privacy-policy/page';
 import TermsOfServicePage from '@/app/(public)/terms-of-service/page';
+
+vi.mock('next-themes', () => ({
+  useTheme: () => ({ theme: 'light', resolvedTheme: 'light', systemTheme: 'light', setTheme: vi.fn() }),
+}));
 
 vi.mock('next/link', async () => {
   const ReactModule = await import('react');
@@ -22,15 +27,29 @@ afterEach(() => {
 });
 
 describe.each([
-  ['Privacy Policy', PrivacyPolicyPage],
-  ['Terms of Service', TermsOfServicePage],
+  ['Privacy policy', PrivacyPolicyPage],
+  ['Terms of service', TermsOfServicePage],
 ])('%s page (G30-SIDE-V06)', (title, Page) => {
-  it('links back to the site from its header', () => {
-    render(<Page />);
-    // The page frame's header comes first; InfoPage adds its own header inside the article.
-    const header = screen.getAllByRole('banner')[0];
-    expect(within(header).getByRole('link', { name: 'Back to the curriculum' })).toHaveAttribute('href', '/curriculum');
+  it('links back to the site from the public header, and adds no site header of its own', () => {
+    // The (public) layout renders PublicHeader above the page.
+    render(
+      <>
+        <PublicHeader />
+        <Page />
+      </>,
+    );
+    const header = screen.getByTestId('public-header');
+    expect(within(header).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
     expect(within(header).getByRole('link', { name: 'SV/UVM Hub home' })).toHaveAttribute('href', '/');
+    // The page itself carries no wordmark link; only the layout's header does.
+    expect(screen.getAllByRole('link', { name: 'SV/UVM Hub home' })).toHaveLength(1);
+  });
+
+  it('fills the viewport below the 56 or 64 px public header, not a full screen more', () => {
+    const { container } = render(<Page />);
+    const frame = container.firstElementChild as HTMLElement;
+    expect(frame).toHaveClass('min-h-[calc(100vh-3.5rem)]', 'sm:min-h-[calc(100vh-4rem)]');
+    expect(frame).not.toHaveClass('min-h-screen');
   });
 
   it('keeps its content in one main landmark under its own heading', () => {
@@ -82,7 +101,7 @@ describe.each([
   });
 });
 
-describe('Privacy Policy content', () => {
+describe('Privacy policy content', () => {
   it('says what stays in this browser, that nothing is sent, and keeps the contact address', () => {
     render(<PrivacyPolicyPage />);
     const main = screen.getByRole('main');

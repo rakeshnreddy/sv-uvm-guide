@@ -18,17 +18,19 @@ export const metadata: Metadata = {
  */
 export default function FlashcardReviewPage() {
   return (
-    <div className="mx-auto w-full max-w-3xl pb-16">
-      <header className="rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-8">
+    <div className="mx-auto w-full max-w-6xl pb-16">
+      <header className="space-y-4">
+        <div>
+          <h1 className="text-h1 text-foreground">Flashcard review</h1>
+          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
+            Cards you rate in a lesson come back here when they are due, oldest first, followed by a few new cards from
+            decks you have opened. Flip a card, then rate it: each button shows when the card would come back. Again
+            starts the card over, and Hard, Good and Easy keep lengthening the gap.
+          </p>
+        </div>
         <LearnerSectionNav current="review" />
-        <h1 className="mt-5 text-3xl font-bold text-foreground sm:text-4xl">Flashcard review</h1>
-        <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-          Cards you rate in a lesson come back here when they are due, oldest first, followed by a few new cards from decks
-          you have opened. Flip a card, then rate it: each button shows when the card would come back. Again starts the
-          card over, and Hard, Good and Easy keep lengthening the gap.
-        </p>
       </header>
-      <div className="mt-8">
+      <div className="mt-8 max-w-3xl">
         <ReviewPageClient />
       </div>
     </div>

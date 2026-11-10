@@ -43,7 +43,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
 
   if (!lab) {
     return (
-      <div className="my-6 p-4 border border-red-500 bg-red-50 rounded-md text-red-700">
+      <div className="my-6 rounded-lg border border-danger bg-danger-subtle p-4 text-danger">
         <strong>Error:</strong> Lab mapping failed for ID <code>{labId}</code>.
       </div>
     );
@@ -87,7 +87,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
             </div>
           ) : (
             <p className="mb-0 mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className="inline-flex items-center rounded-full border border-dashed border-border px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground">
+              <span className="inline-flex items-center rounded-full border border-dashed border-border px-3 py-1 text-label text-foreground">
                 {unavailable.chip}
               </span>
               <span>{unavailable.note}</span>

@@ -41,7 +41,7 @@ const formatCount = (value: number) => value.toLocaleString("en-US");
 const linkClass =
   "rounded-sm font-semibold text-current underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
-const errorTextClass = "text-sm font-medium text-red-700 dark:text-red-300";
+const errorTextClass = "text-sm font-medium text-danger";
 
 /** The pathname as a lesson path: no trailing slash. Null when there is none. */
 function canonicalPath(pathname: string | null | undefined): string | null {
@@ -246,10 +246,10 @@ function AiFeedbackControls({ topic, explanation, className }: AiFeedbackPanelPr
           <div
             aria-labelledby={resultHeadingId}
             role="group"
-            className="rounded-md border border-border bg-background/70 p-4 text-sm text-foreground"
+            className="rounded-lg border border-border bg-background p-4 text-sm text-foreground"
           >
             {outdated ? (
-              <p className="mb-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+              <p className="mb-2 text-xs font-medium text-warning">
                 Outdated: this feedback is for an earlier version of your explanation. Choose Get AI feedback to check
                 the current one.
               </p>
@@ -383,10 +383,10 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({ conceptTitle,
   );
 
   return (
-    <div className="rounded-2xl border border-primary/30 bg-secondary/20 p-4 dark:border-primary/40 dark:bg-secondary/10 sm:p-5">
+    <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5">
       <div className="flex items-start gap-3">
         <Lightbulb aria-hidden="true" className="mt-0.5 h-6 w-6 flex-shrink-0 text-primary" />
-        <p className="min-w-0 text-sm text-foreground/80">
+        <p className="min-w-0 text-sm text-muted-foreground">
           Explain {conceptTitle ? `"${conceptTitle}"` : "this concept"} in your own simple words, as if to a colleague
           who is new to it. Gaps show up where the explanation gets vague.
         </p>
@@ -395,7 +395,7 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({ conceptTitle,
       <p id={checklistId} className="mt-4 text-sm font-semibold text-foreground">
         Check your explanation:
       </p>
-      <ul aria-labelledby={checklistId} className="mt-1 list-disc space-y-1 pl-5 text-sm text-foreground/80">
+      <ul aria-labelledby={checklistId} className="mt-1 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
         {TEACH_BACK_SELF_CHECK.map((item) => (
           <li key={item}>{item}</li>
         ))}
@@ -412,13 +412,13 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({ conceptTitle,
         aria-describedby={hintId}
         placeholder="Type your explanation here. The simpler, the better."
         rows={4}
-        className="mt-2 min-h-[6rem] w-full resize-none overflow-y-hidden rounded-md border border-border bg-background/70 p-3 text-sm text-foreground outline-none transition-shadow duration-150 ease-in-out focus:border-transparent focus:ring-2 focus:ring-primary motion-reduce:transition-none dark:bg-background/40"
+        className="mt-2 min-h-[6rem] w-full resize-none overflow-y-hidden rounded-lg border border-input bg-background p-3 text-sm text-foreground outline-none transition-shadow duration-150 ease-bench focus:border-transparent focus:ring-2 focus:ring-ring motion-reduce:transition-none"
       />
       <div className="mt-1 flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-xs">
         <p id={hintId} className="text-muted-foreground">
           Stored only in this browser, in your notebook, when you choose Save to notebook.
         </p>
-        <p className={overLimit ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}>
+        <p className={overLimit ? "font-medium text-danger" : "text-muted-foreground"}>
           {formatCount(draft.length)} / {formatCount(NOTEBOOK_BODY_MAX_CHARS)} characters
         </p>
       </div>
@@ -448,7 +448,7 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({ conceptTitle,
           </>
         ) : null}
         {status.kind === "saved" && status.outcome === "memory-only" ? (
-          <span className="font-medium text-amber-800 dark:text-amber-200">
+          <span className="font-medium text-warning">
             {writeOutcomeMessage("memory-only")}{" "}
             <Link href={BACKUP_HREF} className={linkClass}>
               Back up your data

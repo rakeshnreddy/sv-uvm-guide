@@ -40,23 +40,23 @@ export interface NotificationItem {
 export const NOTIFICATION_CATEGORY_META: Record<NotificationCategory, { label: string; badgeClass: string }> = {
   progress: {
     label: 'Progress',
-    badgeClass: 'bg-[var(--blueprint-accent)]/15 text-[var(--blueprint-accent)]',
+    badgeClass: 'bg-success/15 text-success',
   },
   practice: {
     label: 'Practice',
-    badgeClass: 'bg-amber-500/20 text-amber-200',
+    badgeClass: 'bg-warning/15 text-warning',
   },
   review: {
     label: 'Review',
-    badgeClass: 'bg-rose-500/20 text-rose-200',
+    badgeClass: 'bg-danger/15 text-danger',
   },
   community: {
     label: 'Community',
-    badgeClass: 'bg-sky-500/15 text-sky-200',
+    badgeClass: 'bg-info/15 text-info',
   },
   mentor: {
     label: 'Mentor',
-    badgeClass: 'bg-violet-500/20 text-violet-200',
+    badgeClass: 'bg-muted text-foreground',
   },
 };
 

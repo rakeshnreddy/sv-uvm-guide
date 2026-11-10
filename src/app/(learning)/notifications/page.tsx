@@ -30,8 +30,8 @@ const SIGN_IN_HREF = `/api/auth/signin?callbackUrl=${encodeURIComponent('/notifi
 function NotificationsNotice({ children }: { children: ReactNode }) {
   return (
     <div className="space-y-6">
-      <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
-        <h1 className="text-3xl font-semibold text-[var(--blueprint-foreground)]">Notifications</h1>
+      <header className="rounded-xl border border-border bg-card p-8 shadow-card">
+        <h1 className="text-h1 text-foreground">Notifications</h1>
         {children}
       </header>
     </div>
@@ -41,11 +41,11 @@ function NotificationsNotice({ children }: { children: ReactNode }) {
 function renderSignedOut() {
   return (
     <NotificationsNotice>
-      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">Sign in to see your notifications.</p>
+      <p className="mt-2 text-sm text-muted-foreground">Sign in to see your notifications.</p>
       {/* A plain link: NextAuth's sign-in page is not an app route, so it needs a full page load. */}
       <a
         href={SIGN_IN_HREF}
-        className="mt-4 inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-sm text-[var(--blueprint-accent)] transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-muted px-5 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         Sign in
       </a>
@@ -56,13 +56,13 @@ function renderSignedOut() {
 function renderSignInUnavailable() {
   return (
     <NotificationsNotice>
-      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+      <p className="mt-2 text-sm text-muted-foreground">
         Sign-in is not available on this site yet, so there are no notifications to show. Your progress is kept in this
         browser.
       </p>
       <Link
         href="/dashboard"
-        className="mt-4 inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-sm text-[var(--blueprint-accent)] transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-muted px-5 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         Open your dashboard
       </Link>
@@ -73,7 +73,7 @@ function renderSignInUnavailable() {
 function renderUnavailable() {
   return (
     <NotificationsNotice>
-      <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+      <p className="mt-2 text-sm text-muted-foreground">
         Your notifications could not be loaded. Try again in a moment.
       </p>
     </NotificationsNotice>
@@ -87,14 +87,14 @@ function isSignedOutError(error: unknown): boolean {
 
 function NotificationsEmptyState() {
   return (
-    <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 p-6 text-center">
-      <p className="text-lg font-semibold text-[var(--blueprint-foreground)]">Inbox is quiet</p>
-      <p className="mt-2 text-sm text-[rgba(230,241,255,0.7)]">
+    <div className="rounded-2xl border border-dashed border-border bg-muted p-6 text-center">
+      <p className="text-lg font-semibold text-foreground">Inbox is quiet</p>
+      <p className="mt-2 text-sm text-muted-foreground">
         You are fully caught up. New lessons, review requests, and reminders will appear here as soon as activity resumes.
       </p>
       <Link
         href="/curriculum"
-        className="mt-4 inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-sm text-[var(--blueprint-accent)] transition hover:bg-white/10"
+        className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-muted px-5 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card"
       >
         Explore the curriculum
       </Link>
@@ -106,30 +106,30 @@ function NotificationCard({ notification }: { notification: NotificationItem }) 
   const meta = NOTIFICATION_CATEGORY_META[notification.category];
 
   return (
-    <article className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-6 transition hover:-translate-y-0.5">
+    <article className="rounded-xl border border-border bg-card p-6 transition-colors">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-3">
           <span
-            className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${meta?.badgeClass ?? 'bg-white/10 text-[rgba(230,241,255,0.8)]'}`}
+            className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${meta?.badgeClass ?? 'bg-muted text-muted-foreground'}`}
           >
             {meta?.label ?? 'Update'}
           </span>
-          <h3 className="text-lg font-semibold text-[var(--blueprint-foreground)]">{notification.title}</h3>
-          <p className="text-sm text-[rgba(230,241,255,0.72)]">{notification.description}</p>
+          <h3 className="text-h3 text-foreground">{notification.title}</h3>
+          <p className="text-sm text-muted-foreground">{notification.description}</p>
         </div>
-        <div className="flex flex-col items-end gap-2 text-right text-xs text-[rgba(230,241,255,0.55)]">
+        <div className="flex flex-col items-end gap-2 text-right text-xs text-subtle">
           <span>{formatTimestamp(notification.timestamp)}</span>
           {notification.priority === 'high' && (
-            <span className="inline-flex items-center rounded-full border border-rose-400/40 px-2 py-0.5 text-[10px] font-semibold text-rose-200">
+            <span className="inline-flex items-center rounded border border-danger/40 px-2 py-0.5 text-xs font-medium text-danger">
               High priority
             </span>
           )}
         </div>
       </div>
       {notification.href && (
-        <div className="mt-5 flex items-center justify-between text-xs text-[rgba(230,241,255,0.6)]">
+        <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
           <span>Keep momentum by taking action now.</span>
-          <Link href={notification.href} className="text-[var(--blueprint-accent)] hover:underline">
+          <Link href={notification.href} className="text-primary hover:underline">
             View details
           </Link>
         </div>
@@ -194,30 +194,30 @@ export default async function NotificationsPage() {
 
   return (
     <div className="space-y-8">
-      <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
+      <header className="rounded-xl border border-border bg-card p-8 shadow-card">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-[var(--blueprint-foreground)]">Notifications</h1>
-            <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+            <h1 className="text-h1 text-foreground">Notifications</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
               Stay on top of lesson completions, reviewer hand-offs, and community activity. Preferences below control which
               nudges arrive in your inbox.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-center text-xs text-[rgba(230,241,255,0.7)] sm:grid-cols-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-lg font-semibold text-[var(--blueprint-foreground)]">{notifications.length}</p>
+          <div className="grid grid-cols-2 gap-3 text-center text-xs text-muted-foreground sm:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-muted px-4 py-3">
+              <p className="text-lg font-semibold text-foreground">{notifications.length}</p>
               <p>Total items</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-lg font-semibold text-[var(--blueprint-foreground)]">{unreadCount}</p>
+            <div className="rounded-2xl border border-border bg-muted px-4 py-3">
+              <p className="text-lg font-semibold text-foreground">{unreadCount}</p>
               <p>Unread</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-lg font-semibold text-[var(--blueprint-foreground)]">{notificationPreferences.digest}</p>
+            <div className="rounded-2xl border border-border bg-muted px-4 py-3">
+              <p className="text-lg font-semibold text-foreground">{notificationPreferences.digest}</p>
               <p>Digest cadence</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-lg font-semibold text-[var(--blueprint-foreground)]">
+            <div className="rounded-2xl border border-border bg-muted px-4 py-3">
+              <p className="text-lg font-semibold text-foreground">
                 {notificationPreferences.quietHours
                   ? `${notificationPreferences.quietHours.start}–${notificationPreferences.quietHours.end}`
                   : 'Off'}
@@ -240,24 +240,24 @@ export default async function NotificationsPage() {
         </div>
 
         <aside className="space-y-4 lg:col-span-2">
-          <div className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-6">
-            <h2 className="text-lg font-semibold text-[var(--blueprint-foreground)]">Preferences snapshot</h2>
-            <p className="mt-2 text-xs text-[rgba(230,241,255,0.65)]">
+          <div className="rounded-xl border border-border bg-card p-6">
+            <h2 className="text-h3 text-foreground">Preferences snapshot</h2>
+            <p className="mt-2 text-xs text-muted-foreground">
               These settings are seeded from the prototype profile. Edit them in the settings panel once persistence ships.
             </p>
-            <ul className="mt-5 space-y-3 text-sm text-[rgba(230,241,255,0.75)]">
+            <ul className="mt-5 space-y-3 text-sm text-muted-foreground">
               {Object.entries(notificationPreferences.categories).map(([key, enabled]) => {
                 const meta = NOTIFICATION_CATEGORY_META[key as keyof typeof NOTIFICATION_CATEGORY_META];
                 return (
                   <li key={key} className="flex items-center justify-between">
                     <span className="flex items-center gap-2">
                       <span
-                        className={`inline-flex h-2 w-2 rounded-full ${enabled ? 'bg-[var(--blueprint-accent)]' : 'bg-white/20'}`}
+                        className={`inline-flex h-2 w-2 rounded-full ${enabled ? 'bg-success' : 'bg-border'}`}
                         aria-hidden="true"
                       />
                       {meta?.label ?? key}
                     </span>
-                    <span className={`text-xs ${enabled ? 'text-[var(--blueprint-accent)]' : 'text-[rgba(230,241,255,0.4)]'}`}>
+                    <span className={`text-xs ${enabled ? 'text-success' : 'text-subtle'}`}>
                       {enabled ? 'Enabled' : 'Muted'}
                     </span>
                   </li>
@@ -266,18 +266,18 @@ export default async function NotificationsPage() {
             </ul>
           </div>
 
-          <div className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-6">
-            <h2 className="text-lg font-semibold text-[var(--blueprint-foreground)]">Delivery schedule</h2>
-            <p className="mt-2 text-sm text-[rgba(230,241,255,0.7)]">
+          <div className="rounded-xl border border-border bg-card p-6">
+            <h2 className="text-h3 text-foreground">Delivery schedule</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
               {channelSummary || 'Notifications are currently paused.'}
             </p>
-            <p className="mt-3 text-xs text-[rgba(230,241,255,0.55)]">
+            <p className="mt-3 text-xs text-subtle">
               Daily digests surface review assignments and community replies in your inbox, while high-priority items still
               send instantaneous nudges.
             </p>
             <Link
               href="/settings"
-              className="mt-4 inline-flex items-center justify-center rounded-full border border-white/15 px-4 py-2 text-xs text-[var(--blueprint-accent)] transition hover:bg-white/10"
+              className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-muted px-4 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card"
             >
               Adjust preferences
             </Link>

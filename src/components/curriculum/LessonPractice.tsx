@@ -24,15 +24,15 @@ export interface LessonPracticeProps {
   moduleCode?: string;
 }
 
-const sectionClass = "rounded-3xl border border-border/60 bg-card/80 p-5 shadow-sm sm:p-6";
-const headingClass = "scroll-mt-28 text-lg font-semibold text-foreground";
+const sectionClass = "rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6";
+const headingClass = "scroll-mt-28 text-h3 text-foreground";
 
 function HandsOnItem({ entry }: { entry: LessonPracticeEntry }) {
   const { item, after } = entry;
   const planned = item.status === "coming_soon";
   return (
-    <li className="flex min-w-0 flex-col rounded-2xl border border-border/60 bg-background/60 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <li className="flex min-w-0 flex-col rounded-xl border border-border bg-card p-4">
+      <p className="text-label text-subtle">
         {PRACTICE_KIND_LABELS[item.kind]}
         {planned ? " · planned" : null}
       </p>

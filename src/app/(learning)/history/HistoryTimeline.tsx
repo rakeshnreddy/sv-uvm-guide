@@ -59,14 +59,14 @@ function TimelineEvent({ event }: { event: HistoryEvent }) {
         <time dateTime={event.date} className="font-mono font-semibold text-foreground">
           {event.dateLabel}
         </time>
-        <span className={cn("rounded-full border px-2 py-0.5 font-medium", laneChip[event.lane])}>{LANE_LABELS[event.lane]}</span>
-        <span className="rounded-full border border-border px-2 py-0.5 text-muted-foreground">{KIND_LABELS[event.kind]}</span>
+        <span className={cn("rounded border px-2 py-0.5 font-medium", laneChip[event.lane])}>{LANE_LABELS[event.lane]}</span>
+        <span className="rounded border border-border px-2 py-0.5 text-muted-foreground">{KIND_LABELS[event.kind]}</span>
       </div>
-      <h4 id={titleId} className="mt-1.5 text-base font-semibold leading-snug text-foreground">
+      <h4 id={titleId} className="mt-1.5 text-h4 text-foreground">
         {event.title}
       </h4>
-      <p className="mt-1 text-sm leading-relaxed text-foreground/90">{event.what}</p>
-      <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">
+      <p className="mt-1 text-sm leading-relaxed text-foreground">{event.what}</p>
+      <p className="mt-1.5 text-sm leading-relaxed text-foreground">
         <span className="font-semibold">Why: </span>
         {event.why}
       </p>
@@ -102,7 +102,7 @@ function Legend() {
       {(Object.keys(LANE_LABELS) as HistoryLane[]).map((lane) => (
         <div key={lane} className="flex items-center gap-1.5">
           <dt>
-            <span className={cn("rounded-full border px-2 py-0.5 font-medium", laneChip[lane])}>{LANE_LABELS[lane]}</span>
+            <span className={cn("rounded border px-2 py-0.5 font-medium", laneChip[lane])}>{LANE_LABELS[lane]}</span>
           </dt>
           <dd>{lane === "language" ? "Verilog, SystemVerilog, e" : "VMM, AVM, OVM, UVM"}</dd>
         </div>
@@ -131,7 +131,7 @@ export function HistoryTimeline() {
           {HISTORY_ERAS.map((era) => (
             <li key={era.id} aria-labelledby={`history-era-${era.id}`}>
               <h3 id={`history-era-${era.id}`} className="text-sm font-semibold text-foreground">
-                <span className="mr-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{era.years}</span>
+                <span className="mr-2 text-xs font-medium text-subtle">{era.years}</span>
                 {era.label}
               </h3>
               <ol className="ml-[7px] mt-3 space-y-5 border-l-2 border-border">

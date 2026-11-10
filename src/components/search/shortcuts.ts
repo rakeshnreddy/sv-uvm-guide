@@ -10,6 +10,8 @@
  * get the key printed on their keyboard) and by `event.code` otherwise.
  */
 
+import { oppositeMode, themeMode, type ThemeMode } from "@/lib/theme-modes";
+
 export type ShortcutId =
   | "search"
   | "outline"
@@ -120,11 +122,13 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target.closest('[contenteditable]:not([contenteditable="false"]), [role="textbox"]') !== null;
 }
 
-/** "default-dark" → "default-light", "ocean-light" → "ocean-dark". */
-export function toggledThemeName(theme: string | undefined): string {
-  const current = theme && /-(light|dark)$/.test(theme) ? theme : "default-dark";
-  const base = current.replace(/-(light|dark)$/, "");
-  return current.endsWith("-dark") ? `${base}-light` : `${base}-dark`;
+/**
+ * The mode Alt/Option+T switches to, from the mode on screen (next-themes'
+ * resolvedTheme): "dark" → "light", "light" → "dark". Old stored names count as
+ * their mode ("ocean-light" → "dark"); an unknown or missing value counts as dark.
+ */
+export function toggledThemeName(resolvedTheme: string | undefined): ThemeMode {
+  return oppositeMode(themeMode(resolvedTheme));
 }
 
 /** A shortcut route is available only while its section is on. */

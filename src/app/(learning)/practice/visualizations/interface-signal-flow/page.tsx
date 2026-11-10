@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const InterfaceSignalFlowPage = () => {
   return (
-    <InfoPage title={practice.title} description={practice.description} diagrams={[<InterfaceSignalFlow key="if-flow" />]}>
+    <InfoPage gutter={false} title={practice.title} description={practice.description} diagrams={[<InterfaceSignalFlow key="if-flow" />]}>
       <LearnInLesson item={practice} />
     </InfoPage>
   );

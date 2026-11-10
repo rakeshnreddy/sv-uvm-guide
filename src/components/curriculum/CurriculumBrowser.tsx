@@ -101,7 +101,7 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
     <section id="modules" aria-labelledby="modules-heading" className="mb-12 scroll-mt-24">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
-          <h2 id="modules-heading" className="text-2xl font-semibold text-foreground sm:text-3xl">
+          <h2 id="modules-heading" className="text-h2 text-foreground">
             Modules by tier
           </h2>
           <p className="mt-2 text-sm text-muted-foreground sm:text-base">
@@ -109,7 +109,7 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
             an Elective label, sit beside it, and the core path&apos;s Next link skips them.
           </p>
         </div>
-        <div role="group" aria-label="View" className="inline-flex shrink-0 self-start rounded-full border border-border bg-background p-1 lg:self-auto">
+        <div role="group" aria-label="View" className="inline-flex shrink-0 self-start rounded-lg border border-border bg-card p-1 lg:self-auto">
           {(
             [
               { id: 'list', label: 'List', Icon: List },
@@ -122,9 +122,12 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
               aria-pressed={view === id}
               onClick={() => setView(id)}
               className={cn(
-                'inline-flex min-h-[40px] items-center gap-2 rounded-full px-4 text-sm font-medium',
+                'inline-flex min-h-[40px] items-center gap-2 rounded-md border-b-2 px-4 text-sm transition-colors duration-150 ease-bench motion-reduce:transition-none',
                 focusRing,
-                view === id ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
+                // The chosen view: the raised surface with a 2 px accent underline, not an accent fill.
+                view === id
+                  ? 'border-primary bg-muted font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
               )}
             >
               <Icon className="h-4 w-4" aria-hidden="true" />
@@ -153,7 +156,7 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
                 placeholder="For example: mailbox, WSTRB, config_db or I-SV-5"
                 autoComplete="off"
                 className={cn(
-                  'min-h-[44px] w-full rounded-full border border-muted-foreground/70 bg-background py-2 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground',
+                  'min-h-[44px] w-full rounded-lg border border-input bg-background py-2 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground',
                   focusRing,
                 )}
               />
@@ -198,8 +201,8 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
             ))}
           </div>
         ) : (
-          <div className="mt-4 rounded-3xl border border-dashed border-border p-8 text-center">
-            <p className="text-base font-semibold text-foreground">No modules found</p>
+          <div className="mt-4 rounded-2xl border border-dashed border-border p-8 text-center">
+            <p className="text-h4 text-foreground">No modules found</p>
             <p className="mt-1 text-sm text-muted-foreground">
               The search covers module codes, titles and lesson descriptions.
             </p>

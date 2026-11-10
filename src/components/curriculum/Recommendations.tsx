@@ -7,7 +7,7 @@ import { ArrowRight } from 'lucide-react';
 import { labelWithCode, lessonKey, type IndexedLesson } from '@/lib/curriculum-overview';
 import type { ResolvedRoute } from '@/lib/learning-paths';
 import { nextOnRoute, recentVisits, type ProgressLike, type RouteId } from '@/lib/learning-route-state';
-import { eyebrow, inlineLink, primaryAction, textLink } from './overview-ui';
+import { eyebrow, inlineLink, primaryAction, secondaryAction, textLink } from './overview-ui';
 
 export interface RecommendationsProps {
   routes: ResolvedRoute[];
@@ -45,16 +45,16 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, read
   return (
     <section
       aria-labelledby="resume-heading"
-      className="mb-12 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6"
+      className="mb-12 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6"
     >
-      <h2 id="resume-heading" className="text-xl font-semibold text-foreground sm:text-2xl">
+      <h2 id="resume-heading" className="text-h2 text-foreground">
         Pick up where you left off
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">Based on the lessons you opened in this browser.</p>
 
       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         {route && (
-          <div className="min-w-0 rounded-2xl border border-border bg-background p-4">
+          <div className="min-w-0 rounded-xl border border-border bg-card p-4">
             <p className={eyebrow}>Next on your {route.name} route</p>
             {routeLesson && routeStep ? (
               <>
@@ -82,14 +82,15 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, read
         )}
 
         {showCourseNext && last && (
-          <div className="min-w-0 rounded-2xl border border-border bg-background p-4">
+          <div className="min-w-0 rounded-xl border border-border bg-card p-4">
             <p className={eyebrow}>Continue the course</p>
             {courseNext ? (
               <>
                 <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
                   The lesson after {labelWithCode(last.moduleCode, last.title)}, which you opened last.
                 </p>
-                <Link href={courseNext.href} className={`${primaryAction} mt-3 max-w-full`}>
+                {/* One filled action per view: this one is secondary when the route's next lesson is shown beside it. */}
+                <Link href={courseNext.href} className={`${route ? secondaryAction : primaryAction} mt-3 max-w-full`}>
                   <span className="[overflow-wrap:anywhere]">
                     Continue with {labelWithCode(courseNext.moduleCode, courseNext.title)}
                   </span>
@@ -107,7 +108,7 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, read
 
       {visits.length > 0 && (
         <div className="mt-5">
-          <h3 id="recent-lessons-heading" className="text-sm font-semibold text-foreground">
+          <h3 id="recent-lessons-heading" className="text-h4 text-foreground">
             Recently visited
           </h3>
           <ul aria-labelledby="recent-lessons-heading" className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">

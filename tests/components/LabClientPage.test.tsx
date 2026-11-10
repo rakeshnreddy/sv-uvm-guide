@@ -304,10 +304,18 @@ describe("LabClientPage (local mode)", () => {
 
     await click(check);
     await waitFor(() => expect(screen.getByRole("button", { name: "Check solution" })).toBeEnabled());
-    expect(document.querySelector("pre[aria-live]")?.textContent).toContain("task automatic drive_sequence");
-    // Failure text uses the readable danger token, not the destructive fill (1.46:1 on muted in dark themes).
-    expect(document.querySelector("pre[aria-live]")).toHaveClass("text-danger");
-    expect(document.querySelector("pre[aria-live]")).not.toHaveClass("text-destructive");
+    expect(screen.getByTestId("lab-check-message").textContent).toContain("task automatic drive_sequence");
+    // A failure is a status box with an icon and a label, not colour alone, and it stays in the live region.
+    const result = screen.getByTestId("lab-check-result");
+    expect(result).toHaveAttribute("aria-live", "polite");
+    expect(result).toHaveAttribute("role", "status");
+    expect(within(result).getByTestId("lab-check-label")).toHaveTextContent("Check failed");
+    // The label uses the readable danger token, not the destructive fill (1.46:1 on muted in dark themes).
+    expect(within(result).getByTestId("lab-check-label")).toHaveClass("text-danger");
+    expect(within(result).getByTestId("lab-check-box")).toHaveClass("bg-danger-subtle");
+    expect(within(result).getByTestId("lab-check-box")).not.toHaveClass("text-destructive");
+    // Backticked spans in the message render as inline code, without the raw backticks.
+    expect(screen.getByTestId("lab-check-message").textContent).not.toContain("`");
     expect(screen.getByRole("heading", { name: "Step 2: Write task automatic drive_sequence" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /work\/tb_counter_unrefactored\.sv/ }));
@@ -315,7 +323,9 @@ describe("LabClientPage (local mode)", () => {
     await click(screen.getByRole("button", { name: "Check solution" }));
 
     expect(await screen.findByRole("heading", { name: "Step 3: Replace the three blocks with calls" })).toBeInTheDocument();
-    expect(document.querySelector("pre[aria-live]")?.textContent).toBe("Task shape check passed.");
+    expect(screen.getByTestId("lab-check-message").textContent).toBe("Task shape check passed.");
+    expect(screen.getByTestId("lab-check-label")).toHaveTextContent("Check passed");
+    expect(screen.getByTestId("lab-check-box")).toHaveClass("bg-success-subtle");
     expect(storedRecord("basics-1", "2")?.stepEvidence["write-task"]).toMatchObject({ kind: "graded", origin: "browser" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -522,7 +532,7 @@ describe("LabClientPage (local mode)", () => {
 
     await click(screen.getByRole("button", { name: "Check solution" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check solution" })).toBeEnabled());
-    const output = document.querySelector("pre[aria-live]")?.textContent ?? "";
+    const output = screen.getByTestId("lab-check-message").textContent ?? "";
     expect(output).toBe(labErrorMessage("INVALID_SUBMISSION_FILE"));
     expect(output).toMatch(/too large to check/);
     expect(document.body.textContent).not.toContain("INVALID_SUBMISSION_FILE");

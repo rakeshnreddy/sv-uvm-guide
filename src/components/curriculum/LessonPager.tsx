@@ -6,7 +6,7 @@ import type { LessonContext, NeighbourLesson } from "@/lib/curriculum/lesson-con
 import { cn } from "@/lib/utils";
 
 const cardClass =
-  "group flex min-h-[5.5rem] flex-col justify-center rounded-2xl border border-border/60 bg-card/80 p-5 shadow-sm transition hover:border-primary/50 hover:shadow-md motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "group flex min-h-[5.5rem] flex-col justify-center rounded-xl border border-border bg-card p-5 transition-colors duration-150 ease-bench hover:border-input hover:bg-muted motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function PagerLink({ lesson, direction }: { lesson: NeighbourLesson; direction: "prev" | "next" }) {
   const isNext = direction === "next";
@@ -18,7 +18,7 @@ function PagerLink({ lesson, direction }: { lesson: NeighbourLesson; direction: 
     >
       <span
         className={cn(
-          "flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+          "flex items-center gap-2 text-xs font-medium text-subtle",
           isNext && "sm:justify-end",
         )}
       >
@@ -26,8 +26,8 @@ function PagerLink({ lesson, direction }: { lesson: NeighbourLesson; direction: 
         {isNext ? "Next lesson" : "Previous lesson"}
         {isNext ? <ArrowRight aria-hidden="true" className="h-4 w-4" /> : null}
       </span>{" "}
-      <span className="mt-2 text-sm font-semibold text-foreground group-hover:text-primary">{lesson.label}</span>{" "}
-      <span className="mt-1 text-xs text-muted-foreground">{lesson.boundary}</span>
+      <span className="mt-2 text-sm font-semibold text-foreground transition-colors duration-150 ease-bench group-hover:text-primary motion-reduce:transition-none">{lesson.label}</span>{" "}
+      <span className="mt-1 text-xs text-subtle">{lesson.boundary}</span>
     </Link>
   );
 }
@@ -46,17 +46,17 @@ export default function LessonPager({ context, className }: { context: LessonCon
       {next ? (
         <PagerLink lesson={next} direction="next" />
       ) : (
-        <div className="rounded-2xl border border-border/60 bg-card/80 p-5 text-sm shadow-sm sm:col-start-2" data-testid="end-of-path">
+        <div className="rounded-xl border border-border bg-card p-5 text-sm shadow-card sm:col-start-2" data-testid="end-of-path">
           <p className="font-semibold text-foreground">
             {lesson.track === "core" ? "You have reached the end of the core path." : "This is the last lesson in the curriculum."}
           </p>
           <p className="mt-1 text-muted-foreground">
             Choose an elective, review a module, or practise on the{" "}
-            <Link href="/curriculum" className="font-semibold text-foreground underline underline-offset-2">
+            <Link href="/curriculum" className="font-medium text-primary underline underline-offset-2 hover:no-underline">
               curriculum overview
             </Link>{" "}
             and in the{" "}
-            <Link href="/practice" className="font-semibold text-foreground underline underline-offset-2">
+            <Link href="/practice" className="font-medium text-primary underline underline-offset-2 hover:no-underline">
               practice hub
             </Link>
             .

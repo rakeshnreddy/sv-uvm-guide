@@ -8,6 +8,7 @@ import { labelWithCode } from '@/lib/curriculum-overview';
 import type { ResolvedMilestone, ResolvedRoute, ResolvedStep } from '@/lib/learning-paths';
 import {
   nextOnRoute,
+  recentVisits,
   routeAnchor,
   routeIdFromHash,
   type ProgressLike,
@@ -31,10 +32,13 @@ function RouteCard({
   route,
   selected,
   onToggle,
+  filled,
 }: {
   route: ResolvedRoute;
   selected: boolean;
   onToggle: () => void;
+  /** This card holds the view's one filled accent action. */
+  filled: boolean;
 }) {
   const anchor = routeAnchor(route.id);
   return (
@@ -42,29 +46,30 @@ function RouteCard({
       id={anchor}
       aria-labelledby={`${anchor}-title`}
       className={cn(
-        'flex min-w-0 scroll-mt-24 flex-col rounded-2xl border bg-card p-5 text-card-foreground shadow-sm',
-        selected ? 'border-2 border-primary' : 'border-border',
+        'flex min-w-0 scroll-mt-24 flex-col rounded-xl border border-border p-5 text-card-foreground shadow-card',
+        // The followed route: the raised surface with a 2 px accent edge, as for every current item.
+        selected ? 'border-l-2 border-l-primary bg-muted' : 'bg-card',
       )}
     >
       <p className={eyebrow}>{route.name} route</p>
-      <h3 id={`${anchor}-title`} className="mt-1 text-xl font-semibold text-foreground">
+      <h3 id={`${anchor}-title`} className="mt-1 text-h3 text-foreground">
         {route.tagline}
       </h3>
       <p className="mt-2 text-sm text-muted-foreground">{route.audience}</p>
       <p className="mt-2 text-sm text-foreground">{route.layers}</p>
-      <p className="mt-3 text-xs text-muted-foreground">
+      <p className="mt-3 text-xs text-subtle">
         {route.steps.length} steps · {route.sequence.length} lessons
         {route.milestones.length > 0 && <> · builds {route.milestones.map((m) => m.id).join(', ')}</>}
       </p>
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-5">
-        <Link href={route.cta.href} className={primaryAction}>
+        <Link href={route.cta.href} className={filled ? primaryAction : secondaryAction}>
           {route.cta.label}
         </Link>
         <button
           type="button"
           aria-pressed={selected}
           onClick={onToggle}
-          className={cn(secondaryAction, selected && 'border-primary bg-primary/10')}
+          className={cn(secondaryAction, selected && 'border-primary')}
         >
           {selected && <Check className="h-4 w-4" aria-hidden="true" />}
           Follow the {route.name} route
@@ -171,9 +176,9 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
       id={ROUTE_STEPS_ID}
       role="region"
       aria-labelledby={`${ROUTE_STEPS_ID}-heading`}
-      className="mt-6 scroll-mt-24 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6"
+      className="mt-6 scroll-mt-24 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6"
     >
-      <h3 id={`${ROUTE_STEPS_ID}-heading`} className="text-xl font-semibold text-foreground">
+      <h3 id={`${ROUTE_STEPS_ID}-heading`} className="text-h3 text-foreground">
         The {route.name} route: {route.steps.length} steps
       </h3>
       {route.assumesSummary && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{route.assumesSummary}</p>}
@@ -189,24 +194,24 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
               key={step.id}
               aria-current={current ? 'step' : undefined}
               className={cn(
-                'rounded-2xl p-4',
-                current ? 'border-2 border-primary' : 'border border-border',
+                'rounded-xl border border-border p-4',
+                current && 'border-l-2 border-l-primary bg-muted',
                 step.kind === 'elective' && !current && 'border-2 border-dashed',
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
-                <span className={cn(chip, 'border-border font-semibold text-foreground')}>Step {step.number}</span>
+                <span className={cn(chip, 'border-border text-foreground')}>Step {step.number}</span>
                 {step.kind === 'review' && <span className={cn(chip, 'border-border text-muted-foreground')}>Skim</span>}
                 {step.kind === 'elective' && (
                   <span className={cn(chip, 'border-dashed border-border text-muted-foreground')}>Elective</span>
                 )}
                 {current && (
-                  <span className={cn(chip, 'border-primary bg-primary text-primary-foreground')}>
+                  <span className={cn(chip, 'border-primary bg-card text-foreground')}>
                     <MapPin className="h-3.5 w-3.5" aria-hidden="true" /> You are here
                   </span>
                 )}
               </div>
-              <h4 className="mt-2 text-base font-semibold text-foreground sm:text-lg">{step.title}</h4>
+              <h4 className="mt-2 text-h4 text-foreground">{step.title}</h4>
               <p className="mt-1 text-sm text-muted-foreground">{step.summary}</p>
               {current && nextLesson && (
                 <p className="mt-2 text-sm text-foreground [overflow-wrap:anywhere]">
@@ -247,8 +252,8 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
 export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMilestone[]; routes: ResolvedRoute[] }) {
   const routeName = (id: RouteId) => routes.find((r) => r.id === id)?.name ?? id;
   return (
-    <section aria-labelledby="milestone-ladder-heading" className="mt-6 rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-6">
-      <h3 id="milestone-ladder-heading" className="text-lg font-semibold text-foreground">
+    <section aria-labelledby="milestone-ladder-heading" className="mt-6 rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6">
+      <h3 id="milestone-ladder-heading" className="text-h3 text-foreground">
         The milestone ladder
       </h3>
       <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -257,14 +262,14 @@ export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMi
       </p>
       <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {milestones.map((m) => (
-          <li key={m.id} className="min-w-0 rounded-2xl border border-border bg-background p-3">
+          <li key={m.id} className="min-w-0 rounded-xl border border-border bg-card p-4">
             <p className="flex items-start gap-2">
-              <span className="rounded-md border border-border px-1.5 font-mono text-sm font-semibold text-foreground">
+              <span className="mt-0.5 shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-label text-muted-foreground">
                 {m.id}
               </span>
               <span className="text-sm font-medium text-foreground">{m.name}</span>
             </p>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-subtle">
               {m.routes.length > 0 ? `Built on: ${m.routes.map(routeName).join(', ')}` : 'Not built on any route yet'}
             </p>
             <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
@@ -308,11 +313,15 @@ export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute,
   }, [routes, onSelectRoute]);
 
   const selected = routes.find((r) => r.id === selectedRoute) ?? null;
+  // One filled accent action per view: the Junior route's call to action, unless
+  // "Pick up where you left off" is showing (a followed route or a visited
+  // lesson), whose continue action then holds the accent.
+  const resumeShown = selectedRoute !== null || recentVisits(progress, 1).length > 0;
 
   return (
     <section id="routes" aria-labelledby="routes-heading" className="mb-12 scroll-mt-24">
       <div className="max-w-3xl">
-        <h2 id="routes-heading" className="text-2xl font-semibold text-foreground sm:text-3xl">
+        <h2 id="routes-heading" className="text-h2 text-foreground">
           Choose your route
         </h2>
         <p className="mt-2 text-sm text-muted-foreground sm:text-base">
@@ -327,6 +336,7 @@ export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute,
             route={route}
             selected={route.id === selectedRoute}
             onToggle={() => onSelectRoute(route.id === selectedRoute ? null : route.id)}
+            filled={route.id === 'junior' && !resumeShown}
           />
         ))}
       </div>

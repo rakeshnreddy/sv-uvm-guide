@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmComponentRelationshipVisualizerPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       diagrams={[<AnimatedUvmTestbenchDiagram key="uvm-agent-topology" />]}

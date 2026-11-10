@@ -19,12 +19,23 @@ const signedText = (r: DataTypeRow) => (r.signed === null ? "—" : r.signed ? "
 const statesText = (r: DataTypeRow) => (r.states === null ? "—" : `${r.states}-state`);
 
 /** Bits per value for the fixed-width types, drawn to scale. 4-state bars are hatched. */
+/**
+ * WidthChart geometry in viewBox units. The value label after a full 64-bit bar
+ * ("64 · 4-state", about 70 units at 10.5 px) needs labelRoom to the right edge,
+ * so no label is clipped at any rendered width.
+ */
+export const WIDTH_CHART_LAYOUT = (() => {
+  const W = 360;
+  const labelW = 70;
+  const labelGap = 6;
+  const labelRoom = 90;
+  return { W, labelW, labelGap, labelRoom, barMax: W - labelW - labelRoom };
+})();
+
 function WidthChart() {
   const patternId = useId().replace(/:/g, "");
   const rows = DATA_TYPE_ROWS.filter((r) => r.width !== null);
-  const W = 360;
-  const labelW = 70;
-  const barMax = W - labelW - 44;
+  const { W, labelW, barMax } = WIDTH_CHART_LAYOUT;
   const rowH = 22;
   const H = rows.length * rowH + 22;
   return (
@@ -60,7 +71,7 @@ function WidthChart() {
                   className={r.states === 4 ? "stroke-rose-500/70" : "fill-indigo-500/25 stroke-indigo-500/70"}
                   strokeWidth={1}
                 />
-                <text x={labelW + w + 6} y={y + 13} className="fill-muted-foreground text-[10.5px]">
+                <text x={labelW + w + WIDTH_CHART_LAYOUT.labelGap} y={y + 13} data-testid="width-chart-value" className="fill-muted-foreground text-[10.5px]">
                   {r.width}
                   {r.states === 4 ? " · 4-state" : r.states === 2 ? " · 2-state" : " · float"}
                 </text>

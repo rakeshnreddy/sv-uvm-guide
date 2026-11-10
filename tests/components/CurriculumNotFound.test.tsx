@@ -2,7 +2,7 @@ import React from "react";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import CurriculumNotFound from "@/components/curriculum/CurriculumNotFound";
+import CurriculumNotFound, { BLOCK_LINK_CLASS, FindYourWayBack } from "@/components/curriculum/CurriculumNotFound";
 
 let mockPathname = "/curriculum/does-not-exist";
 
@@ -54,5 +54,29 @@ describe("<CurriculumNotFound />", () => {
     const suggestions = within(heading.parentElement as HTMLElement).getAllByRole("link");
     expect(suggestions[0]).toHaveAttribute("href", "/curriculum/T2_Intermediate/I-SV-1_OOP/index");
     expect(suggestions[0].textContent).toMatch(/^I-SV-1: /);
+  });
+
+  it("sits on a token card with a label eyebrow and the h1 token in the primary text colour", async () => {
+    render(<CurriculumNotFound />);
+    const heading = await screen.findByRole("heading", { level: 1, name: "Page not found" });
+    expect(heading).toHaveClass("text-h1", "text-foreground");
+    const card = heading.parentElement as HTMLElement;
+    expect(card).toHaveClass("rounded-2xl", "border", "border-border", "bg-card");
+    const eyebrow = screen.getByTestId("not-found-eyebrow");
+    expect(eyebrow).toHaveTextContent("Error 404");
+    expect(eyebrow).toHaveClass("text-label");
+    expect(eyebrow).not.toHaveClass("uppercase", "tracking-wide", "tracking-wider");
+  });
+
+  it("gives each way back a block-level accent link, 40 px tall from padding, never inline-flex in running text", () => {
+    render(<FindYourWayBack />);
+    for (const name of ["Curriculum overview", "Start at the first lesson", "Practice hub"]) {
+      const link = screen.getByRole("link", { name });
+      expect(link).toHaveClass("block", "py-2.5", "leading-5", "text-primary", "hover:underline");
+      expect(link).not.toHaveClass("inline-flex", "min-h-10");
+      // The description is its own paragraph, so it wraps on its own line height.
+      expect(link.nextElementSibling?.tagName).toBe("P");
+    }
+    expect(BLOCK_LINK_CLASS).not.toMatch(/inline-flex|min-h-10/);
   });
 });

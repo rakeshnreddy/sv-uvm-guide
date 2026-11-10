@@ -66,7 +66,7 @@ export function StorageStatusNote({ savedLabel = DEFAULT_SAVED_LABEL, className 
       aria-live="polite"
       className={cn(
         "text-xs text-muted-foreground",
-        warning && "font-medium text-amber-800 dark:text-amber-200",
+        warning && "font-medium text-warning",
         className,
       )}
     >

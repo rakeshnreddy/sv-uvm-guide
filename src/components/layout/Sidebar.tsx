@@ -62,10 +62,10 @@ function isModifiedClick(event: MouseEvent): boolean {
 
 function linkClass(current: boolean, density: Density): string {
   return cn(
-    "flex w-full min-w-0 items-start gap-2 rounded-lg border-l-4 px-2 text-left text-sm transition-colors motion-reduce:transition-none",
+    "flex w-full min-w-0 items-start gap-2 rounded-lg border-l-2 px-2 text-left text-sm transition-colors duration-150 ease-bench motion-reduce:transition-none",
     density === "compact" ? "min-h-8 py-1.5" : "min-h-10 py-2",
     current
-      ? "border-primary bg-primary/10 font-semibold text-foreground"
+      ? "border-primary bg-muted font-medium text-foreground"
       : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
     focusRing,
   );
@@ -137,7 +137,7 @@ function ModuleItem({
           onClick={(event) => follow(event, first.href)}
           className={linkClass(first.current, density)}
         >
-          <span className="mt-0.5 shrink-0 font-mono text-[11px] font-semibold text-muted-foreground">{mod.code}</span>
+          <span className="mt-0.5 shrink-0 font-mono text-label text-subtle">{mod.code}</span>
           <span className={cn("min-w-0 break-words", mod.current && !first.current && "font-medium text-foreground")}>
             {mod.title}
           </span>
@@ -149,7 +149,7 @@ function ModuleItem({
             aria-controls={lessonsId}
             onClick={onToggle}
             className={cn(
-              "inline-flex shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+              "inline-flex shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground motion-reduce:transition-none",
               density === "compact" ? "h-8 w-8" : "h-10 w-10",
               focusRing,
             )}
@@ -200,7 +200,7 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
               aria-controls={panelId}
               onClick={() => toggleTier(tier.id)}
               className={cn(
-                "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted",
+                "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none",
                 density === "compact" ? "min-h-9" : "min-h-11",
                 focusRing,
               )}
@@ -213,7 +213,7 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
                 )}
               />
               <span className="min-w-0">
-                <span className={cn("block text-sm text-foreground", tier.current ? "font-bold" : "font-semibold")}>
+                <span className={cn("block text-sm text-foreground", tier.current ? "font-semibold" : "font-medium")}>
                   {tier.title}
                 </span>
                 <span className="sr-only">, </span>
@@ -251,9 +251,9 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
                     aria-labelledby={labelId}
                     className="mb-1 ml-4 mt-2 rounded-lg border border-dashed border-border p-1"
                   >
-                    <p id={labelId} className="px-2 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <p id={labelId} className="px-2 pb-1 pt-1 text-label text-subtle">
                       Electives
-                      <span className="ml-1 font-normal normal-case tracking-normal">(optional: the core path skips them)</span>
+                      <span className="ml-1 font-normal">(optional: the core path skips them)</span>
                     </p>
                     <ul className="space-y-0.5">{items}</ul>
                   </div>
@@ -268,13 +268,22 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
 }
 
 /** OUTLINE_QUICK_LINKS as a labelled list. `onNavigate` runs when a link is followed (the drawer closes itself). */
-function OutlineQuickLinks({ density, onNavigate }: { density: Density; onNavigate?: (href: string) => void }) {
+function OutlineQuickLinks({
+  density,
+  onNavigate,
+  className,
+}: {
+  density: Density;
+  onNavigate?: (href: string) => void;
+  className?: string;
+}) {
   return (
     <ul
       aria-label="Quick links"
       className={cn(
         "flex shrink-0 flex-wrap gap-x-4 border-t border-border text-sm",
         density === "compact" ? "px-3 py-1.5" : "gap-y-1 px-4 py-2",
+        className,
       )}
     >
       {OUTLINE_QUICK_LINKS.map((link) => (
@@ -285,7 +294,7 @@ function OutlineQuickLinks({ density, onNavigate }: { density: Density; onNaviga
               if (!isModifiedClick(event)) onNavigate?.(link.href);
             }}
             className={cn(
-              "inline-flex items-center whitespace-nowrap rounded font-medium text-foreground underline-offset-4 hover:underline",
+              "inline-flex items-center whitespace-nowrap rounded font-medium text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 ease-bench hover:decoration-current motion-reduce:transition-none",
               density === "compact" ? "min-h-8" : "min-h-10",
               focusRing,
             )}
@@ -330,14 +339,14 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
     <div id={DOCKED_OUTLINE_ID} className="hidden w-64 shrink-0 border-r border-border lg:block xl:w-72">
       <nav aria-label="Course outline" className="sticky top-16 flex max-h-[calc(100vh-4rem)] flex-col">
         <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Course outline</p>
+          <p className="text-label text-subtle">Course outline</p>
           <button
             type="button"
             onClick={hide}
             aria-label="Hide course outline"
             title="Hide course outline"
             className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+              "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground motion-reduce:transition-none",
               focusRing,
             )}
           >
@@ -347,7 +356,8 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-6">
           <CourseOutlineTree outline={outline} density="compact" />
         </div>
-        <OutlineQuickLinks density="compact" />
+        {/* From xl the navbar shows these links itself, so the docked column leaves them to it. */}
+        <OutlineQuickLinks density="compact" className="xl:hidden" />
       </nav>
     </div>
   );
@@ -374,7 +384,7 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
       <div
         aria-hidden="true"
         data-testid="course-outline-backdrop"
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-background/80"
         onClick={shellStore.closeOutline}
       />
       <motion.div
@@ -387,7 +397,7 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
         initial={{ x: "-100%" }}
         animate={{ x: 0 }}
         transition={{ duration: 0.2, ease: "easeOut" }}
-        className="absolute inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col border-r border-border bg-background text-foreground shadow-2xl focus:outline-none"
+        className="absolute inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col border-r border-border bg-card text-foreground shadow-card focus:outline-none"
       >
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-foreground">
@@ -399,7 +409,7 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
             onClick={shellStore.closeOutline}
             aria-label="Close course outline"
             className={cn(
-              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-foreground hover:bg-muted",
+              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-foreground transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none",
               focusRing,
             )}
           >

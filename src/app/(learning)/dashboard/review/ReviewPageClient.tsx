@@ -23,6 +23,7 @@ import {
 import { clampPosition, localFlashcardReviewStore } from '@/lib/srs/review-store';
 import { formatIntervalDays, type ReviewQuality } from '@/lib/srs/scheduler';
 import { cn } from '@/lib/utils';
+import { inlineLink } from '@/components/curriculum/overview-ui';
 
 export const FIRST_VISIT_MESSAGE =
   "Rate cards in any lesson's “Reinforce the essentials” section to build your review queue.";
@@ -44,9 +45,9 @@ type DeckLoad =
   | { status: 'missing' }
   | { status: 'error' };
 
-const panelClass = 'rounded-3xl border border-border/60 bg-card/80 p-5 shadow-sm sm:p-6';
-const linkClass =
-  'rounded-sm font-semibold text-foreground underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+const panelClass = 'rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6';
+/** The accent link style, the same as the notebook's. */
+const linkClass = inlineLink;
 
 /** Outcomes the learner must hear about inline; 'memory-only' is covered by StorageStatusNote. */
 function failureMessage(outcome: WriteOutcome): string | null {
@@ -227,7 +228,7 @@ export default function ReviewPageClient() {
         <p
           role="status"
           aria-live="polite"
-          className={cn('text-sm font-medium text-amber-800 dark:text-amber-200', notice ? 'mt-2' : 'sr-only')}
+          className={cn('text-sm font-medium text-warning', notice ? 'mt-2' : 'sr-only')}
         >
           {notice}
         </p>
@@ -244,7 +245,7 @@ export default function ReviewPageClient() {
       <div className={panelClass}>
         {next !== null ? (
           <>
-            <h2 ref={summaryRef} tabIndex={-1} className="text-xl font-semibold text-foreground focus-visible:outline-none">
+            <h2 ref={summaryRef} tabIndex={-1} className="text-h3 text-foreground focus-visible:outline-none">
               All caught up — next review {formatReviewDay(next, now)}
             </h2>
             {moreNewTomorrow ? (
@@ -262,7 +263,7 @@ export default function ReviewPageClient() {
           </>
         ) : (
           <>
-            <h2 ref={summaryRef} tabIndex={-1} className="text-xl font-semibold text-foreground focus-visible:outline-none">
+            <h2 ref={summaryRef} tabIndex={-1} className="text-h3 text-foreground focus-visible:outline-none">
               Nothing to review yet
             </h2>
             <p className="mt-2 text-base text-muted-foreground">{FIRST_VISIT_MESSAGE}</p>
@@ -300,13 +301,13 @@ export default function ReviewPageClient() {
         className={cn(panelClass, 'flex flex-col items-center focus-visible:outline-none')}
       >
         <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2 px-1">
-          <span id={positionId} className="text-sm font-medium text-foreground/80">
+          <span id={positionId} className="text-sm font-medium text-muted-foreground">
             Card {position + 1} of {visible.length}
           </span>
           <span
             className={cn(
-              'rounded-full px-3 py-1 text-xs font-semibold',
-              current.lane === 'due' ? 'bg-primary/10 text-foreground' : 'bg-muted text-foreground',
+              'rounded border border-border px-2 py-0.5 text-xs font-medium',
+              current.lane === 'due' ? 'bg-muted text-foreground' : 'bg-card text-muted-foreground',
             )}
           >
             {current.lane === 'due' ? 'Due for review' : 'New card'}
@@ -341,7 +342,7 @@ export default function ReviewPageClient() {
             {revealed ? <RatingGroup state={current.state} onRate={handleRate} /> : null}
           </>
         ) : deck?.status === 'error' ? (
-          <div className="mb-4 flex w-full flex-col items-start gap-3 rounded-md border border-border/60 bg-background p-4">
+          <div className="mb-4 flex w-full flex-col items-start gap-3 rounded-lg border border-border bg-background p-4">
             <p className="text-sm text-foreground">This card's deck couldn't be loaded. Check your connection, then try again.</p>
             <Button type="button" variant="outline" onClick={() => handleRetry(current.deckId)}>
               Try again

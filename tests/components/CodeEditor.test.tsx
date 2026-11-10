@@ -155,6 +155,10 @@ describe("CodeEditor", () => {
     expect(textarea.tagName).toBe("TEXTAREA");
     expect(textarea).toHaveValue("module a;\nendmodule\n");
     expect(textarea).toHaveClass("font-mono");
+    // The plain editor sits on the code surface like Monaco, dark in both modes.
+    expect(textarea).toHaveClass("bg-code-surface", "text-code-foreground");
+    expect(textarea).not.toHaveClass("bg-background", "text-foreground");
+    expect(textarea.className).not.toMatch(/\[hsl\(/);
     expect(screen.getByRole("status")).toHaveTextContent(EDITOR_FALLBACK_NOTE);
     expect(textarea).toHaveAccessibleDescription(PLAIN_EDITOR_TAB_HINT);
     expect(screen.queryByText(EDITOR_LOADING_TEXT)).not.toBeInTheDocument();
@@ -269,6 +273,9 @@ describe("CodeEditor", () => {
     });
     expect(screen.queryByTestId("monaco")).not.toBeInTheDocument();
     const switchButton = screen.getByRole("button", { name: EDITOR_SWITCH_LABEL });
+    // A secondary action: hover is a surface step, never the accent role.
+    expect(switchButton).toHaveClass("bg-card", "border-border", "hover:bg-muted", "hover:text-foreground");
+    expect(switchButton.className).not.toMatch(/bg-accent|text-accent-foreground/);
 
     fireEvent.click(switchButton);
     expect(await screen.findByTestId("monaco")).toHaveValue("typed while waiting");

@@ -61,21 +61,21 @@ function formatDay(time: number | string | null | undefined): string | null {
 
 const READING_MESSAGE: Message = { tone: "info", text: "Reading the file…" };
 
-const destructiveAction = `inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground hover:bg-destructive/90 ${focusRing}`;
+const destructiveAction = `inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-transparent bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors duration-150 ease-bench hover:bg-destructive/90 forced-colors:border-[ButtonText] ${focusRing}`;
 
-const groupClass = "min-w-0 space-y-3 rounded-2xl border border-border bg-background p-4 sm:p-5";
-const headingClass = "text-base font-semibold text-foreground";
+const groupClass = "min-w-0 space-y-3 rounded-xl border border-border bg-background p-4 sm:p-5";
+const headingClass = "text-h4 text-foreground";
 const bodyClass = "text-sm text-muted-foreground";
 const actionsClass = "flex flex-col gap-3 sm:flex-row sm:flex-wrap";
 
 const toneClass: Record<Tone, string> = {
   success: "text-foreground",
   info: "text-foreground",
-  error: "font-medium text-red-800 dark:text-red-200",
+  error: "font-medium text-danger",
 };
 
 const errorPanel =
-  "rounded-2xl border border-red-700/50 bg-red-50 p-3 text-sm font-medium text-red-900 dark:border-red-300/50 dark:bg-red-950/40 dark:text-red-100";
+  "rounded-lg border border-danger/50 bg-danger-subtle p-3 text-sm font-medium text-foreground";
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -172,7 +172,7 @@ function PreviewPanel({
   const notUsed = preview.invalidEntries + preview.newerEntries;
 
   return (
-    <div className="min-w-0 space-y-3 rounded-2xl border border-border bg-card p-4" aria-labelledby={headingId} role="region">
+    <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4" aria-labelledby={headingId} role="region">
       <h4 id={headingId} className="text-sm font-semibold text-foreground">
         {exportedAt ? `Backup from ${exportedAt}` : "Backup contents"}
       </h4>
@@ -406,7 +406,7 @@ export function LearnerDataControls({ className }: LearnerDataControlsProps) {
             aria-invalid={fileError ? true : undefined}
             className={cn(
               "mt-2 block w-full min-w-0 max-w-full rounded-md text-sm text-foreground",
-              "file:mr-3 file:min-h-[44px] file:cursor-pointer file:rounded-md file:border file:border-border file:bg-background file:px-4 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:border-primary",
+              "file:mr-3 file:min-h-[44px] file:cursor-pointer file:rounded-lg file:border file:border-border file:bg-muted file:px-4 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:border-primary",
               focusRing,
             )}
           />
@@ -439,9 +439,9 @@ export function LearnerDataControls({ className }: LearnerDataControlsProps) {
           <div
             role="group"
             aria-labelledby={confirmPromptId}
-            className="min-w-0 space-y-3 rounded-2xl border border-red-700/50 bg-red-50 p-4 dark:border-red-300/50 dark:bg-red-950/40"
+            className="min-w-0 space-y-3 rounded-xl border border-danger/50 bg-danger-subtle p-4"
           >
-            <p id={confirmPromptId} className="text-sm font-medium text-red-900 dark:text-red-100">
+            <p id={confirmPromptId} className="text-sm font-medium text-foreground">
               Delete all learning data in this browser? This can&apos;t be undone. Download a backup first if you
               might want it back.
             </p>

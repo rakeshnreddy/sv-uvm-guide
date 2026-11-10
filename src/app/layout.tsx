@@ -1,8 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { env } from "@/lib/env";
 
-import { calSans, inter, jetBrainsMono } from "./fonts";
+import { jetBrainsMono, plexSans, plexSansGreek } from "./fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,10 +22,19 @@ export const metadata: Metadata = {
   },
 };
 
+// Browser chrome on phones matches the page: the --background value of each mode (globals.css).
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f9fafb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0d1016" },
+  ],
+  colorScheme: "dark light",
+};
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetBrainsMono.variable} ${calSans.variable} font-sans`}>
+      <body className={`${plexSans.variable} ${plexSansGreek.variable} ${jetBrainsMono.variable} font-sans`}>
         {children}
       </body>
     </html>

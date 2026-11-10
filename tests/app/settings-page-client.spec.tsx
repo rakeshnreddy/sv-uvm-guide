@@ -111,10 +111,17 @@ describe('SettingsPageClient', () => {
       expect(within(nav).getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
 
       const appearance = screen.getByRole('region', { name: 'Appearance' });
-      const themeGroup = within(appearance).getByRole('group', { name: 'Colour theme and light or dark mode' });
-      expect(await within(themeGroup).findByRole('combobox', { name: 'Select theme' })).toBeInTheDocument();
-      await user.click(within(themeGroup).getByRole('button', { name: 'Toggle theme' }));
-      expect(mocks.setTheme).toHaveBeenCalledWith('default-light');
+      const themeGroup = within(appearance).getByRole('group', { name: 'Light, dark or system' });
+      expect(appearance).toHaveTextContent(
+        'Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.',
+      );
+      expect(appearance).not.toHaveTextContent(/colour theme/i);
+      // One light/dark control; the palette select is gone (DESIGN.md section 7).
+      expect(within(themeGroup).queryByRole('combobox', { name: 'Select theme' })).not.toBeInTheDocument();
+      // The shared theme menu button: Light, Dark and System as radio items.
+      await user.click(await within(themeGroup).findByRole('button', { name: 'Theme' }));
+      await user.click(await screen.findByRole('menuitemradio', { name: 'Light' }));
+      expect(mocks.setTheme).toHaveBeenCalledWith('light');
       expect(appearance).toHaveTextContent(/reduce-motion setting/i);
 
       const data = screen.getByRole('region', { name: 'Your learning data' });

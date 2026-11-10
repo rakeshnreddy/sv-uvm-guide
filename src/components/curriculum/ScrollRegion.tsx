@@ -38,14 +38,13 @@ export function LessonPre({ className, ...props }: React.ComponentPropsWithoutRe
 }
 
 /**
- * A Markdown table. It keeps `display: table` (the `!` overrides the older
- * `.prose table { display: block }` rule), so assistive technology still reads
- * its rows and cells.
+ * A Markdown table. It keeps `display: table`, so assistive technology still
+ * reads its rows and cells; the region around it does the scrolling.
  */
 export function LessonTable({ className, ...props }: React.ComponentPropsWithoutRef<"table">) {
   return (
     <ScrollRegion label="Table">
-      <table {...props} className={cn("!table !max-w-none my-0", className)} />
+      <table {...props} className={cn("my-0", className)} />
     </ScrollRegion>
   );
 }

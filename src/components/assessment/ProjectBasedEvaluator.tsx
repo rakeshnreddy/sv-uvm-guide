@@ -55,7 +55,7 @@ export const ProjectBasedEvaluator = () => {
     <div className="mb-4">
       <div className="flex justify-between items-center mb-1">
         <span className="font-semibold">{label}</span>
-        <span className="text-sm font-bold">{score}/100</span>
+        <span className="text-sm font-semibold tabular-nums">{score}/100</span>
       </div>
       <Progress value={score} className="h-2" />
       <p className="text-xs text-muted-foreground mt-1">{feedback}</p>
@@ -63,9 +63,9 @@ export const ProjectBasedEvaluator = () => {
   );
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Project-Based Evaluator</h2>
-      <p className="text-foreground/80 mb-4">
+    <div className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="text-h2 mb-4 text-foreground">Project-Based Evaluator</h2>
+      <p className="text-muted-foreground mb-4">
         Submit your SystemVerilog/UVM project code below for an automated evaluation.
       </p>
 
@@ -88,7 +88,7 @@ export const ProjectBasedEvaluator = () => {
 
       {result && (
         <div className="mt-6">
-          <h3 className="text-xl font-semibold text-primary mb-4">Evaluation Results</h3>
+          <h3 className="text-h3 mb-4 text-foreground">Evaluation Results</h3>
           <ResultBar label="Overall Score" score={result.overall.score} feedback={result.overall.feedback} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <ResultBar label="Code Quality" score={result.quality.score} feedback={result.quality.feedback} />

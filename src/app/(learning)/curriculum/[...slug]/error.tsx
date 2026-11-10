@@ -37,12 +37,12 @@ export default function LessonError({ error, reset }: LessonErrorProps) {
 
   return (
     <section aria-labelledby="lesson-error-title" className="mx-auto w-full max-w-3xl py-6" data-testid="lesson-error">
-      <div className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-sm sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Error</p>
-        <h1 id="lesson-error-title" className="mt-2 text-3xl font-bold text-foreground">
+      <div className="rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
+        <p className="text-label text-subtle">Error</p>
+        <h1 id="lesson-error-title" className="mt-2 text-h1 text-foreground">
           This lesson could not be shown
         </h1>
-        <p className="mt-3 text-base text-muted-foreground">
+        <p className="mt-3 text-lead text-muted-foreground">
           Something went wrong while loading this page. Try again. If it keeps happening, the links below lead to the rest
           of the curriculum.
         </p>
@@ -59,7 +59,7 @@ export default function LessonError({ error, reset }: LessonErrorProps) {
             onClick={retry}
             aria-disabled={retrying || undefined}
             className={cn(
-              "inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 motion-reduce:transition-none",
+              "inline-flex min-h-11 items-center gap-2 rounded-lg border border-transparent bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText] motion-reduce:transition-none",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               "aria-disabled:cursor-progress aria-disabled:opacity-80",
             )}

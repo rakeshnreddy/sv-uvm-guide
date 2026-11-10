@@ -81,14 +81,16 @@ describe('CodeReviewAssistant component', () => {
     await userEvent.type(input, 'badsha');
     await userEvent.type(textarea, 'comment');
     await userEvent.click(addButton);
-    expect(await screen.findByText(/invalid commit sha/i)).toBeInTheDocument();
+    const invalid = await screen.findByText(/invalid commit sha/i);
+    expect(invalid).toBeInTheDocument();
+    expect(invalid).toHaveClass('text-danger');
     expect(fetchMock).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
     await userEvent.type(input, 'abcdef1');
     await userEvent.click(addButton);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText('Server error')).toBeInTheDocument();
+    expect(await screen.findByText('Server error')).toHaveClass('text-danger');
 
     vi.restoreAllMocks();
 
@@ -114,5 +116,13 @@ describe('CodeReviewAssistant component', () => {
     await userEvent.click(addButton);
     expect(screen.getByText(/500 characters or less/i)).toBeInTheDocument();
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it('sits on the card surface with a dashed hairline and a foreground heading', () => {
+    render(<CodeReviewAssistant />);
+    const panel = screen.getByTestId('code-review-assistant');
+    expect(panel).toHaveClass('rounded-xl', 'border-dashed', 'border-border', 'bg-card');
+    expect(panel.className).not.toMatch(/white/);
+    expect(screen.getByRole('heading', { name: 'Code review assistant' })).toHaveClass('text-foreground');
   });
 });

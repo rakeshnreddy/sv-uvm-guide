@@ -134,7 +134,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
           <article
             id="lesson-content"
             data-testid="lesson-content"
-            className="prose prose-base max-w-none break-words rounded-3xl border border-border/60 bg-card/70 p-4 shadow-sm dark:prose-invert prose-headings:scroll-mt-28 prose-code:before:content-none prose-code:after:content-none sm:p-6"
+            className="prose prose-base max-w-none break-words rounded-2xl border border-border bg-card p-4 shadow-card prose-headings:scroll-mt-28 prose-code:before:content-none prose-code:after:content-none sm:p-6"
           >
             {content}
           </article>

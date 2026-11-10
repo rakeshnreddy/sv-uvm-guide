@@ -52,7 +52,7 @@ describe('/knowledge-hub', () => {
   it('renders statically with real counts and no placeholder wording', async () => {
     const page = await renderHub();
     expect(page.dynamic).toBeUndefined();
-    expect(screen.getByRole('heading', { level: 1, name: 'Knowledge Hub' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Knowledge hub' })).toBeInTheDocument();
     const lessons = conceptGraph.modules.reduce((total, node) => total + (node.lessons?.length ?? 0), 0);
     expect(
       screen.getByText(new RegExp(`${conceptGraph.modules.length} modules and ${lessons} lessons .* ${CONCEPT_TERMS.length} key terms`)),

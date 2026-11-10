@@ -303,5 +303,11 @@ describe("DynamicStructureVisualizer preset 'delete-walk' (§7.9.6, §12.7.3)", 
     render(<DynamicStructureVisualizer initialPreset="nope" />);
     expect(screen.getByTestId("container-lab")).toBeInTheDocument();
   });
-});
 
+  it("gives text and number fields the input boundary", () => {
+    const { container } = render(<DynamicStructureVisualizer />);
+    const fields = Array.from(container.querySelectorAll('input[type="text"], input[type="number"]'));
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) expect(field).toHaveClass("border-input");
+  });
+});

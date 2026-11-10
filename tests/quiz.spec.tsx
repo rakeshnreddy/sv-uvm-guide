@@ -106,7 +106,7 @@ describe('Quiz component', () => {
     fireEvent.click(screen.getByText('Next Question'));
     fireEvent.click(screen.getByText('B'));
     fireEvent.click(screen.getByText('Next Question'));
-    screen.getByText('Quiz Complete!');
+    expect(screen.getByText('Quiz complete')).toHaveClass('text-h3', 'text-foreground');
     screen.getByText(/You answered 1 of 2 correctly/);
     fireEvent.click(screen.getByText('Retry quiz'));
     expect(screen.getByText('Question 1 of 2')).toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('Quiz component', () => {
       expect(localStorage.getItem('sv-uvm-guide:assessments')).toBeNull();
 
       finish(['B']);
-      screen.getByText('Quiz Complete!');
+      screen.getByText('Quiz complete');
 
       const quizzes = Object.entries(storedAssessments().quizzes);
       expect(quizzes).toHaveLength(1);
@@ -176,7 +176,7 @@ describe('Quiz component', () => {
     it('records nothing when there is no pathname', () => {
       render(<Quiz questions={canonical as never} />);
       finish(['In the NBA region of the same time slot', 'A']);
-      screen.getByText('Quiz Complete!');
+      screen.getByText('Quiz complete');
       expect(localStorage.getItem('sv-uvm-guide:assessments')).toBeNull();
       expect(localStorage.getItem('sv-uvm-guide:activity')).toBeNull();
     });
@@ -199,7 +199,7 @@ describe('Quiz component', () => {
       finish(['In the NBA region of the same time slot', 'A']);
 
       const status = screen.getByRole('status');
-      expect(status).toHaveTextContent('Quiz Complete!');
+      expect(status).toHaveTextContent('Quiz complete');
       expect(screen.getByTestId('quiz-save-message')).toHaveTextContent(
         "Your score wasn't saved: the quiz results kept in this browser have reached their size limit.",
       );
@@ -214,7 +214,7 @@ describe('Quiz component', () => {
       navigation.pathname = LESSON_PATH;
       render(<Quiz questions={canonical as never} />);
       finish(['In the NBA region of the same time slot', 'A']);
-      screen.getByText('Quiz Complete!');
+      screen.getByText('Quiz complete');
       expect(screen.queryByTestId('quiz-save-message')).not.toBeInTheDocument();
     });
 
@@ -234,6 +234,23 @@ describe('Quiz component', () => {
         [0, 1],
         [2, 2],
       ]);
+    });
+  });
+
+  describe('heading styles', () => {
+    const one = [{ question: '2 + 2 = ?', options: ['3', '4'], correctAnswer: '4', explanation: 'Four.' }];
+
+    it('sets the question as a foreground h3 and the counter as a tabular label', () => {
+      render(<Quiz questions={one} />);
+      const heading = screen.getByRole('heading', { level: 3, name: '2 + 2 = ?' });
+      expect(heading.className).toContain('text-h3');
+      expect(heading.className).toContain('text-foreground');
+      expect(heading.className).not.toContain('text-primary');
+      const counter = screen.getByTestId('quiz-counter');
+      expect(counter).toHaveTextContent('Question 1 of 1');
+      expect(counter.className).toContain('text-label');
+      expect(counter.className).toContain('tabular-nums');
+      expect(counter.className).not.toMatch(/uppercase|tracking-/);
     });
   });
 });

@@ -8,7 +8,7 @@ import type { Fidelity } from "./visual-language";
 interface VisualFrameProps {
   /** Accessible name of the whole visual (also used as the section label). */
   label: string;
-  /** Small uppercase line above the title, e.g. "Experiment", "Mental picture". */
+  /** Short label above the title in sentence case, e.g. "Experiment", "Mental picture". */
   eyebrow: string;
   title: React.ReactNode;
   summary?: React.ReactNode;
@@ -16,6 +16,25 @@ interface VisualFrameProps {
   assumptions?: string[];
   children: React.ReactNode;
   className?: string;
+}
+
+/** The label style shared by eyebrows and section labels around every visual. */
+export const VISUAL_LABEL_CLASS = "text-label text-subtle";
+
+/**
+ * Renders a label in sentence case when it was authored in all lower case or
+ * all capitals ("experiment", "MENTAL PICTURE"). Mixed case is kept as written,
+ * and a single all-capital word ("AXI") is treated as an acronym and kept.
+ */
+export function toSentenceCaseLabel(text: string): string {
+  const trimmed = text.trim();
+  if (!/[a-z]/i.test(trimmed)) return text;
+  const isLower = trimmed === trimmed.toLowerCase();
+  const isUpper = trimmed === trimmed.toUpperCase();
+  if (isUpper && !/\s/.test(trimmed)) return text;
+  if (!isLower && !isUpper) return text;
+  const lower = trimmed.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 /**
@@ -30,7 +49,7 @@ export function VisualFrame({ label, eyebrow, title, summary, fidelity, assumpti
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{eyebrow}</p>
+          <p className={VISUAL_LABEL_CLASS}>{toSentenceCaseLabel(eyebrow)}</p>
           <h3 className="text-lg font-semibold text-foreground">{title}</h3>
           {summary ? <div className="mt-1 text-sm text-muted-foreground">{summary}</div> : null}
         </div>

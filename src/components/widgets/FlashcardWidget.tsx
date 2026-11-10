@@ -31,10 +31,10 @@ const cardVariants = {
  * over the rating buttons below.
  */
 const faceClass =
-  "relative col-start-1 row-start-1 flex min-w-0 items-center justify-center p-6 rounded-md shadow-md border border-border/30 bg-background [backface-visibility:hidden] [-webkit-backface-visibility:hidden]";
+  "relative col-start-1 row-start-1 flex min-w-0 items-center justify-center p-6 rounded-lg shadow-card border border-border bg-background [backface-visibility:hidden] [-webkit-backface-visibility:hidden]";
 
 const dueLinkClass =
-  "inline-flex min-h-[2.75rem] items-center rounded-full border border-primary/40 bg-primary/10 px-4 text-sm font-semibold text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+  "inline-flex min-h-[2.75rem] items-center rounded-lg border border-border bg-muted px-4 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /** Outcomes the learner must hear about inline; 'memory-only' is covered by StorageStatusNote. */
 function failureMessage(outcome: WriteOutcome): string | null {
@@ -69,7 +69,7 @@ export const FlashcardFace = React.forwardRef<HTMLDivElement, FlashcardFaceProps
   return (
     <div
       ref={ref}
-      className="w-full [perspective:1000px] bg-transparent cursor-pointer mb-4 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-disabled:cursor-default"
+      className="w-full [perspective:1000px] bg-transparent cursor-pointer mb-4 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-disabled:cursor-default"
       onClick={disabled ? undefined : onFlip}
       role="button"
       tabIndex={0}
@@ -98,7 +98,7 @@ export const FlashcardFace = React.forwardRef<HTMLDivElement, FlashcardFaceProps
           aria-hidden={!flipped || undefined}
           data-testid="flashcard-back"
         >
-          <div className="w-full min-w-0 break-words text-center text-base text-foreground/90">
+          <div className="w-full min-w-0 break-words text-center text-base text-foreground">
             <span className="sr-only">Answer: </span>
             {back}
           </div>
@@ -203,8 +203,8 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({ deckId, cards, lesson
 
   if (deckSize === 0) {
     return (
-      <div className="my-6 p-5 rounded-lg shadow-md bg-secondary/20 dark:bg-secondary/10 border border-border/30 text-center">
-        <p className="text-foreground/80">This lesson has no flashcards yet.</p>
+      <div className="my-6 p-5 rounded-xl shadow-card bg-card border border-border text-center">
+        <p className="text-muted-foreground">This lesson has no flashcards yet.</p>
       </div>
     );
   }
@@ -255,10 +255,10 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({ deckId, cards, lesson
   };
 
   return (
-    <div className="my-6 p-4 sm:p-6 rounded-lg shadow-xl bg-card border border-border/50 flex flex-col items-center w-full max-w-lg mx-auto">
+    <div className="my-6 p-4 sm:p-6 rounded-2xl shadow-card bg-card border border-border flex flex-col items-center w-full max-w-lg mx-auto">
       {/* Header: Counter and Restart Button */}
       <div className="w-full flex justify-between items-center mb-3 px-1">
-        <span className="text-sm font-medium text-foreground/80">
+        <span className="text-sm font-medium tabular-nums text-muted-foreground">
           Card {index + 1} of {deckSize}
         </span>
         <Button variant="ghost" size="sm" onClick={handleRestart} disabled={!hydrated} aria-label="Restart flashcards">
@@ -281,7 +281,7 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({ deckId, cards, lesson
       {/* Progress Bar */}
       <div className="w-full h-2 bg-muted rounded-full overflow-hidden mb-4">
         <motion.div
-          className="h-full bg-primary"
+          className="h-full bg-success"
           initial={{ width: 0 }}
           animate={{ width: `${progressPercentage}%` }}
           transition={{ duration: 0.5, ease: "easeInOut" }}
@@ -313,7 +313,7 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({ deckId, cards, lesson
       <p
         role="status"
         aria-live="polite"
-        className={cn("w-full text-sm font-medium text-amber-800 dark:text-amber-200", notice ? "mt-2" : "sr-only")}
+        className={cn("w-full text-sm font-medium text-warning", notice ? "mt-2" : "sr-only")}
       >
         {notice}
       </p>

@@ -24,7 +24,7 @@ export function LabBackLink({ backLink, className }: LabBackLinkProps) {
     <Link
       href={backLink.href}
       className={cn(
-        'inline-flex max-w-full items-baseline gap-1.5 rounded-sm py-1 text-sm font-medium text-primary underline-offset-4 hover:underline',
+        'inline-flex max-w-full items-baseline gap-1.5 rounded-sm py-1 text-sm font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline',
         focusRing,
         className,
       )}

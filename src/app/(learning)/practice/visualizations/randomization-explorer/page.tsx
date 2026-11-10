@@ -21,7 +21,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const RandomizationExplorerPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       diagrams={[<ConstraintSolverHeatmapVisualizer key="rand-explorer" />]}

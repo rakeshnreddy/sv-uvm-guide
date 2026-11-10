@@ -329,7 +329,7 @@ const StateMachineDesigner = () => {
                 <Label htmlFor="source-select">Source</Label>
                 <select
                   id="source-select"
-                  className="rounded border px-2 py-1"
+                  className="h-10 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={newTransition.source}
                   onChange={(e) => setNewTransition((t) => ({ ...t, source: e.target.value }))}
                 >
@@ -345,7 +345,7 @@ const StateMachineDesigner = () => {
                 <Label htmlFor="target-select">Target</Label>
                 <select
                   id="target-select"
-                  className="rounded border px-2 py-1"
+                  className="h-10 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={newTransition.target}
                   onChange={(e) => setNewTransition((t) => ({ ...t, target: e.target.value }))}
                 >

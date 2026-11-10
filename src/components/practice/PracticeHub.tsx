@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { LabProgressBadge } from './LabProgressBadge';
 import { LabPrerequisiteList, LessonChipLink, focusRing } from './LearnInLesson';
 
-const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const eyebrow = 'text-xs font-medium text-subtle';
 const textLink = cn('rounded-sm font-medium text-primary underline-offset-4 hover:underline', focusRing);
 
 /** Extra lines for a card: lab check and progress notes, prerequisites and progress badge; interview question counts. */
@@ -48,13 +48,13 @@ export function PracticeCard({ item, details, headingLevel = 'h3' }: PracticeCar
   const statusLabel =
     item.kind === 'lab' ? (item.status === 'available' ? 'Available' : 'Coming soon') : PRACTICE_KIND_LABELS[item.kind];
   return (
-    <li className="relative flex min-w-0 flex-col rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-sm transition-shadow hover:shadow-md motion-reduce:transition-none">
+    <li className="relative flex min-w-0 flex-col rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card transition-colors duration-150 ease-bench hover:border-input motion-reduce:transition-none">
       <div className="flex items-start justify-between gap-3">
-        <Heading className="min-w-0 text-lg font-semibold leading-snug text-foreground [overflow-wrap:anywhere]">
+        <Heading className="min-w-0 text-h4 text-foreground [overflow-wrap:anywhere]">
           {item.href ? (
             <Link
               href={item.href}
-              className="rounded-sm underline-offset-4 after:absolute after:inset-0 after:rounded-2xl hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
+              className="rounded-sm underline-offset-4 after:absolute after:inset-0 after:rounded-xl hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
             >
               {item.title}
             </Link>
@@ -62,7 +62,7 @@ export function PracticeCard({ item, details, headingLevel = 'h3' }: PracticeCar
             item.title
           )}
         </Heading>
-        <span className="shrink-0 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="shrink-0 pt-1 text-xs font-medium text-subtle">
           {statusLabel}
         </span>
       </div>
@@ -117,7 +117,7 @@ function ComingSoonList({ items }: { items: readonly PracticeItem[] }) {
           <li key={item.id} className="min-w-0 rounded-xl border border-dashed border-border p-4 text-sm">
             <div className="flex items-start justify-between gap-3">
               <h4 className="min-w-0 font-semibold text-foreground [overflow-wrap:anywhere]">{item.title}</h4>
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="shrink-0 text-xs font-medium text-subtle">
                 Coming soon
               </span>
             </div>
@@ -201,9 +201,9 @@ const PracticeHub = () => {
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-16">
-      <header className="rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-8">
-        <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Practice Hub</h1>
-        <p className="mt-3 max-w-3xl text-base text-muted-foreground sm:text-lg">
+      <header className="border-b border-border pb-6">
+        <h1 className="text-h1 text-foreground">Practice hub</h1>
+        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
           Sharpen your SystemVerilog and UVM skills with labs, exercises, interactive models, tools and interview questions.
           Items are listed in curriculum order, and each one names the lesson that teaches it.
         </p>
@@ -214,12 +214,12 @@ const PracticeHub = () => {
                 <a
                   href={link.href}
                   className={cn(
-                    'inline-flex min-h-[40px] items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted',
+                    'inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:border-input hover:bg-card',
                     focusRing,
                   )}
                 >
                   {link.label}
-                  <span className="text-xs text-muted-foreground">{link.count}</span>
+                  <span className="font-mono text-xs font-medium tabular-nums text-subtle">{link.count}</span>
                 </a>
               </li>
             ))}
@@ -228,7 +228,7 @@ const PracticeHub = () => {
       </header>
 
       <section aria-labelledby={labsAnchor} className="mt-12">
-        <h2 id={labsAnchor} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+        <h2 id={labsAnchor} className="scroll-mt-24 text-h2 text-foreground">
           Labs
         </h2>
         <p className="mt-1 text-muted-foreground">
@@ -239,7 +239,7 @@ const PracticeHub = () => {
         </div>
         {comingSoonLabs.length > 0 ? (
           <section aria-labelledby={comingSoonAnchor} className="mt-8">
-            <h3 id={comingSoonAnchor} className="scroll-mt-24 text-lg font-semibold text-foreground">
+            <h3 id={comingSoonAnchor} className="scroll-mt-24 text-h3 text-foreground">
               Coming soon
             </h3>
             <p className="mb-3 mt-1 text-sm text-muted-foreground">Planned labs, listed where they will sit in the curriculum.</p>
@@ -250,7 +250,7 @@ const PracticeHub = () => {
 
       {sections.map((section, index) => (
         <section key={section.kind} aria-labelledby={sectionAnchors[index]} className="mt-12">
-          <h2 id={sectionAnchors[index]} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+          <h2 id={sectionAnchors[index]} className="scroll-mt-24 text-h2 text-foreground">
             {section.title}
           </h2>
           <p className="mt-1 text-muted-foreground">{section.intro}</p>
@@ -261,7 +261,7 @@ const PracticeHub = () => {
       ))}
 
       <section aria-labelledby={interviewAnchor} className="mt-12">
-        <h2 id={interviewAnchor} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+        <h2 id={interviewAnchor} className="scroll-mt-24 text-h2 text-foreground">
           Interview prep
         </h2>
         <p className="mt-1 text-muted-foreground">

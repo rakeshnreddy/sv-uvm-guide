@@ -133,7 +133,8 @@ describe('LabLink in a lesson', () => {
   it('renders a coming-soon lab as a "Coming soon" chip with no link to the lab (G30-PRAC-09)', () => {
     expect(getLabById(PLANNED_LAB.id)?.status).toBe('coming_soon');
     render(<LabLink labId={PLANNED_LAB.id} />);
-    expect(screen.getByText('Coming soon')).toBeInTheDocument();
+    expect(screen.getByText('Coming soon')).toHaveClass('text-label');
+    expect(screen.getByText('Coming soon').className).not.toMatch(/uppercase|tracking-/);
     expect(screen.getByText('This lab is planned and cannot be opened yet.')).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.queryByText(PROGRESS_NOTE)).not.toBeInTheDocument();
@@ -178,7 +179,11 @@ describe('LabLink in a lesson', () => {
 
   it('reports an unknown lab id to the author', () => {
     render(<LabLink labId="no-such-lab" />);
-    expect(screen.getByText(/Lab mapping failed/)).toBeInTheDocument();
+    const note = screen.getByText(/Lab mapping failed/);
+    expect(note).toBeInTheDocument();
+    // Status tokens read in both modes; the fixed red-50 / red-700 pair did not.
+    expect(note).toHaveClass('text-danger', 'bg-danger-subtle', 'border-danger');
+    expect(note.className).not.toMatch(/\bred-\d/);
   });
 });
 

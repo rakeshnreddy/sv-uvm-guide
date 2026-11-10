@@ -6,7 +6,7 @@ import { render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import CurriculumNotFound from "@/components/curriculum/CurriculumNotFound";
+import CurriculumNotFound, { BLOCK_LINK_CLASS } from "@/components/curriculum/CurriculumNotFound";
 import { lessonScrollRegionComponents, ScrollRegion } from "@/components/curriculum/ScrollRegion";
 import { Input } from "@/components/ui/Input";
 import { SelectTrigger, Select, SelectValue } from "@/components/ui/Select";
@@ -126,7 +126,12 @@ describe("404 page", () => {
     render(<CurriculumNotFound />);
     const links = screen.getAllByRole("link");
     expect(links.length).toBeGreaterThan(0);
-    for (const link of links) expect(link).toHaveClass("inline-flex", "min-h-10");
+    // Block links: 20 px line height plus py-2.5 (10 px top and bottom) gives a 40 px target.
+    for (const link of links) {
+      expect(link).toHaveClass(...BLOCK_LINK_CLASS.split(/\s+/).filter(Boolean));
+      expect(link).toHaveClass("block", "py-2.5", "leading-5");
+      expect(link).not.toHaveClass("inline-flex");
+    }
   });
 });
 
@@ -165,7 +170,11 @@ describe("lesson code blocks and tables scroll in a focusable, labelled region",
     expect(region).toHaveAttribute("aria-label", "Table");
     const table = region?.querySelector("table");
     expect(table).not.toBeNull();
-    expect(table?.className).toContain("!table");
+    // Nothing turns the table into a block box (no override class and no
+    // `.prose table { display: block }` rule), so it keeps table semantics.
+    expect(table?.className).not.toMatch(/(^|\s)!?(block|table)(\s|$)/);
+    const css = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+    expect(css).not.toMatch(/\.prose\s+table\s*\{[^}]*display\s*:\s*block/);
     expect(table?.querySelectorAll("th")).toHaveLength(2);
     expect(table?.querySelectorAll("tbody td")).toHaveLength(2);
   });

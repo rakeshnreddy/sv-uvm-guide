@@ -36,7 +36,7 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
       onClick={() => setIsOpen(!isOpen)}
       aria-expanded={isOpen}
       aria-controls={contentId}
-      className="flex items-center justify-between w-full py-4 px-5 text-left text-lg font-medium text-foreground hover:bg-muted/50 focus:outline-none focus-visible:ring focus-visible:ring-primary/50 transition-colors"
+      className="flex items-center justify-between w-full py-4 px-5 text-left text-lg font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span>{title}</span>
       <ChevronDown
@@ -49,7 +49,7 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
   );
 
   return (
-    <div className="border-b border-border/50 last:border-b-0">
+    <div className="border-b border-border last:border-b-0">
       <h2>
         {href ? <Link href={href}>{content}</Link> : content}
       </h2>
@@ -69,7 +69,7 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className={`px-5 pb-4 pt-2 text-foreground/90 ${prose ? 'prose dark:prose-invert max-w-none' : ''}`}>
+            <div className={`px-5 pb-4 pt-2 text-foreground ${prose ? 'prose max-w-none' : ''}`}>
               {children}
             </div>
           </motion.div>
@@ -94,7 +94,7 @@ interface AccordionProps {
 
 export const Accordion: React.FC<AccordionProps> = ({ children, className }) => {
   return (
-    <div className={`bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg ${className}`}>
+    <div className={`rounded-2xl border border-border bg-card shadow-card ${className ?? ''}`}>
       {children}
     </div>
   );

@@ -43,8 +43,8 @@ export interface AssessmentPageClientProps {
   placementVersions?: PlacementVersions;
 }
 
-const card = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
-const panel = 'min-w-0 rounded-2xl border border-border bg-background p-4';
+const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+const panel = 'min-w-0 rounded-lg border border-border bg-background p-4';
 const muted = 'text-sm text-muted-foreground';
 /** Standalone links are at least 40 px tall, so they are easy to tap on a phone. */
 const tapTarget = 'inline-flex min-h-10 items-center';
@@ -101,9 +101,9 @@ function LessonBar({ total, opened, done }: { total: number; opened: number; don
   const openedPct = total > 0 ? clampPercent(((opened - done) / total) * 100) : 0;
   return (
     <div aria-hidden="true" className="mt-2 flex h-3 w-full overflow-hidden rounded-full border border-border bg-muted">
-      <div className="h-full bg-primary" style={{ width: `${donePct}%` }} />
+      <div className="h-full bg-success" style={{ width: `${donePct}%` }} />
       <div
-        className="h-full bg-primary/40 [background-image:repeating-linear-gradient(135deg,transparent_0,transparent_3px,hsl(var(--foreground)/0.35)_3px,hsl(var(--foreground)/0.35)_5px)]"
+        className="h-full bg-success/40 [background-image:repeating-linear-gradient(135deg,transparent_0,transparent_3px,hsl(var(--foreground)/0.35)_3px,hsl(var(--foreground)/0.35)_5px)]"
         style={{ width: `${openedPct}%` }}
       />
     </div>
@@ -113,7 +113,7 @@ function LessonBar({ total, opened, done }: { total: number; opened: number; don
 function ScoreBar({ fraction }: { fraction: number }) {
   return (
     <div aria-hidden="true" className="mt-2 h-2 w-full overflow-hidden rounded-full border border-border bg-muted">
-      <div className="h-full bg-primary" style={{ width: `${clampPercent(fraction * 100)}%` }} />
+      <div className="h-full bg-success" style={{ width: `${clampPercent(fraction * 100)}%` }} />
     </div>
   );
 }
@@ -121,7 +121,7 @@ function ScoreBar({ fraction }: { fraction: number }) {
 function OverviewChart({ tracks }: { tracks: readonly TrackSummary[] }) {
   return (
     <section aria-labelledby="assessment-overview-heading" className={card}>
-      <h2 id="assessment-overview-heading" className="text-lg font-semibold text-foreground sm:text-xl">
+      <h2 id="assessment-overview-heading" className="text-h3 text-foreground">
         Lessons by track
       </h2>
       <figure className="mt-3">
@@ -168,7 +168,7 @@ function PlacementSection({
 }) {
   return (
     <section aria-labelledby="assessment-placement-heading" className={card}>
-      <h2 id="assessment-placement-heading" className="text-lg font-semibold text-foreground sm:text-xl">
+      <h2 id="assessment-placement-heading" className="text-h3 text-foreground">
         Placement result
       </h2>
       {attempt ? (
@@ -276,7 +276,7 @@ function TrackSection({
 
   return (
     <section id={`track-${track.id}`} aria-labelledby={headingId} className={cn(card, 'scroll-mt-24')}>
-      <h2 id={headingId} className="text-lg font-semibold text-foreground sm:text-xl">
+      <h2 id={headingId} className="text-h3 text-foreground">
         {track.name}
       </h2>
       <p className="mt-1 text-xs text-muted-foreground">{track.scope}</p>
@@ -336,7 +336,7 @@ function TrackSection({
       </div>
 
       {(startedModules.length > 0 || startedLabs.length > 0 || quizzes.weak.length > 0) && (
-        <details className="mt-5 rounded-2xl border border-border bg-background p-4 text-sm">
+        <details className="mt-5 rounded-lg border border-border bg-background p-4 text-sm">
           <summary className="cursor-pointer font-medium text-foreground">Details for {track.name}</summary>
           {startedModules.length > 0 && (
             <div className="mt-3">
@@ -400,7 +400,7 @@ function TrackSection({
 function EmptyState() {
   return (
     <section aria-labelledby="assessment-empty-heading" className={cn(card, 'sm:p-8')}>
-      <h2 id="assessment-empty-heading" className="text-xl font-semibold text-foreground sm:text-2xl">
+      <h2 id="assessment-empty-heading" className="text-h3 text-foreground">
         Nothing to assess yet
       </h2>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -429,7 +429,7 @@ function EmptyState() {
 function AccountNotice() {
   return (
     <section aria-labelledby="assessment-account-heading" className={card}>
-      <h2 id="assessment-account-heading" className="text-xl font-semibold text-foreground">
+      <h2 id="assessment-account-heading" className="text-h3 text-foreground">
         Your progress is saved to your account
       </h2>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -517,8 +517,8 @@ export default function AssessmentPageClient({
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Self-assessment</h1>
-          <p className="mt-2 max-w-3xl text-base text-muted-foreground">
+          <h1 className="text-h1 text-foreground">Self-assessment</h1>
+          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             Where you stand in each track, from what you have done here: lessons, lesson quizzes, labs, flashcards and
             the placement quiz. It is a self-check, not a grade or a certificate.
           </p>

@@ -12,9 +12,8 @@ const Card: React.FC<CardProps> = ({ children, className, ...props }) => {
     <div
       className={twMerge(
         clsx(
-          "bg-white/10 backdrop-blur-lg border border-white/20",
-          "rounded-lg",
-          "shadow-lg", // Adding a subtle shadow for depth
+          // DESIGN.md section 5: cards are 12 px, one surface step above the page, hairline border.
+          "rounded-xl border border-border bg-card text-card-foreground shadow-card",
           className
         )
       )}
@@ -37,14 +36,15 @@ const CardHeader: React.FC<CardProps> = ({ children, className, ...props }) => (
 CardHeader.displayName = "CardHeader";
 
 const CardTitle: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = ({ children, className, ...props }) => (
-  <h3 className={twMerge(clsx("text-2xl font-semibold leading-none tracking-tight text-brand-text-primary", className))} {...props}>
+  // The size token sits outside twMerge, which reads text-h3 as a colour and would drop it beside text-foreground.
+  <h3 className={`text-h3 ${twMerge(clsx("text-foreground", className))}`} {...props}>
     {children}
   </h3>
 );
 CardTitle.displayName = "CardTitle";
 
 const CardDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement>> = ({ children, className, ...props }) => (
-  <p className={twMerge(clsx("text-sm text-brand-text-primary/80", className))} {...props}>
+  <p className={`text-ui ${twMerge(clsx("text-muted-foreground", className))}`} {...props}>
     {children}
   </p>
 );

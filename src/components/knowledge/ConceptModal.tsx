@@ -95,23 +95,23 @@ const ConceptModal = () => {
   const lessonHeading = kind === 'module' ? 'Lessons' : kind === 'lesson' ? 'Open the lesson' : 'Taught in';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={close}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" onClick={close}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p className="text-xs font-medium text-subtle">
               {KIND_LABEL[kind]} · {activeConcept.tier}
               {kind === 'term' && activeConcept.code ? ` · first taught in ${activeConcept.code}` : ''}
             </p>
-            <h2 id={titleId} className="mt-1 break-words text-2xl font-bold text-primary">
+            <h2 id={titleId} className="mt-1 break-words text-h2 text-foreground">
               {activeConcept.name}
             </h2>
           </div>
@@ -120,7 +120,7 @@ const ConceptModal = () => {
             type="button"
             onClick={close}
             aria-label="Close concept details"
-            className="min-h-10 min-w-10 rounded-md px-2 text-2xl leading-none text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-10 min-w-10 rounded-lg px-2 text-2xl leading-none text-muted-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span aria-hidden="true">&times;</span>
           </button>
@@ -132,7 +132,7 @@ const ConceptModal = () => {
 
         {lessons.length > 0 && (
           <section className="mb-4">
-            <h3 className="mb-2 text-base font-semibold">{lessonHeading}</h3>
+            <h3 className="mb-2 text-h4 text-foreground">{lessonHeading}</h3>
             <ul className="space-y-1">
               {lessons.map((lesson) => (
                 <li key={lesson.key}>
@@ -147,7 +147,7 @@ const ConceptModal = () => {
 
         {dependencies && dependencies.prerequisites.length > 0 && (
           <section className="mb-4">
-            <h3 className="mb-2 text-base font-semibold">Study first</h3>
+            <h3 className="mb-2 text-h4 text-foreground">Study first</h3>
             <ul className="space-y-1">
               {dependencies.prerequisites.map((node) => (
                 <li key={node.id}>
@@ -166,14 +166,14 @@ const ConceptModal = () => {
 
         {dependencies && dependencies.related.length > 0 && (
           <section>
-            <h3 className="mb-2 text-base font-semibold">{kind === 'term' ? 'Related terms' : 'Key terms taught here'}</h3>
+            <h3 className="mb-2 text-h4 text-foreground">{kind === 'term' ? 'Related terms' : 'Key terms taught here'}</h3>
             <ul className="flex flex-wrap gap-2">
               {dependencies.related.map((node) => (
                 <li key={node.id}>
                   <button
                     type="button"
                     onClick={() => setActiveConcept(node)}
-                    className="min-h-10 rounded-full border border-border px-3 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="min-h-10 rounded border border-border bg-muted px-3 text-sm text-foreground transition-colors duration-150 ease-bench hover:border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {node.name}
                   </button>

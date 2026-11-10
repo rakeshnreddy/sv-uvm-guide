@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const DataTypeComparisonChartPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       charts={[<DataTypeComparisonChart key="dt-chart" />]}

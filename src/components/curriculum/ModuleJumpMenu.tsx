@@ -62,7 +62,7 @@ export default function ModuleJumpMenu({ moduleLabel, lessons, className }: Modu
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex min-h-[2.5rem] items-center gap-1 rounded-lg border border-border/60 px-3 text-xs font-semibold text-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex min-h-[2.5rem] items-center gap-1 rounded-lg border border-border bg-card px-3 text-label text-foreground transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Jump to
         <ChevronsUpDown aria-hidden="true" className="h-3.5 w-3.5" />
@@ -70,9 +70,9 @@ export default function ModuleJumpMenu({ moduleLabel, lessons, className }: Modu
       {open ? (
         <div
           id={panelId}
-          className="absolute right-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-background p-2 shadow-lg"
+          className="absolute right-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-card"
         >
-          <p id={labelId} className="px-2 pb-2 pt-1 text-xs font-semibold text-muted-foreground">
+          <p id={labelId} className="px-2 pb-2 pt-1 text-label text-subtle">
             Lessons in {moduleLabel}
           </p>
           <ol aria-labelledby={labelId} className="max-h-72 list-decimal space-y-0.5 overflow-y-auto pl-7 pr-1 text-sm marker:text-muted-foreground">
@@ -83,13 +83,13 @@ export default function ModuleJumpMenu({ moduleLabel, lessons, className }: Modu
                   aria-current={lesson.current ? "page" : undefined}
                   onClick={() => setOpen(false)}
                   className={cn(
-                    "flex min-h-[2.5rem] items-center justify-between gap-2 rounded-md px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    lesson.current ? "bg-muted font-semibold text-foreground" : "text-foreground hover:bg-muted/60",
+                    "flex min-h-[2.5rem] items-center justify-between gap-2 rounded-lg border-l-2 px-2 py-1.5 transition-colors duration-150 ease-bench motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    lesson.current ? "border-primary bg-muted font-medium text-foreground" : "border-transparent text-foreground hover:bg-muted",
                   )}
                 >
                   <span className="min-w-0">{lesson.title}</span>
                   {lesson.current ? (
-                    <span aria-hidden="true" className="shrink-0 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <span aria-hidden="true" className="shrink-0 text-label text-subtle">
                       Current
                     </span>
                   ) : null}

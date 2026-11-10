@@ -20,8 +20,8 @@ const AccountPreferencesPanel = dynamic(() => import('./AccountPreferencesPanel'
   loading: () => <p className="text-sm text-muted-foreground">Loading your preferences…</p>,
 });
 
-const card = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
-const sectionHeading = 'text-xl font-semibold text-foreground sm:text-2xl';
+const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+const sectionHeading = 'text-h2 text-foreground';
 const body = 'text-sm text-muted-foreground';
 
 /** How long to wait after a write before measuring usage again. */
@@ -72,8 +72,8 @@ export default function SettingsPageClient() {
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Settings</h1>
-          <p className="mt-2 max-w-3xl text-base text-muted-foreground">
+          <h1 className="text-h1 text-foreground">Settings</h1>
+          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             Your theme, and the learning data saved in this browser.
           </p>
         </div>
@@ -85,18 +85,17 @@ export default function SettingsPageClient() {
           Appearance
         </h2>
         <p className={cn(body, 'mt-2 max-w-3xl')}>
-          Pick a colour theme and switch between light and dark. Your choice is saved in this browser and applies to
-          every page.
+          Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.
         </p>
         <div role="group" aria-labelledby="settings-theme-label" className="mt-4 min-w-0">
           <p id="settings-theme-label" className="text-sm font-medium text-foreground">
-            Colour theme and light or dark mode
+            Light, dark or system
           </p>
           <div className="mt-2">
             <ThemeSwitcher />
           </div>
         </div>
-        <p className="mt-4 text-xs text-muted-foreground">
+        <p className="mt-4 text-xs text-subtle">
           Motion follows your operating system: turn on its reduce-motion setting and animations here are reduced too.
         </p>
       </section>

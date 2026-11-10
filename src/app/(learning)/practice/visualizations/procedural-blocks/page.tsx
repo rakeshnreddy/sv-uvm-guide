@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 // Runs on the deterministic process model (src/lib/sv-process-model.ts); no browser-only APIs are needed at render time.
 const ProceduralBlocksPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description="initial, always and final procedures over simulation time, with the region each update lands in."
       diagrams={[<ProceduralBlocksSimulator key="proc-blocks" />]}

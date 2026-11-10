@@ -15,7 +15,7 @@ export interface LessonOrientationProps {
 }
 
 const badgeClass =
-  "inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs font-semibold text-foreground";
+  "inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-label text-muted-foreground";
 
 /**
  * The lesson header (G30-PAGE-01, G30-PAGE-V01): tier and module, the title,
@@ -28,15 +28,15 @@ export default function LessonOrientation({ context, title, summary, readingMinu
   const isElective = lesson.track === "elective";
 
   return (
-    <header className={cn("min-w-0 rounded-3xl border border-border/60 bg-card/80 p-5 shadow-sm sm:p-6", className)}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <header className={cn("min-w-0 rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6", className)}>
+      <p className="text-label text-subtle">
         {tier.title}
         <span aria-hidden="true"> · </span>
         <span className="sr-only">, </span>
         {module.label}
       </p>
-      <h1 className="mt-3 break-words text-3xl font-bold text-foreground sm:text-4xl">{title}</h1>
-      {summary ? <p className="mt-3 text-base text-muted-foreground sm:text-lg">{summary}</p> : null}
+      <h1 className="mt-2 break-words text-h1 text-foreground">{title}</h1>
+      {summary ? <p className="mt-3 text-lead text-muted-foreground">{summary}</p> : null}
 
       <ul aria-label="About this lesson" className="mt-5 flex flex-wrap items-center gap-2">
         <li className={badgeClass}>{isElective ? "Elective (optional)" : "Core path"}</li>
@@ -79,7 +79,7 @@ export default function LessonOrientation({ context, title, summary, readingMinu
         </p>
       ) : null}
 
-      <div className="mt-5 rounded-2xl border border-border/60 bg-muted/30 p-4" data-testid="before-you-start-chips">
+      <div className="mt-5 rounded-xl border border-border bg-muted p-4" data-testid="before-you-start-chips">
         <p id="before-you-start-label" className="text-sm font-semibold text-foreground">
           Before you start
         </p>
@@ -89,7 +89,7 @@ export default function LessonOrientation({ context, title, summary, readingMinu
               <li key={item.href} className="min-w-0 max-w-full">
                 <Link
                   href={item.href}
-                  className="inline-flex min-h-[2.5rem] max-w-full items-center rounded-xl border border-border bg-card px-3 py-1.5 text-sm text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex min-h-[2.5rem] max-w-full items-center rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground underline-offset-2 transition-colors duration-150 ease-bench hover:border-input hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="min-w-0 break-words">
                     {item.kind === "lesson" ? <span className="text-muted-foreground">Previous lesson: </span> : null}

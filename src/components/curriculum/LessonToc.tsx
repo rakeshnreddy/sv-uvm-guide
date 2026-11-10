@@ -48,20 +48,15 @@ function TocLink({
       // One name in every browser: "Expert: <topic>", matching the heading text.
       aria-label={entry.expert ? `Expert: ${label}` : undefined}
       className={cn(
-        "flex min-h-[2.5rem] items-start gap-2 rounded-lg px-2 py-2 text-sm leading-snug transition-colors motion-reduce:transition-none xl:min-h-0 xl:py-1.5",
+        "flex min-h-[2.5rem] items-start gap-2 rounded-lg border-l-2 px-2 py-2 text-sm leading-snug transition-colors duration-150 ease-bench motion-reduce:transition-none xl:min-h-0 xl:py-1.5",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active
-          ? "bg-primary/10 font-semibold text-foreground"
-          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          ? "border-primary bg-muted font-medium text-foreground"
+          : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
     >
-      {active ? (
-        <span aria-hidden="true" className="mt-0.5 font-bold text-primary">
-          ›
-        </span>
-      ) : null}
       {entry.expert ? (
-        <span className="mt-px shrink-0 rounded border border-border px-1.5 py-px text-[0.7rem] font-semibold uppercase tracking-wide text-foreground">
+        <span className="mt-0.5 shrink-0 rounded border border-border px-1.5 py-px text-label text-muted-foreground">
           Expert
         </span>
       ) : null}{" "}
@@ -125,7 +120,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
 
   return (
     <nav aria-label="On this page" className={cn("min-w-0", className)} onKeyDown={onKeyDown}>
-      <p aria-hidden="true" className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:block">
+      <p aria-hidden="true" className="hidden px-2 pb-1 text-label text-subtle xl:block">
         On this page
       </p>
       <button
@@ -134,7 +129,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((value) => !value)}
-        className="flex min-h-[2.75rem] w-full items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/80 px-4 py-2 text-left text-sm font-semibold text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:hidden"
+        className="flex min-h-[2.75rem] w-full items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-2 text-left text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:hidden"
       >
         <span>
           On this page{" "}
@@ -151,7 +146,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
       <ol
         id={listId}
         className={cn(
-          "mt-2 space-y-0.5 rounded-2xl border border-border/60 bg-card/80 p-2 xl:block xl:border-0 xl:bg-transparent xl:p-0",
+          "mt-2 space-y-0.5 rounded-xl border border-border bg-card p-2 xl:block xl:border-0 xl:bg-transparent xl:p-0",
           open ? "block" : "hidden",
         )}
       >
@@ -159,7 +154,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
           <li key={entry.id}>
             <TocLink entry={entry} active={activeId === entry.id} onNavigate={close} />
             {children.length > 0 ? (
-              <ol className="ml-3 space-y-0.5 border-l border-border/60 pl-2">
+              <ol className="ml-3 space-y-0.5 border-l border-border pl-2">
                 {children.map((child) => (
                   <li key={child.id}>
                     <TocLink entry={child} active={activeId === child.id} onNavigate={close} />

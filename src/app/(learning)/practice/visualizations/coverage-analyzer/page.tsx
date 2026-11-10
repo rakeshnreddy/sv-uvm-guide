@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const CoverageAnalyzerPage = () => {
   return (
-    <InfoPage
+    <InfoPage gutter={false}
       title={practice.title}
       description={practice.description}
       diagrams={[<CoverageCrossExplorerVisualizer key="coverage-cross" />, <CovergroupBuilder key="covergroup-bins" />]}

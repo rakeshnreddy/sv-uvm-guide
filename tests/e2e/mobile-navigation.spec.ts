@@ -107,25 +107,44 @@ test.describe('Mobile Navigation', () => {
     await page.getByRole('button', { name: 'Open main menu' }).click();
     const mobileMenu = page.getByTestId('mobile-menu');
     const appearance = mobileMenu.getByRole('region', { name: 'Appearance' });
-    const select = appearance.getByRole('combobox', { name: 'Select theme' });
-    const toggle = appearance.getByRole('button', { name: 'Toggle theme' });
-    await expect(select).toBeVisible();
-    for (const control of [select, toggle]) {
-      const box = await control.boundingBox();
-      expect(box!.height).toBeGreaterThanOrEqual(40);
-      expect(box!.height).toBeLessThanOrEqual(44);
+    // The same three choices as the header menu, as a segmented radio group; no palette select and no nested popup (DESIGN.md section 7).
+    await expect(appearance.getByRole('combobox', { name: 'Select theme' })).toHaveCount(0);
+    await expect(appearance.getByRole('button', { name: 'Theme' })).toHaveCount(0);
+    const group = appearance.getByRole('radiogroup', { name: 'Theme' });
+    await expect(group).toBeVisible();
+    await expect(group.getByRole('radio')).toHaveCount(3);
+    for (const name of ['Light', 'Dark', 'System']) {
+      const box = await group.locator('label', { hasText: name }).boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
     }
+
+    // At 320 px every segment's label fits inside its segment, clear of the group border.
+    await page.setViewportSize({ width: 320, height: 640 });
+    const groupBox = (await group.boundingBox())!;
+    for (const name of ['Light', 'Dark', 'System']) {
+      const label = group.locator('label', { hasText: name });
+      const segment = (await label.boundingBox())!;
+      expect(segment.height).toBeGreaterThanOrEqual(44);
+      expect(segment.x).toBeGreaterThan(groupBox.x);
+      expect(segment.x + segment.width).toBeLessThan(groupBox.x + groupBox.width);
+      expect(await label.locator('span').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     const learning = mobileMenu.getByRole('navigation', { name: 'Your learning' });
     for (const name of ['Settings', 'Self-assessment', 'Find your level']) {
       await expect(learning.getByRole('link', { name, exact: true })).toBeVisible();
     }
 
     // The choice applies at once and survives a reload.
-    await select.selectOption('forest');
-    await expect(page.locator('html')).toHaveAttribute('data-theme', /^forest-/);
-    await toggle.click();
+    const html = page.locator('html');
+    const before = await html.getAttribute('data-theme');
+    expect(before).toMatch(/^(light|dark)$/);
+    const flipped = before === 'dark' ? 'light' : 'dark';
+    await group.locator('label', { hasText: flipped === 'dark' ? 'Dark' : 'Light' }).click();
+    await expect(html).toHaveAttribute('data-theme', flipped);
+    await expect(group.getByRole('radio', { name: flipped === 'dark' ? 'Dark' : 'Light', exact: true })).toBeChecked();
     const theme = await page.evaluate(() => localStorage.getItem('theme'));
-    expect(theme).toMatch(/^forest-(light|dark)$/);
+    expect(theme).toBe(flipped);
     await page.reload();
     await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme!);

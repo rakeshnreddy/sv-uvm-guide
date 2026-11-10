@@ -159,14 +159,14 @@ export const CodeReviewAssistant = () => {
   };
 
   const renderIcon = (status: CheckResult["status"]) => {
-    if (status === "pass") return <CheckCircle className="text-green-400" size={16} />;
-    if (status === "fail") return <XCircle className="text-red-400" size={16} />;
-    return <Clock className="text-yellow-400" size={16} />;
+    if (status === "pass") return <CheckCircle className="text-success" size={16} />;
+    if (status === "fail") return <XCircle className="text-danger" size={16} />;
+    return <Clock className="text-warning" size={16} />;
   };
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-4">Code Review Assistant</h2>
+    <div data-testid="code-review-assistant" className="my-6 rounded-xl border border-dashed border-border bg-card p-4">
+      <h2 className="mb-4 text-h3 text-foreground">Code review assistant</h2>
 
       <ul className="space-y-2">
         {checks.map(({ label, result }) => (
@@ -194,7 +194,7 @@ export const CodeReviewAssistant = () => {
           className="mb-2"
         />
         {commitError && (
-          <p className="text-xs text-red-400 mb-2">{commitError}</p>
+          <p className="text-xs text-danger mb-2">{commitError}</p>
         )}
         {commitId && (
           <p className="text-xs text-foreground/60 mb-2">
@@ -209,13 +209,13 @@ export const CodeReviewAssistant = () => {
           className="mb-2"
         />
         {commentError && (
-          <p className="text-xs text-red-400 mb-2">{commentError}</p>
+          <p className="text-xs text-danger mb-2">{commentError}</p>
         )}
         <Button variant="outline" onClick={addComment} className="mb-4">
-          Add Comment
+          Add comment
         </Button>
         {serverError && (
-          <p className="text-xs text-red-400 mb-2">{serverError}</p>
+          <p className="text-xs text-danger mb-2">{serverError}</p>
         )}
 
         {comments.length > 0 && (
@@ -230,7 +230,7 @@ export const CodeReviewAssistant = () => {
           {approved ? "Approved" : "Approve"}
         </Button>
         {approved && (
-          <p className="text-green-400 text-sm mt-2">Review approved</p>
+          <p className="text-success text-sm mt-2">Review approved</p>
         )}
       </div>
     </div>

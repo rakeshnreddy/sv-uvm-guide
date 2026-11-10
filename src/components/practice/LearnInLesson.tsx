@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 export const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
-const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const eyebrow = 'text-xs font-medium text-subtle';
 const textLink = cn('rounded-sm font-medium text-primary underline-offset-4 hover:underline', focusRing);
 
 interface LessonChipLinkProps {
@@ -27,12 +27,12 @@ export function LessonChipLink({ lesson, className }: LessonChipLinkProps) {
     <Link
       href={lesson.href}
       className={cn(
-        'inline-flex max-w-full items-baseline gap-2 rounded-sm py-1 text-sm font-medium text-primary underline-offset-4 hover:underline',
+        'inline-flex max-w-full items-baseline gap-2 rounded-sm py-1 text-sm font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline',
         focusRing,
         className,
       )}
     >
-      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] font-semibold text-muted-foreground [font-variant-ligatures:none]">
+      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-xs font-medium text-muted-foreground [font-variant-ligatures:none]">
         {lesson.code}
       </span>
       <span className="min-w-0 [overflow-wrap:anywhere]">
@@ -138,7 +138,7 @@ export default function LearnInLesson({ item, className }: LearnInLessonProps) {
     <nav
       aria-label={`Lessons for ${item.title}`}
       className={cn(
-        'not-prose mb-8 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-sm sm:p-5',
+        'not-prose mb-8 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-card sm:p-5',
         className,
       )}
     >

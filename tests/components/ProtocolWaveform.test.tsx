@@ -53,7 +53,14 @@ describe('ProtocolWaveform', () => {
         outputElement: expect.any(HTMLElement),
       }),
     );
-    expect(screen.getByRole('img', { name: 'AHB single write' })).toBeInTheDocument();
+    const output = screen.getByRole('img', { name: 'AHB single write' });
+    expect(output).toBeInTheDocument();
+    // The diagram sits on the always-dark code surface with the scoped WaveDrom skin, never a white panel.
+    const surface = output.parentElement as HTMLElement;
+    expect(surface).toHaveAttribute('data-wavedrom-surface');
+    expect(surface).toHaveClass('bg-code-surface');
+    expect(surface.className).not.toMatch(/bg-white|slate-/);
+    expect(document.querySelector('style[data-wavedrom-skin]')?.textContent).toContain('[data-wavedrom-surface] svg');
     expect(screen.getByText('AHB single write')).toBeInTheDocument();
     expect(screen.getByText('Address phase overlaps the preceding data phase.')).toBeInTheDocument();
     expect(screen.getByText('HREADY low stretches both phases.')).toBeInTheDocument();
@@ -72,6 +79,11 @@ describe('ProtocolWaveform', () => {
     expect(renderWaveDromToElementMock).not.toHaveBeenCalled();
     expect(screen.getByText('Unable to render timing diagram.')).toBeInTheDocument();
     expect(screen.getByText('Waveform spec must be valid JSON.')).toBeInTheDocument();
+    // The note sits on the card, not the dark code surface, and uses the warning tokens.
+    const note = screen.getByTestId('protocol-waveform-error');
+    expect(note).toHaveClass('bg-warning-subtle', 'border-warning', 'text-foreground');
+    expect(note.parentElement).toHaveClass('bg-card');
+    expect(note.parentElement).not.toHaveClass('bg-code-surface');
   });
 
   it('uses title, caption, legend, and explicit aria text correctly', async () => {
@@ -95,7 +107,11 @@ describe('ProtocolWaveform', () => {
     expect(screen.getByRole('img', { name: 'AXI write address handshake timing diagram' })).toBeInTheDocument();
     expect(screen.getByText('AXI write address handshake')).toBeInTheDocument();
     expect(screen.getByText('VALID must remain asserted until READY completes the transfer.')).toBeInTheDocument();
-    expect(screen.getByText('Legend')).toBeInTheDocument();
+    const legendLabel = screen.getByText('Legend');
+    expect(legendLabel).toBeInTheDocument();
+    // Sentence-case label (DESIGN.md section 4): 12/16, weight 500, no uppercase or tracking.
+    expect(legendLabel).toHaveClass('text-label', 'font-medium', 'text-subtle');
+    expect(legendLabel.className).not.toMatch(/uppercase|tracking-/);
     expect(screen.getByText('READY low applies backpressure from the slave.')).toBeInTheDocument();
   });
 });

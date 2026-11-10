@@ -3,7 +3,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import UvmPhaseSorterExercise, { uvmPhases } from "../../src/components/exercises/UvmPhaseSorterExercise";
+import UvmPhaseSorterExercise, { PHASE_CONTROL_CLASS, PHASE_NAME_CLASS, uvmPhases } from "../../src/components/exercises/UvmPhaseSorterExercise";
 
 const solvedDirections = {
   build: "top-down",
@@ -69,5 +69,18 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
     expect(feedback()).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /shuffle again/i }));
     expect(screen.queryByTestId("exercise-feedback")).not.toBeInTheDocument();
+  });
+
+  it("lets the phase name take the free width and wrap, with 40 px controls beside or below it", () => {
+    expect(PHASE_NAME_CLASS).toContain("flex-1");
+    expect(PHASE_NAME_CLASS).toContain("[overflow-wrap:anywhere]");
+    expect(PHASE_CONTROL_CLASS).toContain("h-10");
+    expect(PHASE_CONTROL_CLASS).toContain("min-w-10");
+    render(<UvmPhaseSorterExercise initialItems={uvmPhases} />);
+    const names = screen.getAllByTestId("phase-name");
+    expect(names).toHaveLength(uvmPhases.length);
+    for (const control of screen.getAllByTestId("phase-controls")) expect(control).toHaveClass("ml-auto", "shrink-0");
+    expect(screen.getByRole("button", { name: "end_of_elaboration_phase runs top-down" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move end_of_elaboration_phase up" })).toBeInTheDocument();
   });
 });

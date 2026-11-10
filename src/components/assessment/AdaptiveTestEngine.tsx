@@ -131,10 +131,10 @@ export const AdaptiveTestEngine = () => {
 
   if (state.status === "intro") {
     return (
-      <section className="my-6 rounded-lg border border-dashed border-white/30 bg-white/5 p-4">
-        <h2 className="mb-4 text-2xl font-bold text-primary">Adaptive Test Engine</h2>
+      <section className="my-6 rounded-xl border border-border bg-card p-4">
+        <h2 className="mb-4 text-h2 text-foreground">Adaptive Test Engine</h2>
         <div className="text-center">
-          <h3 className="mb-2 text-xl font-semibold text-primary">Ready to test your knowledge?</h3>
+          <h3 className="mb-2 text-h3 text-foreground">Ready to test your knowledge?</h3>
           <Button onClick={() => dispatch({ type: "START", seed: 0x5eed })}>Start quiz</Button>
         </div>
       </section>
@@ -144,8 +144,8 @@ export const AdaptiveTestEngine = () => {
   if (state.status === "complete") {
     const score = state.answers.filter((answer) => answer.correct).length;
     return (
-      <section className="my-6 rounded-lg border border-dashed border-white/30 bg-white/5 p-4 text-center">
-        <h2 className="text-2xl font-bold text-primary">Quiz complete</h2>
+      <section className="my-6 rounded-xl border border-border bg-card p-4 text-center">
+        <h2 className="text-h2 text-foreground">Quiz complete</h2>
         <p className="mt-2">Your final score is {score} / {adaptiveQuestionBank.length}.</p>
         <Button onClick={() => dispatch({ type: "RETAKE" })} className="mt-4">Play again</Button>
       </section>
@@ -157,10 +157,10 @@ export const AdaptiveTestEngine = () => {
   const answer = showingFeedback ? state.selectedAnswer : selectedAnswer;
 
   return (
-    <section className="my-6 rounded-lg border border-dashed border-white/30 bg-white/5 p-4">
-      <h2 className="mb-4 text-2xl font-bold text-primary">Adaptive Test Engine</h2>
+    <section className="my-6 rounded-xl border border-border bg-card p-4">
+      <h2 className="mb-4 text-h2 text-foreground">Adaptive Test Engine</h2>
       <p className="mb-2 text-sm text-muted-foreground">Difficulty: {state.question.difficulty} · Score: {score}</p>
-      <h3 className="mb-4 text-lg font-semibold">{state.question.text}</h3>
+      <h3 className="mb-4 text-h3 text-foreground">{state.question.text}</h3>
       <div className="space-y-2">
         {state.question.options.map((option, index) => (
           <Button

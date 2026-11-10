@@ -8,13 +8,13 @@ import { requirePracticePage } from '@/lib/practice-links';
 const practice = requirePracticePage('/exercises/uvm-agent-builder');
 
 const UvmAgentBuilderPage: React.FC = () => {
-  const pageTitle = "Exercise: UVM Agent Builder";
+  const pageTitle = `Exercise: ${practice.title}`;
 
   const content = (
     <>
       <LearnInLesson item={practice} />
       <section className="mb-6">
-        <h2 className="text-2xl font-semibold text-primary mb-2">Build a UVM Agent</h2>
+        <h2 className="text-h2 mb-2 text-foreground">Build a UVM agent</h2>
         <p className="text-muted-foreground mb-1">
           Choose whether the agent is active or passive, then place the components it should build. Use the buttons or drag and drop; order inside the agent does not matter.
         </p>
@@ -23,12 +23,12 @@ const UvmAgentBuilderPage: React.FC = () => {
         </p>
       </section>
 
-      <div className="my-8 border-t border-b border-border py-8">
+      <div className="not-prose my-8 border-y border-border py-8">
         <UvmAgentBuilderExercise />
       </div>
 
       <section className="mt-6">
-        <h3 className="text-xl font-semibold text-primary mb-2">Learning objectives</h3>
+        <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
         <ul className="list-disc list-inside text-muted-foreground space-y-1">
           <li>Identify the core components of a UVM agent.</li>
           <li>Explain what changes between active and passive agents, and why.</li>
@@ -40,7 +40,7 @@ const UvmAgentBuilderPage: React.FC = () => {
   );
 
   return (
-    <InfoPage title={pageTitle}>
+    <InfoPage gutter={false} title={pageTitle}>
       {content}
     </InfoPage>
   );
@@ -50,7 +50,7 @@ export default UvmAgentBuilderPage;
 
 export async function generateMetadata() {
   return {
-    title: "Exercise: UVM Agent Builder",
+    title: `Exercise: ${practice.title}`,
     description: "Interactive exercise: choose an active or passive UVM agent and build it from its components, sequencer, driver and monitor, with feedback on the get_is_active() rule.",
   };
 }

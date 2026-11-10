@@ -38,16 +38,18 @@ const SAVE_ERROR_MESSAGE = 'Unable to save preferences right now. Please retry.'
 const LOAD_ERROR_MESSAGE = 'Unable to load your preferences right now.';
 const SAVED_STATUS_MS = 2000;
 
-const card = 'min-w-0 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6';
-const panel = 'min-w-0 rounded-2xl border border-border bg-background p-4';
-const eyebrow = 'text-xs font-semibold uppercase tracking-wider text-muted-foreground';
+const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+const panel = 'min-w-0 rounded-xl border border-border bg-background p-4';
+const eyebrow = 'text-xs font-medium text-subtle';
 const toggleRow = cn(
-  'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm transition-colors motion-reduce:transition-none',
+  'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors duration-150 ease-bench motion-reduce:transition-none',
   focusRing,
 );
 
 function onOffClass(on: boolean): string {
-  return on ? 'border-primary bg-primary/10 text-foreground' : 'border-border bg-background text-foreground hover:bg-muted';
+  return on
+    ? 'border-border border-l-2 border-l-primary bg-muted font-medium text-foreground'
+    : 'border-border bg-background text-foreground hover:bg-muted';
 }
 
 export default function AccountPreferencesPanel() {
@@ -157,7 +159,7 @@ export default function AccountPreferencesPanel() {
   const header = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h2 id="settings-account-heading" className="text-xl font-semibold text-foreground">
+        <h2 id="settings-account-heading" className="text-h3 text-foreground">
           Account preferences
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">Saved to your account.</p>
@@ -167,7 +169,7 @@ export default function AccountPreferencesPanel() {
         aria-live="polite"
         className={cn(
           'text-sm font-medium',
-          status === 'error' ? 'text-red-800 dark:text-red-200' : 'text-foreground',
+          status === 'error' ? 'text-danger' : 'text-foreground',
         )}
       >
         {statusLabel ? (status === 'error' && errorMessage ? errorMessage : statusLabel) : null}
@@ -181,7 +183,7 @@ export default function AccountPreferencesPanel() {
         {header}
         {loadState === 'error' ? (
           <div className="mt-4 space-y-3">
-            <p role="alert" className="text-sm font-medium text-red-800 dark:text-red-200">
+            <p role="alert" className="text-sm font-medium text-danger">
               {LOAD_ERROR_MESSAGE}
             </p>
             <button type="button" className={secondaryAction} onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
@@ -262,7 +264,7 @@ export default function AccountPreferencesPanel() {
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="min-w-0">
-          <h3 className="text-lg font-semibold text-foreground">Notifications</h3>
+          <h3 className="text-h3 text-foreground">Notifications</h3>
           <p className="mt-1 text-sm text-muted-foreground">Decide when we nudge you about streaks, reviews, and new labs.</p>
           <div className="mt-4 space-y-4">
             <button
@@ -285,7 +287,7 @@ export default function AccountPreferencesPanel() {
                     onClick={() => setDigest(option)}
                     aria-pressed={digestCadence === option}
                     className={cn(
-                      'min-h-[44px] flex-1 rounded-full border px-4 py-2 text-sm transition-colors motion-reduce:transition-none',
+                      'min-h-[44px] flex-1 rounded-lg border px-4 py-2 text-sm transition-colors duration-150 ease-bench motion-reduce:transition-none',
                       focusRing,
                       onOffClass(digestCadence === option),
                     )}
@@ -320,7 +322,7 @@ export default function AccountPreferencesPanel() {
         </div>
 
         <div className="min-w-0">
-          <h3 className="text-lg font-semibold text-foreground">Privacy & Data</h3>
+          <h3 className="text-h3 text-foreground">Privacy and data</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Control how we use engagement insights to personalize recommendations.
           </p>

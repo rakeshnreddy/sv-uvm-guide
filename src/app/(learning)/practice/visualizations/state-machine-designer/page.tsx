@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const StateMachineDesignerPage = () => {
   return (
-    <InfoPage title={practice.title} description={practice.description} diagrams={[<StateMachineDesigner key="state-machine" />]}>
+    <InfoPage gutter={false} title={practice.title} description={practice.description} diagrams={[<StateMachineDesigner key="state-machine" />]}>
       <LearnInLesson item={practice} />
     </InfoPage>
   );

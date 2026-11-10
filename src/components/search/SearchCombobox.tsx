@@ -233,7 +233,7 @@ export default function SearchCombobox({
             setPopupOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         />
       </div>
 
@@ -251,7 +251,7 @@ export default function SearchCombobox({
         <div
           className={
             variant === "popup"
-              ? "absolute left-0 right-0 top-full z-50 mt-2 min-w-[20rem] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-xl"
+              ? "absolute left-0 right-0 top-full z-50 mt-2 min-w-[20rem] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-card"
               : "mt-3"
           }
         >
@@ -297,13 +297,13 @@ export default function SearchCombobox({
                       if (!selected) setActiveIndex(index);
                     }}
                     className={cn(
-                      "block rounded-lg border-l-4 px-3 py-2 text-left transition-colors motion-reduce:transition-none",
-                      selected ? "border-primary bg-muted" : "border-transparent hover:bg-muted/60",
+                      "block rounded-lg border-l-2 px-3 py-2 text-left transition-colors duration-150 ease-bench motion-reduce:transition-none",
+                      selected ? "border-primary bg-muted" : "border-transparent hover:bg-muted",
                     )}
                   >
                     <span className="flex items-start justify-between gap-3">
                       <span className="min-w-0 break-words text-sm font-medium text-foreground">{result.doc.title}</span>
-                      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-label text-muted-foreground">
                         {resultKindLabel(result.doc)}
                       </span>
                     </span>
@@ -314,7 +314,7 @@ export default function SearchCombobox({
             })}
           </ul>
           {listVisible && (
-            <p aria-hidden="true" className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <p aria-hidden="true" className="border-t border-border px-3 py-2 text-xs text-subtle">
               ↑ ↓ to choose · Enter to open · Esc to close
             </p>
           )}
