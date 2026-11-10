@@ -127,6 +127,10 @@ const loaders = {
   ExpressionTreeExplorer: () => import("@/components/visuals/ExpressionTreeExplorer").then(module => asMdxModule(module.default)),
   VerificationMethodsExplorer: () => import("@/components/curriculum/f1/VerificationMethodsExplorer").then(module => asMdxModule(module.default)),
   ClosureBudgetLab: () => import("@/components/curriculum/f1/ClosureBudgetLab").then(module => asMdxModule(module.default)),
+  ShiftLeftTimeline: () => import("@/components/curriculum/f1/ShiftLeftTimeline").then(module => asMdxModule(module.default)),
+  StreamPackLab: () => import("@/components/visuals/StreamPackLab").then(module => asMdxModule(module.default)),
+  FsmEdgeStepper: () => import("@/components/visuals/FsmEdgeStepper").then(module => asMdxModule(module.default)),
+  DeferredReportVisualizer: () => import("@/components/visuals/DeferredReportVisualizer").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<
