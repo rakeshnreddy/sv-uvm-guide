@@ -16,7 +16,17 @@ sources:
 - **What it is:** **Transaction recording** writes each transaction a component handles (its name, its start and end times, and its field values) into a **transaction database**, a store of timed records that a waveform viewer can draw as rows of boxes next to the signals. IEEE 1800.2-2020 defines the pieces: the database (`uvm_tr_database`, §7.1), **streams** that group records (`uvm_tr_stream`, §7.2), one **recorder** per record (`uvm_recorder`, §16.4), **links** between records (§7.3), and the component calls that drive them: `begin_tr`, `end_tr`, `record_error_tr` and `record_event_tr` (§13.1.7).
 - **Why it matters:** A bus transfer that spans ten clocks is ten lines of text in a log, and you have to match them to the waveform by hand. A recorded transaction is one box on the waveform, aligned with the signals that carried it, showing its fields and the sequence that caused it. That is often the fastest way to see *which* transaction a failure belongs to.
 - **The rule that bites:** recording is **off by default** on every component (§13.1.7.14). Until you enable it, `begin_tr` returns 0, opens nothing, and the database stays empty, however carefully you wrote `do_record`.
-- **The Analogy:** A warehouse ledger. Each dock (a component) has its own pages in the shared ledger (its streams). When a dock starts handling a package (`begin_tr`), it opens a new line; when the package leaves (`end_tr`), it writes the package's contents on that line and closes it. A line can point to another ("this package belongs to that order": a parent/child link). *Where it breaks:* the ledger is switched off at every dock until someone switches it on; the contents are copied from the package at the moment it leaves, not as items go in; and the ledger's format belongs to the simulator, not to UVM.
+- **The Analogy:** A warehouse ledger. Each dock (a component) has its own pages in the shared ledger (its streams). When a dock starts handling a package (`begin_tr`), it opens a new line; when the package leaves (`end_tr`), it writes the package's contents on that line and closes it. A line can point to another ("this package belongs to that order": a parent/child link). *Where it breaks:* the ledger is switched off at every dock until someone switches it on; the contents are copied from the package at the moment it leaves, not as items go in; and the standard does not fix the ledger's format: uvm-core writes a text file, a simulator writes its own database.
+
+The analogy, piece by piece:
+
+| In the ledger | In UVM | Where the analogy breaks |
+|---|---|---|
+| the shared ledger | the transaction database (`uvm_tr_database`) | the standard does not fix a format: uvm-core writes a text file, a simulator writes its own database |
+| a dock's pages | the component's streams | the switch for each dock is off until someone turns it on |
+| a new line, opened when a package arrives | a recorder, opened by `begin_tr` | a `label` or `desc` can be written at begin (uvm-core) |
+| the contents, written when the package leaves | the attributes (the recorded field values), written by `end_tr` | copied at that moment, not as items go in |
+| "this package belongs to that order" | a parent/child link | UVM has other link kinds too, such as "caused" and "related" (§7.3) |
 
 **You will be able to:**
 1. Explain the recording architecture (database, streams, recorders, attributes and links) and what a component's `begin_tr` and `end_tr` do to it.
@@ -90,6 +100,15 @@ Every recorder has an integer **handle** (§16.4.5.1), a number that names the r
   ]}
 />
 
+Which component call builds each piece of the picture:
+
+| Piece in the picture | Built by | Through (called for you) | What it holds |
+|---|---|---|---|
+| stream (middle row) | the component's first `begin_tr` (with recording on), `record_error_tr` or `record_event_tr` on that stream name | `get_tr_stream` (§13.1.7.9), which calls the database's `open_stream` (§7.1.4.1) | a name, the component's full name as scope, and its records |
+| recorder (bottom row) | each `begin_tr` while recording is on | the stream's `open_recorder` (§7.2.5.1) | one transaction's begin and end times, then its attributes |
+| attributes (inside each recorder) | `end_tr` | `tr.record(recorder)`, which runs the field macros and `do_record` (§5.3.7) | the field values at `end_tr`; in uvm-core a `label` or `desc` argument is written at `begin_tr` |
+| dashed link | `begin_tr` when the record has a parent record | the database's `establish_link` (§7.1.5) | the parent's and the child's handles |
+
 You will rarely call `open_stream`, `open_recorder` or `establish_link` yourself. The component methods in the next sections call them for you; the picture tells you what those calls build.
 
 ### Turning recording on
@@ -108,6 +127,14 @@ env.agt.set_recording_enabled_hier(1);
 //    when it is created. Set it before the parent's build_phase creates it.
 uvm_config_db#(int)::set(this, "env.agt.drv", "recording_detail", UVM_FULL);
 ```
+
+The three ways side by side (the paragraph below explains the timing rule):
+
+| Way | Defined by | Turns on | Must happen |
+|---|---|---|---|
+| `set_recording_enabled(1)` | IEEE 1800.2 §13.1.7.13 | one component | any time after the component exists |
+| `set_recording_enabled_hier(1)` | IEEE 1800.2 D.2.3 | a component and everything below it | any time after those components exist |
+| a `recording_detail` setting, through `uvm_config_db` or `+uvm_set_config_int` | uvm-core only (the plusarg itself is G.2.8) | each component whose path matches | before the component's constructor runs (in uvm-core's default configuration mode) |
 
 Calls 1 and 2 work at any time after the component exists; in a test, `end_of_elaboration_phase` (the phase that runs after every component has been built and connected) is the natural place. Way 3 is **uvm-core behaviour**, not part of IEEE 1800.2. uvm-core keeps the switch in a member called `recording_detail` (default `UVM_NONE`, which means off) and reads a configuration setting of that name **only in the component's constructor** in its default configuration mode. A setting made after the component was created is never read, not even by its own `build_phase` (see the expert note on configuration mode). The command-line form, `+uvm_set_config_int=uvm_test_top.env.agt.drv,recording_detail,1` (G.2.8), works the same way.
 
@@ -223,6 +250,34 @@ The diagram shows one item in the Make It Work example, where the sequencer, the
 
 With automatic recording left on, two more steps appear: the sequencer's own `begin_tr(req)` when `start_item` is granted, and its `end_tr(req)` just before `finish_item` returns.
 
+<SequenceDiagram
+  title="The same item with automatic item recording left on"
+  caption="Compare with the diagram above. Inside start_item, after the grant, the sequence calls the sequencer's begin_tr for the item on the root sequence's stream; inside finish_item, after item_done, it calls the sequencer's end_tr. Because this driver also records the item, item0 is now recorded twice: once on stream seq with the handshake times, once on stream drv with the drive times. Order as in uvm-core 2020.3.1 (uvm_sequence_base.svh)."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" },
+    { id: "db", label: "uvm_tr_database", kind: "generic" }
+  ]}
+  messages={[
+    { from: "seq", to: "sqr", label: "start(): begin_tr(seq, \"seq\")" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "seq", to: "sqr", label: "granted; automatic recording is on" },
+    { from: "seq", to: "sqr", label: "begin_tr(req, \"seq\"), label Transactions", tone: "active" },
+    { from: "sqr", to: "db", label: "open recorder \"item0\" on stream seq; link seq to it", tone: "active" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "self", from: "drv", label: "begin_tr(req, \"drv\"): a second record" },
+    { from: "drv", to: "db", label: "open recorder \"item0\" on stream drv; link seq to it" },
+    { kind: "divider", label: "one clock: drive the transfer on the pins" },
+    { kind: "self", from: "drv", label: "end_tr(req)" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { from: "seq", to: "sqr", label: "end_tr(req): fields written, record on seq closed", tone: "active" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+
 ### Parent/child links
 
 A **parent/child link** says "this record is part of that one", so a viewer can show a sequence containing its items. Records get one in three ways:
@@ -230,6 +285,28 @@ A **parent/child link** says "this record is part of that one", so a viewer can 
 1. **The sequencer links them itself.** A child sequence's record, and an automatically recorded item's record, are linked to their parent sequence's record.
 2. **A component's `begin_tr` looks up the parent sequence (uvm-core only).** If you pass no `parent_handle` and the transaction is a sequence item, uvm-core uses the record of the item's parent sequence. The header of `uvm_component::begin_tr` calls this "an added feature" beyond the standard. It works **only if that sequence was itself recorded**, which means the *sequencer's* recording is on. Enable recording on the driver alone, and the driver's records have no parent link.
 3. **You pass `parent_handle` explicitly** (§13.1.7.3): `begin_tr(rsp, "drv", "", "", 0, req_handle)` links `rsp`'s record under the record whose handle is `req_handle`. This works in any implementation, as long as that handle is still valid: the parent record must not have been freed yet (uvm-core reports `ILLHNDL` for a handle that no longer names a recorder).
+
+<ArchitectureDiagram
+  title="Does this begin_tr record get a parent/child link?"
+  caption="The decision uvm-core 2020.3.1 makes inside a component's begin_tr when recording is on (uvm_component.svh, m_begin_tr). Way 1 above takes the first branch: uvm-core passes the parent sequence's handle to the sequencer's begin_tr (uvm_sequence_base.svh). Way 3 takes it too. Way 2 is the second question, and only uvm-core asks it. Every other record, including every monitor-built item, gets no link."
+  cellWidth={160}
+  gapX={48}
+  cellHeight={56}
+  gapY={56}
+  nodes={[
+    { id: "pc-q1", label: "parent_handle not 0?", sublabel: "passed to begin_tr", col: 0, row: 0, state: "active" },
+    { id: "pc-explicit", label: "link to that record", sublabel: "freed: ILLHNDL, no link", col: 1, row: 0, state: "ok" },
+    { id: "pc-q2", label: "parent seq recorded?", sublabel: "sequence items; uvm-core", col: 0, row: 1, state: "active" },
+    { id: "pc-auto", label: "link to the sequence", sublabel: "needs sqr recording on", col: 1, row: 1, state: "ok" },
+    { id: "pc-none", label: "no link", sublabel: "a record with no parent", col: 0, row: 2, state: "dim" }
+  ]}
+  edges={[
+    { from: "pc-q1", to: "pc-explicit", style: "causal", label: "yes" },
+    { from: "pc-q1", to: "pc-q2", style: "causal", label: "no" },
+    { from: "pc-q2", to: "pc-auto", style: "causal", label: "yes" },
+    { from: "pc-q2", to: "pc-none", style: "causal", label: "no" }
+  ]}
+/>
 
 A monitor builds new transaction objects from the pins, so they have no parent sequence and get no automatic link. That is correct: the monitor reports what happened on the bus, not who asked for it.
 
@@ -245,10 +322,33 @@ void'(record_event_tr("mon", null, "reset_released")); // type "Event"; no field
 
 The arguments are the stream name, an optional object whose fields are recorded (`info`, through its `do_record`), a label (defaults `"error_tr"` and `"event_tr"`), a description, a time (0 means now) and `keep_active`. With `keep_active = 0` (the default) the record is closed at once; with 1 the call returns a handle you can link to. A viewer can show these as markers on the stream, so a protocol error sits right on the transaction row where it happened. Remember the logging rule: an error record does not fail the test. Report the error with `` `uvm_error `` as well.
 
+The three kinds of record side by side (the `TYPE` row is what uvm-core's text database writes, read in Make It Work):
+
+| | `begin_tr` … `end_tr` | `record_error_tr` | `record_event_tr` |
+|---|---|---|---|
+| Duration | begin time to end time | zero: closed at the time given (0 means now) | zero, the same way |
+| Fields come from | `tr.record()` inside `end_tr` | `info.record()`, if `info` is not null | `info.record()`, if `info` is not null |
+| Default label | none | `"error_tr"` | `"event_tr"` |
+| Returns | `begin_tr`: the handle, or 0 | 0; the handle when `keep_active = 1` | 0; the handle when `keep_active = 1` |
+| `TYPE` (uvm-core) | `Begin_End, Link` or `Begin_No_Parent, Link` | `Error`; `Error, Link` when `keep_active = 1` | `Event`; `Event, Link` when `keep_active = 1` |
+| Written while recording is off | no | yes, in uvm-core (see the expert note) | yes, in uvm-core |
+| Counted by the report server | no | no | no |
+
 ### Databases: the text file or the simulator's
 
 - **uvm-core's default, `uvm_text_tr_database`** (uvm-core impl.), writes every stream, record, attribute and link as a line of text in `tr_db.log` in the run directory. It needs no tool support, so it is how you check recording code with any simulator. You read it in Make It Work.
 - **A simulator's database** (tool-dependent) writes records into the simulator's own waveform database, so the viewer draws them as transaction rows. Each vendor documents its own switch for this; it may replace the default database for the whole run. The UVM code on this page does not change.
+
+| | `uvm_text_tr_database` (uvm-core default) | A simulator's database |
+|---|---|---|
+| Where records go | `tr_db.log`, a text file in the run directory | the simulator's waveform database (tool-dependent) |
+| How you read it | as text, in an editor or a script | as transaction rows in the waveform viewer |
+| Needs tool support | no: works with any simulator | yes: the vendor's switch (tool-dependent) |
+| A second run in the same directory | appends to the same file | tool-dependent |
+| Links it keeps | parent/child and related; it drops cause/effect links silently | tool-dependent; it may keep all three kinds |
+| File name | `set_file_name`, before the first record | tool-dependent |
+
+The last three rows are uvm-core details, explained in the expert note on the text database and the one on links.
 
 ### Common mistakes
 
@@ -528,6 +628,26 @@ module tb_top;
 endmodule
 ```
 
+**Predict before you run it.** The clock rises at 5, 15, 25, 35 ns and every 10 ns after; reset is released at 22 ns. The test turns recording on for the agent's sequencer, driver and monitor. Using only the code above, answer:
+
+1. At what times does the driver's record of `item0` open and close, and at what times does the monitor's record of the same transfer open and close?
+2. Does `item0` also appear on the sequencer's stream `seq`?
+3. What does the report summary's `UVM_ERROR` line show, and what does the `PARITY` count show?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your predictions</summary>
+
+| Question | Answer | Why, from the code |
+|---|---|---|
+| 1. `item0` on `drv` | opens at 25 ns, closes at 35 ns | the driver waits for reset, then for the 25 ns edge, calls `begin_tr`, drives for one clock and calls `end_tr` at the 35 ns edge |
+| 1. the same transfer on `mon` | opens at 35 ns, closes at 45 ns | the clocking block samples `valid` at the 35 ns edge, the edge after it was driven; the record closes one clock later |
+| 2. `item0` on `seq` | no | the driver calls `disable_auto_item_recording()` before its first `get_next_item`, so the sequencer records only the sequence |
+| 3. the report summary | `UVM_ERROR :    0`, and `[PARITY]     1` | the one `PARITY` error is demoted to info by the severity override, but it is still counted under its ID |
+
+The expected output and the database below confirm each answer, and Read the database explains every line.
+
+</details>
+
 **Run it.** Compile `tb_top.sv` with the UVM library (uvm-core 2020.3.1) on any simulator with UVM support and run it; the test name is passed to `run_test`, so no plusarg is needed. With uvm-core's default database, `tr_db.log` appears in the run directory. If you turn on your simulator's own transaction recording (tool-dependent), the records go to its waveform database instead and may not appear in `tr_db.log`. Delete `tr_db.log` between runs, because the text database appends to it.
 
 **Expected output.** Illustrative: written from the uvm-core 2020.3.1 sources, not captured from a named simulator run. File names, line numbers, the banner and the exact report counts vary.
@@ -593,11 +713,58 @@ Each line kind comes from uvm-core's text backend (`uvm_text_tr_stream.svh`, `uv
 
 | Line | Written by | In this run |
 |---|---|---|
-| `CREATE_STREAM` | the first `begin_tr`, `record_error_tr` or `record_event_tr` on a stream name | three streams: `seq` (sequencer), `mon`, `drv` |
+| `CREATE_STREAM` | the first `begin_tr` (with recording on), `record_error_tr` or `record_event_tr` on a stream name | three streams: `seq` (sequencer), `mon`, `drv` |
 | `OPEN_RECORDER` | `begin_tr` (and the error and event calls) | `TIME` is the record's begin time; `TYPE` is `Begin_End, Link` when the record has a parent, `Begin_No_Parent, Link` otherwise, or `Error`/`Event` |
 | `LINK ... RELATION=child` | a parent/child link | `TXH1` is the parent (the sequence, handle 2), `TXH2` the child |
 | `SET_ATTR` | `record()` inside `end_tr`, or a `label` argument | written at the end time (`@35`), not the begin time: the fields are recorded in `end_tr` |
 | `CLOSE_RECORDER`, `FREE_RECORDER` | `end_tr` with the default `free_handle = 1` | |
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 182" role="img" aria-label="The run drawn as a viewer draws streams. Row seq: one sequence record from 0 to 75 ns. Row drv: three item records, 25 to 35, 45 to 55 and 65 to 75 ns, each joined to the seq record by a dashed parent/child link. Row mon: an event marker at 25 ns, three monitor records from 35 to 45, 55 to 65 and 75 to 85 ns with no links, and an error marker at 75 ns." style={{ width: "100%", maxWidth: 520 }}>
+    <text x="4" y="24" fontSize="11" fontWeight="bold" fill="currentColor">seq</text>
+    <text x="4" y="57" fontSize="11" fontWeight="bold" fill="currentColor">drv</text>
+    <text x="4" y="69" fontSize="11" fill="currentColor">item0 to 2</text>
+    <text x="4" y="101" fontSize="11" fontWeight="bold" fill="currentColor">mon</text>
+    <text x="4" y="113" fontSize="11" fill="currentColor">mon_item</text>
+    <rect x="90" y="10" width="217.5" height="20" rx="3" fill="currentColor" fillOpacity="0.1" stroke="currentColor" />
+    <text x="98" y="24" fontSize="10" fill="currentColor">seq</text>
+    <path d="M177 30 L177 48" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <path d="M235 30 L235 48" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <path d="M293 30 L293 48" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <rect x="162.5" y="48" width="29" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <rect x="220.5" y="48" width="29" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <rect x="278.5" y="48" width="29" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <text x="177" y="62" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+    <text x="235" y="62" fontSize="10" textAnchor="middle" fill="currentColor">1</text>
+    <text x="293" y="62" fontSize="10" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="191.5" y="92" width="29" height="20" rx="3" className="fill-violet-500/15 stroke-violet-500" />
+    <rect x="249.5" y="92" width="29" height="20" rx="3" className="fill-violet-500/15 stroke-violet-500" />
+    <rect x="307.5" y="92" width="29" height="20" rx="3" className="fill-violet-500/15 stroke-violet-500" />
+    <text x="206" y="106" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+    <text x="264" y="106" fontSize="10" textAnchor="middle" fill="currentColor">1</text>
+    <text x="322" y="106" fontSize="10" textAnchor="middle" fill="currentColor">2</text>
+    <path d="M162.5 84 L162.5 118" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="162.5" y="81" fontSize="10" fontWeight="bold" textAnchor="middle" fill="currentColor">E</text>
+    <path d="M307.5 84 L307.5 118" fill="none" className="stroke-red-600 dark:stroke-red-400" strokeWidth="2" />
+    <text x="307.5" y="81" fontSize="10" fontWeight="bold" textAnchor="middle" className="fill-red-600 dark:fill-red-400">!</text>
+    <path d="M90 126 L340 126" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <path d="M90 126 L90 130 M162.5 126 L162.5 130 M191.5 126 L191.5 130 M220.5 126 L220.5 130 M249.5 126 L249.5 130 M278.5 126 L278.5 130 M307.5 126 L307.5 130 M336.5 126 L336.5 130" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="4" y="142" fontSize="11" fill="currentColor">t (ns)</text>
+    <text x="90" y="142" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+    <text x="162.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">25</text>
+    <text x="191.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">35</text>
+    <text x="220.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">45</text>
+    <text x="249.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">55</text>
+    <text x="278.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">65</text>
+    <text x="307.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">75</text>
+    <text x="336.5" y="142" fontSize="11" textAnchor="middle" fill="currentColor">85</text>
+    <text x="4" y="162" fontSize="11" fill="currentColor">Dashed line: parent/child LINK. E: Event record.</text>
+    <text x="4" y="176" fontSize="11" fill="currentColor">!: Error record. Box numbers: transfer 0 to 2.</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    **The run as a viewer would draw it.** One row per stream; the x-axis is simulation time in ns, to scale. Each box is one record from its begin time to its end time. The times up to 75 ns are the ones in the log above; the records the abbreviated log leaves out (items 1 and 2, and the last monitor record, which the 20 ns drain time lets close at 85 ns) follow from the code. Only the driver's records hang under the sequence; the monitor's records, the event and the error have no link. How a real viewer draws this is tool-dependent.
+  </figcaption>
+</figure>
 
 Now trace what the run shows:
 
@@ -608,6 +775,28 @@ Now trace what the run shows:
 5. **The parity error is a zero-length `Error` record** at 75 ns on stream `mon`, carrying the transfer's fields. The report summary still shows `UVM_ERROR :    0` only because the test demoted that one ID; without the demotion the test would fail, as it should. The demoted report is still counted (`[PARITY]     1`), and that count is what the test's `check_phase` requires: no parity report, or a second one, raises `PARITY_COUNT` and fails the run. Demoting expected errors with a reporter, an ID *and* a count is taught in full, with report catchers, in [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
 ### How to add recording to an agent
+
+<ArchitectureDiagram
+  title="Where each step's recording code lives"
+  caption="The Make It Work bench, with the step number from the list below on each piece. The item describes itself with do_record (step 1); the driver brackets items with begin_tr and end_tr (step 2); the monitor does the same and adds record_error_tr (step 3); the test enables recording on the agent with set_recording_enabled_hier and keeps the run open with a drain time (steps 4 and 5). The sequencer needs no code: with its recording on, it records the sequence. Step 6, reading tr_db.log, happens after the run. Dashed arrows show that end_tr calls the item's record()."
+  cellWidth={100}
+  gapX={20}
+  cellHeight={60}
+  gapY={64}
+  nodes={[
+    { id: "how-test", label: "rec_test", sublabel: "steps 4 and 5", kind: "test", col: 1, row: 0 },
+    { id: "how-agt", label: "agt", kind: "agent", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "how-sqr", label: "sqr", sublabel: "no code", kind: "sequencer", col: 0, row: 1 },
+    { id: "how-drv", label: "drv", sublabel: "step 2", kind: "driver", col: 1, row: 1 },
+    { id: "how-mon", label: "mon", sublabel: "step 3", kind: "monitor", col: 2, row: 1 },
+    { id: "how-item", label: "bus_item", sublabel: "step 1", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "how-test", to: "how-agt", style: "control", label: "enable" },
+    { from: "how-drv", to: "how-item", style: "causal", label: "record()" },
+    { from: "how-mon", to: "how-item", style: "causal", label: "record()" }
+  ]}
+/>
 
 1. In each item class, write `do_record` with `` `uvm_record_int `` and `` `uvm_record_string `` (or register the fields with field macros, not both).
 2. In the driver, decide who records items. If the driver does, call `seq_item_port.disable_auto_item_recording()` at the start of `run_phase`, before the first `get_next_item`, and bracket each item with `begin_tr(req, "drv")` when it starts on the pins and `end_tr(req)` after the last field (including any response data) is filled.
@@ -656,13 +845,45 @@ Recording costs simulation time (a call into the database for every record and a
 
 IEEE 1800.2 places automatic item recording around `get_next_item` and `item_done` (§15.3.2.22); uvm-core 2020.3.1 does it in `start_item` after the grant and in `finish_item` after `item_done`. Either way it marks the handshake, not the time the item spends on the pins. For a simple in-order driver the two are close; for a **pipelined** driver, which calls `item_done` as soon as the address phase is accepted and finishes the data phase later, the automatic record ends too early. §15.2.1 gives the rule: such a driver calls `disable_auto_item_recording()` before its first request and calls `begin_tr`/`end_tr` itself at the right moments. A sequence that must wait until the item has really finished waits on the item's `"end"` event (`get_event_pool()`, §5.4.2.13), which `end_tr` triggers. uvm-core also accepts a compile-time define, `UVM_DISABLE_AUTO_ITEM_RECORDING`, that turns automatic item recording off globally (uvm-core impl.).
 
+<TimingDiagram
+  title="Two records of item A on a pipelined bus"
+  caption="An illustrative two-stage bus: each item's address phase is accepted at one rising edge and its data phase completes at the next, while the next item's address phase overlaps it. The x-axis is rising clock edges 0 to 4. The automatic record (uvm-core: from the grant in start_item until finish_item sees item_done) ends at edge 1, because this driver calls item_done when A's address phase is accepted. The driver's own record of A runs from the drive to edge 2, where end_tr writes its fields and triggers A's end event. A hatched X on the bus rows means idle (no phase in that cycle)."
+  edges={5}
+  cycleWidth={52}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "addr phase", kind: "bus", values: [undefined, "A", "B", undefined, undefined] },
+    { name: "data phase", kind: "bus", values: [undefined, undefined, "A", "B", undefined] },
+    { name: "auto rec A", kind: "bit", values: [1, 1, 0, 0, 0] },
+    { name: "drv rec A", kind: "bit", values: [0, 1, 1, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "item_done", label: "item_done(A) at address accept: the automatic record ends" },
+    { edge: 2, tone: "pass", short: "end_tr", label: "end_tr(A) after the data phase: the driver record ends" }
+  ]}
+/>
+
 ### Expert: component-level versus transaction-level recording
 
-Everything on this page is **component-level** recording (§13.1.7): the component owns the streams and decides. A `uvm_transaction` can also record itself: `enable_recording(stream)` (§5.4.2.9) points it at a stream, and its own `begin_tr`/`end_tr` then open and close records there. The two differ in when fields are written. §5.4.2.4 says the transaction-level `begin_tr` records the current property values at begin; uvm-core 2020.3.1 records them only in `end_tr`, like the component path. Label any code that depends on begin-time values as implementation-dependent. Component-level recording is the norm in UVM testbenches because the test can switch it per component.
+Everything on this page is **component-level** recording (§13.1.7): the component owns the streams and decides. A `uvm_transaction` can also record itself: `enable_recording(stream)` (§5.4.2.9) points it at a stream, and its own `begin_tr`/`end_tr` then open and close records there. The two differ in when fields are written. §5.4.2.4 says the transaction-level `begin_tr` records the current property values at begin, and §5.4.2.6 has its `end_tr` record the final values again; uvm-core 2020.3.1 records them only in `end_tr`, like the component path. Label any code that depends on begin-time values as implementation-dependent. Component-level recording is the norm in UVM testbenches because the test can switch it per component.
+
+| | Component-level (§13.1.7) | Transaction-level (§5.4.2) |
+|---|---|---|
+| Who owns the stream | the component: one stream per name you pass, scoped by its full name | whatever stream you pass to `enable_recording(stream)` (§5.4.2.9) |
+| Switched on by | `set_recording_enabled` on the component, or `set_recording_enabled_hier` (D.2.3) | `enable_recording` on the transaction |
+| The calls | `begin_tr(tr, ...)` and `end_tr(tr)` on the component | the transaction's own `begin_tr` and `end_tr` |
+| Fields written, per the standard | in `end_tr` (§13.1.7.5) | at begin (§5.4.2.4), then again at end with the final values (§5.4.2.6) |
+| Fields written, in uvm-core 2020.3.1 | in `end_tr` | in `end_tr`, like the component path |
 
 ### Expert: links beyond parent/child
 
 §7.3 defines three link classes, each created with a static `get_link(lhs, rhs)` and stored with the database's `establish_link` (§7.1.5): `uvm_parent_child_link` (§7.3.2, containment), `uvm_cause_effect_link` (§7.3.3, "this caused that", for example a request and its response) and `uvm_related_link` (§7.3.4). You need the recorders, which you get from handles with `uvm_recorder::get_recorder_from_handle` (§16.4.5.2). Two uvm-core facts to know: the automatic parent lookup in `begin_tr` is a uvm-core addition, and **the text database writes `LINK` lines only for parent/child and related links**; it drops a cause/effect link silently (`uvm_text_tr_database::do_establish_link`). A simulator's database may keep all three (tool-dependent). Where portability matters, pass `parent_handle` to `begin_tr` explicitly.
+
+| Link class | Means | Kept by uvm-core's text database |
+|---|---|---|
+| `uvm_parent_child_link` (§7.3.2) | containment: this record is part of that one | yes: `LINK ... RELATION=child` |
+| `uvm_cause_effect_link` (§7.3.3) | this caused that, such as a request and its response | no: dropped silently |
+| `uvm_related_link` (§7.3.4) | the two records are related | yes: a `LINK` line with an empty `RELATION` |
 
 ### Expert: when uvm-core reads recording_detail
 
@@ -850,6 +1071,34 @@ Start with the quiz, which covers all four objectives. Then do the kata, which i
     explanation: "uvm-core's uvm_text_tr_database opens its file with $fopen(..., \"a+\"). Recording on every run in one directory therefore accumulates without bound; it is both a disk cost and a source of confusion when reading the file."
   }
 ]} />
+
+After the quiz, check your answers against this one-glance picture of the core rule, then move on to the kata.
+
+<ArchitectureDiagram
+  title="One glance: what a begin_tr/end_tr pair leaves in the stream"
+  caption="Ask the three questions in order for the component that calls begin_tr. Each no ends at the symptom on its right; three yeses give a closed box with the field values as they were at end_tr. This is for begin_tr/end_tr records only: uvm-core writes error and event records even when recording is off."
+  cellWidth={150}
+  gapX={52}
+  cellHeight={56}
+  gapY={48}
+  nodes={[
+    { id: "gl-on", label: "recording on at begin_tr?", sublabel: "off by default; too late = nothing", col: 0, row: 0, state: "active" },
+    { id: "gl-none", label: "nothing recorded", sublabel: "begin_tr returns 0", col: 1, row: 0, state: "error" },
+    { id: "gl-end", label: "end_tr runs?", sublabel: "on every path", col: 0, row: 1, state: "active" },
+    { id: "gl-open", label: "box never closes", sublabel: "and holds no fields", col: 1, row: 1, state: "error" },
+    { id: "gl-rec", label: "record() has fields?", sublabel: "macros or do_record", col: 0, row: 2, state: "active" },
+    { id: "gl-times", label: "box with times only", sublabel: "no user fields", col: 1, row: 2, state: "error" },
+    { id: "gl-ok", label: "box with fields", sublabel: "values at end_tr", col: 0, row: 3, state: "ok" }
+  ]}
+  edges={[
+    { from: "gl-on", to: "gl-none", style: "causal", label: "no" },
+    { from: "gl-on", to: "gl-end", style: "causal", label: "yes" },
+    { from: "gl-end", to: "gl-open", style: "causal", label: "no" },
+    { from: "gl-end", to: "gl-rec", style: "causal", label: "yes" },
+    { from: "gl-rec", to: "gl-times", style: "causal", label: "no" },
+    { from: "gl-rec", to: "gl-ok", style: "causal", label: "yes" }
+  ]}
+/>
 
 ### Kata: record an agent and read its database
 

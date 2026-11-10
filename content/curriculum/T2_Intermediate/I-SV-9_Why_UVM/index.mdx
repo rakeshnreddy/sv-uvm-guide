@@ -91,9 +91,60 @@ The key property is **one job per class**: the driver knows the pins but not wha
 - **Reusing one transaction handle.** A mailbox carries *handles*, not copies (IEEE 1800-2023 §15.4). If the generator or monitor calls `new` once and then refills the same object, the receiver sees values that were overwritten after they were sent. Create a new object for every item, as `fifo_gen.run` and `fifo_mon.publish` do. The full story is in [I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes).
 - **Driving the DUT with blocking assignments at the clock edge.** The bench and the DUT wake on the same edge, and the simulator may run them in any order (§4.7), so the drive races the flops (§4.8). Drive through a clocking block (`vif.drv_cb.wr_en <= 1'b1`) and sample through one (`vif.mon_cb`), as in [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index). UVM does not fix this for you: a UVM driver still drives through a clocking block.
 
+**See mistake 1 happen.** In this model the monitor refills one object and the scoreboard stores the handle. Step through it, then choose a fix and check that the stored items keep their values. (Its log uses UVM-style messages, which this lesson introduces below.)
+
+<ObjectHandleVisualizer mode="bug" />
+
+**Mistake 2, done right, on a waveform.** This is what the driver's clocking-block drive looks like from the DUT's side.
+
+<TimingDiagram
+  title="A drv_cb drive reaches the DUT's flops at the next edge"
+  caption={"x-axis: rising edges 0 to 4 of clk, 10 ns apart (tb_top's always #5 clock); each column shows the value sampled at that edge. At edge 1 the driver executes vif.drv_cb.wr_en <= 1'b1. The drive lands in the Re-NBA region, after the flops have already sampled edge 1 (IEEE 1800-2023 §14.16), so the DUT first sees wr_en = 1 at edge 2, and dut.wptr steps from 0 to 1 just after edge 2. Here the FIFO is not full and the next item is a read, so at edge 2 the driver drives wr_en back to 0. A blocking drive at edge 1 would instead race the flops (§4.7, §4.8)."}
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "wr_en", kind: "bit", values: [0, 0, 1, 0, 0] },
+    { name: "dut.wptr", kind: "bus", values: [0, 0, 0, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "drive", label: "drv_cb drives wr_en = 1 after the flops sampled this edge" },
+    { edge: 2, tone: "sample", label: "the DUT's flops first see wr_en = 1" }
+  ]}
+/>
+
 ### Where the layered bench strains
 
-Nothing in the Make It Work bench is wrong. It is race-free, self-checking and passes with zero mismatches. Its limits appear only when the bench has to grow. Here are the six, each shown in the bench's own code.
+Nothing in the Make It Work bench is wrong. It is race-free, self-checking and passes with zero mismatches. Its limits appear only when the bench has to grow. Here are the six, each shown in the bench's own code. First, the map: each badge is a limit number, placed on the class whose code holds it.
+
+<ArchitectureDiagram
+  title="Where the six limits live in the layered bench"
+  cellWidth={120}
+  gapX={70}
+  caption={"Badges give the limit numbers from the list below. 1: env's constructor names every concrete class (gen = new(…), drv = new(…), mon = new(…)). 2: the vif, depth and n reach each layer only as constructor arguments, from tb_top through test (new(vif, depth)) and env (new(vif, depth, n)). 3: env.run starts every thread and decides the end by counting. 4: mon owns one mailbox per consumer. 5: gen is built inside env. 6: test prints PASS/FAIL from sb's counters, while u_sva (fifo_sva, bound into dut, so it is the instance dut.u_sva) reports with $error, which that verdict never sees."}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "test", label: "test", sublabel: "fifo_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 4, container: true, badge: "limits 2, 6" },
+    { id: "env", label: "env", sublabel: "fifo_env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true, badge: "limits 1, 3, 5" },
+    { id: "gen", label: "gen", sublabel: "fifo_gen", kind: "generic", col: 0, row: 0, badge: "limit 5" },
+    { id: "drv", label: "drv", sublabel: "fifo_drv", kind: "driver", col: 2, row: 0 },
+    { id: "sb", label: "sb", sublabel: "fifo_sb", kind: "scoreboard", col: 0, row: 1 },
+    { id: "mon", label: "mon", sublabel: "fifo_mon", kind: "monitor", col: 2, row: 1, badge: "limit 4" },
+    { id: "cov", label: "cov", sublabel: "fifo_cov", kind: "generic", col: 0, row: 2 },
+    { id: "args", label: "new(vif, depth[, n])", sublabel: "n from +N=", kind: "generic", col: 1, row: 3, badge: "limit 2" },
+    { id: "bus", label: "bus", sublabel: "fifo_if", kind: "interface", col: 3, row: 0 },
+    { id: "dut", label: "dut", sublabel: "sync_fifo", kind: "dut", col: 3, row: 1 },
+    { id: "sva", label: "u_sva", sublabel: "dut.u_sva (bound)", kind: "generic", col: 3, row: 2, badge: "limit 6" }
+  ]}
+  edges={[
+    { from: "gen", to: "drv", style: "data", label: "gen2drv" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "mon", to: "sb", style: "data", label: "mon2sb" },
+    { from: "mon", to: "cov", style: "data", label: "mon2cov", via: [[1, 2]] },
+    { from: "dut", to: "sva", style: "structural", label: "bind" }
+  ]}
+/>
 
 **1. Construction is hard-coded.** `fifo_env` names every concrete class:
 
@@ -123,11 +174,50 @@ join_any
 
 A second environment needs its own counting rule. Two environments in one bench must agree on who decides the end, and a rule like `#10000 $finish` cuts off transactions still in flight.
 
+<SequenceDiagram
+  title="fifo_env::run: how the hand-built bench decides the end"
+  caption={"Time runs downward. env starts gen.run() and three forever loops (drv, mon, cov) with fork … join_none; gen's loop ends after its last put of n_total items. Then env races the scoreboard against a watchdog with fork … join_any. Normally sb.run returns first; if the watchdog's count runs out first, it sets timed_out and reports TIMEOUT instead. Either way env waits two more mon_cb edges and kills every remaining thread with disable fork. All of this is code this bench invented; UVM replaces it with phasing and objections (next subsection)."}
+  participants={[
+    { id: "env", label: "env", sublabel: "fifo_env::run", kind: "env" },
+    { id: "layers", label: "gen, drv, mon, cov", sublabel: "their run tasks", kind: "generic" },
+    { id: "sb", label: "sb", sublabel: "fifo_sb::run", kind: "scoreboard" },
+    { id: "wd", label: "watchdog", sublabel: "a fork branch in env", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "async", from: "env", to: "layers", label: "fork … join_none: gen.run(), drv.run(), mon.run(), cov.run()" },
+    { kind: "async", from: "env", to: "sb", label: "fork: sb.run(gen.n_total)" },
+    { kind: "async", from: "env", to: "wd", label: "fork: repeat (4 * gen.n_total + 100) @(vif.mon_cb)" },
+    { kind: "note", from: "env", to: "wd", label: "join_any: env waits until the first of these two branches finishes" },
+    { kind: "divider", label: "items flow through the mailboxes; sb counts observations" },
+    { kind: "return", from: "sb", to: "env", label: "sb.run returns after gen.n_total observations" },
+    { kind: "divider", label: "repeat (2) @(vif.mon_cb): let fifo_cov sample the last item" },
+    { kind: "self", from: "env", label: "disable fork: stop the forever loops and the watchdog" }
+  ]}
+/>
+
 **4. Consumers are wired point to point.** The monitor owns one mailbox per consumer (`mon2sb`, `mon2cov`). Adding a protocol checker means editing the monitor's constructor and its `publish` function, and the environment.
 
 **5. Stimulus is welded into the environment.** `fifo_gen` is one random loop followed by drain reads. A directed corner case, a different traffic mix or a reused stimulus library means a new generator class and an edit to `fifo_env` to construct it.
 
 **6. Messages and the verdict are home-made.** The bench reports with `$display` and `$error`, and `fifo_test` computes `PASS=… FAIL=…` from the scoreboard's own counters. An `$error` from the bound assertion module `fifo_sva` is *not* in that count: the bench can print `FAIL=0` while an assertion failed. There is also no standard way to make the log quieter or louder.
+
+<ArchitectureDiagram
+  title="Limit 6: two error paths, one verdict"
+  cellWidth={120}
+  gapX={70}
+  caption={"Top row: sb counts every mismatch, and test.run adds n_mismatch, the pending model size and timed_out into FAIL= before printing PASS=… FAIL=…. Bottom row: u_sva's action block calls $error (an IEEE 1800-2023 §20.10 severity task). That message reaches the simulator log, but none of the bench's counters, so FAIL=0 can be printed next to an assertion failure. With UVM reporting (next subsection), the scoreboard and the assertion's action block can both call `uvm_error, so one report server counts both; a plain $error is still missed."}
+  nodes={[
+    { id: "sb", label: "sb", sublabel: "n_mismatch++", kind: "scoreboard", col: 0, row: 0 },
+    { id: "verdict", label: "test.run", sublabel: "PASS=… FAIL=…", kind: "test", col: 1, row: 0 },
+    { id: "sva", label: "u_sva", sublabel: "action block", kind: "generic", col: 0, row: 1, state: "error" },
+    { id: "log", label: "simulator log", sublabel: "text only, no count", kind: "generic", col: 2, row: 0, rowSpan: 2 }
+  ]}
+  edges={[
+    { from: "sb", to: "verdict", style: "data", label: "counters" },
+    { from: "verdict", to: "log", style: "data", label: "$display" },
+    { from: "sva", to: "log", style: "data", label: "$error" }
+  ]}
+/>
 
 **What this adds up to: copy-paste reuse.** At subsystem or SoC level the FIFO is written by RTL, not by your driver. To reuse your monitor, scoreboard and coverage there, without the generator and driver, you copy `fifo_env`, delete the stimulus half and re-wire the rest. Two copies then drift apart. This is the "reuse problem" UVM was built for.
 
@@ -190,6 +280,27 @@ seq.start(env.agt.sqr);
 phase.drop_objection(this);
 ```
 
+<figure className="my-6">
+  <svg viewBox="0 0 340 238" role="img" aria-label="The UVM phase order in three bands. At time 0: build_phase top-down, then connect_phase, end_of_elaboration_phase and start_of_simulation_phase. Then run_phase consumes simulation time, runs concurrently in every component, and ends when every objection is dropped. Then extract_phase, check_phase, report_phase and final_phase." style={{ width: "100%", maxWidth: 420 }}>
+    <rect x="8" y="8" width="324" height="88" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="18" y="25" fontSize="11" fontWeight="600" fill="currentColor">At time 0, in this order</text>
+    <text x="18" y="42" fontSize="10.5" fill="currentColor">1. build_phase (top-down)</text>
+    <text x="18" y="56" fontSize="10.5" fill="currentColor">2. connect_phase</text>
+    <text x="18" y="70" fontSize="10.5" fill="currentColor">3. end_of_elaboration_phase</text>
+    <text x="18" y="84" fontSize="10.5" fill="currentColor">4. start_of_simulation_phase</text>
+    <line x1="170" y1="96" x2="170" y2="112" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="112" width="324" height="56" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="18" y="129" fontSize="11" fontWeight="600" fill="currentColor">5. run_phase: consumes simulation time</text>
+    <text x="18" y="145" fontSize="10.5" fill="currentColor">runs concurrently in every component;</text>
+    <text x="18" y="159" fontSize="10.5" fill="currentColor">ends when every objection is dropped</text>
+    <line x1="170" y1="168" x2="170" y2="184" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="184" width="324" height="46" rx="6" fill="rgba(99,102,241,0.10)" stroke="rgb(99,102,241)" />
+    <text x="18" y="201" fontSize="11" fontWeight="600" fill="currentColor">Then, in this order</text>
+    <text x="18" y="219" fontSize="10.5" fill="currentColor">6. extract 7. check 8. report 9. final</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The phase order this paragraph lists (IEEE 1800.2-2020 §9.8.1), as one strip. Steps 6 to 9 are extract_phase, check_phase, report_phase and final_phase. Only the middle band takes simulation time, and it ends normally when every objection is dropped (§13.1.4.1.5). [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) steps through the full timeline.</figcaption>
+</figure>
+
 *What phasing does not do:* it orders construction and connection, but every component's `run_phase` runs concurrently (§9.6), so run-time races against the DUT are still prevented by clocking blocks, not by UVM. *New failure modes:* forget to raise and the run phase ends at time 0 with no traffic, which can look like a pass; forget to drop and the test hangs until a timeout.
 
 **TLM analysis ports.** The monitor publishes once; any number of subscribers listen:
@@ -205,6 +316,23 @@ agt.mon.ap.connect(cov.analysis_export); // uvm_subscriber's built-in imp
 ```
 
 `write` "Sends the specified value to all connected interfaces" (§12.2.10.1.4): it calls each subscriber's `write` function in turn, in zero time. Adding a checker adds one `connect` line in the environment; the monitor is not edited. *New failure mode:* an analysis port with nothing connected is legal, so a scoreboard that was never connected receives nothing and reports no mismatches. A good scoreboard checks in `check_phase` that it saw traffic.
+
+<SequenceDiagram
+  title="One ap.write(t) call, with two subscribers connected"
+  caption={"Time runs downward, but no simulation time passes: write is a function, so each subscriber's write must return before the next is called, and nothing is queued. Both subscribers receive the same handle t, not a copy, which is why a UVM monitor creates a new item before every write. IEEE 1800.2-2020 §12.2.10.1.4 says only that write sends the value to all connected interfaces; it names no order among subscribers, so the order drawn here is not a promise."}
+  participants={[
+    { id: "mon", label: "mon", sublabel: "fifo_mon, ap", kind: "monitor" },
+    { id: "sb", label: "sb", sublabel: "item_imp", kind: "scoreboard" },
+    { id: "cov", label: "cov", sublabel: "analysis_export", kind: "subscriber" }
+  ]}
+  messages={[
+    { from: "mon", to: "sb", label: "write(t)" },
+    { kind: "return", from: "sb", to: "mon", label: "returns" },
+    { from: "mon", to: "cov", label: "write(t)" },
+    { kind: "return", from: "cov", to: "mon", label: "returns" },
+    { kind: "note", from: "mon", to: "cov", label: "ap.write(t) has returned. A third subscriber would cost one connect line in fifo_env::connect_phase." }
+  ]}
+/>
 
 **Sequences.** The generator becomes a sequence object that runs on the agent's sequencer; the driver pulls items:
 
@@ -250,7 +378,7 @@ Pass or fail becomes "no `UVM_ERROR` and no `UVM_FATAL` in the report summary", 
 
 Put the two benches next to each other. On the left, the hand-built bench after three ordinary change requests: (a) one test needs `err_drv`, an error-injecting driver; (b) the SoC team wants the monitor, scoreboard and coverage with RTL driving the FIFO; (c) a protocol checker must see every transaction. The classes you would edit are marked. On the right, the same bench built from UVM base classes, with the six mechanisms marked where they live.
 
-<div className="grid gap-6 2xl:grid-cols-2">
+<div className="grid gap-6 grid-cols-[repeat(auto-fit,minmax(min(100%,640px),1fr))]">
 
 <ArchitectureDiagram
   title="Hand-built bench: classes edited by three change requests"
@@ -361,6 +489,48 @@ Two more facts about the shape of a UVM bench, which [I-UVM-1A](/curriculum/T2_I
 - **Components** (test, env, agent, sequencer, driver, monitor, scoreboard, subscriber) are "quasi-static objects that exist throughout simulation" and form a hierarchy, while **transactions** "are transient in nature" (§5.1). Your `fifo_txn` objects are created and dropped all the time; your `fifo_drv` lives for the whole test.
 - Every component is created in a parent's `build_phase` with `::type_id::create(name, this)`, never with `new`, so the factory can substitute it and the hierarchy knows its name.
 
+<figure className="my-6">
+  <svg viewBox="0 0 340 300" role="img" aria-label="The two branches of the UVM class tree. uvm_object at the top. Left branch, transient objects: uvm_transaction, then uvm_sequence_item, then uvm_sequence_base, then uvm_sequence. Right branch, quasi-static components: uvm_report_object, then uvm_component, which uvm_test, uvm_env, uvm_agent, uvm_driver, uvm_monitor, uvm_scoreboard, uvm_subscriber and uvm_sequencer_base extend; uvm_sequencer extends uvm_sequencer_base." style={{ width: "100%", maxWidth: 420 }}>
+    <rect x="110" y="8" width="120" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="170" y="24" fontSize="11" textAnchor="middle" fill="currentColor">uvm_object</text>
+    <path d="M170 32 V44 M86 44 H254 M86 44 V56 M254 44 V56" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="56" width="156" height="24" rx="5" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="86" y="72" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_transaction</text>
+    <path d="M86 80 V92" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="92" width="156" height="24" rx="5" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="86" y="108" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_sequence_item</text>
+    <path d="M86 116 V128" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="128" width="156" height="24" rx="5" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="86" y="144" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_sequence_base</text>
+    <path d="M86 152 V164" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="8" y="164" width="156" height="24" rx="5" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="86" y="180" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_sequence</text>
+    <text x="8" y="210" fontSize="10.5" fontWeight="600" fill="currentColor">Objects: transient</text>
+    <text x="8" y="224" fontSize="10" fill="currentColor" opacity="0.8">created and dropped</text>
+    <text x="8" y="237" fontSize="10" fill="currentColor" opacity="0.8">throughout the run</text>
+    <rect x="176" y="56" width="156" height="24" rx="5" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="254" y="72" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_report_object</text>
+    <path d="M254 80 V92" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="176" y="92" width="156" height="24" rx="5" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="254" y="108" fontSize="10.5" textAnchor="middle" fill="currentColor">uvm_component</text>
+    <path d="M254 116 V128" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="176" y="128" width="156" height="128" rx="5" fill="rgba(6,182,212,0.06)" stroke="rgb(6,182,212)" />
+    <text x="186" y="144" fontSize="10.5" fill="currentColor">uvm_test</text>
+    <text x="186" y="157" fontSize="10.5" fill="currentColor">uvm_env</text>
+    <text x="186" y="170" fontSize="10.5" fill="currentColor">uvm_agent</text>
+    <text x="186" y="183" fontSize="10.5" fill="currentColor">uvm_driver</text>
+    <text x="186" y="196" fontSize="10.5" fill="currentColor">uvm_monitor</text>
+    <text x="186" y="209" fontSize="10.5" fill="currentColor">uvm_scoreboard</text>
+    <text x="186" y="222" fontSize="10.5" fill="currentColor">uvm_subscriber</text>
+    <text x="186" y="235" fontSize="10.5" fill="currentColor">uvm_sequencer_base</text>
+    <path d="M192 239 V247 H200" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="204" y="250" fontSize="10.5" fill="currentColor">uvm_sequencer</text>
+    <text x="176" y="276" fontSize="10.5" fontWeight="600" fill="currentColor">Components: quasi-static</text>
+    <text x="176" y="290" fontSize="10" fill="currentColor" opacity="0.8">exist throughout simulation</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The two branches behind the mapping table (IEEE 1800.2-2020 §5.1). Each line means "extends": the lower class extends the one above it, and every class in the large box except uvm_sequencer extends uvm_component directly; uvm_sequencer extends uvm_sequencer_base, as its hook line shows (§13.2 to §13.9, §15.3, §15.5). The standard lets an implementation insert classes between two classes it shows (§1.4.3). Your fifo_txn would sit under uvm_sequence_item; your fifo_drv under uvm_driver.</figcaption>
+</figure>
+
 ### What UVM is, and what it is not
 
 <ArchitectureDiagram
@@ -422,6 +592,47 @@ UVM did not appear from nothing; it standardized what several vendor libraries h
   ]}
 />
 
+<figure className="my-6">
+  <svg viewBox="0 0 340 168" role="img" aria-label="A to-scale timeline from 2006 to 2024. AVM May 2006, OVM 1.0 January 2008, UVM 1.0 February 2011, UVM 1.2 June 2014, IEEE 1800.2-2017 February 2017, IEEE 1800.2-2020 June 2020, uvm-core 2020.3.1 September 2024. Pre-IEEE releases are hollow circles, IEEE standards are filled circles, and the reference implementation is a square." style={{ width: "100%", maxWidth: 520 }}>
+    <line x1="16" y1="80" x2="334" y2="80" stroke="currentColor" strokeOpacity="0.5" />
+    <line x1="20" y1="76" x2="20" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+    <line x1="86" y1="76" x2="86" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+    <line x1="168.5" y1="76" x2="168.5" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+    <line x1="251" y1="76" x2="251" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+    <line x1="317" y1="76" x2="317" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="20" y="140" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">2006</text>
+    <text x="86" y="140" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">2010</text>
+    <text x="168.5" y="140" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">2015</text>
+    <text x="251" y="140" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">2020</text>
+    <text x="317" y="140" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">2024</text>
+    <circle cx="26" cy="80" r="4" fill="none" stroke="currentColor" />
+    <circle cx="53" cy="80" r="4" fill="none" stroke="currentColor" />
+    <circle cx="104" cy="80" r="4" fill="none" stroke="currentColor" />
+    <circle cx="159" cy="80" r="4" fill="none" stroke="currentColor" />
+    <circle cx="203.5" cy="80" r="4.5" fill="currentColor" />
+    <circle cx="258" cy="80" r="4.5" fill="currentColor" />
+    <rect x="323" y="75" width="10" height="10" fill="rgb(6,182,212)" />
+    <path d="M26 74 V58 M104 74 V58 M203.5 74 V58 M328 74 V58 M53 86 V96 M159 86 V96 M258 86 V96" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="8" y="40" fontSize="10.5" fontWeight="600" fill="currentColor">AVM</text>
+    <text x="8" y="53" fontSize="10" fill="currentColor" opacity="0.8">May 2006</text>
+    <text x="104" y="40" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">UVM 1.0</text>
+    <text x="104" y="53" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.8">Feb 2011</text>
+    <text x="203.5" y="40" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">1800.2-2017</text>
+    <text x="203.5" y="53" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.8">Feb 2017</text>
+    <text x="334" y="27" fontSize="10.5" fontWeight="600" textAnchor="end" fill="currentColor">uvm-core</text>
+    <text x="334" y="40" fontSize="10" textAnchor="end" fill="currentColor">2020.3.1</text>
+    <text x="334" y="53" fontSize="10" textAnchor="end" fill="currentColor" opacity="0.8">Sep 2024</text>
+    <text x="53" y="109" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">OVM 1.0</text>
+    <text x="53" y="122" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.8">Jan 2008</text>
+    <text x="159" y="109" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">UVM 1.2</text>
+    <text x="159" y="122" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.8">Jun 2014</text>
+    <text x="258" y="109" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">1800.2-2020</text>
+    <text x="258" y="122" fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.8">Jun 2020</text>
+    <text x="8" y="160" fontSize="10" fill="currentColor" opacity="0.8">hollow: pre-IEEE release; filled: IEEE standard</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The same dates as the lineage diagram, to scale (one tick per five years, plus 2024). The square is the uvm-core reference implementation. Nearly eleven years of vendor and Accellera releases came before the first IEEE edition; URM, eRM and VMM are concept sources with no date here.</figcaption>
+</figure>
+
 Three facts to keep straight, because interviewers and older material get them wrong:
 - **The first IEEE UVM standard is IEEE 1800.2-2017**, not 2020. IEEE 1800.2-2020 is its revision ("Revision of IEEE Std 1800.2-2017"), and it is the edition this course follows.
 - **"UVM 1.2" is a pre-IEEE Accellera release.** Code written for it mostly runs on uvm-core, and uvm-core marks the leftovers it still supports as `@uvm-compat` (Expert: the standard and the implementation).
@@ -446,6 +657,20 @@ UVM is the usual choice for simulation benches that will be reused or shared, bu
 2. **A single-protocol subsystem** (a DMA engine with one bus interface) that the SoC team will reuse. UVM: the bus agent will be reused passively at SoC level, and tests will be selected and combined in regressions.
 3. **SoC integration** of a dozen IP blocks, each with an existing UVM agent. UVM without question: the passive agents, scoreboards and register models come from the block teams, and virtual sequences coordinate them ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
 
+**The three decisions against the criteria.** Each cell says which way that scenario's stated facts point; "not stated" means the scenario gives no fact for that criterion. Tools is left out because no scenario states it: check it for your own flow.
+
+| Criterion | 1. CRC block | 2. DMA subsystem | 3. SoC integration |
+|---|---|---|---|
+| Reuse horizon | Away: no reuse planned | Toward: the SoC team reuses the bus agent passively | Toward: the agents come from the block teams |
+| Team | Away: two engineers | Not stated | Toward: work from many block teams |
+| VIP | Not stated | Not stated | Toward: every IP block has an existing UVM agent |
+| Regression scale | Not stated | Toward: tests selected and combined in regressions | Not stated |
+| Protocol complexity | Not stated | Leans away: one bus interface | Toward: a dozen blocks, virtual sequences across agents |
+| Alternative methods | Away: formal is available | Not stated | Not stated |
+| **Decision** | **Formal plus a small class bench** | **UVM** | **UVM** |
+
+Read scenario 2 closely: one criterion leans away, yet the decision is UVM, because planned reuse outweighs it. The criteria are weighed, not counted.
+
 Two misconceptions to retire: "every bench needs UVM" (scenario 1 does not) and "UVM is chosen for simulation speed" (it is chosen for reuse and consistency, at some run-time cost).
 
 ### Recap
@@ -455,6 +680,54 @@ Two misconceptions to retire: "every bench needs UVM" (scenario 1 does not) and 
 - Six UVM mechanisms remove them, each with its own new failure mode: the factory, the configuration database, phasing with objections, TLM analysis ports, sequences on a sequencer, and reporting; the agent packages them for active or passive reuse.
 - Each layer has a UVM base class; the sequence and the agent are the two genuinely new shapes.
 - UVM is an IEEE 1800.2-2020 API with the uvm-core reference implementation: a SystemVerilog library, not a language, not faster, and not a substitute for your own checks, models and coverage. It is worth its overhead when reuse, team size, VIP and regression scale demand it.
+
+<VisualRecap
+  title="Six limits, six mechanisms, six failures that pass unnoticed unless you check"
+  rule="Each UVM mechanism removes one limit of the layered bench and brings one failure that is silent unless you check for it; the agent packages limits 1, 2 and 4 for active or passive reuse. UVM standardizes where checks live, not what they check."
+  code={`// snippet: err_test::build_phase
+fifo_drv::type_id::set_type_override(err_drv::get_type()); // factory
+
+// snippet: fifo_test::run_phase
+phase.raise_objection(this);                               // objections
+seq.start(env.agt.sqr);                                    // sequences
+phase.drop_objection(this);`}
+  mistake="Expecting a mechanism to fail loudly. A late override does nothing, an unchecked get leaves the vif null, a missing raise ends run_phase at time 0, an unconnected analysis port delivers to nobody, a missing item_done blocks finish_item, and a plain $error is missing from the report counts."
+  inTestbench="A typical UVM bench uses all six: the test sets overrides and configuration, raises and drops objections around its sequences; the env connects analysis ports; checks report with uvm_error."
+>
+  <svg viewBox="0 0 340 236" role="img" aria-label="Six rows. 1 hard-coded new: factory; a late override does nothing. 2 constructor arguments: configuration database; get returns 0 and the vif stays null. 3 end by counting: objections; no raise ends at time 0, no drop hangs. 4 one mailbox per consumer: analysis port; nothing connected means nobody receives. 5 generator in env: sequences; no item_done means finish_item waits. 6 home-made verdict: reporting; a plain $error is not counted. Footer: the agent packages limits 1, 2 and 4." style={{ width: "100%", maxWidth: 400 }}>
+    <text x="8" y="16" fontSize="10" fontWeight="600" fill="currentColor">Limit</text>
+    <text x="122" y="16" fontSize="10" fontWeight="600" fill="currentColor">UVM answer</text>
+    <text x="210" y="16" fontSize="10" fontWeight="600" fill="currentColor">Silent failure</text>
+    <line x1="8" y1="22" x2="332" y2="22" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="8" y="38" fontSize="10" fill="currentColor">1 hard-coded new</text>
+    <text x="122" y="38" fontSize="10" fill="currentColor">factory</text>
+    <text x="210" y="38" fontSize="10" fill="currentColor">late override:</text>
+    <text x="210" y="50" fontSize="10" fill="currentColor" opacity="0.8">does nothing</text>
+    <text x="8" y="70" fontSize="10" fill="currentColor">2 constructor args</text>
+    <text x="122" y="70" fontSize="10" fill="currentColor">config_db</text>
+    <text x="210" y="70" fontSize="10" fill="currentColor">get returns 0:</text>
+    <text x="210" y="82" fontSize="10" fill="currentColor" opacity="0.8">vif stays null</text>
+    <text x="8" y="102" fontSize="10" fill="currentColor">3 end by counting</text>
+    <text x="122" y="102" fontSize="10" fill="currentColor">objections</text>
+    <text x="210" y="102" fontSize="10" fill="currentColor">no raise: ends at 0</text>
+    <text x="210" y="114" fontSize="10" fill="currentColor" opacity="0.8">no drop: hangs</text>
+    <text x="8" y="134" fontSize="10" fill="currentColor">4 mailbox per</text>
+    <text x="8" y="146" fontSize="10" fill="currentColor">consumer</text>
+    <text x="122" y="134" fontSize="10" fill="currentColor">analysis port</text>
+    <text x="210" y="134" fontSize="10" fill="currentColor">nothing connected:</text>
+    <text x="210" y="146" fontSize="10" fill="currentColor" opacity="0.8">nobody receives</text>
+    <text x="8" y="166" fontSize="10" fill="currentColor">5 generator in env</text>
+    <text x="122" y="166" fontSize="10" fill="currentColor">sequences</text>
+    <text x="210" y="166" fontSize="10" fill="currentColor">no item_done:</text>
+    <text x="210" y="178" fontSize="10" fill="currentColor" opacity="0.8">finish_item waits</text>
+    <text x="8" y="198" fontSize="10" fill="currentColor">6 home-made verdict</text>
+    <text x="122" y="198" fontSize="10" fill="currentColor">reporting</text>
+    <text x="210" y="198" fontSize="10" fill="currentColor">plain $error:</text>
+    <text x="210" y="210" fontSize="10" fill="currentColor" opacity="0.8">not counted</text>
+    <line x1="8" y1="218" x2="332" y2="218" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="8" y="232" fontSize="10" fontWeight="600" fill="currentColor">agent = 1 + 2 + 4, packaged: active or passive</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -866,6 +1139,23 @@ The simulator adds its own `$finish` line. The coverage figure depends on the se
 4. **Annotate the mapping.** Next to each class, write its UVM base class and the mechanism that would replace its ad-hoc part. Check your answers against the mapping table.
 5. **Run the change requests.** For each of (a), (b) and (c) from the side-by-side picture, list the edits you would make here. Then read the debug challenge below.
 
+**Step 2 on a waveform.** One accepted read, as `mon_cb` samples it.
+
+<TimingDiagram
+  title="The registered read: rd_pending carries the read to the next edge"
+  caption={"x-axis: rising edges 0 to 4 of clk, 10 ns apart; each column is the pre-edge value mon_cb samples at that edge (the default input skew is 1step, IEEE 1800-2023 §14.3; input sampling, §14.13). Before edge 0 the previous read returned 5e, and a1 is at the head of the FIFO, which is not empty. At edge 1 the DUT accepts the read and loads a1 into rd_data just after that edge. The monitor therefore sets rd_pending at edge 1 and publishes the read at edge 2, when rd_data holds a1."}
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rd_en", kind: "bit", values: [0, 1, 0, 0, 0] },
+    { name: "rd_data", kind: "bus", values: ["5e", "5e", "a1", "a1", "a1"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "mon_cb: rd_en = 1, empty = 0, so rd_pending = 1" },
+    { edge: 2, tone: "pass", label: "publish(READ, a1, 1): rd_data now holds the read's data" }
+  ]}
+/>
+
 ### Debug challenge: three mutants
 
 Each mutant is a small edit to the bench above. Predict the symptom in the log before you open the answer.
@@ -884,6 +1174,21 @@ Each mutant is a small edit to the bench above. Predict the symptom in the log b
 <summary>Symptom, cause and fix</summary>
 
 **Symptom:** almost every accepted read mismatches, and the reported data is always the *previous* read's value (or `00` for the first read after reset). **Cause:** `rd_data` is a flop that updates at the edge that accepts the read; `mon_cb` samples the value from just before that edge (§14.13), which is the previous read's data. **Fix:** remember the accepted read and capture `rd_data` one edge later, as `rd_pending` does. A clocking block removes races, not the DUT's latency: the monitor must model the protocol's timing.
+
+<TimingDiagram
+  title="Mutant 2 on the same read"
+  caption={"x-axis: rising edges 0 to 4 of clk, as in the step 2 waveform: same signals and values. Mutant 2 publishes at edge 1, where it sees rd_en, and captures 5e, the previous read's data. The scoreboard expected a1, so it reports a mismatch."}
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rd_en", kind: "bit", values: [0, 1, 0, 0, 0] },
+    { name: "rd_data", kind: "bus", values: ["5e", "5e", "a1", "a1", "a1"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", label: "mutant 2: publish(READ, 5e, 1), the previous read's data" },
+    { edge: 2, tone: "info", label: "a1 only appears here, one edge too late for mutant 2" }
+  ]}
+/>
 </details>
 
 **Mutant 3.** `fifo_env::run` ends the test when the generator returns: `sb.run(gen.n_total)` moves into the `join_none` group, and `gen.run()` takes its place in the `join_any`.
@@ -914,9 +1219,42 @@ IEEE 1800.2-2020 defines an API, not source code. Several of its rules matter in
 - **uvm-core keeps compatibility shims**, marked `@uvm-compat` in its source: the global `uvm_top` ("Provided for compatibility with 1.2", `uvm_root.svh`) and the OVM-style `build()`, `connect()` and `run()` methods (`uvm_component.svh`, where `uvm_component::build_phase` simply calls `build()`). The standard spells the root `uvm_root::get()`.
 - **uvm-core deliberately diverges in one default.** Its automatic configuration mode defaults to `CONFIG_CHECK_NAMES`, which its source calls "a divergence from 1800.2, however the performance increase is drastic"; compiling with `+define+UVM_COMPONENT_CONFIG_MODE_DEFAULT=CONFIG_STRICT` restores the standard behaviour (`uvm_global_defines.svh`).
 
+**The same facts as a lookup table.** Use it to check whether a name you are about to rely on is portable.
+
+| Topic | IEEE 1800.2-2020 (portable) | uvm-core 2020.3.1 (uvm-core impl.) |
+|---|---|---|
+| Command-line plusargs | `+UVM_TESTNAME`, `+UVM_VERBOSITY` and the others in Annex G.2 | Adds `+UVM_TIMEOUT`, `+UVM_OBJECTION_TRACE`, `+UVM_PHASE_TRACE`, `+UVM_CONFIG_DB_TRACE` |
+| Debug helpers | Not defined | `uvm_root::set_enable_print_topology`, `check_config_usage`, `print_config` |
+| The root component | `uvm_root::get()` | Also the global `uvm_top`, marked `@uvm-compat` |
+| Phase methods | `build_phase`, `connect_phase`, `run_phase` and the rest | Also the OVM-style `build()`, `connect()`, `run()`, marked `@uvm-compat` |
+| Inheritance | `uvm_sequencer` extends `uvm_sequencer_base`; an implementation may insert classes between them (§1.4.3) | Inserts `uvm_sequencer_param_base` between them |
+| Automatic configuration default | The standard behaviour (`CONFIG_STRICT`) | `CONFIG_CHECK_NAMES`, a documented divergence chosen for speed; restore the standard behaviour with `+define+UVM_COMPONENT_CONFIG_MODE_DEFAULT=CONFIG_STRICT` |
+| Order of equivalent data | Not guaranteed (§1.4.4) | Not promised either: do not depend on the order one release happens to use |
+| Random stability | Guaranteed for every API unless otherwise specified, except APIs that result in user code being executed, which are not guaranteed to be random stable (§1.4.6) | Write to the standard rule: do not rely on random stability across an API that runs your code |
+
 *Practical rule:* write to the standard, and label every uvm-core-only feature you use, so the bench survives a different implementation or a newer uvm-core release.
 
 ### Expert: what UVM costs and how to measure it
+
+**Predict first.** A run uses `+UVM_VERBOSITY=UVM_LOW`, so every `UVM_HIGH` message below is filtered out. Which of the three styles pays for formatting the string on every call?
+
+```systemverilog
+// snippet: three ways to log one scoreboard value
+string msg;
+
+`uvm_info("SB", $sformatf("got %02h", t.data), UVM_HIGH)   // (a)
+
+msg = $sformatf("got %02h", t.data);                       // (b)
+`uvm_info("SB", msg, UVM_HIGH)
+
+$display("got %02h", t.data);                              // (c)
+```
+
+<details>
+<summary>Answer</summary>
+
+**(b) and (c).** In (a) the `$sformatf` is an argument of the macro, and the macro checks the verbosity and the action "before any string formatting is performed" (Annex B.1), so a filtered call formats nothing. In (b) the `$sformatf` runs on the line before the macro, whether or not the message is then filtered. In (c) nothing is filtered at all: `$display` formats and prints on every call. Keep formatting inside the macro call in hot code.
+</details>
 
 UVM's benefits are paid for in simulation time and memory, and the costs scale with how you use it:
 - **Objects and phases.** Every component is an object in a hierarchy, and every phase visits every component.
@@ -1214,6 +1552,19 @@ Item 4 is the honest exception: a well-written hand-built bench can already take
 Build the Make It Work bench yourself, from an empty file, on your simulator. **Acceptance:** zero mismatches over at least 1,000 random items, `pending=0`, coverage of at least 90%, the three bound assertions passing, and `PASS=<n> FAIL=0`. Then:
 1. Inject each of the three mutants and confirm the symptom you predicted.
 2. Make one change the bench cannot express cleanly (for example, the driver that drops every tenth write in one test only) and record every file you had to edit. Keep that list: you will redo the same change with a factory override in [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index).
+
+**Acceptance scorecard: where each criterion shows in the log.** The line formats are the ones the listing prints.
+
+| Criterion | Read it from | Passes when |
+|---|---|---|
+| At least 1,000 random items | Your `+N=` value and the `SCB_SUMMARY` line | `+N=1000` or more, and `matches=` equals N + 8 (the 8 drain reads) |
+| Zero mismatches | `SCB_SUMMARY` line | `mismatches=0`, and no `SCB mismatch` error lines |
+| Nothing left unchecked | `SCB_SUMMARY` line | `pending=0`, and no `TIMEOUT` line |
+| Coverage of at least 90% | `COVERAGE fifo_cov.cg = …` line | 90.0% or more |
+| The three bound assertions pass | The simulator log | No `SVA a_not_full_and_empty failed`, `SVA a_write_fills failed` or `SVA a_read_frees failed` line |
+| The verdict | The last line the test prints | `PASS=<n> FAIL=0` |
+
+The assertion row is the one the bench's own verdict cannot check for you (limit 6), so read the log for it.
 
 <details>
 <summary>Self-check list for the capstone</summary>

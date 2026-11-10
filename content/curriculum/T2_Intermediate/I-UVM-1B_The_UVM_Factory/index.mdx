@@ -13,9 +13,19 @@ sources:
 
 ## Quick Take
 
-- **What it is:** The **UVM factory** is the one object in a simulation that builds UVM objects and components on request. Each class registers a small stand-in with it, and code asks for a class with `T::type_id::create(...)` instead of `new()`. Before it builds anything, the factory checks whether a test has asked for a different class at that spot. That request is an **override**: a **type override** swaps a class everywhere, and an **instance override** swaps it at one place in the testbench hierarchy (IEEE 1800.2-2020 §8.1, §8.3.1.4).
+- **What it is:** The **UVM factory** is the one object in a simulation that builds UVM objects and components on request. Each class registers a small proxy object with it (its entry in the factory's books), and code asks for a class with `T::type_id::create(...)` instead of `new()`. Before it builds anything, the factory checks whether a test has asked for a different class at that spot. That request is an **override**: a **type override** swaps a class everywhere, and an **instance override** swaps it at one place in the testbench hierarchy (IEEE 1800.2-2020 §8.1, §8.3.1.4).
 - **Why it matters:** The environment that builds your drivers and monitors should be written once and reused by every test. With the factory, a test can say "build an error-injecting driver in agent 0" or "use a quieter monitor everywhere" without editing a line of the environment. Without it, every variation means a copy of the environment, or `if` statements scattered through it.
 - **The Analogy:** A casting director. Every actor registers with the agency (registration). The director hands the agency a list of recasts: "in scene 3, Ann plays the guard" (an instance override) or "Bob plays every guard" (a type override). When a scene is shot, the agency sends whoever the list says (`create`). *Where it breaks:* a recast changes only scenes shot after it is written down, so an object that already exists keeps its class. The stand-in must be able to play the part, which means the override class must extend the original. And an actor hired straight off the street (`new()`) never goes through the agency, so no recast can reach them.
+
+**The analogy at a glance**, with the limits from the last sentence beside the part they belong to:
+
+| In the analogy | In UVM | Where it breaks |
+|---|---|---|
+| registering with the agency | a registration macro gives the class a proxy (its entry in the agency's books) | no limit: this part maps directly |
+| the list of recasts | type and instance overrides held by the factory | a recast reaches only scenes shot after it is written down: an object that already exists keeps its class |
+| "in scene 3" | one place in the testbench hierarchy (an instance path) | no limit: this part maps directly |
+| the agency sends whoever the list says | `T::type_id::create(...)` asks the factory | the stand-in must be able to play the part: the override class must extend the original |
+| an actor hired off the street | `new()` | never goes through the agency, so no recast reaches it |
 
 **You will be able to:**
 
@@ -64,7 +74,7 @@ Every use of the factory follows the same three steps, at three different times:
   ]}
 />
 
-1. **Register.** A registration macro in each class gives it a **proxy** (a small stand-in object for the class, explained in the next section), and the proxy is registered with the factory when UVM initializes, before any phase runs.
+1. **Register.** A registration macro in each class gives it a **proxy** (a small object that represents the class, explained in the next section), and the proxy is registered with the factory when UVM initializes, before any phase runs.
 2. **Override.** The test tells the factory which class to substitute, usually in its `build_phase`.
 3. **Create.** Each parent builds its children with `T::type_id::create(name, this)`. The factory looks up the overrides **at that moment** and builds the class they select.
 
@@ -72,7 +82,7 @@ Keep one sentence in mind for the rest of the page: *register, override, then cr
 
 ### Registration: the `type_id` proxy
 
-A **proxy** (the standard also says *wrapper*) is a small object that stands in for a class. There is one per registered class, it holds the class's type name, and it knows how to construct that class. The factory stores proxies, not instances, so registering a class never builds one (IEEE 1800.2-2020 §8.2.1). All proxies extend `uvm_object_wrapper`, which is why the factory's type-based methods take `uvm_object_wrapper` arguments (§8.3.2).
+A **proxy** (the standard also says *wrapper*) is a small object that represents a class. There is one per registered class, it holds the class's type name, and it knows how to construct that class. The factory stores proxies, not instances, so registering a class never builds one (IEEE 1800.2-2020 §8.2.1). All proxies extend `uvm_object_wrapper`, which is why the factory's type-based methods take `uvm_object_wrapper` arguments (§8.3.2).
 
 The registration macros create the proxy for you. Here is what `` `uvm_component_utils(mock_driver) `` expands to in uvm-core 2020.3.1 (`src/macros/uvm_object_defines.svh`), slightly simplified:
 
@@ -100,7 +110,7 @@ So `type_id` is a **class type** (the registry specialized for `mock_driver`), a
 | Component (driver, agent, env, test) | `` `uvm_component_utils(T) `` | `new(string name, uvm_component parent)` |
 | Object (sequence item, sequence, configuration) | `` `uvm_object_utils(T) `` | `new(string name = "T")`; every argument needs a default |
 
-The factory itself is reached with `uvm_factory::get()`. That static method is a wrapper around the **core service**, `uvm_coreservice_t`, the singleton (the one and only object of its class) that holds UVM's global services: the factory, the report server and `uvm_root` (§8.3.1.2.1, F.4.1.4.2). You can always write `uvm_coreservice_t::get().get_factory()` instead; both return the same object.
+The factory itself is reached with `uvm_factory::get()`. That static method is a wrapper around the **core service**, `uvm_coreservice_t`, the singleton (the one and only object of its class) that holds UVM's global services, among them the factory, the report server and `uvm_root` (§8.3.1.2.1, F.4.1.4.2). You can always write `uvm_coreservice_t::get().get_factory()` instead; both return the same object.
 
 **Two classic mistakes:**
 
@@ -135,7 +145,7 @@ Here is the whole call, step by step, for the driver in `agt1` when the test has
 
 <SequenceDiagram
   title={'What base_driver::type_id::create("drv", this) does'}
-  caption="The agent asks base_driver's proxy (base_driver::type_id); the proxy asks the factory; the factory looks up the overrides for the full path and asks mock_driver's proxy (mock_driver::type_id), which constructs the new mock_driver object, drv. The requesting proxy then checks the result with $cast. uvm-core routes step 2 through an internal helper (uvm_registry_common), which this diagram leaves out."
+  caption="The agent asks base_driver's proxy (base_driver::type_id); the proxy asks the factory; the factory looks up the overrides for the full path and asks mock_driver's proxy (mock_driver::type_id), which constructs the new mock_driver object, drv. The requesting proxy then checks the result with $cast. Step 2 is the factory's create_component_by_type method, and step 3 is its find_override_by_type method. uvm-core routes step 2 through an internal helper (uvm_registry_common), which this diagram leaves out."
   participants={[
     { id: "agt", label: "my_agent", sublabel: "uvm_test_top.env.agt1", kind: "agent" },
     { id: "breg", label: "base_driver", sublabel: "type_id (proxy)" },
@@ -146,14 +156,15 @@ Here is the whole call, step by step, for the driver in `agt1` when the test has
   messages={[
     { from: "agt", to: "breg", label: "create(\"drv\", this)" },
     { kind: "note", from: "breg", to: "fac", label: "contxt is empty, so contxt = parent.get_full_name() = \"uvm_test_top.env.agt1\"" },
-    { from: "breg", to: "fac", label: "create_component_by_type (base_driver proxy, contxt, \"drv\", this)" },
-    { kind: "self", from: "fac", label: "find_override_by_type(base_driver proxy, \"uvm_test_top.env.agt1.drv\")" },
-    { kind: "note", from: "fac", to: "mreg", label: "instance overrides first, in registration order, first match wins; then the type override; repeat for the new class", tone: "active" },
-    { from: "fac", to: "mreg", label: "create_component(\"drv\", this)" },
+    { from: "breg", to: "fac", label: "create by type (base_driver proxy, contxt, \"drv\", this)" },
+    { kind: "self", from: "fac", label: "find override" },
+    { kind: "note", from: "fac", to: "obj", label: "find_override_by_type(base_driver proxy, \"uvm_test_top.env.agt1.drv\"): instance overrides first, in registration order, first match wins; then the type override; repeat for the new class", tone: "active" },
+    { from: "fac", to: "mreg", label: "create_component (\"drv\", this)" },
     { from: "mreg", to: "obj", label: "new(\"drv\", this)" },
     { kind: "return", from: "mreg", to: "fac", label: "uvm_component handle" },
     { kind: "return", from: "fac", to: "breg", label: "uvm_component handle" },
-    { kind: "self", from: "breg", label: "$cast to base_driver; UVM_FATAL [FCTTYP] if it fails" },
+    { kind: "self", from: "breg", label: "$cast check" },
+    { kind: "note", from: "breg", to: "fac", label: "$cast to base_driver; UVM_FATAL [FCTTYP] if it fails" },
     { kind: "return", from: "breg", to: "agt", label: "drv: a base_driver handle to a mock_driver" }
   ]}
 />
@@ -234,6 +245,21 @@ set_inst_override(err_driver::get_type(), "env.agt0.drv", this);
 
 Always qualify the shortcut (`base_driver::type_id::set_inst_override(...)`), or use form (c).
 
+**Every override call form on one card.** The argument order and the path rule are what to check first when an override does nothing:
+
+| Call | Arguments, in order | Path | Classes named by |
+|---|---|---|---|
+| `T::type_id::set_type_override` (§8.2.3.2.5) | override proxy [, replace] | none: every path | type (the compiler checks the name; compatibility is checked at create, `FCTTYP`) |
+| `T::type_id::set_inst_override` (§8.2.3.2.6) | override proxy, path [, parent] | relative to `parent` when you pass one, otherwise absolute | type |
+| `uvm_factory` `set_type_override_by_type` / `_by_name` (§8.3.1.4.2) | original, override [, replace] | none: every path | type / name string |
+| `uvm_factory` `set_inst_override_by_type` / `_by_name` (§8.3.1.4.1) | original, override, full path | always absolute | type / name string |
+| `uvm_component` `set_type_override_by_type` (D.2.1.3) / `set_type_override` (D.2.1.5) | original, override [, replace] | none: every path | type / name string |
+| `uvm_component` `set_inst_override_by_type` (D.2.1.4) / `set_inst_override` (D.2.1.6) | **path first**, original, override | relative to the calling component | type / name string |
+| `+uvm_set_type_override` (G.2.7) | requested type, override type [, replace] | none: every path | name string |
+| `+uvm_set_inst_override` (G.2.7) | requested type, override type, full path | absolute | name string |
+
+The `type_id` and `uvm_factory` forms work anywhere, including `tb_top`. The `uvm_component` instance forms work only inside a component, because their path is relative to it. The `uvm_component` type forms are static (D.2.1.3, D.2.1.5), so `uvm_component::set_type_override_by_type(...)` also works from `tb_top`. A name string is checked only at run time.
+
 ### How create() resolves the class
 
 When `create` runs, the factory applies these rules. They are normative in IEEE 1800.2-2020 §8.3.1.4.1, §8.3.1.4.2 and §8.3.1.5, and the uvm-core 2020.3.1 `uvm_default_factory` implements them as stated (loop detection is the one exception; see Push Further).
@@ -244,6 +270,29 @@ When `create` runs, the factory applies these rules. They are normative in IEEE 
 4. **Overrides chain.** If `base_driver → mock_driver` and `mock_driver → err_driver` are both registered, a request for `base_driver` builds `err_driver`. The factory repeats the lookup, instance overrides first, for each new class. The standard makes a loop (`A → B` and `B → A`) an error (§8.3.1.5); never register one.
 5. **Timing matters.** An override affects only `create()` calls made after it is registered. Because build runs top-down, an override set anywhere in the test's `build_phase` still reaches the drivers. An override set in `connect_phase` reaches nothing that `build_phase` created.
 6. **`type_id::create` checks the result.** It `$cast`s the object to the requested class, and an override class that does not extend it gives `UVM_FATAL [FCTTYP]`.
+
+Rule 5 is the one that depends on time, so here it is on a timeline. The test registers one override in `build_phase` and, as a mistake, a second one in `connect_phase`:
+
+<SequenceDiagram
+  title="Rule 5: an override reaches only create() calls made after it"
+  caption={'Time runs downward. The instance override is registered in the test\'s build_phase, before env exists, so the create() in agt1\'s build_phase, which runs later because build is top-down, finds it. The type override registered in connect_phase comes after every build_phase has finished: the drivers already exist and keep their class. The calls, in order: base_driver::type_id::set_inst_override(mock_driver::get_type(), "env.agt1.drv", this) and my_env::type_id::create("env", this) in the test\'s build_phase; base_driver::type_id::create("drv", this) in agt1\'s build_phase; base_driver::type_id::set_type_override(err_driver::get_type()) in connect_phase.'}
+  participants={[
+    { id: "test", label: "uvm_test_top", sublabel: "mock_test", kind: "test" },
+    { id: "fac", label: "uvm_factory" },
+    { id: "agt", label: "agt1", sublabel: "my_agent", kind: "agent" }
+  ]}
+  messages={[
+    { from: "test", to: "fac", label: "build_phase: instance override, env.agt1.drv to mock_driver" },
+    { from: "test", to: "fac", label: "creates env through my_env::type_id" },
+    { kind: "divider", label: "the test's build_phase ends; env's build_phase creates agt0 and agt1" },
+    { kind: "divider", label: "agt1's build_phase runs" },
+    { from: "agt", to: "fac", label: "create(\"drv\", this) for a base_driver" },
+    { kind: "return", from: "fac", to: "agt", label: "a mock_driver: the override already exists", tone: "active" },
+    { kind: "divider", label: "every build_phase has finished; connect_phase starts" },
+    { from: "test", to: "fac", label: "connect_phase: type override, base_driver to err_driver", tone: "error" },
+    { kind: "note", from: "fac", to: "agt", label: "Too late for the drivers: each keeps its class. It would reach only a base_driver created after this point, and no component is built after build_phase.", tone: "error" }
+  ]}
+/>
 
 Now test the rules on the factory model. Each puzzle shows the test code and asks which class one `create()` builds. **Commit to an answer before you reveal the factory's lookup,** then press "Change one thing" and predict again. Use the same names as this page: `my_test`, `my_env`, `my_agent` (instances `agt0` and `agt1`), `base_driver`, `mock_driver` and `err_driver`. In the visualizers' class table, `err_driver` extends `mock_driver`; in this page's code it extends `base_driver` directly.
 
@@ -299,7 +348,16 @@ UVM_INFO @ 0: reporter [INSTOVR] Applying instance override from the command lin
 UVM_INFO @ 0: reporter [UVM_CMDLINE_PROC] Applying type override from the command line: +uvm_set_type_override=base_driver,mock_driver
 ```
 
-Because the command line registers first, the rules above decide what happens when the test registers an override for the same class in its `build_phase`:
+Because the command line registers first, the rules above decide what happens when the test registers an override for the same class in its `build_phase`.
+
+**Predict first.** For each case, name the class that the driver at `uvm_test_top.env.agt0.drv` becomes, and the rule from the list above that decides it:
+
+1. The command line registers a type override `base_driver → mock_driver`; then the test's `build_phase` registers a type override `base_driver → err_driver` (default `replace`).
+2. The same, but the test's call passes `replace = 0`.
+3. The command line registers an instance override at `uvm_test_top.env.agt0.drv`; then the test registers an instance override, to a different class, at the same path.
+
+<details>
+<summary>Check your predictions</summary>
 
 | Registered in this order | Result | Rule |
 |---|---|---|
@@ -307,7 +365,11 @@ Because the command line registers first, the rules above decide what happens wh
 | same, but the test passes `replace = 0` | `mock_driver` (the test's call is ignored, `TPREGD`) | `replace = 0` |
 | command line: instance at `uvm_test_top.env.agt0.drv`; then test: instance at the same path | the command line's class | first registered match |
 
-So a regression can retarget a test from the command line only where the test has not claimed the same type override itself. Push Further explains the corner where the test registers in its constructor instead.
+So a regression can retarget a test from the command line only where the test has not claimed the same type override itself.
+
+</details>
+
+Push Further explains the corner where the test registers in its constructor instead.
 
 ### Creating a class chosen by name
 
@@ -398,11 +460,13 @@ Asking for an abstract class that has no override is an error (§8.2.5). uvm-cor
 
 **Choosing the macro:**
 
-| The class is … | Macro |
-|---|---|
-| an ordinary component or object | `` `uvm_component_utils(T) `` / `` `uvm_object_utils(T) `` |
-| parameterized, such as `width_driver #(W)` | `` `uvm_component_param_utils(T #(P)) `` / `` `uvm_object_param_utils(T #(P)) `` |
-| abstract (`virtual class`) | `` `uvm_component_abstract_utils(T) `` / `` `uvm_object_abstract_utils(T) `` |
+| The class is … | Macro | Proxy class `type_id` names (component / object) | Type name for lookups? |
+|---|---|---|---|
+| an ordinary component or object | `` `uvm_component_utils(T) `` / `` `uvm_object_utils(T) `` | `uvm_component_registry #(T, "T")` / `uvm_object_registry #(T, "T")` | yes |
+| parameterized, such as `width_driver #(W)` | `` `uvm_component_param_utils(T #(P)) `` / `` `uvm_object_param_utils(T #(P)) `` | `uvm_component_registry #(T #(P))` / `uvm_object_registry #(T #(P))` | no |
+| abstract (`virtual class`) | `` `uvm_component_abstract_utils(T) `` / `` `uvm_object_abstract_utils(T) `` | `uvm_abstract_component_registry #(T, "T")` / `uvm_abstract_object_registry #(T, "T")` | yes |
+
+A class that is both abstract and parameterized combines the two: `` `uvm_component_abstract_param_utils(T #(P)) `` / `` `uvm_object_abstract_param_utils(T #(P)) `` (listed in B.2.1.2–B.2.1.3) declare the abstract proxy with no type name. The proxy columns come from the macro expansions in uvm-core 2020.3.1 `src/macros/uvm_object_defines.svh`.
 
 ### Common mistakes, and why each one fails
 
@@ -415,6 +479,21 @@ Asking for an abstract class that has no override is an error (§8.2.5). uvm-cor
 - **An incompatible class.** The override does not extend the original: `UVM_FATAL [FCTTYP]` when the requesting proxy `$cast`s the result.
 - **A broad instance override registered first.** It hides every specific one registered after it.
 - **Misspelled names in by-name overrides.** A misspelled *original* name never matches, silently. A misspelled *override* name gives `UVM_ERROR [TYPNTF]` ("Cannot resolve override …") when `create` runs, after which the factory has no proxy to call, and the simulator stops on a null-object access.
+
+The same mistakes, sorted by the step of *register, override, then create* that each one breaks. Most of them leave nothing in the log, which is why the next section starts from two prints instead of from messages:
+
+| Step it breaks | Mistake | What the log shows |
+|---|---|---|
+| register | no macro on the override class | `UVM_WARNING [TYPDUP]` |
+| register | no registered ancestor at all | `UVM_ERROR [NOTYPID]`, then `UVM_FATAL [NULLWR]` |
+| override | registered too late | nothing |
+| override | relative path given where an absolute one is expected | nothing |
+| override | broad instance override registered first | nothing |
+| override | misspelled original name (by name) | nothing |
+| override | misspelled override name (by name) | `UVM_ERROR [TYPNTF]` when `create` runs, then a null-object access |
+| create | `new()` instead of `create` | nothing |
+| create | object created with no context | nothing |
+| create (its `$cast`) | override class does not extend the original | `UVM_FATAL [FCTTYP]` |
 
 ### Debugging an override that did nothing
 
@@ -453,6 +532,26 @@ Now practise on the explorer. Pick each **Debug** scenario, form a hypothesis fr
 **What the debug scenarios showed.** "Override ignored" is the timing rule: in `connect_phase` the drivers already exist. "new() in the agent" is the only case where the override is correct and registered in time, yet the factory is never asked. "Path typo" is silent, as every non-matching path is: the lookup log compares the registered pattern with the real path and finds no match. "FCTTYP fatal" shows that the factory itself happily builds an unrelated class; only the requesting proxy's `$cast` objects to it.
 
 ### Where the factory sits in a real testbench
+
+<ArchitectureDiagram
+  title="Tests decide, environments create"
+  caption="Read from the top. Each test subclass registers one override in its build_phase and then calls super.build_phase, so the base test, my_test, creates env with the policy already in place; my_test also prints the factory and the topology in end_of_elaboration_phase. my_env and my_agent are the same code under every test: they only call type_id::create. mock_test is the Make It Work test; err_test is the one you write in the Kata."
+  cellWidth={150}
+  gapX={56}
+  nodes={[
+    { id: "mock", label: "mock_test", sublabel: "override at env.agt1.drv", kind: "test", col: 0, row: 0 },
+    { id: "err", label: "err_test", sublabel: "override at env.agt0.drv", kind: "test", col: 1, row: 0 },
+    { id: "base", label: "my_test (base test)", sublabel: "creates env; prints the factory and topology", kind: "test", col: 0, row: 1, colSpan: 2 },
+    { id: "env", label: "my_env (unchanged)", sublabel: "my_agent::type_id::create, twice", kind: "env", col: 0, row: 2, colSpan: 2 },
+    { id: "agt", label: "my_agent (unchanged)", sublabel: "base_driver::type_id::create(\"drv\", this)", kind: "agent", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "mock", to: "base", style: "structural", label: "extends" },
+    { from: "err", to: "base", style: "structural", label: "extends" },
+    { from: "base", to: "env", style: "causal", label: "creates" },
+    { from: "env", to: "agt", style: "causal", label: "creates" }
+  ]}
+/>
 
 - **Environments create, tests decide.** Every reusable component builds its children with `type_id::create`, and only tests (usually a base test and its subclasses) register overrides, in `build_phase`, before they create the environment. Then the factory print in the base test documents each test's policy.
 - **Typical overrides:** an error-injecting driver in one agent, a sequence item with extra constraints for a directed test, a monitor subclass with extra coverage, a stub or mock in place of a component that is not ready yet.
@@ -733,6 +832,15 @@ With `+UVM_TESTNAME=my_test` the factory print says "No instance or type overrid
 
 The second run gets the same result **without** `mock_test`. Its log adds one line, `[INSTOVR] Applying instance override from the command line: +uvm_set_inst_override=base_driver,mock_driver,uvm_test_top.env.agt1.drv`, and the "Running test" line names `my_test`. The open-source Verilator flow has limited UVM support, so it is not a verified option for this example.
 
+**Predict a third run.** `my_test` registers no override of its own. Run it with a type override from the command line instead: `+UVM_TESTNAME=my_test +uvm_set_type_override=base_driver,mock_driver`. What do the topology's two `drv` rows show, which tag do the four item lines carry, and which extra line does the log print? Answer before you open it.
+
+<details>
+<summary>Check your prediction</summary>
+
+Both `drv` rows show `mock_driver`, because a type override reaches every `base_driver` that `type_id::create` builds, and no instance override or test override competes with it. All four item lines are `[MOCK] accept …, drive nothing`, two from `uvm_test_top.env.agt0.drv` and two from `uvm_test_top.env.agt1.drv`. The log adds `[UVM_CMDLINE_PROC] Applying type override from the command line: +uvm_set_type_override=base_driver,mock_driver`, and the factory print lists the override under "Type Overrides" instead of "Instance Overrides".
+
+</details>
+
 **How to add a factory override to a test:**
 
 1. Make sure the class you want to replace, and the class you replace it with, both have a `uvm_*_utils` macro, and that the replacement extends the original.
@@ -756,6 +864,29 @@ The second run gets the same result **without** `mock_test`. Its log adds one li
 
 The order in which overrides reach the factory decides which one wins, and the command line sits at a fixed point in that order. In uvm-core 2020.3.1, `run_test` creates the test by name first (`uvm_root.svh`), then phasing starts and `uvm_root::build_phase` applies the `+uvm_set_*_override` plusargs (`m_do_factory_settings`), and only then does the test's `build_phase` run. Two placements in the test therefore behave differently:
 
+<SequenceDiagram
+  title="When each override reaches the factory (uvm-core 2020.3.1)"
+  caption={'Time runs downward, and each override is registered in this order. run_test creates the test with create_component_by_name(test name, "", "uvm_test_top", null), so the test\'s constructor runs inside run_test, before phasing. The plusargs are applied in uvm_root\'s build_phase, which runs before the test\'s because build is top-down: m_do_factory_settings applies every +uvm_set_inst_override, then every +uvm_set_type_override, logging INSTOVR and UVM_CMDLINE_PROC lines. The test\'s build_phase comes next; the drivers\' create() calls come last and see every override above them. The point at which the plusargs are applied is a uvm-core implementation detail, not part of IEEE 1800.2-2020.'}
+  participants={[
+    { id: "tb", label: "tb_top" },
+    { id: "root", label: "uvm_root" },
+    { id: "fac", label: "uvm_factory" },
+    { id: "test", label: "uvm_test_top", sublabel: "the test", kind: "test" }
+  ]}
+  messages={[
+    { from: "tb", to: "root", label: "run_test()" },
+    { from: "root", to: "fac", label: "creates the test by name, as uvm_test_top" },
+    { from: "fac", to: "test", label: "new(): overrides in the constructor register first", tone: "active" },
+    { kind: "divider", label: "phasing starts: build_phase, top-down" },
+    { kind: "note", from: "root", to: "fac", label: "uvm_root's build_phase calls m_do_factory_settings" },
+    { from: "root", to: "fac", label: "inst plusargs, then type plusargs" },
+    { kind: "divider", label: "uvm_test_top's build_phase" },
+    { from: "test", to: "fac", label: "the test's build_phase overrides register after the command line" },
+    { kind: "note", from: "fac", to: "test", label: "Then env, the agents and the drivers are created, and each create() sees all of the above." },
+    { kind: "note", from: "tb", to: "fac", label: "A command-line override of the test class comes after the test exists, so it does nothing. One set in tb_top before run_test does apply." }
+  ]}
+/>
+
 - **Overrides in the test's `build_phase`** come after the command line. The test's type override replaces a command-line type override for the same class (`replace = 1`), while a command-line instance override still wins for the same path, because it was registered first.
 - **Overrides in the test's constructor** come before the command line. A command-line type override then replaces the test's, and the test's instance overrides precede the command line's.
 
@@ -765,7 +896,32 @@ A command-line override of the **test class itself** has no effect, because the 
 
 `` `uvm_component_param_utils(width_driver #(W)) `` declares the proxy and `get_type()` but **no** `get_type_name()` (uvm-core 2020.3.1 `uvm_object_defines.svh`). So a `width_driver #(16)` inherits `get_type_name()` from `base_driver`, and `print_topology()` labels it `base_driver`, while `factory.print()` shows `<unknown>`. If you need readable logs, override `get_type_name()` yourself, for example to return `$sformatf("width_driver #(%0d)", W)`. That changes only messages: the proxy still has no type name, so lookup by name still fails (B.2.1.3, §8.3.1.3). The UVM library uses param registration for its own parameterized classes; `uvm_driver #(REQ, RSP)` is one, which is why `base_driver` extends a specialization of a parameterized class and still registers normally with `` `uvm_component_utils ``.
 
+What each place shows for one `width_driver #(16)` built through a type override:
+
+| Where you look | With the param macro only | After you add your own `get_type_name()` |
+|---|---|---|
+| `factory.print()` | `<unknown>` | still `<unknown>`: the proxy has no type name |
+| `print_topology()` and `get_type_name()` in messages | `base_driver` (inherited) | `width_driver #(16)` |
+| lookup by name (`set_*_override_by_name`, plusargs, `create_*_by_name`) | fails: no registered name | still fails |
+
 ### Expert: the factory is a replaceable service
+
+<ArchitectureDiagram
+  title="The factory is one service held by uvm_coreservice_t"
+  caption="uvm_coreservice_t is a singleton that holds UVM's global services, among them the factory (a uvm_default_factory unless someone installs another), the report server and uvm_root. uvm_factory::get() and set() are wrappers that go through it, so every caller reaches the same factory object, and the overrides live inside that object. Install a custom factory before any override is registered."
+  cellWidth={180}
+  gapX={40}
+  nodes={[
+    { id: "wrap", label: "uvm_factory::get()/set()", sublabel: "static wrappers", col: 0, row: 0 },
+    { id: "cs", label: "uvm_coreservice_t", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "fac", label: "get_factory()", sublabel: "default: uvm_default_factory", col: 1, row: 0 },
+    { id: "rs", label: "get_report_server()", sublabel: "the report server", col: 1, row: 1 },
+    { id: "root", label: "get_root()", sublabel: "uvm_root", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "wrap", to: "fac", style: "causal" }
+  ]}
+/>
 
 There is one factory per simulation (§8.1). `uvm_factory::get()` and `uvm_factory::set()` are convenience wrappers around `uvm_coreservice_t::get_factory()` and `set_factory()` (§8.3.1.2.1–§8.3.1.2.2, F.4.1.4.2–F.4.1.4.3), and `uvm_default_factory` is the implementation you normally get (§8.3.3). A methodology team can install a factory subclass, for example one that logs every `create` for an audit. Overrides are stored inside the factory object, so a factory must be installed before any override is registered, and a custom factory must keep the lookup rules, or every test's policy changes meaning. Treat this as a framework decision ([E-CUST-1](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index)), not something a test does.
 
@@ -783,6 +939,13 @@ In uvm-core 2020.3.1, every `create` walks the instance-override queue in regist
 ### Expert: factory, callbacks or configuration?
 
 This is a methodology trade-off, not a rule of the standard. The **factory** replaces a whole class, at build time or object creation, and it needs a component that creates through `type_id::create` and a class you can extend. **Callbacks** (IEEE 1800.2-2020 §10.7) add behaviour at hooks a component's author provided, can be added and removed during the run, and work on a VIP you cannot subclass ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)). A **configuration** field changes values, not classes, and follows the configuration database's own precedence rules, which differ from the factory's first-match rule ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)). Error injection usually combines them: a factory override installs an error-capable driver, and configuration or a sequence decides when it corrupts. Planning which errors to inject, and how the scoreboard expects them, is error-injection strategy, taught in [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+
+| Question | Factory override | Callback | Configuration field |
+|---|---|---|---|
+| What it changes | the whole class that gets built | behaviour at hooks the component's author provided | a value, not a class |
+| When it acts | at `create` (build time or object creation) | each time the component calls the hook; callbacks can be added and removed during the run | when the component reads the value, usually in `build_phase` |
+| What the component must provide | `type_id::create`, and a class you can extend | the hooks (works on a VIP you cannot subclass) | a read of the value from the configuration database |
+| Which one wins | first registered instance match, then the type override | see [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) | the configuration database's own precedence, see [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) |
 
 ### Interview angles
 
@@ -937,6 +1100,34 @@ Answer each one yourself before you open the options' feedback.
     explanation: "Pick the macro from two questions: is it a component or an object, and is it ordinary, parameterized or abstract? An abstract class needs the _abstract_ form, because the plain proxy would construct it."
   }
 ]} />
+
+**The whole lesson on one card.** Each step, when it happens, the line that does it, and the mistakes that break it, then the two prints that tell you which step failed:
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 340 336" role="img" aria-label="Summary card. 1, register, when UVM starts, before any phase, with uvm_component_utils or uvm_object_utils; broken by a missing macro (TYPDUP) or no registered ancestor (NOTYPID, then NULLWR). 2, override, in the test's build_phase, with type_id set_type_override or set_inst_override; broken silently by a wrong path, a misspelled original name, a late registration or a broad pattern registered first, and by a misspelled override name (TYPNTF). 3, create, in each parent's build_phase, with type_id create; broken silently by new() or an object with no context, and by a class that does not extend the original (FCTTYP). Debug in end_of_elaboration_phase: factory.print shows what you asked for, print_topology shows what you got." style={{ width: "100%", maxWidth: 420 }}>
+    <rect x="6" y="8" width="328" height="74" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="14" y="24" fontSize="11" fontWeight="600" fill="currentColor">1 · REGISTER · when UVM starts, before any phase</text>
+    <text x="14" y="40" fontSize="10" fill="currentColor">`uvm_component_utils(T) or `uvm_object_utils(T)</text>
+    <text x="14" y="56" fontSize="10" fill="currentColor" opacity="0.85">breaks: no macro on the override class: TYPDUP;</text>
+    <text x="14" y="72" fontSize="10" fill="currentColor" opacity="0.85">no registered ancestor: NOTYPID, then NULLWR</text>
+    <rect x="6" y="90" width="328" height="90" rx="6" fill="rgba(99,102,241,0.10)" stroke="rgb(99,102,241)" />
+    <text x="14" y="106" fontSize="11" fontWeight="600" fill="currentColor">2 · OVERRIDE · in the test's build_phase</text>
+    <text x="14" y="122" fontSize="10" fill="currentColor">T::type_id::set_type_override / set_inst_override</text>
+    <text x="14" y="138" fontSize="10" fill="currentColor" opacity="0.85">breaks silently: wrong path, misspelled original</text>
+    <text x="14" y="154" fontSize="10" fill="currentColor" opacity="0.85">name, registered too late, broad pattern first;</text>
+    <text x="14" y="170" fontSize="10" fill="currentColor" opacity="0.85">misspelled override name: TYPNTF</text>
+    <rect x="6" y="188" width="328" height="74" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="14" y="204" fontSize="11" fontWeight="600" fill="currentColor">3 · CREATE · in each parent's build_phase</text>
+    <text x="14" y="220" fontSize="10" fill="currentColor">T::type_id::create("drv", this)</text>
+    <text x="14" y="236" fontSize="10" fill="currentColor" opacity="0.85">breaks silently: new(), object with no context;</text>
+    <text x="14" y="252" fontSize="10" fill="currentColor" opacity="0.85">class that does not extend the original: FCTTYP</text>
+    <rect x="6" y="270" width="328" height="58" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="14" y="286" fontSize="11" fontWeight="600" fill="currentColor">DEBUG · in end_of_elaboration_phase</text>
+    <text x="14" y="302" fontSize="10" fill="currentColor">factory.print(): what you asked for</text>
+    <text x="14" y="318" fontSize="10" fill="currentColor">print_topology(): what you got</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Register, override, then create: at create time the factory takes the first matching instance override in registration order, otherwise the type override, repeats for a new class, then $casts the result.</figcaption>
+</figure>
 
 ### Kata: error-inject one agent
 

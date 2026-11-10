@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--fix-applied", nargs="*", default=[])
     parser.add_argument("--embed")
     parser.add_argument("--usage", nargs="*", default=[])
+    parser.add_argument("--note", default="", help="embed mode: one more sentence for every task")
     args = parser.parse_args()
 
     v1 = (HERE / "visual-enrichment.js").read_text()
@@ -87,7 +88,7 @@ def main():
                         "prompt or text it serves, with one or two sentences that say what to try and what to notice. Never let it reveal the "
                         "answer to a prediction that comes before it. When an existing embed of the same component only gains props, edit that "
                         "tag in place. Skip a planned embed that does not fit the lesson as it is now, and say why in skipped. Make no other "
-                        "change to the lesson.")
+                        "change to the lesson." + (" " + args.note if args.note else ""))
         picked = [l for l in all_lessons if l["file"] in tasks]
     elif args.review_only:
         wanted = [f.strip() for f in Path(args.files_from).read_text().split() if f.strip()]

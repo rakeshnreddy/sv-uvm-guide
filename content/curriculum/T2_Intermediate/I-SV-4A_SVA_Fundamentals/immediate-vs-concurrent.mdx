@@ -123,6 +123,9 @@ endmodule
 
 **Predict first.** At 10 ns, how many error lines do `a1`, `a2` and `a3` each print? Write down three numbers before you read the trace.
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the 10 ns time slot, step by step</summary>
+
 Here is the time slot at 10 ns, step by step. `a1`, `a2` and `a3` all check the same condition; they differ only in when they report.
 
 | Step | Region | What happens | `a` | `b` | `a1` simple | `a2` `#0` | `a3` `final` |
@@ -136,6 +139,8 @@ Here is the time slot at 10 ns, step by step. `a1`, `a2` and `a3` all check the 
 
 **Debrief.** The answer is 1, 0, 0. Only `a1` prints, at 10 ns, with `a=1 b=0`: a failure on values that existed for one delta cycle. `a2` and `a3` also failed in step 2, but they only *queued* their reports, and the queue was cleared when `chk` ran again in step 4. Most learners guess that the queue is cleared when the procedure suspends; it is cleared when the procedure **resumes** (§16.4.2). That is the whole idea of a deferred assertion.
 
+</details>
+
 ### Deferred assertions: `assert #0` and `assert final`
 
 A **deferred assertion** evaluates its expression the moment the statement is reached, exactly like a simple one. The difference is in reporting (§16.4, §16.4.1):
@@ -148,6 +153,26 @@ A **deferred assertion** evaluates its expression the moment the statement is re
 3. **Mature and report.** A pending report that survives **matures**: it is confirmed and can no longer be flushed.
    - **Observed deferred** (`#0`): matures in the **Observed** region; its call runs in the **Reactive** region.
    - **In the Postponed region** a pending report of an `assert final` (a **final deferred** assertion) matures, and its call runs there too.
+
+<ArchitectureDiagram
+  title="The life of one deferred assertion report"
+  caption="Follow the dashed arrows, which show the order of events. The check runs when the statement is reached and its report waits on the process's queue. If the process reaches a flush point first (a resume from @ or wait, an always_comb or always_latch re-trigger, or a disable of its outermost scope, §16.4.2), the report is thrown away; resuming from a delay such as #0 is not on that list. If the process runs the statement again, it checks again and queues a new report. A report that survives matures and its call runs (§16.4.1). A simple immediate assertion has no queue: it reports at once (§16.3)."
+  cellWidth={140}
+  gapX={72}
+  nodes={[
+    { id: "chk", label: "check runs", sublabel: "by-value args captured", kind: "generic", col: 0, row: 0 },
+    { id: "pend", label: "pending report", sublabel: "on the process's queue", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "flush", label: "flushed", sublabel: "the call never runs", kind: "generic", col: 0, row: 2, state: "dim" },
+    { id: "mature", label: "matures", sublabel: "#0 Observed, final Postponed", kind: "generic", col: 1, row: 1 },
+    { id: "run", label: "call runs", sublabel: "#0 Reactive, final Postponed", kind: "generic", col: 1, row: 2, state: "ok" }
+  ]}
+  edges={[
+    { from: "chk", to: "pend", style: "causal", label: "queue" },
+    { from: "pend", to: "flush", style: "causal", label: "flush point" },
+    { from: "pend", to: "mature", style: "causal", label: "survives" },
+    { from: "mature", to: "run", style: "causal" }
+  ]}
+/>
 
 The syntax adds `#0` or `final` after the keyword, and works for `assert`, `assume` and `cover` (§16.4):
 
@@ -201,6 +226,28 @@ a_conc: assert property (@(posedge clk) a == b)
   else $error("a_conc: sampled a=%0b b=%0b", $sampled(a), $sampled(b));
 ```
 
+<SequenceDiagram
+  title="One clock tick of a_conc, region by region"
+  caption="Read top to bottom: one time slot in which posedge clk occurs. The values are photographed in Preponed, before any code in the slot runs (§16.5.1). Design code may then write a and b in Active and NBA. The check in Observed uses only the photo (§16.5), and on a failure the else statement runs in Reactive (§16.14.1), where plain a and b already hold the new values. The four rules below spell out each step."
+  columnWidth={130}
+  participants={[
+    { id: "design", label: "design code", sublabel: "writes a and b", kind: "dut" },
+    { id: "conc", label: "a_conc", sublabel: "the assertion", kind: "generic" },
+    { id: "act", label: "action block", sublabel: "the else statement", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "@(posedge clk): a time slot with a clock tick" },
+    { kind: "self", from: "conc", label: "Preponed" },
+    { kind: "note", from: "conc", label: "samples a and b before any code in the slot runs" },
+    { kind: "self", from: "design", label: "Active/NBA" },
+    { kind: "note", from: "design", label: "may write new a and b values" },
+    { kind: "self", from: "conc", label: "Observed" },
+    { kind: "note", from: "conc", label: "checks a == b on the samples only" },
+    { kind: "async", from: "conc", to: "act", label: "on failure: schedule the else statement", tone: "error" },
+    { kind: "note", from: "conc", to: "act", label: "Reactive: plain a and b are current values; $sampled(a) and $sampled(b) are the checked ones" }
+  ]}
+/>
+
 Four rules define how it sees the design:
 
 - **Sampled values.** Each expression uses its **sampled value**: the value in the Preponed region of that time slot, before anything in the slot changed (§16.5.1). A flop output written on this edge is still its old value; the new value is first seen at the next tick. At time 0 the sampled value is the **default sampled value**: a static variable's declaration initializer if it has one, otherwise the type's default, which is `x` for `logic` (§16.5.1).
@@ -216,7 +263,10 @@ Four rules define how it sees the design:
 
 ### Where each kind runs: one picture
 
-**Predict first.** For each of the four kinds, name the region where it *checks* and the region where its failure message *prints*. Then look at the ladder.
+**Predict first.** For each of the four kinds, name the region where it *checks* and the region where its failure message *prints*. Then open the ladder below to check.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: open the reveal to see the four kinds on one region ladder</summary>
 
 <figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
   <svg viewBox="0 0 370 266" role="img" aria-label="Scheduling regions of one time slot, top to bottom: Preponed, Active, Inactive, NBA, Observed, Reactive, Postponed, with one column per assertion kind. Simple immediate assert: checks and reports in Active. Observed deferred assert #0: checks and queues its report in Active, the report matures in Observed and prints in Reactive. Final deferred assert final: checks and queues in Active, the report matures and prints in Postponed. Concurrent assert property: samples values in Preponed, checks in Observed, runs its action block in Reactive." style={{ width: "100%", maxWidth: 560 }}>
@@ -268,6 +318,10 @@ Four rules define how it sees the design:
 </figure>
 
 **Debrief.** Read the columns left to right and the trade-off appears. Each kind moves its decision later in the time slot, so it sees more settled values. The simple assertion decides in Active, as soon as its procedure runs, and so it sees glitches. `#0` decides in Observed, after the Active region set has settled for that pass, and `final` decides last of all, at the end of the time slot. The concurrent assertion is different in kind: it checks in Observed but on the Preponed photo, so it never sees anything that happened in this slot, glitch or not.
+
+</details>
+
+The ladder inside that reveal is the picture to remember from this lesson: reopen it whenever you need to recall where a kind checks and where it reports.
 
 ### Action blocks and severity tasks
 
@@ -444,9 +498,32 @@ The waveform below shows what the concurrent assertion sees. The kit draws each 
 
 **Break it on purpose.** Make three one-line changes, one at a time, and predict the log before each run:
 
-- Delete `#0 ` from the second line of the `initial` block, so `b = 1'b1;` runs right after `a = 1'b1;`. On typical simulators `chk` then runs once, after both changes, and `a_simple` no longer prints at 10 ns: the glitch came from the `#0`. (The standard lets a simulator switch to `chk` between the two statements, §4.7, so this is not guaranteed; the `#0` version is.)
-- Change `a_obs` to `assert (a == b)`. It now prints at 10 ns as well, exactly like `a_simple`.
-- In `a_conc`, print `a, b` instead of `$sampled(a), $sampled(b)`. At 25 ns it still prints `a=0 b=1` here, because nothing changes `a` or `b` at 25 ns. Current and sampled values differ only when something writes the signals on the clock edge, as in the `a1_bad` waveform above.
+**Edit 1.** Delete `#0 ` from the second line of the `initial` block, so `b = 1'b1;` runs right after `a = 1'b1;`. Does `a_simple` still print at 10 ns?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check edit 1</summary>
+
+On typical simulators `chk` then runs once, after both changes, and `a_simple` no longer prints at 10 ns: the glitch came from the `#0`. (The standard lets a simulator switch to `chk` between the two statements, §4.7, so this is not guaranteed; the `#0` version is.)
+
+</details>
+
+**Edit 2.** Change `a_obs` to `assert (a == b)`. What does it print at 10 ns?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check edit 2</summary>
+
+It now prints at 10 ns as well, exactly like `a_simple`.
+
+</details>
+
+**Edit 3.** In `a_conc`, print `a, b` instead of `$sampled(a), $sampled(b)`. What does its 25 ns line print now?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check edit 3</summary>
+
+At 25 ns it still prints `a=0 b=1` here, because nothing changes `a` or `b` at 25 ns. Current and sampled values differ only when something writes the signals on the clock edge, as in the `a1_bad` waveform above.
+
+</details>
 
 **Checklist before moving on:**
 - [ ] You can say, for each of the four kinds, when it checks, which values it reads and in which region it reports.
@@ -465,6 +542,28 @@ Deferral protects against glitches that come from the order of procedural execut
 - The `#0` report matures in Observed, so its failure is printed in Reactive.
 - Still in Reactive, the program sets `a = 0`. That starts another pass through Active, where the implied `always_comb` runs again: a flush point. For `#0` the flush comes too late; the new evaluation passes, so the log shows **both a fail and a pass** at one time stamp.
 - The `final` report has not matured yet, so it is flushed. Only the settled pass is reported in Postponed.
+
+<SequenceDiagram
+  title="The standard's example: a Reactive write after Observed"
+  caption="One time slot, top to bottom, for the §16.4.2 example: a1 is the assert #0 and a2 the assert final, both static in the DUT, and each action block prints Pass or Fail. a1's Fail matures in Observed before the program writes a in Reactive, so the log shows a1 Fail and then a1 Pass. a2's Fail is still pending when the re-run flushes it, so a2 reports only Pass, in Postponed. Printing a1's Fail and the program's write of a are both Reactive events, which the standard lets run in either order; the log is the same either way, because the Fail report has already matured."
+  columnWidth={130}
+  participants={[
+    { id: "tb", label: "program tb", sublabel: "Reactive region set", kind: "generic" },
+    { id: "dut", label: "dut a1, a2", sublabel: "implied always_comb", kind: "dut" },
+    { id: "log", label: "log", sublabel: "printed lines", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "self", from: "dut", label: "Active" },
+    { kind: "note", from: "dut", label: "a & c is 1, so a1 and a2 fail and queue Fail" },
+    { kind: "note", from: "dut", label: "Observed: a1's Fail matures and can no longer be flushed" },
+    { kind: "async", from: "dut", to: "log", label: "Reactive: a1 Fail", tone: "error" },
+    { kind: "async", from: "tb", to: "dut", label: "Reactive: a = 0" },
+    { kind: "self", from: "dut", label: "Active" },
+    { kind: "note", from: "dut", to: "log", label: "Active again: a flush point. a2's Fail is flushed; a1 and a2 pass and queue Pass" },
+    { kind: "async", from: "dut", to: "log", label: "Observed, then Reactive: a1 Pass" },
+    { kind: "async", from: "dut", to: "log", label: "Postponed: a2 Pass, its only report" }
+  ]}
+/>
 
 Clocking-block output drives land in Re-NBA (§14.16), also after Observed. So a combinational check on DUT inputs that a UVM driver writes through a clocking block should use `assert final`, as long as its action only prints.
 
@@ -492,7 +591,7 @@ Both resist glitches from the order of procedural execution and neither resists 
 
 ### Expert: Silencing one kind with `$assertcontrol`
 
-`$assertoff`, `$asserton` and `$assertkill` act on all four kinds in this lesson: `$assertoff(levels, scope)` is defined as `$assertcontrol(4, 15, 7, levels, scope)` (§20.11; the module overview covers them for concurrent assertions). The second argument is an **assertion_type** mask (Table 20-6): 1 concurrent, 2 simple immediate, 4 observed deferred, 8 final deferred, 16 `expect`, and 32, 64 and 128 for `unique`, `unique0` and `priority` violation reports. So you can switch off only the deferred checks of one block during a known-noisy reset sequence:
+`$assertoff`, `$asserton` and `$assertkill` act on all four kinds in this lesson: `$assertoff(levels, scope)` is defined as `$assertcontrol(4, 15, 7, levels, scope)` (§20.11; the module overview covers them for concurrent assertions). The second argument is an **assertion_type** mask (Table 20-6), with one value per kind; the table after the example lists them all. So you can switch off only the deferred checks of one block during a known-noisy reset sequence:
 
 ```systemverilog
 // snippet
@@ -503,7 +602,25 @@ initial begin
 end
 ```
 
+The mask is the sum (bitwise OR) of the types it selects, so `12` is `4 | 8` (Table 20-6, §20.11):
+
+| assertion_type value | Selects | In the mask `12`? |
+|---|---|---|
+| 1 | Concurrent assertions | no |
+| 2 | Simple immediate assertions | no |
+| 4 | Observed deferred immediate (`assert #0`) | **yes** |
+| 8 | Final deferred immediate (`assert final`) | **yes** |
+| 16 | `expect` statements | no |
+| 32, 64, 128 | `unique`, `unique0` and `priority` violation reports | no |
+
 Off and Kill differ for deferred assertions (§20.11). **Off** (control_type 4) stops new checks, but reports already queued are not flushed and may still mature and print. **Kill** (control_type 5), for the assertions it selects, also flushes pending deferred reports and pending procedural assertion instances that have not matured, and aborts concurrent attempts in flight.
+
+| For the selected assertions | Off (control_type 4) | Kill (control_type 5) |
+|---|---|---|
+| New checks and attempts | Stop until On (3) | Stop until On (3) |
+| Deferred reports already queued | Not flushed; may still mature and print | Flushed if not yet matured |
+| Procedural assertion instances already queued | Not flushed; may still mature | Flushed if not yet matured |
+| Concurrent attempts already executing | Continue, with their pass and fail statements | Aborted |
 
 ### Expert: Interview angles
 
@@ -685,6 +802,58 @@ endmodule
 </details>
 
 ### Reinforce the essentials
+
+<VisualRecap
+  title="Four kinds, three questions"
+  rule="Immediate assertions check current values when the code reaches them; a deferred one queues its report and drops it if the process reaches a flush point before the report matures; a concurrent assertion checks Preponed samples at each clock tick and runs its action block in Reactive."
+  code={`a_obs:  assert #0 (a == b)
+  else $error("a_obs: a=%0b b=%0b", a, b);
+a_conc: assert property (@(posedge clk) a == b)
+  else $error("a_conc: sampled a=%0b b=%0b", $sampled(a), $sampled(b));`}
+  mistake="A begin-end block or a bare statement such as count++ in a deferred action block (it must be one subroutine call), or a final action that writes variables (an assert final call runs in Postponed, so it may only print), or plain a and b in a concurrent action block, which prints current values instead of the sampled ones the check used."
+  inTestbench="Put static assert #0 checks for combinational rules in the module or interface; concurrent checks with $sampled messages sit in the interface that the agent's virtual interface points to; class code uses simple immediate assertions or the uvm_error macro."
+>
+  <svg viewBox="0 0 350 232" role="img" aria-label="Recap of the four kinds. Simple, assert (e): checks when code reaches it, on current values; reports at once, in the same region. Observed deferred, assert #0: checks the same way; reports in Reactive unless flushed first. Final deferred, assert final: checks the same way; reports in Postponed unless flushed first, and may only print. Concurrent, assert property: checks in Observed at each clock tick on Preponed samples; reports in Reactive, so print $sampled values." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="10" y="14" fontSize="11" fill="currentColor" fillOpacity="0.7">kind</text>
+    <text x="116" y="14" fontSize="11" fill="currentColor" fillOpacity="0.7">checks</text>
+    <text x="236" y="14" fontSize="11" fill="currentColor" fillOpacity="0.7">reports</text>
+    <rect x="2" y="22" width="346" height="48" rx="6" className="fill-rose-500/10 stroke-rose-500" />
+    <text x="10" y="37" fontSize="11" fontWeight="600" fill="currentColor">simple</text>
+    <text x="10" y="50" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">assert (e)</text>
+    <text x="116" y="37" fontSize="11" fill="currentColor">when code</text>
+    <text x="116" y="50" fontSize="11" fill="currentColor">reaches it,</text>
+    <text x="116" y="63" fontSize="11" fill="currentColor">current values</text>
+    <text x="236" y="37" fontSize="11" fill="currentColor">at once, in the</text>
+    <text x="236" y="50" fontSize="11" fill="currentColor">same region</text>
+    <rect x="2" y="74" width="346" height="48" rx="6" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="10" y="89" fontSize="11" fontWeight="600" fill="currentColor">observed</text>
+    <text x="10" y="102" fontSize="11" fontWeight="600" fill="currentColor">deferred</text>
+    <text x="10" y="115" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">assert #0</text>
+    <text x="116" y="89" fontSize="11" fill="currentColor">when code</text>
+    <text x="116" y="102" fontSize="11" fill="currentColor">reaches it,</text>
+    <text x="116" y="115" fontSize="11" fill="currentColor">current values</text>
+    <text x="236" y="89" fontSize="11" fill="currentColor">Reactive, unless</text>
+    <text x="236" y="102" fontSize="11" fill="currentColor">flushed first</text>
+    <rect x="2" y="126" width="346" height="48" rx="6" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="10" y="141" fontSize="11" fontWeight="600" fill="currentColor">final</text>
+    <text x="10" y="154" fontSize="11" fontWeight="600" fill="currentColor">deferred</text>
+    <text x="10" y="167" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">assert final</text>
+    <text x="116" y="141" fontSize="11" fill="currentColor">when code</text>
+    <text x="116" y="154" fontSize="11" fill="currentColor">reaches it,</text>
+    <text x="116" y="167" fontSize="11" fill="currentColor">current values</text>
+    <text x="236" y="141" fontSize="11" fill="currentColor">Postponed, unless</text>
+    <text x="236" y="154" fontSize="11" fill="currentColor">flushed first;</text>
+    <text x="236" y="167" fontSize="11" fill="currentColor">print only</text>
+    <rect x="2" y="178" width="346" height="48" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="10" y="193" fontSize="11" fontWeight="600" fill="currentColor">concurrent</text>
+    <text x="10" y="206" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">assert property</text>
+    <text x="116" y="193" fontSize="11" fill="currentColor">Observed, at each</text>
+    <text x="116" y="206" fontSize="11" fill="currentColor">clock tick, on</text>
+    <text x="116" y="219" fontSize="11" fill="currentColor">Preponed samples</text>
+    <text x="236" y="193" fontSize="11" fill="currentColor">Reactive; print</text>
+    <text x="236" y="206" fontSize="11" fill="currentColor">$sampled values</text>
+  </svg>
+</VisualRecap>
 
 The flashcards for this lesson cover the three questions, flush points, `#0` versus `final`, the deferred action-block rules, sampled values and severity tasks. Use them until you can answer each card before you flip it.
 

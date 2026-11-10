@@ -42,9 +42,75 @@ sources:
 - Every AHB **transfer** has an **address phase**, one cycle in which the master drives the address (`HADDR`) and control (`HTRANS`, `HWRITE`, `HSIZE`, `HBURST`), and a **data phase**, one or more cycles in which write data (`HWDATA`) or read data (`HRDATA`) moves. The address phase of one transfer overlaps the data phase of the previous one (§3.1).
 - `HTRANS` is the **transfer type**: IDLE (no transfer), BUSY (a pause inside a burst), NONSEQ (a single transfer or the first beat of a burst) or SEQ (a later beat of a burst) (§3.2, Table 3-1). A **burst** is a run of transfers to related addresses; each transfer in it is a **beat**.
 - A slave drives **`HREADYOUT`** low to ask for more time. The **interconnect**, the logic between masters and slaves, routes the selected slave's `HREADYOUT` onto **`HREADY`**, which every component sees. An edge where `HREADY` is low is a **wait state**: nothing completes, and both the current data phase and the next address phase are held (§3.1).
+
+<TimingDiagram
+  title="Two pipelined reads, A and B, with one wait state on A"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. A's address phase is accepted at edge 1 and its data phase runs over edges 2 and 3; B's address phase overlaps it. Edge 2 is a wait state, so nothing completes there: A's data phase and B's address phase are both held (§3.1)."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "NONSEQ", "NONSEQ", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "B", "B", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 1, 1, 1] },
+    { name: "HRDATA", kind: "bus", values: [undefined, undefined, undefined, "Data A", "Data B", undefined] }
+  ]}
+  highlights={[{ from: 2, to: 3, tone: "info", label: "A's data phase" }]}
+  markers={[
+    { edge: 1, tone: "sample", label: "A's address phase accepted (HREADY high)", short: "A" },
+    { edge: 2, tone: "info", label: "wait state: nothing completes; A's data phase and B's address phase are held", short: "wait" },
+    { edge: 3, tone: "pass", label: "A completes with Data A, and B's address phase is accepted", short: "A done" },
+    { edge: 4, tone: "pass", label: "B completes with Data B", short: "B done" }
+  ]}
+/>
+
 - `HRESP` is the **response**: low for OKAY, high for ERROR (§5.1, Table 5-1).
 - The **decoder** turns the address into one select signal, `HSELx`, per slave, and the **multiplexor** returns the selected slave's `HREADYOUT`, `HRESP` and `HRDATA` to the master (§4.2, §4.3). In a system with several masters, an **arbiter** in the interconnect decides whose transfer goes next.
+
+<ArchitectureDiagram
+  title="An AHB system: decoder, multiplexor and slaves"
+  cellWidth={104}
+  gapX={40}
+  legend={false}
+  caption="Solid arrows carry data and responses; the dotted arrow is a select. The decoder turns HADDR into one HSELx per slave (only the one to S0 is drawn). The multiplexor returns the selected slave's responses (HREADYOUT, HRESP and HRDATA) to the master; the selected slave's HREADYOUT becomes HREADY, which also goes back to every slave (not drawn). HADDR, the control signals and HWDATA also go to every slave (not drawn). The default slave answers addresses no real slave owns (§4.2.1). The dimmed arbiter exists only with several masters, and its design is interconnect policy (§4.1)."
+  nodes={[
+    { id: "arb", label: "arbiter", sublabel: "several masters", kind: "generic", state: "dim", col: 0, row: 0 },
+    { id: "m", label: "master", sublabel: "starts transfers", kind: "generic", col: 0, row: 1 },
+    { id: "dec", label: "decoder", sublabel: "HADDR to HSELx", kind: "generic", col: 1, row: 0 },
+    { id: "mux", label: "multiplexor", sublabel: "one slave back", kind: "generic", col: 1, row: 2 },
+    { id: "s0", label: "S0", sublabel: "slave", kind: "dut", col: 2, row: 0 },
+    { id: "s1", label: "S1", sublabel: "slave", kind: "dut", col: 2, row: 1 },
+    { id: "dflt", label: "default slave", sublabel: "unmapped", kind: "dut", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "m", to: "dec", style: "data", label: "HADDR" },
+    { from: "dec", to: "s0", style: "control" },
+    { from: "s0", to: "mux", style: "data" },
+    { from: "s1", to: "mux", style: "data" },
+    { from: "dflt", to: "mux", style: "data" },
+    { from: "mux", to: "m", style: "data", label: "responses" }
+  ]}
+/>
+
 - A **concurrent assertion** checks a property at every clock edge on values sampled just before the edge. In `a |-> b` the left side is the **antecedent** and the right side the **consequent**; `|=>` checks the consequent one edge later. When the antecedent is false the attempt succeeds **vacuously**: it passes without testing anything. `$past(x)` is the value of `x` at the previous edge, `$stable(x)` is true when `x` did not change, and `$fell(x)` is true at an edge where `x` was 1 at the previous edge and is 0 now. `##[1:N] b` means `b` must be true at one of the next 1 to N edges. `disable iff (c)` switches the check off while `c` is true.
+
+Step through one property from Pitfall 4 to see each of those words in place.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="anatomy.sv"
+  code={`// snippet: one property from Pitfall 4, one part per line
+property p_error_first_then_second;
+  @(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && !HREADY)
+    |=> (HRESP && HREADY);
+endproperty`}
+  explanationSteps={[
+    { target: "3", title: "Clock and disable", explanation: "An attempt starts at every rising edge of HCLK, on values sampled just before the edge. While HRESETn is low, disable iff switches the check off." },
+    { target: "4", title: "Antecedent", explanation: "The condition that starts the real check: HRESP is ERROR and HREADY is low at this edge. At an edge where it is false, the attempt succeeds vacuously: it passes without testing anything." },
+    { target: "5", title: "Implication and consequent", explanation: "|=> checks the consequent one edge later: at the next edge HRESP must still be ERROR and HREADY must be high. With |-> the consequent would be checked at the same edge." }
+  ]}
+/>
 
 ### Rule or budget? Tagging every check
 
@@ -276,7 +342,41 @@ Read `p_hold_in_wait` line by line. The antecedent picks every edge where a NONS
 - `$past(HBURST) == INCR && HTRANS inside {IDLE, NONSEQ}`: in an undefined-length INCR the master may end the burst instead. `$past` reads the burst type of the BUSY, because a new NONSEQ may carry a new `HBURST`.
 - `$past(HRESP) && HTRANS == IDLE`: the cancel after an ERROR first cycle, exactly as in `p_hold_in_wait`.
 
+**One glance: what a waited transfer may become, and which term checks it.**
+
+| Waited transfer (`HREADY` low) | At the next edge it may | Source | Checked by |
+|---|---|---|---|
+| IDLE | become NONSEQ, or change its address | §3.6.1, §3.6.2, Figures 3-13, 3-16 | nothing to check: neither property starts on an IDLE |
+| BUSY in a fixed-length burst (INCR4/8/16, WRAP4/8/16) | stay BUSY, or become SEQ at the same address | §3.6.1, Figure 3-14 | `p_busy_in_wait`, first term |
+| BUSY in an undefined-length INCR | become any type: SEQ continues the burst, IDLE or NONSEQ ends it | §3.6.1, Figure 3-15 | `p_busy_in_wait`, first and second terms |
+| NONSEQ or SEQ | nothing: type, address and control hold | §3.6.1, §3.6.2, Figure 3-16 | `p_hold_in_wait`, `$stable` term |
+| NONSEQ, SEQ or BUSY, when that edge was a first ERROR cycle | change to IDLE (cancel) and change the address | §3.5.2, §3.6.2, Figure 3-17 | the `$past(HRESP) && HTRANS == IDLE` term of both |
+
 **The classic mistake.** A shorter check, `p_ctrl_stable`: `(!HREADY && HTRANS != IDLE) |=> $stable(HTRANS) && $stable(HADDR)`. It treats "control never changes in a wait" as the rule. It fires on a legal BUSY→SEQ change and on a legal cancel after ERROR. The lab below shows it as `p_ctrl_stable (old)`, a version that also checks `HWRITE`, `HSIZE` and `HBURST`. Run it in your head against the Make It Work traces: it fails three times, and two of those are false alarms.
+
+<details>
+<summary>Check one of them: Make It Work trace c</summary>
+
+<TimingDiagram
+  title="A legal BUSY to SEQ change during a wait (Make It Work trace c)"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. An INCR4 of words from 0x20; the beat at 0x24 waits at edges 2 and 3. The waited BUSY at 0x28 becomes SEQ at the same address, which a fixed-length burst allows (§3.6.1, Figure 3-14). The correct properties pass; the old one-line check raises a false alarm."
+  edges={7}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["NONSEQ", "SEQ", "BUSY", "SEQ", "SEQ", "SEQ", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: ["0x20", "0x24", "0x28", "0x28", "0x28", "0x2C", undefined] },
+    { name: "HBURST", kind: "bus", values: ["INCR4", "INCR4", "INCR4", "INCR4", "INCR4", "INCR4", "SINGLE"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 0, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", label: "waited BUSY at 0x28: attempts of p_busy_in_wait and of the old check start", short: "BUSY" },
+    { edge: 3, tone: "fail", label: "BUSY became SEQ at 0x28: p_busy_in_wait passes, but p_ctrl_stable (old) fails, a false alarm", short: "false alarm" },
+    { edge: 4, tone: "pass", label: "SEQ at 0x28 held since edge 3 and accepted: p_hold_in_wait passes", short: "held" }
+  ]}
+/>
+
+</details>
 
 Bursts have more control rules than the hold rule: control is identical on every SEQ beat (Table 3-1), and a SINGLE is never followed by BUSY (§3.5.1). [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) assembles those checks into the full checker.
 
@@ -304,6 +404,25 @@ An ERROR response always takes **two cycles** (§5.1.3, Table 5-2). In the first
 />
 
 **Debrief.** A waits one cycle with OKAY, then gets ERROR with `HREADY` low, then ERROR with `HREADY` high. The master saw the first ERROR cycle at the edge that ends it, so it drives IDLE in the second. `HTRANS` is therefore IDLE in the second ERROR cycle, and B is cancelled: it was on the bus for two cycles, both with `HREADY` low, so it was never accepted. A master cannot cancel a transfer that has already started (§5.1), which is exactly why the first ERROR cycle has `HREADY` low.
+
+<SequenceDiagram
+  title="Why the ERROR response needs a first cycle with HREADY low"
+  caption="Read top to bottom; each divider is a rising edge of HCLK. B's address is already on the bus when the slave decides to answer A with ERROR. The first ERROR cycle holds HREADY low, so B is not accepted, and the master learns of the error in time to cancel B with IDLE (§5.1.3, §3.5.2). OKAY wait states before the first ERROR cycle, like the one in the waveform above, are allowed and not drawn."
+  participants={[
+    { id: "m", label: "master", sublabel: "drives HTRANS, HADDR", kind: "generic" },
+    { id: "s", label: "slave", sublabel: "answers A", kind: "dut" }
+  ]}
+  messages={[
+    { from: "m", to: "s", label: "A: NONSEQ, address phase accepted" },
+    { kind: "divider", label: "edge: A's data phase starts" },
+    { from: "m", to: "s", label: "B: address phase on the bus" },
+    { kind: "self", from: "s", label: "decides: A gets ERROR" },
+    { kind: "return", from: "s", to: "m", label: "first ERROR cycle: HRESP high, HREADY low, so B is held", tone: "error" },
+    { kind: "divider", label: "edge: the master samples the first ERROR cycle" },
+    { from: "m", to: "s", label: "IDLE: B cancelled (continuing with B is also allowed)" },
+    { kind: "return", from: "s", to: "m", label: "second ERROR cycle: HRESP high, HREADY high, A completes", tone: "error" }
+  ]}
+/>
 
 **The bug.** A slave that drives ERROR for only one cycle, with `HREADYOUT` high, breaks §5.1.3. The master learns of the error at the same edge that accepts its next transfer, so it can no longer cancel it.
 
@@ -369,6 +488,24 @@ a_error_second_needs_first: assert property (p_error_second_needs_first);
 
 The first property alone **cannot** catch the one-cycle ERROR. A one-cycle ERROR never has `HREADY` low, so the antecedent never matches and every attempt succeeds vacuously; the assertion stays silent (IEEE 1800-2023 §16.14.8). The second property starts at every ERROR completion and looks one edge back. At the first edge after reset, `$past` returns the value sampled at the last reset edge (OKAY), because `disable iff` stops evaluation but not sampling, so a one-cycle ERROR straight after reset still fails (§16.9.3).
 
+<TimingDiagram
+  title="The one-cycle ERROR against both ERROR properties"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. This is Make It Work trace b: A is accepted at edge 1, and the slave answers it with ERROR and HREADY high at edge 2, the same edge that accepts B. No edge ever shows HRESP high with HREADY low, so the antecedent of p_error_first_then_second never holds: every attempt succeeds vacuously and it reports nothing. Edge 0 is an IDLE edge the diagram adds before A. Kata (b) and the lab's Debug: one-cycle ERROR scenario add one OKAY wait state at edge 2 before the ERROR, so their failing edge is edge 3; Make It Work trace b, drawn here, has no wait, so it fails at edge 2."
+  edges={5}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "NONSEQ", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "B", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "ERROR", "OKAY", "OKAY"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "A accepted", short: "A" },
+    { edge: 2, tone: "fail", label: "ERROR with HREADY high, and edge 1 was no first ERROR cycle: p_error_second_needs_first fails; B is accepted at this same edge. p_error_first_then_second: its antecedent never held, so every attempt succeeded vacuously and it reports nothing", short: "fail" }
+  ]}
+/>
+
 ### Pitfall 5: locks that starve other masters
 
 **What a lock is.** A master that needs an indivisible sequence, such as the read and write of a semaphore, asserts **`HMASTLOCK`**. It tells every slave that the current sequence "must therefore be processed before any other transfers are processed" (§3.3). `HMASTLOCK` has the same timing as the address and control signals (Table 2-2). All transfers in a locked sequence must go to the same slave address region, and the master is recommended to insert an IDLE after it (§3.3).
@@ -405,6 +542,31 @@ The first property alone **cannot** catch the one-cycle ERROR. A one-cycle ERROR
 />
 
 **Fixed priority plus a lock.** Put three masters behind a fixed-priority arbiter: M2 (high) before M1 (medium) before M0 (low). M0 starts a locked read-modify-write to a slow slave; M2 then requests the same slave and waits for the whole lock; when the lock ends, fixed priority serves M2 before M1, so M1 waits behind both. This is **not a deadlock**: M2's worst wait is bounded by the longest locked sequence plus the slave's wait states. The real failure is an *unbounded* wait, from a lock that never ends or a slave with no wait-state limit. (The Mars Pathfinder reset is sometimes quoted here; it was a priority inversion on an operating-system mutex, not a bus arbitration bug.)
+
+<ArchitectureDiagram
+  title="Starvation is a chain of waits; deadlock is a cycle"
+  cellWidth={106}
+  gapX={40}
+  legend={false}
+  caption="Each dashed arrow means waits for. Left, the scenario above: M1 waits for M2 (fixed priority), M2 waits for M0's lock, and the lock waits for the slow slave S, whose wait states have a predetermined maximum (§5.1.2 Note). The chain ends, so every wait is bounded: starvation risk, an [Integration policy] budget. Right, the general shape of a deadlock, not an AHB trace from this lesson: P, Q and R each need what the next one holds (P waits for Q's R2, Q for R's R3, R for P's R1), so the waits form a cycle and none of them ever ends."
+  nodes={[
+    { id: "m1", label: "M1", sublabel: "medium priority", kind: "generic", col: 0, row: 0 },
+    { id: "m2", label: "M2", sublabel: "high priority", kind: "generic", col: 0, row: 1 },
+    { id: "lk", label: "M0's lock", sublabel: "read + write of A", kind: "generic", col: 0, row: 2 },
+    { id: "ss", label: "slow slave S", sublabel: "bounded waits", kind: "dut", state: "ok", col: 0, row: 3 },
+    { id: "p", label: "P", sublabel: "holds R1, needs R2", kind: "generic", state: "error", col: 1, row: 0 },
+    { id: "q", label: "Q", sublabel: "holds R2, needs R3", kind: "generic", state: "error", col: 2, row: 1 },
+    { id: "r", label: "R", sublabel: "holds R3, needs R1", kind: "generic", state: "error", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "m1", to: "m2", style: "causal" },
+    { from: "m2", to: "lk", style: "causal" },
+    { from: "lk", to: "ss", style: "causal" },
+    { from: "p", to: "q", style: "causal" },
+    { from: "q", to: "r", style: "causal" },
+    { from: "r", to: "p", style: "causal" }
+  ]}
+/>
 
 **Do not revoke a lock.** Breaking a locked sequence breaks the atomicity it exists to provide. Give locks a cycle budget and report a violation from a checker instead.
 
@@ -506,6 +668,28 @@ The antecedent includes `HREADY`, so it fires only for an IDLE or BUSY that was 
 />
 
 **Debrief.** The IDLE accepted at edge 2 must get a zero wait state OKAY, so `HREADY` must be high at edge 3. It is low, and `p_idle_busy_zero_wait_okay` fails at edge 3: the slave selected for that data phase broke Table 3-1. The bus stalls for a cycle although nobody is transferring. The other two checks stay silent. `p_wait_budget` starts an attempt at edge 3, but `HREADY` is high again at edge 4. `p_hold_in_wait` never starts, because the waited transfer is an IDLE. Only the dedicated check names this bug; Make It Work trace g shows it in a log.
+
+The default slave shows both halves of the rule on one trace: a NONSEQ to an unmapped address gets the two-cycle ERROR, and the IDLE after it gets a zero wait state OKAY (§4.2.1).
+
+<TimingDiagram
+  title="The default slave: ERROR for a NONSEQ, zero-wait OKAY for an IDLE"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. U1 and U2 are addresses that no real slave owns, so the default slave is selected for both. Compare the response to the NONSEQ at U1 with the response to the IDLE at U2."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "IDLE", "IDLE", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "U1", "U2", "U2", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 1, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "ERROR", "ERROR", "OKAY", "OKAY"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "NONSEQ to unmapped U1 accepted", short: "U1" },
+    { edge: 2, tone: "info", label: "first ERROR cycle: HRESP high, HREADY low; the IDLE at U2 is held", short: "ERR 1" },
+    { edge: 3, tone: "sample", label: "second ERROR cycle: U1 completes, and the IDLE at U2 is accepted", short: "ERR 2" },
+    { edge: 4, tone: "pass", label: "the IDLE gets a zero wait state OKAY: p_idle_busy_zero_wait_okay passes", short: "OKAY" }
+  ]}
+/>
 
 **ERROR read data.** "ERROR responses do not require valid read data" (§6.1.2). A master, monitor or scoreboard that records `HRDATA` from an ERROR-completed read stores garbage. And after a cancel, the master has "no requirement … to rebuild the burst" (§3.5.2), so a scoreboard must not wait for the cancelled beats.
 
@@ -623,6 +807,26 @@ a_reset_values: assert property (p_reset_values);
 
 **Debrief.** `(!HRESETn)[*2]` first matches at edge 1, the second consecutive low edge, so the check applies at edges 1 and 2. It passes at edge 1, where the master shows IDLE and `HREADY` is high, and fails at edge 2, where the master shows NONSEQ during reset. From edge 3 `HRESETn` is high, nothing matches, and the NONSEQ at edge 4 is an ordinary first transfer.
 
+**Why `disable iff (1'b0)`.** Here is the same trace once more, for a version of `p_reset_values` written without its own disable clause and placed in a module with `default disable iff (!HRESETn)`. The default applies to it (IEEE 1800-2023 §16.15), so it is switched off at exactly the edges it exists to check.
+
+<TimingDiagram
+  title="The same reset trace with a default disable iff (!HRESETn) in scope"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k; the signals are those of the diagram above. HRESETn is low at edges 0 to 2, so the inherited disable condition is true and every attempt there is disabled (marked ⊘: disabled, which is not the same outcome as a vacuous success, §16.12, §16.15). The NONSEQ at edge 2 goes unreported."
+  edges={5}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HRESETn", kind: "bit", values: [0, 0, 0, 1, 1] },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "IDLE", "NONSEQ", "IDLE", "NONSEQ"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pending", glyph: "⊘", label: "disabled by the default disable iff: not checked", short: "off" },
+    { edge: 2, tone: "pending", glyph: "⊘", label: "disabled as well: the NONSEQ during reset is missed", short: "missed" },
+    { edge: 4, tone: "info", label: "HRESETn is high (reset released), so (!HRESETn)[*2] no longer matches: nothing to check", short: "no match" }
+  ]}
+/>
+
 **What the bus check cannot see.** `p_reset_values` sees only the multiplexed `HREADY`, which is the `HREADYOUT` of whichever slave the multiplexor selects (§4.3). Every other slave's `HREADYOUT` is invisible to it. Bind a one-line check to each slave as well (a `bind` statement instantiates a checker inside another module without editing it):
 
 ```systemverilog
@@ -664,6 +868,30 @@ These come from how the decoder, multiplexor and slaves are wired together, not 
   ]}
 />
 
+<TimingDiagram
+  title="A waited read from S0, with a retimed and an unretimed select"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. The master reads A from S0, which waits at edges 2 and 3, while B, an address in S1, is already in its address phase. S1 is idle and ready. RDYOUT S0 and RDYOUT S1 are the HREADYOUT of S0 and S1. The rows marked ok (HREADY ok, HRDATA ok) show what the master sees with the select retimed through mux_sel; the rows marked bug use the decoder's select directly, unretimed, and stop at edge 2, where the master has already been told that A completed: from edge 3 they are not drawn (the text table lists X there, meaning not shown, not an unknown value)."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "NONSEQ", "NONSEQ", "NONSEQ", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A in S0", "B in S1", "B in S1", "B in S1", undefined] },
+    { name: "RDYOUT S0", kind: "bit", values: [1, 1, 0, 0, 1, 1] },
+    { name: "RDYOUT S1", kind: "bit", values: [1, 1, 1, 1, 1, 1] },
+    { name: "mux_sel", kind: "bus", values: ["S0", "S0", "S0", "S0", "S0", "S1"] },
+    { name: "HREADY ok", kind: "bit", values: [1, 1, 0, 0, 1, 1] },
+    { name: "HRDATA ok", kind: "bus", values: [undefined, undefined, undefined, undefined, "S0 data", undefined] },
+    { name: "HREADY bug", kind: "bit", values: [1, 1, 1] },
+    { name: "HRDATA bug", kind: "bus", values: [undefined, undefined, "S1's HRDATA"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "read A to S0 accepted; mux_sel loads S0 at this edge", short: "A" },
+    { edge: 2, tone: "fail", label: "bug: the select already follows B, so S1's HREADYOUT makes HREADY high and A completes early with S1's HRDATA", short: "bug" },
+    { edge: 4, tone: "pass", label: "retimed: A completes with S0's data and B is accepted; mux_sel loads S1 for B's data phase", short: "A done" }
+  ]}
+/>
+
 ### Check your checks in the AHB pipeline lab
 
 The lab below is the model-backed AHB simulator from B-AHB-1. It runs each scenario cycle by cycle and evaluates this lesson's properties, plus the flawed versions they replace, marking where each passes or fails. Use its **Scenario** selector for three experiments, and answer each prediction before you step through.
@@ -700,6 +928,36 @@ The BUSY at edge 2 changes to SEQ at edge 3 while `HREADY` is low, which §3.6.1
 
 ### Where these checks live in a testbench
 
+<ArchitectureDiagram
+  title="Where the checkers bind, and where their reports go"
+  cellWidth={110}
+  gapX={40}
+  legend={false}
+  spreadAnchors={true}
+  caption="Plain lines are bus connections and bind points; the solid arrow carries monitored transactions; dotted arrows carry reports. One checker is bound at the master port, where it sees the multiplexed HREADY and HRESP. Another is bound at a slave port, where it sees that slave's own HREADYOUT and HRESP, with antecedents gated by HSELx and HREADY. Both report protocol failures as errors and budget overruns as warnings. The monitor feeds the scoreboard, which catches the bugs that leave the bus legal (Pitfalls 2 and 6)."
+  nodes={[
+    { id: "m", label: "master", sublabel: "DUT or VIP", kind: "dut", col: 0, row: 0 },
+    { id: "ic", label: "interconnect", sublabel: "decoder, mux", kind: "generic", col: 1, row: 0 },
+    { id: "s", label: "slave", sublabel: "DUT", kind: "dut", col: 2, row: 0 },
+    { id: "chkm", label: "checker", sublabel: "master port", kind: "generic", col: 0, row: 1 },
+    { id: "mon", label: "monitor", sublabel: "watches the bus", kind: "monitor", col: 1, row: 1 },
+    { id: "chks", label: "checker", sublabel: "slave port", kind: "generic", col: 2, row: 1 },
+    { id: "scb", label: "scoreboard", sublabel: "one effect per transfer", kind: "scoreboard", col: 1, row: 2 },
+    { id: "rpt", label: "UVM reports", sublabel: "error and warning counts", kind: "generic", col: 0, row: 3, colSpan: 3 }
+  ]}
+  edges={[
+    { from: "m", to: "ic", style: "structural" },
+    { from: "ic", to: "s", style: "structural" },
+    { from: "m", to: "chkm", style: "structural", label: "bind" },
+    { from: "s", to: "chks", style: "structural", label: "bind" },
+    { from: "ic", to: "mon", style: "structural" },
+    { from: "mon", to: "scb", style: "data" },
+    { from: "chkm", to: "rpt", style: "control" },
+    { from: "chks", to: "rpt", style: "control" },
+    { from: "scb", to: "rpt", style: "control" }
+  ]}
+/>
+
 - **In an interface or a bound checker module.** Write the properties once in a module like the `ahb_pitfall_checker` of Make It Work, and instantiate it in the testbench top or `bind` it into the design. Assertions in the AHB interface of a UVM agent work the same way. [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index) covers SystemVerilog `checker` units and `bind`.
 - **Report through the environment.** In a UVM testbench, call `` `uvm_error `` for protocol failures and `` `uvm_warning `` for policy budgets from the action blocks, so they count in the end-of-test summary ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)).
 - **Make budgets parameters.** `MAX_WAIT`, `MAX_LOCK_CYCLES` and `MIN_RST_CYCLES` come from the system's latency budget and the components' datasheets; set them per instance.
@@ -734,6 +992,41 @@ The BUSY at edge 2 changes to SEQ at edge 3 while `HREADY` is low, which §3.6.1
 | 1KB crossing | Incrementing burst over 1KB | `p_incr_no_1kb_cross` [Protocol §3.5] |
 | Unaligned transfer | Address not aligned to `HSIZE` | `p_aligned` [Protocol §3.5] |
 | NONSEQ during reset | Missing reset guard | `p_reset_values` [Protocol §7.1.2] |
+
+**Who to blame: the pitfall map.** The same pitfalls, placed on the component that causes them. A failing check points first at the component that drives the failing signal.
+
+<ArchitectureDiagram
+  title="Pitfall map: which component causes each failure"
+  cellWidth={160}
+  gapX={40}
+  gapY={56}
+  caption="Three groups: master, interconnect and slave. Each box names a pitfall (P1 to P8, or the unretimed select from the integration section) and, underneath, its tag: Protocol with its section, Policy for a budget your system chooses, or scoreboard for a bug the bus does not show. Pitfall 5 appears twice and Pitfall 8 three times, because several components share them."
+  nodes={[
+    { id: "gm", label: "master", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "p3", label: "P3 waited NONSEQ changes", sublabel: "[Protocol §3.6]", kind: "generic", col: 0, row: 0 },
+    { id: "p5m", label: "P5 long lock", sublabel: "[Policy] lock budget", kind: "generic", col: 1, row: 0 },
+    { id: "p7", label: "P7 1KB cross, unaligned", sublabel: "[Protocol §3.5]", kind: "generic", col: 0, row: 1 },
+    { id: "p8m", label: "P8 NONSEQ in reset", sublabel: "[Protocol §7.1.2]", kind: "generic", col: 1, row: 1 },
+    { id: "gi", label: "interconnect", kind: "generic", col: 0, row: 2, colSpan: 2, rowSpan: 2, container: true },
+    { id: "p5i", label: "P5 arbitration", sublabel: "[Policy] §4.1", kind: "generic", col: 0, row: 2 },
+    { id: "mx", label: "unretimed select", sublabel: "[Protocol §2.4 Note]", kind: "generic", col: 1, row: 2 },
+    { id: "p8i", label: "P8 grant in reset", sublabel: "[Policy]", kind: "generic", col: 0, row: 3 },
+    { id: "gs", label: "slave", kind: "generic", col: 0, row: 4, colSpan: 2, rowSpan: 3, container: true },
+    { id: "p1", label: "P1 no wait bound", sublabel: "[Policy] wait budget", kind: "generic", col: 0, row: 4 },
+    { id: "p2", label: "P2 acts per wait", sublabel: "scoreboard only", kind: "generic", col: 1, row: 4 },
+    { id: "p4", label: "P4 one-cycle ERROR", sublabel: "[Protocol §5.1.3]", kind: "generic", col: 0, row: 5 },
+    { id: "p6", label: "P6 waits on IDLE", sublabel: "[Protocol §3.2], scoreboard", kind: "generic", col: 1, row: 5 },
+    { id: "p8s", label: "P8 HREADYOUT low", sublabel: "[Protocol §7.1.2] in reset", kind: "generic", col: 0, row: 6 }
+  ]}
+/>
+
+**Myth, fact, and the check that settles it.**
+
+| Myth | Fact | The check that settles it |
+|---|---|---|
+| `(HRESP && !HREADY) \|=> (HRESP && HREADY)` catches a one-cycle ERROR | A one-cycle ERROR never has `HREADY` low, so the antecedent never matches and every attempt succeeds vacuously (IEEE 1800-2023 §16.14.8) | `p_error_second_needs_first`, plus a cover on each antecedent |
+| Control may never change during a wait state | Only a waited NONSEQ or SEQ must hold. A waited IDLE may change; a waited BUSY may become SEQ (in an undefined-length INCR, any type); after a first ERROR cycle the master may cancel to IDLE (§3.6.1, §3.6.2, §3.5.2) | `p_hold_in_wait`, `p_busy_in_wait` |
+| An `HREADY` timeout is a protocol rule | The protocol asks each slave only for a predetermined maximum number of wait states (§5.1.2 Note; IHI0033B.b also recommends at most 16, which is not mandatory) | `p_wait_budget`, reported as a warning [Integration policy] |
 
 Keep the two tags apart, and every check fires only on what it should.
 
@@ -1013,6 +1306,35 @@ The old one-line stability check from Pitfall 3, run on the same traces, would f
 
 ### How to turn a failing assertion into a root cause
 
+<ArchitectureDiagram
+  title="Triage path from a failing assertion to a fix"
+  cellWidth={170}
+  gapX={40}
+  gapY={44}
+  legend={false}
+  caption="Dashed arrows give the order of the steps listed below; list step 2 is split into two boxes (go to the failing edge, then step back to the start), the outcome boxes come from step 4's question, and the rerun box is step 5. The exceptions question has two outcomes: yes means the checker is wrong, no means the design is. Both paths end with a rerun and a look at the cover counts."
+  nodes={[
+    { id: "t1", label: "Read the tag", sublabel: "Protocol or Policy", kind: "generic", col: 0, row: 0 },
+    { id: "t2", label: "Go to the failing edge", sublabel: "cursor on the waveform", kind: "generic", col: 0, row: 1 },
+    { id: "t3", label: "Step back to the start", sublabel: "1 edge for |=>", kind: "generic", col: 0, row: 2 },
+    { id: "t4", label: "Find the driver", sublabel: "master, slave, interconnect", kind: "generic", col: 0, row: 3 },
+    { id: "t5", label: "An exception?", sublabel: "IDLE, BUSY, ERROR, WRAP", kind: "generic", col: 0, row: 4 },
+    { id: "fc", label: "Fix the checker", sublabel: "it flagged legal traffic", kind: "generic", state: "active", col: 1, row: 4 },
+    { id: "fd", label: "Fix the design", sublabel: "the driver broke a rule", kind: "generic", state: "error", col: 0, row: 5 },
+    { id: "cv", label: "Rerun, read covers", sublabel: "0 hits: not tested", kind: "generic", state: "ok", col: 1, row: 5 }
+  ]}
+  edges={[
+    { from: "t1", to: "t2", style: "causal" },
+    { from: "t2", to: "t3", style: "causal" },
+    { from: "t3", to: "t4", style: "causal" },
+    { from: "t4", to: "t5", style: "causal" },
+    { from: "t5", to: "fc", style: "causal", label: "yes" },
+    { from: "t5", to: "fd", style: "causal", label: "no" },
+    { from: "fc", to: "cv", style: "causal" },
+    { from: "fd", to: "cv", style: "causal" }
+  ]}
+/>
+
 1. **Read the tag first.** A [Protocol §x] failure is a bug in the master, slave or interconnect; an [Integration policy] warning is a budget question for the architect.
 2. **Put the waveform cursor on the failing edge,** and step back to the edge where the attempt started: one edge for `|=>`, `MAX_WAIT` edges for the wait budget.
 3. **Find who drives the failing signal.** `HTRANS` and `HADDR` come from the master; `HREADYOUT` and `HRESP` from the slave selected in that data phase; `HREADY` and the select from the interconnect.
@@ -1035,6 +1357,12 @@ A property whose antecedent never matches succeeds on every attempt without test
 
 Cover each antecedent separately (§16.14.3): `HRESP && !HREADY` for `p_error_first_then_second` and `HRESP && HREADY` for `p_error_second_needs_first`. Covering only the first proves nothing about the second. The same applies to every implication in the checker; many tools can also report vacuous attempts per assertion (tool-dependent). In sign-off, a protocol check with zero non-vacuous attempts counts as "not verified", not as "passed".
 
+| Assertion | Antecedent covered by | Hits in the Make It Work run | Sign-off verdict |
+|---|---|---|---|
+| `a_error_first_then_second` | `c_err_first` (`HRESP && !HREADY`) | 1 | exercised |
+| `a_error_second_needs_first` | `c_err_second` (`HRESP && HREADY`) | 2 | exercised |
+| Either one, in a regression with no ERROR traffic | the same two covers | 0 | not verified, although it never failed |
+
 ### Expert: `$past`, `disable iff` and the edges around reset
 
 - `disable iff` stops evaluation, not sampling. `$past` keeps its history through reset, and if there is no earlier tick it returns the default sampled value of its argument (IEEE 1800-2023 §16.9.3). That is why `p_error_second_needs_first` still fails on a one-cycle ERROR at the first edge after reset.
@@ -1055,6 +1383,27 @@ Bursts end early in two ways (§3.5.2): the master cancels after an ERROR, or a 
 - A checker must never demand that a fixed-length burst completes after an ERROR.
 - A scoreboard must not wait for cancelled beats, because the master has no requirement to rebuild the burst (§3.5.2).
 - A monitor must not record `HRDATA` of an ERROR completion as read data (§6.1.2). IHI0033C §5.1.3 adds the security angle: a master that receives ERROR on a read "might still use the data", a slave "cannot rely on the ERROR response to prevent the reading of a value", and driving `HRDATA` to zero on an ERROR read is recommended.
+
+<SequenceDiagram
+  title="An INCR4 read cancelled after ERROR on its second beat"
+  caption="Read top to bottom. The slave answers the second beat with the two-cycle ERROR, and the master cancels the rest of the burst with IDLE (§3.5.2). The monitor reports the ERROR beat without its HRDATA (§6.1.2), and the scoreboard closes the burst instead of waiting for beats 3 and 4, which never come."
+  participants={[
+    { id: "m", label: "master", sublabel: "INCR4 read", kind: "generic" },
+    { id: "s", label: "slave", kind: "dut" },
+    { id: "mon", label: "monitor", kind: "monitor" },
+    { id: "scb", label: "scoreboard", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "m", to: "s", label: "beat 1: NONSEQ" },
+    { kind: "return", from: "s", to: "m", label: "beat 1 data, OKAY" },
+    { from: "m", to: "s", label: "beat 2: SEQ" },
+    { kind: "return", from: "s", to: "m", label: "beat 2: two-cycle ERROR, first ERROR cycle (HREADY low)", tone: "error" },
+    { from: "m", to: "s", label: "IDLE: beats 3 and 4 cancelled" },
+    { kind: "return", from: "s", to: "m", label: "beat 2: second ERROR cycle (HREADY high)", tone: "error" },
+    { kind: "async", from: "mon", to: "scb", label: "beat 1 data; beat 2 ERROR, HRDATA not recorded" },
+    { kind: "self", from: "scb", label: "burst closed early: no wait for beats 3 and 4" }
+  ]}
+/>
 
 ### Expert: interconnect effects on bus-level checks
 
@@ -1081,6 +1430,17 @@ IHI0033C (2021) renumbers most of Chapter 3 and changes several details that a c
 - IDLE address alignment changes from a rule ("must") to a recommendation (IHI0033C §3.6).
 - A new chapter defines which signals must always be valid: `HTRANS`, `HADDR`, `HSEL`, `HMASTLOCK`, `HREADY`, `HREADYOUT` and `HRESP` (IHI0033C §8.2). An always-on `!$isunknown` check on those is a protocol check under issue C.
 - Write strobes (`HWSTRB`, IHI0033C §3.5) are new, and the lock extent is defined (§3.3).
+
+**One glance: the same differences, with their effect on the checker.**
+
+| Topic | IHI0033B.b | IHI0033C | Effect on the checker |
+|---|---|---|---|
+| Wait states | at most 16 recommended, serial boot ROM exempt (§5.1.2 Note) | only the predetermined maximum (§5.1.2 Note) | `MAX_WAIT` is your budget under both: a warning, never an error |
+| IDLE address alignment | "must" (§3.5) | recommended (§3.6) | `p_aligned` skips IDLE under both; an IDLE alignment check is a protocol error only under B.b |
+| Always-valid signals | no such list | `HTRANS`, `HADDR`, `HSEL`, `HMASTLOCK`, `HREADY`, `HREADYOUT`, `HRESP` (§8.2) | an always-on `!$isunknown` check on them is a protocol check under C |
+| Write strobes | no `HWSTRB` | `HWSTRB` (§3.5) | new checks, behind the issue-C parameter |
+| Lock extent | not defined exactly | from a cycle with `HMASTLOCK` and `HREADY` high (and `HSEL`, if present) to one with `HMASTLOCK` low and `HREADY` high (§3.3) | the Pitfall 5 counter follows the issue C definition |
+| Exclusive transfers | §8.3.1, §8.4 | §10.3.1, §10.4 | the same assertions; cite the new section numbers |
 
 Pin the issue in your verification plan, and keep one parameter per checker that enables issue-C-only checks.
 

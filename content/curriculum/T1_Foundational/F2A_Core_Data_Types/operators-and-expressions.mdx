@@ -516,6 +516,10 @@ The lab below opens on a signed compare: `a` is a signed 4-bit `-4`. **Predict**
 
 What the lab showed: `a > 4'd0` is true, because the unsigned literal makes the comparison unsigned and `4'b1100` reads as 12. `a > 0` and `a > 4'sd0` compare signed values and are false: one letter, `s`, or the choice between a sized and an unsized literal decides the answer. In the `int vs logic [31:0]` scenario, `i < w` is false for `i = -1`, because the unsigned `logic [31:0]` turns the comparison unsigned and −1 reads as 4294967295.
 
+The second lab replays the two `w = sb` rows of the table: `sb` is a signed 8-bit `-8` and `w` is a signed 16-bit target. Step through `w = sb[7:0]` and find the step where the part-select drops the sign, then choose `w = $signed(sb[7:0])`. Edit `sb` to a positive value such as 5 and notice that all three forms agree: the trap only shows when the sign bit is 1.
+
+<SignednessVisualizer scenario="part-select" />
+
 ### Concatenation and replication
 
 A **concatenation** `{a, b, c}` joins its operands into one vector, the first operand in the most significant bits (§11.4.12). Each operand keeps its own width (self-determined), and the result is unsigned. A **replication** `{n{a}}` repeats a concatenation `n` times; `n` must be a non-negative constant without `x` or `z` bits (§11.4.12.1).
@@ -803,6 +807,10 @@ The merge rule itself, Table 11-20 (§11.4.11), for one bit of the `?` branch (r
 Only agreeing 0s and 1s survive; every other pair, including `z` against `z`, gives `x`.
 
 Table 11-20 merges `z` with anything into `x`, so a tri-state model `assign bus = en ? data : 'z;` drives `x`, not `z`, when `en` is unknown. A reference model written with `?:` propagates unknowns honestly; when it disagrees with a DUT written with `if` only on cycles where a control input is `x`, look for the `x` before blaming either side.
+
+The explorer opens on the trace above, `sel = x` with `4'b1100` against `4'b1010`. Set `sel` to 0 or 1 and notice that only one branch is returned; set it back to `x` and change one branch bit at a time, predicting each merged result before you reveal it. Then load the preset with equal branches, where no `x` appears, and choose the operator `en ? data : 'z` to check the tri-state rule with `en = x`.
+
+<OperatorExplorer family="conditional" />
 
 <VisualRecap
   title="Width, sign, grouping, order"
@@ -1095,8 +1103,17 @@ Table 11-4 (§11.4.3) in full, for an integral `op1 ** op2`:
 
 - **`>>>` inside an unsigned expression.** In `r = (s >>> 1) + u;` with `u` unsigned, the whole expression is unsigned, so `s` is converted to unsigned before the shift and `>>>` fills with 0 (§11.8.1, §11.8.2, §11.4.10). Shift into a signed variable first, or make `u` signed.
 - **Part-selects and concatenations are unsigned**, even `s[7:0]` covering all of `logic signed [7:0] s`, and `{s}` (§11.8.1). `s[7:0] >>> 1` therefore fills with 0.
+
+The lab below runs both traps with `s = -8`, `u = 8'd1` and a signed 8-bit `r`. Predict `r = (s >>> 1) + u` before you reveal it, then compare `r = (s >>> 1) + $signed(u)` and `r = s[7:0] >>> 1`, and notice which bit fills the vacated position in each.
+
+<SignednessVisualizer scenario="ashr-unsigned-context" />
+
 - **Extension of an unknown sign bit.** Resizing a signed value whose sign bit is `x` fills the new bits with `x`; a `z` sign bit fills with `z` (§11.8.4).
 - **Mixed 2-state and 4-state operands** evaluate as if all were 4-state (§11.3.4): `i + l` is all `x` when the `logic` operand `l` holds an `x`, even though `i` is an `int`. Stored into an `int`, that `x` silently becomes 0 (§6.11.2).
+
+The next lab shows the same poisoning with two `logic` operands: `p = 4'b10x1` and `q = 4'd1`. Predict how many bits of `p + q` the one `x` reaches, then switch to the `bit` target to see what a 2-state variable keeps, and to `p | q` to compare a bitwise operator, where the `x` stays in its own bit.
+
+<SignednessVisualizer scenario="x-arith" />
 - **Literal signedness.** `-4'sd12 / 3` is 1: `4'sd12` is the 4-bit pattern `1100`, which is −4, and negating it gives 4 (§11.3.3). Write negative constants as simple decimals, or size them generously.
 
 ### Expert: Streaming aggregates and byte order at scale

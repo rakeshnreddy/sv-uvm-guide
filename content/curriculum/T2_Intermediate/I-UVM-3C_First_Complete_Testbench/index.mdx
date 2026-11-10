@@ -17,6 +17,19 @@ sources:
 - **Why it matters:** This bench is the shape of every UVM environment you will meet, and it is the gate of Tier 2 (milestone M2, and the seed of M3). The hard part is no longer any single class: it is the joins between them. A virtual interface that never arrives, an objection nobody raises, an analysis port nobody connects, a driver that forgets `item_done()`: each one gives a bench that compiles cleanly and then hangs, ends at 0 ns, or "passes" having checked nothing. You learn to make the bench prove it ran, and to read those four failures straight from the log.
 - **The Analogy:** A new restaurant's opening night. The building (`tb_top`) supplies power and the street address (clock, reset, the interface). The manager (the test) hands each station its instructions (the configuration object) and decides the menu (which sequence runs). The kitchen line (the agent) takes orders (sequence items), cooks them (the driver), and a runner (the monitor) reports every plate that actually left the pass. The inspector (the scoreboard) checks every plate against the recipe and, at closing, counts the plates that never arrived. *Where it breaks:* a real inspector who saw no plates would notice that the kitchen never opened; a scoreboard reports "0 mismatches" happily unless you make it count, and a real restaurant does not close itself the moment nobody is holding the door (UVM's run phase does, unless someone raises an objection).
 
+The analogy at a glance, one role per row:
+
+| In the restaurant | In the bench | What it does |
+|---|---|---|
+| The building | `tb_top` | Supplies the clock, the reset and the interface. |
+| The manager | the test | Fills the configuration object and picks the sequence. |
+| An order | a sequence item | One unit of stimulus. |
+| The kitchen line | the agent | Holds the sequencer, the driver and the monitor. |
+| The cook | the driver | Turns each item into pin activity. |
+| The runner | the monitor | Reports every transfer that really happened on the pins. |
+| The inspector | the scoreboard | Checks each observed transfer and, at the end, counts what it checked. |
+| Someone holding the door | an objection | Keeps the run phase open; with none raised, it ends at once. |
+
 **You will be able to:**
 1. **Write** the top module: a clock and a reset, the DUT, an interface with clocking blocks, a `uvm_config_db` set of the virtual interface, and `run_test()`.
 2. **Write** the test, env and agent (with a configuration object that selects active or passive), the driver, monitor and sequencer, a sequence, and a scoreboard fed through `uvm_tlm_analysis_fifo` with `check_phase` accounting; and **organize** them in a package compiled in the right order.
@@ -158,6 +171,31 @@ A UVM bench is many files, but only four compile units. Two kinds of code live i
 
 **Trace the include order** inside `mem_pkg`: `mem_item` first, because every other class names it; `mem_cfg` next, because the driver, monitor and agent hold one; the sequences; then the driver, monitor and coverage subscriber; the agent, which declares handles of those three; the scoreboard; the env, which declares an agent and a scoreboard; and the tests last, because they name the env, the configuration and the sequences. A class must be declared before it is used as a type in the same compilation unit; `typedef class` is the forward declaration for the rare case of two classes that need each other (§8.27).
 
+The same order as a table, read from the complete files in Make It Work. Each row lists the package's own types that the file names (base classes from `uvm_pkg` are left out); every one of them must already be declared above it.
+
+| Included file | Names these types of the bench | So it must follow |
+|---|---|---|
+| `mem_item.svh` | none | (nothing in the package) |
+| `mem_cfg.svh` | `virtual mem_if` (a design element, compiled before the package) | (nothing in the package) |
+| `typedef ... mem_sqr` | `mem_item` | `mem_item` |
+| `mem_seqs.svh` | `mem_item`; `mem_rand_seq` extends `mem_wr_rd_seq` in the same file | `mem_item` |
+| `mem_drv.svh` | `mem_item`, `mem_cfg` | both |
+| `mem_mon.svh` | `mem_item`, `mem_cfg` | both |
+| `mem_cov.svh` | `mem_item` | `mem_item` |
+| `mem_agent.svh` | `mem_cfg`, `mem_sqr`, `mem_drv`, `mem_mon`, `mem_cov`, `mem_item` | all six |
+| `mem_sb.svh` | `mem_item` | `mem_item` |
+| `mem_env.svh` | `mem_agent`, `mem_sb` | both |
+| `mem_tests.svh` | `mem_env`, `mem_cfg`, `mem_wr_rd_seq`, `mem_rand_seq` | all four |
+
+**Predict from the table:** which files could legally be included immediately after `mem_item.svh`, in place of `mem_cfg.svh`? Could any file even come before `mem_item.svh`?
+
+<details>
+<summary>Answer</summary>
+
+Right after `mem_item.svh`, the `mem_sqr` typedef, `mem_seqs.svh`, `mem_cov.svh` and `mem_sb.svh` would all compile, because each names only `mem_item`. `mem_cfg.svh` could even come before `mem_item.svh`: it names no class of the package. `mem_drv.svh` and `mem_mon.svh` need `mem_cfg` as well, and the agent, the env and the tests need still more. Any order in which every file follows the types in its row compiles; the order in `mem_pkg.sv` is one of them, chosen so that it reads from the item up to the tests.
+
+</details>
+
 **Pitfalls.**
 - *An interface inside the package.* A package may declare types, nets, variables, tasks, functions, sequences, properties and checkers (§26.2), not interfaces or modules. Keep `mem_if.sv` separate.
 - *Include order backwards.* If `mem_agent.svh` comes before `mem_drv.svh`, the compiler stops in `mem_agent.svh`: `mem_drv` is not yet a type. The error points at the agent, not at the include list.
@@ -194,6 +232,49 @@ end
 - **The set comes before `run_test()`.** `run_test()` builds the test and runs every phase, and by default ends the simulation with `$finish` when the run is over, so it never returns to the next line. The test reads the virtual interface in its `build_phase`, so the handle must already be in the database. A `set()` written after `run_test()` in the same block is never reached.
 - **The scope `"uvm_test_top"`.** With a `null` context the second argument is the whole path (Annex C.4.2.2.1). `uvm_test_top` is the name `run_test()` gives the test, so exactly the test can `get()` it. The test then hands the handle on inside the configuration object; nothing below the test reads `"vif"`.
 
+The whole start-up happens at 0 ns, before the first rising edge. Follow the handle from `tb_top` to the agent:
+
+<SequenceDiagram
+  title="Start-up at 0 ns: from tb_top's set() to the first raise_objection"
+  caption="Time does not advance until run_phase. tb_top's set() must be in the database before the test's get(), because run_test() never hands control back to tb_top. The test publishes cfg for env.agt before it creates the env, so the agent's get() finds it one level down. The uvm-core details (when the command line is read, and that uvm_root's build_phase runs before the test's) follow the Accellera reference implementation, uvm_root.svh."
+  participants={[
+    { id: "top", label: "tb_top", sublabel: "last initial block", kind: "generic" },
+    { id: "cdb", label: "uvm_config_db", sublabel: "the typed store", kind: "generic" },
+    { id: "root", label: "uvm_root", sublabel: "inside run_test()", kind: "generic" },
+    { id: "test", label: "uvm_test_top", sublabel: "mem_smoke_test", kind: "test" },
+    { id: "env", label: "env", sublabel: "mem_env", kind: "env" },
+    { id: "agt", label: "agt", sublabel: "mem_agent", kind: "agent" }
+  ]}
+  messages={[
+    { from: "top", to: "cdb", label: 'set(null, "uvm_test_top", "vif", mem_if0)' },
+    { from: "top", to: "root", label: 'run_test("mem_smoke_test"): never returns' },
+    { kind: "self", from: "root", label: "+UVM_TESTNAME, else the argument: the factory creates uvm_test_top" },
+    { kind: "divider", label: "build_phase, top-down" },
+    { kind: "self", from: "root", label: "uvm_root's build_phase: applies any +uvm_set_type_override" },
+    { from: "test", to: "cdb", label: 'get(this, "", "vif", cfg.vif)' },
+    { kind: "return", from: "cdb", to: "test", label: "found: mem_if0" },
+    { from: "test", to: "cdb", label: 'set(this, "env.agt", "cfg", cfg)' },
+    { from: "test", to: "env", label: 'create("env", this)' },
+    { kind: "self", from: "env", label: "build_phase: create agt and sb" },
+    { from: "agt", to: "cdb", label: 'get(this, "", "cfg", cfg)' },
+    { kind: "return", from: "cdb", to: "agt", label: "cfg, with vif inside" },
+    { kind: "self", from: "agt", label: "build_phase: mon, cov, sqr, drv; mon.cfg = cfg, drv.cfg = cfg" },
+    { kind: "divider", label: "connect_phase, then end_of_elaboration_phase" },
+    { kind: "self", from: "test", label: "print_topology()" },
+    { kind: "divider", label: "run_phase starts, still at 0 ns" },
+    { kind: "self", from: "test", label: "raise_objection, then seq.start(env.agt.sqr)" }
+  ]}
+/>
+
+**Predict:** a teammate moves the `set()` line below `run_test()` in the same `initial` block. The test's `build_phase` calls `` `uvm_fatal("NOVIF", ...) `` when its `get()` fails. Which bench message does the log show, from which component, and at what time? Does the topology table appear?
+
+<details>
+<summary>Answer</summary>
+
+After the banner and `RNTST`, the log shows `UVM_FATAL @ 0 ns: uvm_test_top [NOVIF] virtual mem_if 'vif' not found: set it in tb_top before run_test()`, and nothing else from the bench. The `set()` is never reached, so the test's `get()` fails in `build_phase`, at 0 ns, before the env exists. The fatal ends the run there, so no topology table is printed: `print_topology()` runs only in `end_of_elaboration_phase`. This is failure 1 of the four bring-up failures below.
+
+</details>
+
 **Misconception: "setting the vif from the test by a hierarchical reference is the same thing."** It looks equivalent: `cfg.vif = tb_top.mem_if0;` in the test would give the same handle. It is not:
 - The test lives in `mem_pkg`, and an item in a package may not refer to the design hierarchy (IEEE 1800-2023 §26.2: "Items within packages shall not have hierarchical references to identifiers except those created within the package or made visible by import of another package"). The line does not compile.
 - Even in code outside a package, the test would then work only under a top module named `tb_top` with an instance named `mem_if0`. In Make It Work the same package runs under a second top, `tb_sys_top`; a hard-coded path would break it. The module that owns the instance publishes it; classes stay independent of where the pins live.
@@ -222,6 +303,24 @@ The agent does four things in `build_phase`, in this order:
 Right after creating each child, the agent hands it the same `cfg` handle (`mon.cfg = cfg;`). That works because a child's `build_phase` runs after its parent's `build_phase` has returned. In `connect_phase` the agent connects `drv.seq_item_port` to `sqr.seq_item_export` (active only), promotes `mon.ap` to its own `ap`, and connects `mon.ap` to the coverage subscriber. The env then sees one port on the agent's boundary and never reaches inside it ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), one level at a time).
 
 **Pitfall: a driver that is built anyway.** If the agent created the driver without checking `get_is_active()`, a passive agent would drive the bus too, fighting the real source of the traffic. The guard is not optional.
+
+**Predict:** a test sets `cfg.is_active = UVM_PASSIVE` and `cfg.coverage_enable = 0`. Using the four steps above, which of `mon`, `cov`, `sqr` and `drv` does the agent build, and which connections does its `connect_phase` make?
+
+<details>
+<summary>Answer, with all four settings</summary>
+
+Only `mon` (and the agent's own `ap`, which it creates in every case). The one connection is the promotion `mon.ap` to `ap`. The table gives every combination of the two fields, read from `mem_agent.svh` in Make It Work:
+
+| `is_active` | `coverage_enable` | Children built | Connections made in `connect_phase` |
+|---|---|---|---|
+| `UVM_ACTIVE` | 1 (this bench) | `mon`, `cov`, `sqr`, `drv` | `mon.ap` to `ap`; `mon.ap` to `cov.analysis_export`; `drv.seq_item_port` to `sqr.seq_item_export` |
+| `UVM_ACTIVE` | 0 | `mon`, `sqr`, `drv` | `mon.ap` to `ap`; `drv.seq_item_port` to `sqr.seq_item_export` |
+| `UVM_PASSIVE` | 1 (the second bench) | `mon`, `cov` | `mon.ap` to `ap`; `mon.ap` to `cov.analysis_export` |
+| `UVM_PASSIVE` | 0 | `mon` | `mon.ap` to `ap` |
+
+The coverage connection is guarded by `cov != null`, and the driver connection by `get_is_active()`, so `connect_phase` never touches a child that `build_phase` did not create.
+
+</details>
 
 ### Driver and monitor: one transfer each
 
@@ -295,6 +394,18 @@ end
 - **The one exception, and this module's lab.** A result that the DUT registers at the *same* edge as the request may be sampled with `#0` at that edge, because `#0` sees it after the update. The lab's FIFO samples its `dout` that way. Its earlier version broke because it also sampled the `full` and `empty` flags with `#0`: the flags qualify the transfer, so they need `#1step`. The rule, from the expert item on monitor sampling skew in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): `#1step` for whatever decides whether a transfer happened; `#0` only for a same-edge registered result.
 - **Why a new item each time.** Subscribers receive the handle, not a copy. Reusing one object would let the next transfer overwrite an item the scoreboard has not read yet.
 - **Why `rdata` is `logic`.** The item's `rdata` field is 4-state, so an X from the DUT reaches the scoreboard and fails the compare, instead of silently turning into 0.
+
+The sampling rule, signal by signal (`mon_cb` declares `default input #1step`; the last two rows are the lab's FIFO, for contrast):
+
+| Signal | What the monitor uses it for | Input skew | Why |
+|---|---|---|---|
+| `valid` | decides whether a transfer happened at this edge | `#1step` | It must be the value the DUT's flip-flops used at the edge. |
+| `we`, `addr` | the kind and the location of the transfer | `#1step` | Same edge, same "before" values; `MON_X` reports an X or Z while `valid` is 1. |
+| `wdata` | the data of a write | `#1step` | It belongs to the transfer accepted at that edge. |
+| `rst_n` | in reset, the monitor drops a read in flight | `#1step` | It qualifies every edge, like `valid`. |
+| `rdata` | the result of a read, filled into `rd_pending` | `#1step`, one edge after the accept | The DUT registers it at the accept edge; the next edge's `#1step` sample sees it. |
+| lab FIFO: `full`, `empty` | decide whether a push or pop happened | `#1step` | They qualify the transfer; sampling them with `#0` was the earlier version's bug. |
+| lab FIFO: `dout` | the result registered at the same edge | `#0` allowed | `#0` sees the value after that edge's update. |
 
 ### One transaction through the bench
 
@@ -370,6 +481,10 @@ The scoreboard predicts what each read should return and compares. Its reference
 - **Why an export on the scoreboard.** The env connects `agt.ap` to `sb.item_export`, a `uvm_analysis_export` that `mem_sb` connects to its FIFO. The env never reaches inside the scoreboard, and the scoreboard can change how it buffers without touching the env.
 - **Compare with `!==`.** `t.rdata !== model[t.addr]` treats X and Z as values, so an X on `rdata` fails ([F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index)).
 
+**Try the first bullet.** The explorer below opens on a subscriber, `chk`, whose check needs 25 ns of waiting. Predict where that waiting can go, given that `write()` is a function, then check. Its component names are its own, not this bench's.
+
+<AnalysisBroadcastVisualizer section="slow" />
+
 **Accounting in `check_phase`.** `check_phase` runs after `run_phase` has ended, bottom-up (IEEE 1800.2-2020 §9.8.1.7). It is the place to ask "did I check everything, and did I check anything?":
 - `item_fifo.used()` (§12.2.8.2.3) must be 0. Items still in the FIFO were observed but never judged.
 - `n_reads` must not be 0. A scoreboard that checked no read has proved nothing about the DUT, whatever its mismatch count says.
@@ -428,6 +543,15 @@ The test therefore raises an objection before anything consumes time, starts the
 
 **Why a drain time and not a delay.** A `#20ns` before `drop_objection` would also work today, but it hides the intent and is easy to forget when the DUT's latency changes. The drain time belongs to the objection, applies every time the count reaches zero, and is visible in a phase trace. For a DUT whose latency varies, use `phase_ready_to_end` in the scoreboard instead ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). Also set a global timeout (`uvm_root::get().set_timeout(1ms)`, Annex F.7.3.3) so that a hang ends in a millisecond of simulated time, not at uvm-core's default of 9200 s.
 
+The four ways this bench's run can end, side by side (the last row is the bench as written):
+
+| What the test does with its objection | The run ends at | What the log shows | `check_phase` and `report_phase` |
+|---|---|---|---|
+| Never raises one | 0 ns, in the first time slot | Everything at 0 ns; `SCB_NO_TRAFFIC`; `SCB_SUMMARY matches=0` | Run |
+| Raises it and never drops it | 1000000 ns, the 1 ms timeout | `PH_TIMEOUT` fatal; no `SCB_SUMMARY` | Never run: the fatal ends the run |
+| Drops it when `start()` returns, drain time 0 | 345 ns | `MON_INFLIGHT` for the read of address F; `SCB_SUMMARY matches=15` | Run |
+| Drops it when `start()` returns, drain time 20 ns | 365 ns | `SCB_SUMMARY matches=16 mismatches=0 pending=0` | Run |
+
 ### Two tests and a factory override
 
 Both tests are compiled into every run; the command line picks one. `run_test()` creates the test named by `+UVM_TESTNAME` if it is present, and otherwise the one named in its argument (Annex F.7.3.1, G.2.1). Every test is created with the instance name `uvm_test_top`, which is why the configuration paths start there.
@@ -447,6 +571,28 @@ The same override can come from the command line without a new test class: `+UVM
 
 **Pitfall: creating the sequence with `new()`.** `mem_wr_rd_seq seq = new("seq");` bypasses the factory, so the override silently does nothing: the second test runs the directed sequence. Every object you might want to replace is created with `::type_id::create`.
 
+**Predict:** in each run below, which class's `body()` drives the bus, and so what does the `TEST` line print after `starting`? Remember that the sequence is created in the inherited `run_phase`, after every `build_phase` has finished.
+1. `+UVM_TESTNAME=mem_smoke_test`.
+2. `+UVM_TESTNAME=mem_rand_test`.
+3. `+UVM_TESTNAME=mem_rand_test`, with the `run_phase` changed to `new("seq")`.
+4. `+UVM_TESTNAME=mem_rand_test`, with the override line moved *after* `super.build_phase(phase)`.
+5. `+UVM_TESTNAME=mem_smoke_test +uvm_set_type_override=mem_wr_rd_seq,mem_rand_seq`.
+
+<details>
+<summary>Answer</summary>
+
+| Run | Override in place when `run_phase` creates `seq`? | Created with | Class that runs | `TEST` line |
+|---|---|---|---|---|
+| 1 | none | `create` | `mem_wr_rd_seq` | `starting mem_wr_rd_seq` |
+| 2 | yes, from `mem_rand_test::build_phase` | `create` | `mem_rand_seq` | `starting mem_rand_seq` |
+| 3 | yes, but `new()` never asks the factory | `new()` | `mem_wr_rd_seq` | `starting mem_wr_rd_seq` |
+| 4 | yes: it is still set before `run_phase` | `create` | `mem_rand_seq` | `starting mem_rand_seq` |
+| 5 | yes, from the command line, applied in `uvm_root`'s `build_phase` (uvm-core) | `create` | `mem_rand_seq` | `starting mem_rand_seq` |
+
+Only `new()` defeats the override. Run 4 works because an override applies to every *later* create, and this sequence is created at run time; an override meant for a component created by `super.build_phase` would have to come before that call. Run 5 needs no new test class, as the paragraph above says.
+
+</details>
+
 ### The four bring-up failures, from their logs
 
 Almost every first bench fails in one of four ways. Each has a recognizable signature in the log; learn the signatures and you can fix most bring-up problems without opening a waveform. The log lines are from a hand trace of this bench (illustrative; file and line fields removed, times as `tb_top`'s `$timeformat` prints them).
@@ -458,6 +604,31 @@ Almost every first bench fails in one of four ways. Each has a recognizable sign
 | **2b. Objection never dropped** | `UVM_FATAL @ 1000000 ns: reporter [PH_TIMEOUT] Explicit timeout of 1000000 ns hit, indicating a probable testbench issue`, and **no** `SCB_SUMMARY` | A missing `drop_objection`, or a sequence stuck forever (see failure 4) | Drop on every path; find what the stuck thread waits for (`+UVM_OBJECTION_TRACE`, uvm-core impl.) |
 | **3. Unconnected analysis port** | A clean-looking run with `[SCB_NO_TRAFFIC]` at the end, `COV_SUMMARY` at 100.0% and `SCB_SUMMARY matches=0` | `agt.ap.connect(sb.item_export)` missing in `mem_env`: an analysis port may legally have no connection, so nothing complains | Add the connection; keep the zero-traffic check so this can never pass |
 | **4. Missing `item_done()`** | `UVM_ERROR @ 35 ns: uvm_test_top.env.agt.sqr [uvm_test_top.env.agt.sqr] Get_next_item called twice without item_done or get in between`, then the same line every 10 ns, then `PH_TIMEOUT` | The driver loops back to `get_next_item()` without `item_done()`; the sequencer hands it the same item again, and `finish_item()` in the sequence never returns | Call `seq_item_port.item_done()` once per item, after the item is on the pins |
+
+Each failure is one missing line, and each line has an owner. The picture marks where the fix goes:
+
+<ArchitectureDiagram
+  title="Where each bring-up fix lives in the mem bench"
+  caption="Red marks where each missing line belongs, and the line's absence gives one signature in the table above; the badge is the failure's number. 1: tb_top's set() before run_test(). 2: the test's raise_objection and drop_objection in run_phase. 3: mem_env's connect_phase line agt.ap.connect(sb.item_export), without which sb receives nothing; the line lives in env, not in sb. 4: the driver's item_done(), once per get_next_item(). The agt box is left out to keep the picture small: drv, sqr and mon sit inside agt, as in the bench diagram at the top."
+  cellWidth={140}
+  gapX={84}
+  nodes={[
+    { id: "init", label: "tb_top initial", sublabel: "set(), then run_test()", kind: "generic", col: 0, row: 0, state: "error", badge: "1" },
+    { id: "test", label: "uvm_test_top", sublabel: "raise, start, drop", kind: "test", col: 1, row: 0, state: "error", badge: "2" },
+    { id: "env", label: "env", sublabel: "mem_env", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "drv", label: "drv", sublabel: "item_done()", kind: "driver", col: 0, row: 1, state: "error", badge: "4" },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer", col: 1, row: 1 },
+    { id: "mon", label: "mon", sublabel: "via agt.ap", kind: "monitor", col: 0, row: 2 },
+    { id: "sb", label: "sb", sublabel: "mem_sb", kind: "scoreboard", col: 1, row: 2 },
+    { id: "conn", label: "env connect_phase", sublabel: "agt.ap.connect(sb.item_export)", kind: "generic", col: 0, row: 3, colSpan: 2, state: "error", badge: "3" }
+  ]}
+  edges={[
+    { from: "init", to: "test", style: "causal", label: "vif" },
+    { from: "test", to: "sqr", style: "causal", label: "seq.start" },
+    { from: "drv", to: "sqr", style: "control", label: "item_done" },
+    { from: "mon", to: "sb", style: "data", label: "write(t)" }
+  ]}
+/>
 
 Four details make the signatures reliable:
 - **A fatal skips the checking phases.** `PH_TIMEOUT` and `NOVIF` end the run through uvm-core's `die()`, which runs `pre_abort()` and prints the report summary but never runs `check_phase` or `report_phase` (`uvm_root.svh`). A log without `SCB_SUMMARY` is never a pass.
@@ -515,6 +686,12 @@ Three details make the reuse work:
 - **The interface's request signals are nets** (`wire`). In the first bench the driver's clocking block drives them; in the second, `mem_traffic_gen`'s output ports do. A clocking-block output on a net creates its own driver that stays `'z` until the first synchronous drive (§14.16), so the unused `drv_cb` does not interfere. With variables (`logic`), the same interface could not legally be driven by both (see the expert item on one interface type on both sides of the DUT in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
 - **The test, not the agent, decides.** `mem_sys_env` creates `mem_agent` exactly as `mem_env` does. If the agent were active here, its driver would fight `mem_traffic_gen` for the bus.
 - **Check the shape and the count.** The second test prints the topology at the end of elaboration: under `mem_agt` you must see `cov` and `mon` and no `sqr` or `drv`. The scoreboard must report `matches=16` for the 16 reads the RTL makes.
+
+**Try it on a generic bench.** The explorer below uses its own two-agent bench (`in_agt`, `out_agt`, `bus_*` classes), not `mem_agent`. It opens with `out_agt` set to `UVM_PASSIVE`: predict which children `out_agt` builds, then check. Its controls also let you make `in_agt` passive, and a further option shows what skipping `super.build_phase` breaks.
+
+<AnimatedUvmTestbenchDiagram />
+
+To build an agent yourself and be graded on the `get_is_active()` rule, use the [UVM Agent Builder](/exercises/uvm-agent-builder).
 
 ### Recap
 
@@ -1150,6 +1327,20 @@ UVM_FATAL :    0
 
 The reads of addresses 0 to 7 still match; each read of 8 to F returns the location eight below it (address 8 returns `0f`, what address 0 holds). Eight errors, one per broken read, and a summary that names the damage. Set `.BUG(0)` again before you go on.
 
+Every read of the upper half, worked out (the read of address `n` is published at 205 + 10n ns, expects `{n, ~n}` and, with the bug, returns what address `n - 8` holds; the rows a to f are hex addresses, as in the log):
+
+| Read of address | Published at | Expected (model) | Returned with `.BUG(1)` | Result |
+|---|---|---|---|---|
+| 0 to 7 | 205 to 275 ns | `0f` to `78` | the same | ✓ match (8) |
+| 8 | 285 ns | `87` | `0f` | ✕ mismatch |
+| 9 | 295 ns | `96` | `1e` | ✕ mismatch |
+| a | 305 ns | `a5` | `2d` | ✕ mismatch |
+| b | 315 ns | `b4` | `3c` | ✕ mismatch |
+| c | 325 ns | `c3` | `4b` | ✕ mismatch |
+| d | 335 ns | `d2` | `5a` | ✕ mismatch |
+| e | 345 ns | `e1` | `69` | ✕ mismatch |
+| f | 355 ns | `f0` | `78` | ✕ mismatch |
+
 ### The same agent, passive, in a second bench
 
 These three files, compiled with `mem_dut.sv`, `mem_if.sv` and an **unchanged** `mem_pkg.sv`, make the second bench. Compile them as a separate run with `tb_sys_top` as the top module.
@@ -1310,6 +1501,15 @@ UVM_FATAL :    0
 
 The topology has no `sqr` and no `drv` under `mem_agt`, and the passive monitor saw all 32 transfers: 16 writes (accepted from 25 ns to 175 ns) and 16 reads (accepted from 185 ns to 335 ns), every read matched. The test drops its objection at 345 ns, when `mon_cb` first samples `valid` as 0, and the drain ends the run at 365 ns. That is the M2 signature: one agent class, active in one bench and passive in another, changed only through its configuration.
 
+Every run on this page so far, side by side:
+
+| Run | Stimulus | Transfers | Last request accepted | Run ends | Verdict lines |
+|---|---|---|---|---|---|
+| `mem_smoke_test` | `mem_wr_rd_seq`: 16 writes, then 16 reads | 32 | 345 ns | 365 ns | `SCB_SUMMARY matches=16 mismatches=0 pending=0`, `UVM_ERROR` count 0 |
+| `mem_rand_test` | `mem_rand_seq`, through the override | 40 random | 425 ns | 445 ns | `matches=` the number of reads (seed-dependent), `mismatches=0` |
+| `mem_smoke_test` with `.BUG(1)` | `mem_wr_rd_seq` | 32 | 345 ns | 365 ns | `SCB_SUMMARY matches=8 mismatches=8 pending=0`, `UVM_ERROR` count 8 |
+| `mem_sys_test` (passive) | `mem_traffic_gen`, RTL: 16 writes, then 16 reads | 32 | 335 ns (objection dropped at 345 ns) | 365 ns | `SCB_SUMMARY matches=16 mismatches=0 pending=0`, `UVM_ERROR` count 0 |
+
 ### How to build your own first bench
 
 1. **Write the DUT's protocol down** as a table: which edge accepts a request, when results are valid, what reset does. Every later decision (clocking skews, the monitor's state, the drain time) comes from it.
@@ -1345,6 +1545,26 @@ The topology has no `sqr` and no `drv` under `mem_agt`, and the passive monitor 
 - **Import is not elaboration.** `import mem_pkg::*;` makes names visible; it does not create anything. Whether a compiled but unreferenced package is elaborated (and so registers its classes with the factory) is tool-dependent, which is why `tb_top` imports `mem_pkg` even though it names none of its classes.
 - **Interview angle:** "Two engineers each include `my_item.svh` in their own package. What breaks, and how do you fix it?" (Two distinct `my_item` types; a `uvm_config_db#(my_item)` set by one package's code is invisible to a `get()` compiled in the other. Put shared types in one package that both import.)
 
+<ArchitectureDiagram
+  title="One file included into two packages makes two types"
+  caption="my_item.svh is pasted into pkg_a and into pkg_b, so each package declares its own my_item: pkg_a::my_item and pkg_b::my_item are two distinct types with the same text. A uvm_config_db set() written in pkg_a's code is keyed by pkg_a::my_item, so a get() written in pkg_b's code, keyed by pkg_b::my_item, finds nothing. The fix: declare my_item once, in a shared package that both import."
+  cellWidth={140}
+  gapX={84}
+  nodes={[
+    { id: "file", label: "my_item.svh", sublabel: "one file, included twice", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "pa", label: "pkg_a", kind: "generic", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "pb", label: "pkg_b", kind: "generic", col: 1, row: 1, rowSpan: 2, container: true },
+    { id: "ta", label: "my_item", sublabel: "pkg_a::my_item", kind: "generic", col: 0, row: 1 },
+    { id: "tb", label: "my_item", sublabel: "pkg_b::my_item", kind: "generic", col: 1, row: 1 },
+    { id: "set", label: "set()", sublabel: "keyed by pkg_a's type", kind: "generic", col: 0, row: 2 },
+    { id: "get", label: "get()", sublabel: "returns 0: no match", kind: "generic", col: 1, row: 2, state: "error" }
+  ]}
+  edges={[
+    { from: "file", to: "ta", style: "structural", label: "include" },
+    { from: "file", to: "tb", style: "structural", label: "include" }
+  ]}
+/>
+
 ### Expert: what `run_test()` does with the command line
 
 - **Test selection.** If `+UVM_TESTNAME` is present, `run_test()` creates that test through the factory by name; otherwise it uses its argument (IEEE 1800.2-2020 Annex F.7.3.1, G.2.1). If several `+UVM_TESTNAME` arguments are given, the first is used and a warning is issued (G.2.1).
@@ -1352,7 +1572,43 @@ The topology has no `sqr` and no `drv` under `mem_agt`, and the passive monitor 
 - **When the command line is applied.** uvm-core applies `+uvm_set_type_override` and the other `+uvm_set_*` arguments in `uvm_root`'s own `build_phase`, which runs before the test's (`uvm_root.svh`), so a command-line override is in place before any component or sequence is created. It then logs `UVM_CMDLINE_PROC` with the override applied.
 - **Interview angle:** "Why do regressions select tests with `+UVM_TESTNAME` instead of recompiling with a different `run_test()` argument?" (One compiled image runs every test; the command line, not the source, records which test ran.)
 
+<SequenceDiagram
+  title="Inside run_test(), as uvm-core 2020.3.1 does it"
+  caption="Read top to bottom: test selection and creation happen before any phase; command-line overrides are applied in uvm_root's build_phase, before the test's build_phase creates anything; the summary and $finish come after final_phase. Error ids are those of uvm_root.svh in the Accellera reference implementation."
+  participants={[
+    { id: "top", label: "tb_top", sublabel: "initial block", kind: "generic" },
+    { id: "root", label: "uvm_root", sublabel: "run_test()", kind: "generic" },
+    { id: "fac", label: "factory", sublabel: "uvm_factory", kind: "generic" },
+    { id: "test", label: "uvm_test_top", sublabel: "the selected test", kind: "test" }
+  ]}
+  messages={[
+    { from: "top", to: "root", label: 'run_test("mem_smoke_test")' },
+    { kind: "self", from: "root", label: "+UVM_TESTNAME present? It replaces the argument" },
+    { kind: "self", from: "root", label: "if uvm_test_top already exists: TTINST fatal" },
+    { from: "root", to: "fac", label: 'create_component_by_name(name, "", "uvm_test_top", null)' },
+    { kind: "return", from: "fac", to: "root", label: "the test (null for an unknown name: INVTST fatal)" },
+    { kind: "self", from: "root", label: "if no component exists at all: NOCOMP fatal" },
+    { kind: "self", from: "root", label: "RNTST: Running test mem_smoke_test..." },
+    { kind: "divider", label: "phases run, build_phase top-down" },
+    { kind: "self", from: "root", label: "build_phase: +uvm_set_type_override applied, UVM_CMDLINE_PROC logged" },
+    { kind: "self", from: "test", label: "build_phase: every create() now sees those overrides" },
+    { kind: "divider", label: "after final_phase" },
+    { kind: "self", from: "root", label: "report_summarize(), then $finish by default" }
+  ]}
+/>
+
 ### Expert: when the run really ends, and what a fatal skips
+
+The two endings side by side (the fatal column follows `uvm_root::die()` in uvm-core 2020.3.1; the bullets below give the clauses):
+
+| Step | Normal end | Fatal end (`PH_TIMEOUT`, `NOVIF`, a reached quit count) |
+|---|---|---|
+| What starts it | the last objection drops and every drain time has passed | an action with `UVM_EXIT`: any `UVM_FATAL`, or the error that reaches the quit count; it calls `die()` |
+| `run_phase` threads | killed when `run_phase` ends | not ended by a phase: the simulation stops |
+| `extract_phase`, `check_phase`, `report_phase`, `final_phase` | run, in that order | never run |
+| `pre_abort()` | not called | called on every component |
+| Report summary | printed by `run_test()` | printed by `die()` |
+| `$finish` | called by default | always called |
 
 - **Normal end.** After the last objection drops and every drain time has passed, `run_phase` ends, its threads are killed (IEEE 1800.2-2020 §9.6, §10.5.1), and `extract_phase`, `check_phase`, `report_phase` and `final_phase` run (§9.8.1). `run_test()` then prints the report summary and, by default, calls `$finish`.
 - **Fatal end.** A `UVM_FATAL` (including `PH_TIMEOUT`, `NOVIF` and a reached quit count) calls `uvm_root::die()` in uvm-core 2020.3.1, which runs `pre_abort()` on every component and prints the summary, then calls `$finish` (`uvm_root.svh`). `check_phase` and `report_phase` never run. Override `pre_abort()` in the scoreboard to print the pending count when a run is killed.
@@ -1374,6 +1630,10 @@ The topology has no `sqr` and no `drv` under `mem_agt`, and the passive monitor 
 - **It stores handles, not copies.** The monitor must create a new item per transfer. A monitor that reuses one object fills the FIFO with N handles to the same item, and every check sees the last transfer's values.
 - **Imps versus FIFOs.** A scoreboard whose checks are all zero-time can implement `write()` directly through `` `uvm_analysis_imp_decl `` and skip the FIFO; one that must wait needs the FIFO and a thread. The FIFO also gives you `used()` and `is_empty()` for free accounting ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) compares the forms).
 - **Cost at scale** (tool-dependent): every published item is an object allocation, and every subscriber connected to a port adds a call per transfer. On a high-rate interface, measure before adding subscribers; keep the coverage subscriber switchable (`coverage_enable`) as this agent does.
+
+**See the stored-handle bug.** The challenge below has a scoreboard that stores the handle a monitor keeps reusing. Step through it and find the line that causes the wrong checks, then compare the fix with this bench's monitor, which calls `create` for every transfer.
+
+<ObjectHandleVisualizer mode="bug" />
 
 ### Expert: the same agent on both sides of a hierarchy
 
@@ -1409,6 +1669,37 @@ Attempt each question before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="The joins decide, and the bench must prove it ran"
+  rule="A first bench passes only when the log shows UVM_ERROR 0, UVM_FATAL 0 and an SCB_SUMMARY line with a non-zero match count; a fatal, or a summary with matches=0, is a fail."
+  code={`// tb_top: publish first, because run_test() never returns
+uvm_config_db#(virtual mem_if)::set(null, "uvm_test_top", "vif", mem_if0);
+run_test("mem_smoke_test");
+// test run_phase: hold the phase open, cover the read latency
+phase.raise_objection(this);
+phase.get_objection().set_drain_time(this, 20ns);
+seq.start(env.agt.sqr);
+phase.drop_objection(this);
+// driver: one item_done() per get_next_item()
+seq_item_port.item_done();
+// scoreboard check_phase: n_reads == 0 is an error (SCB_NO_TRAFFIC)`}
+  mistake="Calling a run with 0 mismatches a pass. A scoreboard that checked nothing, because no objection was raised or agt.ap was never connected, also reports 0 mismatches."
+  inTestbench="The regression script greps three things per log: the UVM_ERROR count, the UVM_FATAL count, and the SCB_SUMMARY line with matches above 0. A log with no SCB_SUMMARY line is a fail."
+>
+  <svg viewBox="0 0 340 168" role="img" aria-label="The pass contract as three checks that must all hold: the UVM_ERROR count is 0, the UVM_FATAL count is 0, and an SCB_SUMMARY line is present with a match count above 0. If any one fails, the run fails." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="6" y="6" width="328" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="18" y="30" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">UVM_ERROR count</text>
+    <text x="322" y="30" fontSize="12" textAnchor="end" fill="currentColor">must be 0</text>
+    <rect x="6" y="52" width="328" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="18" y="76" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">UVM_FATAL count</text>
+    <text x="322" y="76" fontSize="12" textAnchor="end" fill="currentColor">must be 0</text>
+    <rect x="6" y="98" width="328" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="18" y="122" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">SCB_SUMMARY line</text>
+    <text x="322" y="122" fontSize="12" textAnchor="end" fill="currentColor">present, matches &gt; 0</text>
+    <text x="170" y="158" fontSize="12" textAnchor="middle" fill="currentColor">All three hold, or the run fails.</text>
+  </svg>
+</VisualRecap>
 
 ### Retrieval quiz
 
@@ -1597,6 +1888,10 @@ Each excerpt below comes from this bench with one line changed. Name the failure
 4. **Missing `item_done()`.** The driver loops back to `get_next_item()` without `seq_item_port.item_done()`. The sequence is stuck in `finish_item()`, the objection is never dropped, and the timeout fires. Fix: one `item_done()` after the item is on the pins.
 
 </details>
+
+**Now triage with a fix you choose.** The hang explorer below models three bring-up failures from this page on its own small bench: a missing `item_done()`, an objection never dropped (failure 2b), and a test that ends at 0 ns because it raised none. Its fourth scenario, a grab that is never released, belongs to [I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index). For each scenario, name the component holding the run open (or ending it) from the log, pick a fix and rerun.
+
+<DebuggingSimulator scenario="all" />
 
 ### Lab: the FIFO environment capstone
 

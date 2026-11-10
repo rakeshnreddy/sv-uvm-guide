@@ -36,6 +36,29 @@ A few terms from earlier lessons, in one line each. A **component** is a `uvm_co
 
 Here is the running example of this lesson. An environment `env` holds two identical agents, `agt0` and `agt1`, and each agent's driver is a `my_driver`. The drivers send `packet` items, each with a data byte and a checksum byte, `crc` (a cyclic redundancy check, CRC). A test called `err_test` must corrupt the CRC of the packets that `agt0`'s driver sends to the design under test (DUT), and leave `agt1` clean. The driver comes from a VIP: you are not supposed to edit it.
 
+<ArchitectureDiagram
+  title="The running example: one error test, two identical agents"
+  caption="Both agents' drivers are the same my_driver class. The goal of err_test: packets from agt0's driver reach the DUT with a bad CRC, packets from agt1's driver stay clean, and my_driver's source stays untouched."
+  gapY={96}
+  spreadAnchors={true}
+  nodes={[
+    { id: "env", label: "env", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "agt0", label: "agt0", kind: "agent", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "agt1", label: "agt1", kind: "agent", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "sqr0", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv0", label: "drv", sublabel: "my_driver: corrupt", kind: "driver", col: 0, row: 1 },
+    { id: "sqr1", label: "sqr", kind: "sequencer", col: 1, row: 0 },
+    { id: "drv1", label: "drv", sublabel: "my_driver: clean", kind: "driver", col: 1, row: 1 },
+    { id: "dut", label: "DUT", kind: "dut", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "sqr0", to: "drv0", style: "data", label: "packet" },
+    { from: "sqr1", to: "drv1", style: "data", label: "packet" },
+    { from: "drv0", to: "dut", style: "data", label: "bad crc" },
+    { from: "drv1", to: "dut", style: "data", label: "crc ok" }
+  ]}
+/>
+
 You have several options, and each changes something different:
 
 - **Subclass and override:** write `err_driver extends my_driver` and register a factory instance override for `env.agt0.drv`. This replaces the whole driver class for that instance, at build time.
@@ -194,6 +217,16 @@ Read it slowly, because four rules hide in it:
   ]}
 />
 
+**Predict, then check.** Change the setup. `agt0.drv`'s instance queue holds three callbacks, in this order: `dly_cb` (a callback that waits), `log_cb` and `err_cb`. `agt1.drv` has no instance queue, and the type-wide queue holds only `log_cb`. `log_cb` is a single object that sits in both queues, and the test has called `log_cb.callback_mode(0)`; the other two are enabled. For one packet on each driver, which `pre_send` calls run, and in what order? Use the four rules above.
+
+<details>
+<summary>Check your answer</summary>
+
+- **`agt0.drv`: `dly_cb`, then `err_cb`.** The iterator walks the driver's own queue (rule 1) in queue order (rule 2). `first()` returns `dly_cb`; `next()` passes over `log_cb`, whose `callback_mode()` is 0 (rule 3), and returns `err_cb`.
+- **`agt1.drv`: no `pre_send` call at all.** It has no instance queue, so it walks the type-wide queue (rule 1), and that queue's only entry, `log_cb`, is disabled. The mode is a bit on the callback object, so switching `log_cb` off affects every queue that holds it (§10.7.1.2.2; more in "Switching callbacks at run time" below).
+
+</details>
+
 You can write the loop yourself when the macro does not fit, for example when every callback votes and the driver needs the combined answer. The same iterator also has `last()` and `prev()` for walking backwards, and `get_cb()` for the callback returned last (D.1.2.3, D.1.2.5, D.1.2.6). The static functions `get_first`, `get_next`, `get_last` and `get_prev` of `uvm_callbacks#(T,CB)` are the same walk without the facade (§10.7.2.4).
 
 ```systemverilog
@@ -225,6 +258,31 @@ You never construct `uvm_callbacks#(T,CB)`; you call its static functions. Its a
 The second type parameter is optional for these calls, so `uvm_callbacks#(my_driver)::add(env.agt0.drv, err_cb)` means the same thing (§10.7.2.2.2). And `T` need not be a component: it can be any `uvm_object` derivative (§10.7.2.2.1), which is how UVM attaches callbacks to registers and fields.
 
 Now the rule that causes most callback bugs. **The handle is read when `add()` runs.** If `env.agt0.drv` is still `null` at that moment, the call is `add(null, err_cb)`: a perfectly legal type-wide registration, with no warning. When is the handle null? UVM builds **top-down** (IEEE 1800.2-2020 §9.8.1.1): the test's `build_phase` creates `env`; then `env`'s `build_phase` creates `agt0` and `agt1`; then each agent's `build_phase` creates its driver. A component's children exist once its own `build_phase` has created them, but its grandchildren do not exist until the children's `build_phase` has run. By `connect_phase`, every component exists. So attach callbacks in `connect_phase`, `end_of_elaboration_phase` or `start_of_simulation_phase`, or later at run time.
+
+<SequenceDiagram
+  title="Top-down build: when each handle stops being null"
+  caption="Time runs downwards. Each component's build_phase creates only its own children, and a child's build_phase runs after its parent's has finished (uvm_build_phase is a top-down phase, IEEE 1800.2-2020 §9.8.1.1). The notes give the state of the handles at that point; by connect_phase every handle on the path is real."
+  columnWidth={140}
+  participants={[
+    { id: "test", label: "err_test", sublabel: "uvm_test_top", kind: "test" },
+    { id: "env", label: "env", sublabel: "my_env", kind: "env" },
+    { id: "agt0", label: "env.agt0", sublabel: "my_agent", kind: "agent" },
+    { id: "drv", label: "env.agt0.drv", sublabel: "my_driver", kind: "driver" }
+  ]}
+  messages={[
+    { kind: "divider", label: "build_phase, top-down" },
+    { kind: "self", from: "test", label: "build_phase()" },
+    { from: "test", to: "env", label: "type_id::create env" },
+    { kind: "note", from: "test", to: "env", label: "env exists; env.agt0 is still null" },
+    { kind: "self", from: "env", label: "build_phase()" },
+    { from: "env", to: "agt0", label: "create agt0 (and agt1)" },
+    { kind: "note", from: "env", to: "agt0", label: "env.agt0 exists; env.agt0.drv is still null" },
+    { kind: "self", from: "agt0", label: "build_phase()" },
+    { from: "agt0", to: "drv", label: "create drv (and sqr)" },
+    { kind: "note", from: "agt0", to: "drv", label: "env.agt0.drv now refers to the driver" },
+    { kind: "divider", label: "connect_phase: every component exists" }
+  ]}
+/>
 
 `add_by_name` fails differently: it searches only the components that exist when it runs. If nothing matches, it warns `CBNOMTC` and registers nothing. If something matches that is not a `T` (the pattern `"*.agt0"` finds the agent, not the driver), it skips that match **without** a warning (uvm-core 2020.3.1, `add_by_name`).
 
@@ -261,6 +319,19 @@ Trace this sequence of calls. `log_cb` prints the CRC it sees, `err_cb` inverts 
 
 After step 3, `log_cb` on `agt0` runs **before** `err_cb`, so its log line shows the original CRC, a value the DUT never received. Add `log_cb` type-wide **after** step 2 instead, and it lands **behind** `err_cb` in `agt0`'s queue, so it logs the corrupted CRC. Same objects, different order, different log.
 
+**Predict step 5.** After step 4, the test runs `add(env.agt1.drv, err2_cb)`, where `err2_cb` is a second CRC corrupter. Write down all three queues after step 5 before you open the answer.
+
+<details>
+<summary>Step 5, checked against the rules</summary>
+
+| Step | Call | Type-wide queue | `agt0.drv` | `agt1.drv` |
+|---|---|---|---|---|
+| 5 | `add(env.agt1.drv, err2_cb)` | log2_cb, log_cb | log2_cb, dly_cb, log_cb, err_cb | **created as a copy**, then append: log2_cb, log_cb, err2_cb |
+
+This is `agt1.drv`'s first instance add, so rule 2 applies: its queue starts as a copy of the type-wide queue as it is now (log2_cb, log_cb), and `err2_cb` goes at the back. An instance add touches only that object's queue, so the type-wide queue and `agt0.drv`'s queue do not change.
+
+</details>
+
 **Try it.** In the explorer above, place the `add()` in `err_test.connect_phase`, open "Show advanced", and predict which CRC `log_cb` prints on `agt0`'s first packet for each choice of "Type-wide log_cb registered in": `base_test build_phase` (step 1 of the table) or `start_of_simulation_phase` (after `err_cb`'s add). Then switch `err_cb` to `UVM_PREPEND` and predict again. The queue panel shows the final queues; the build-order list shows where each `add()` ran.
 
 **Debrief.** With `log_cb` added in `base_test` `build_phase`, `log_cb` is ahead of `err_cb` in `agt0`'s queue and prints the original CRC, 0x5A. With `log_cb` added in `start_of_simulation_phase`, or with `err_cb` added with `UVM_PREPEND`, `err_cb` runs first and `log_cb` prints the corrupted CRC, 0xA5.
@@ -281,6 +352,38 @@ There are two ways to stop a callback:
 `callback_mode(on)` returns the mode **before** the call, so `void'(err_cb.callback_mode(0));` discards it, and `is_enabled()` asks without changing anything (§10.7.1.2.3). Prefer `callback_mode` for "on for these items, off for those": the object keeps its place in every queue.
 
 **Switch between items, never inside a hook.** The iterator walks the live queue by position. If a hook deletes a callback, the entries behind it move up one place and the next `next()` can skip one; if a hook prepends, the current callback can run again (uvm-core 2020.3.1 by source inspection). Changing `callback_mode` inside a hook is safe for the queue, but it only affects later lookups.
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 250" role="img" aria-label="agt0.drv's queue while log_cb's hook runs at index 1. Before any change: dly_cb at 0, log_cb at 1, err_cb at 2, and next() reads index 2, err_cb. If log_cb deletes itself: dly_cb at 0, err_cb moves up to 1, index 2 is empty, so next() returns nothing and err_cb is skipped. If log_cb prepends new_cb: new_cb at 0, dly_cb at 1, log_cb at 2, err_cb at 3, so next() reads index 2 and log_cb runs again." style={{ width: "100%", maxWidth: 440 }}>
+    <text x="8" y="16" fontSize="12" fontWeight="600" fill="currentColor">No change: log_cb's hook runs at index 1</text>
+    <rect x="8" y="24" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="16" y="42" fontSize="11" fill="currentColor">0: dly_cb</text>
+    <rect x="124" y="24" width="104" height="28" rx="4" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="2" />
+    <text x="132" y="42" fontSize="11" fill="currentColor">1: log_cb</text>
+    <rect x="240" y="24" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="248" y="42" fontSize="11" fill="currentColor">2: err_cb</text>
+    <text x="8" y="70" fontSize="10.5" fill="currentColor">✓ next() reads index 2: err_cb runs</text>
+    <text x="8" y="98" fontSize="12" fontWeight="600" fill="currentColor">log_cb deletes itself inside its hook</text>
+    <rect x="8" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="16" y="124" fontSize="11" fill="currentColor">0: dly_cb</text>
+    <rect x="124" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="132" y="124" fontSize="11" fill="currentColor">1: err_cb</text>
+    <rect x="240" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="248" y="124" fontSize="11" fill="currentColor">2: (empty)</text>
+    <text x="8" y="152" fontSize="10.5" fill="currentColor">✗ next() reads index 2: nothing, so err_cb is skipped</text>
+    <text x="8" y="180" fontSize="12" fontWeight="600" fill="currentColor">log_cb prepends new_cb inside its hook</text>
+    <rect x="8" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="14" y="206" fontSize="11" fill="currentColor">0: new_cb</text>
+    <rect x="96" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="102" y="206" fontSize="11" fill="currentColor">1: dly_cb</text>
+    <rect x="184" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="190" y="206" fontSize="11" fill="currentColor">2: log_cb</text>
+    <rect x="272" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
+    <text x="278" y="206" fontSize="11" fill="currentColor">3: err_cb</text>
+    <text x="8" y="234" fontSize="10.5" fill="currentColor">✗ next() reads index 2: log_cb runs a second time</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">agt0.drv's queue while log_cb's pre_send runs; the highlighted box is the current position. next() goes to the stored index plus one in the queue as it is now, so a change made inside a hook moves entries under the iterator. This is uvm-core 2020.3.1 behaviour (get_next in uvm_callback.svh), not a rule of IEEE 1800.2.</figcaption>
+</figure>
 
 With a driver that calls `get_next_item` and then `item_done` **after** driving, the boundary between items is exact. In the Make It Work test, the sequence for `agt0`'s first two items returns only after the driver's `item_done` for item 2, and item 3 does not exist until the next sequence starts it, so a `callback_mode(0)` in between affects exactly items 3 and later. In the diagram below, **t (10 ns)** is the time axis, one column per 10 ns; **agt0 item** is the item `agt0`'s driver is putting on the pins; **err_cb on** is the value `err_cb.is_enabled()` would return; **CRC (gni)** is the CRC sent by a driver that uses `get_next_item` and `item_done`; and **CRC (get)** is the CRC sent by a driver that uses `get()`:
 
@@ -402,6 +505,30 @@ A common misconception says callbacks always replace overrides, or the other way
 
 ### Where callbacks live in a real testbench
 
+<ArchitectureDiagram
+  title="Hook points in one agent"
+  caption="The driver's hooks sit on the way to the pins, so a driver callback can modify what the DUT receives. The monitor's hook sits after capture and before ap.write(tr), so a monitor callback observes what really happened on the bus. Checking belongs in the scoreboard, not in a hook."
+  gapY={88}
+  spreadAnchors={true}
+  nodes={[
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "scb", label: "scoreboard", sublabel: "checks", kind: "scoreboard", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "pre_send, post_send", kind: "driver", col: 0, row: 1, badge: "can modify" },
+    { id: "mon", label: "mon", sublabel: "post_capture", kind: "monitor", col: 1, row: 1, badge: "observe" },
+    { id: "dut", label: "DUT", kind: "dut", col: 0, row: 2, colSpan: 2 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "bottom", kind: "analysis_imp" }
+  ]}
+  edges={[
+    { from: "sqr", to: "drv", style: "data", label: "req" },
+    { from: "drv", to: "dut", style: "data", label: "drives" },
+    { from: "dut", to: "mon", style: "data", label: "samples" },
+    { from: "mon.ap", to: "scb.imp", style: "data", label: "write(tr)" }
+  ]}
+/>
+
 - **Drivers:** a `pre_send` hook just before driving (corrupt, delay, drop) and a `post_send` hook after it (log, count). This is where error injection happens: the corruption must reach the DUT, and the checker must be told to expect it. Planning which errors to inject and how the scoreboard accounts for them is taught in [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 - **Monitors:** a hook after a transaction is captured and before it is written to the analysis port, for extra coverage sampling or protocol-specific logging. A monitor hook sees what really happened on the bus.
 
@@ -437,6 +564,41 @@ A common misconception says callbacks always replace overrides, or the other way
 - Order is queue order; check it with `display()`.
 - `callback_mode(0/1)` switches an object in every queue; switch between items.
 - A callback changes what runs at a hook; the factory changes which class exists. They compose.
+
+<VisualRecap
+  title="A callback from hook to verified queue"
+  rule="At a hook, uvm_do_callbacks runs the enabled callbacks of one queue in queue order: the object's own instance queue if it has one, otherwise the type-wide queue. add() reads its handle when it runs, and a null handle means type-wide."
+  code={`// err_test::connect_phase: every component exists now
+if (env.agt0.drv == null) \`uvm_fatal("CBNULL", "env.agt0.drv is null")
+err_cb = crc_err_cb::type_id::create("err_cb");
+uvm_callbacks#(my_driver, drv_cb)::add(env.agt0.drv, err_cb);
+
+// end_of_elaboration_phase: check the queues
+uvm_callbacks#(my_driver, drv_cb)::display();
+
+// run_phase, between items
+void'(err_cb.callback_mode(0));`}
+  mistake="Calling add(env.agt0.drv, err_cb) in a build_phase. If the driver is not built yet the handle is null and every my_driver gets the callback; if env.agt0 is null too, reading the path stops the run."
+  inTestbench="A base test registers testbench-wide callbacks type-wide on purpose; an error test attaches its callback to one driver in connect_phase, prints the queues with display() in end_of_elaboration_phase, and switches the callback with callback_mode between items."
+>
+  <svg viewBox="0 0 340 282" role="img" aria-label="Five stages with one trap each. 1, write the three parts; trap: no base-class constructor, or pure hooks. 2, attach after build with add(handle, cb); trap: a null handle means type-wide. 3, order is queue order; trap: the copy of the type-wide queue, UVM_PREPEND and later type-wide adds all change it. 4, switch with callback_mode between items; trap: the mode belongs to the object, so it applies in every queue. 5, verify with display() and get_all(); trap: get_all() also returns callbacks that are off." style={{ width: "100%", maxWidth: 380 }}>
+    <rect x="8" y="8" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="18" y="26" fontSize="11" fontWeight="600" fill="currentColor">1. Three parts: base class, hook, callback</text>
+    <text x="18" y="44" fontSize="10" fill="currentColor" opacity="0.85">trap: no base-class constructor, or pure hooks</text>
+    <rect x="8" y="62" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="18" y="80" fontSize="11" fontWeight="600" fill="currentColor">2. Attach after build: add(handle, cb)</text>
+    <text x="18" y="98" fontSize="10" fill="currentColor" opacity="0.85">trap: a null handle means type-wide</text>
+    <rect x="8" y="116" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="18" y="134" fontSize="11" fontWeight="600" fill="currentColor">3. Order is queue order</text>
+    <text x="18" y="152" fontSize="10" fill="currentColor" opacity="0.85">trap: type-wide copy, PREPEND, later type-wide adds</text>
+    <rect x="8" y="170" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="18" y="188" fontSize="11" fontWeight="600" fill="currentColor">4. Switch with callback_mode, between items</text>
+    <text x="18" y="206" fontSize="10" fill="currentColor" opacity="0.85">trap: the mode is per object, in every queue</text>
+    <rect x="8" y="224" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="18" y="242" fontSize="11" fontWeight="600" fill="currentColor">5. Verify with display() and get_all()</text>
+    <text x="18" y="260" fontSize="10" fill="currentColor" opacity="0.85">trap: get_all() also returns callbacks that are off</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -708,6 +870,13 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
+One glance at the run: which queue each driver's hook walks, and what that does to the log.
+
+| Driver | Queue its hook walks (`display()` rows) | Items 1 and 2 | Items 3 and 4 |
+|---|---|---|---|
+| `agt0.drv` | its own queue: `log_cb`, then `err_cb` (the two `uvm_test_top.env.agt0.drv` rows) | `LOG` shows the CRC before corruption (item 1: `99`), `DRV` drives the inverted one (`66`): `CRC CORRUPT` | `err_cb` is off: `LOG` and `DRV` show the same CRC, `crc ok` |
+| `agt1.drv` | no queue of its own, so the type-wide queue: `log_cb` (the `(*)` row) | `LOG` and `DRV` show the same CRC, `crc ok` | the same: `crc ok` |
+
 Read the log against the rules:
 
 - **`display()`** lists the type-wide queue as `(*)`, then every instance queue. `agt0.drv` has its own queue (a copy of `log_cb`, then `err_cb`); `agt1.drv` has none, so it walks the type-wide queue. `display()` comes from uvm-core, not from IEEE 1800.2, and its messages come from `reporter`, the top of the hierarchy.
@@ -820,6 +989,34 @@ function bit any_drop(packet pkt);
 endfunction
 ```
 
+<SequenceDiagram
+  title="any_drop with VAL = 1: the first 1 ends the walk"
+  caption="agt0.drv's queue holds three enabled drv_cb objects, a_cb, b_cb and c_cb, in that order. Case 1: b_cb returns 1, so any_drop returns 1 at once and c_cb is never asked. Case 2: every callback returns 0, so the loop ends and any_drop returns 1 - VAL, which is 0 (the macro body in uvm-core 2020.3.1, uvm_callback_defines.svh)."
+  columnWidth={140}
+  participants={[
+    { id: "drv", label: "agt0.drv", sublabel: "any_drop(pkt)", kind: "driver" },
+    { id: "a", label: "a_cb", kind: "generic" },
+    { id: "b", label: "b_cb", kind: "generic" },
+    { id: "c", label: "c_cb", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "Case 1: b_cb votes to drop" },
+    { from: "drv", to: "a", label: "drop(this, pkt)" },
+    { kind: "return", from: "a", to: "drv", label: "0" },
+    { from: "drv", to: "b", label: "drop(this, pkt)" },
+    { kind: "return", from: "b", to: "drv", label: "1" },
+    { kind: "note", from: "drv", to: "c", label: "1 equals VAL: any_drop returns 1 now; c_cb.drop is never called", tone: "active" },
+    { kind: "divider", label: "Case 2: no callback returns 1" },
+    { from: "drv", to: "a", label: "drop(this, pkt)" },
+    { kind: "return", from: "a", to: "drv", label: "0" },
+    { from: "drv", to: "b", label: "drop(this, pkt)" },
+    { kind: "return", from: "b", to: "drv", label: "0" },
+    { from: "drv", to: "c", label: "drop(this, pkt)" },
+    { kind: "return", from: "c", to: "drv", label: "0" },
+    { kind: "note", from: "drv", to: "c", label: "loop ends: any_drop returns 1 - VAL, which is 0" }
+  ]}
+/>
+
 `` `uvm_do_obj_callbacks(T, CB, OBJ, METHOD) `` (B.4.4) runs the callbacks registered with another object, for example a sequence that runs its sequencer's callbacks; `` `uvm_do_obj_callbacks_exit_on `` (B.4.6) combines both. One macro gotcha: the expansion declares local variables named `iter` and `cb`, so an unqualified identifier `cb` or `iter` in the `METHOD` arguments binds to the macro's locals, not to your variable (uvm-core 2020.3.1, `uvm_callback_defines.svh`). A qualified name such as `vif.cb` is safe.
 
 ### Expert: queue internals in uvm-core 2020.3.1
@@ -828,6 +1025,11 @@ These are implementation details found by reading `uvm_callback.svh`, not rules 
 
 - **One global pool.** Every instance queue lives in one pool keyed by object, shared by all `(T, CB)` pairs; iteration filters entries by type. So `display()` for `(my_driver, drv_cb)` lists every callback in a driver's queue, including report catchers.
 - **An instance add for another pair can hide type-wide callbacks.** The first instance add for an object seeds its queue with the type-wide report catchers and the type-wide queue of **that** add's `T`. If `log_cb` was added type-wide for `(my_driver, drv_cb)` and a colleague later adds a report catcher to `agt0.drv` with `uvm_report_cb::add(env.agt0.drv, demoter)`, `agt0.drv` now has a pool queue without `log_cb` and stops logging, while `agt1.drv` still logs.
+
+  | uvm-core 2020.3.1 | `agt0.drv`'s hook walks | `log_cb` runs on `agt0`? | `agt1.drv`'s hook walks |
+  |---|---|---|---|
+  | Before the catcher's add | the type-wide queue of `my_driver`: `log_cb` | yes | the type-wide queue: `log_cb` |
+  | After `uvm_report_cb::add(env.agt0.drv, demoter)` | its own pool queue: `demoter`, plus any type-wide report catchers; the `drv_cb` iterator's type filter passes over them | no | the type-wide queue: `log_cb`, unchanged |
 - **An empty queue is re-seeded.** If an object's queue is empty when an instance `add()` runs, it is filled again from the type-wide queue, so a type-wide callback you deleted from that instance can come back.
 - **`delete` on an object with no queue.** `delete(obj, cb)` for an object that never had an instance queue looks up a queue that does not exist and dereferences a null handle, where §10.7.2.3.3 expects a warning. Use `delete(null, cb)` for type-wide callbacks.
 - **Live index.** `get_next` continues from a stored position in the current queue, which is why changing the queue inside a hook skips or repeats callbacks.

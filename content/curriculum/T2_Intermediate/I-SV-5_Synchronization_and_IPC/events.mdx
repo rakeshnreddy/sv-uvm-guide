@@ -48,6 +48,26 @@ event done_too = done;   // a second name for the same object
 event empty = null;      // a name that refers to no object at all
 ```
 
+<ArchitectureDiagram
+  title="Anatomy of an event: names, objects and null"
+  caption="Solid arrows: the variable refers to that synchronization object. done and done_too are two names for one object, which holds a waiting queue (empty so far) and a triggered state (0 so far). empty is null and names no object. In the Quick Take's doorbell analogy, the object is the bell, the triggered state is its light, and each variable is a name for a bell (§6.17, §15.5, §15.5.5)."
+  legend={false}
+  gapX={100}
+  spreadAnchors={true}
+  nodes={[
+    { id: "done", label: "done", sublabel: "event variable", col: 0, row: 0 },
+    { id: "done_too", label: "done_too", sublabel: "event variable", col: 0, row: 1 },
+    { id: "empty", label: "empty", sublabel: "event variable", col: 0, row: 2 },
+    { id: "obj", label: "one object", sublabel: "queue: empty · triggered: 0", col: 1, row: 0, rowSpan: 2, state: "active" },
+    { id: "none", label: "no object", sublabel: "the value null", col: 1, row: 2, state: "dim" }
+  ]}
+  edges={[
+    { from: "done", to: "obj", style: "data", label: "refers to" },
+    { from: "done_too", to: "obj", style: "data", label: "refers to" },
+    { from: "empty", to: "none", style: "structural", label: "null" }
+  ]}
+/>
+
 Because an event is a handle, it behaves like a class handle: assigning one event variable to another makes both names refer to one object. That matters later on this page.
 
 ### Trigger with `->`, wait with `@`
@@ -141,6 +161,50 @@ The next two sections explain the two fixes and the trap in the fourth variant.
 
 Every event has a built-in method, `triggered()`, that returns 1 if the event has been triggered **in the current time slot** and 0 otherwise (§15.5.3, which calls the time slot a "time step"). The trigger sets the state, and it stays set until simulation time advances.
 
+**Predict first.** At t = 10 ns a producer runs `-> done;` in the Active region, and nothing else triggers `done`. Four waiters reach these statements. Which ones proceed?
+
+1. `@(done)`, reached at t = 10 ns before the trigger;
+2. `@(done)`, reached at t = 10 ns after the trigger;
+3. `wait (done.triggered)`, reached at t = 10 ns after the trigger;
+4. `wait (done.triggered)`, reached at t = 11 ns.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+Waiters 1 and 3 proceed; waiters 2 and 4 stay blocked until the next trigger. `@` catches only later triggers (§15.5.2), and the triggered state is 1 from the trigger to the end of the t = 10 ns time slot, then 0 again (§15.5.3).
+
+<figure className="my-4">
+  <svg viewBox="0 0 340 214" role="img" aria-label="Timeline of two time slots. In the t = 10 ns slot, -> done fires part-way through, and done.triggered goes from 0 to 1 at the trigger and stays 1 to the end of the slot. In the t = 11 ns slot it is 0. Waiter 1, @(done) armed before the trigger, wakes. Waiter 2, @(done) reached after the trigger, misses it. Waiter 3, wait (done.triggered) after the trigger in the same slot, passes. Waiter 4, wait (done.triggered) at 11 ns, blocks." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="6" y="6" width="240" height="108" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <rect x="254" y="6" width="80" height="108" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="14" y="22" fontSize="11" fill="currentColor">{"t = 10 ns"}</text>
+    <text x="262" y="22" fontSize="11" fill="currentColor">{"t = 11 ns"}</text>
+    <line x1="120" y1="28" x2="120" y2="110" stroke="rgb(6,182,212)" strokeWidth="1.5" strokeDasharray="3 3" />
+    <text x="126" y="38" fontSize="10" fill="currentColor">{"-> done fires"}</text>
+    <text x="14" y="52" fontSize="10" fill="currentColor">{"done.triggered"}</text>
+    <path d="M12 76 H120 V62 H240 V76" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    <path d="M260 76 H328" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    <text x="60" y="72" fontSize="10" fill="currentColor">{"0"}</text>
+    <text x="176" y="58" fontSize="10" fill="currentColor">{"1"}</text>
+    <text x="290" y="72" fontSize="10" fill="currentColor">{"0"}</text>
+    <circle cx="60" cy="96" r="9" fill="none" stroke="currentColor" />
+    <text x="60" y="100" fontSize="10" textAnchor="middle" fill="currentColor">{"1"}</text>
+    <circle cx="160" cy="96" r="9" fill="none" stroke="currentColor" />
+    <text x="160" y="100" fontSize="10" textAnchor="middle" fill="currentColor">{"2"}</text>
+    <circle cx="200" cy="96" r="9" fill="none" stroke="currentColor" />
+    <text x="200" y="100" fontSize="10" textAnchor="middle" fill="currentColor">{"3"}</text>
+    <circle cx="294" cy="96" r="9" fill="none" stroke="currentColor" />
+    <text x="294" y="100" fontSize="10" textAnchor="middle" fill="currentColor">{"4"}</text>
+    <text x="10" y="138" fontSize="10.5" fill="currentColor">{"1. @(done) armed before the trigger: wakes ✓"}</text>
+    <text x="10" y="158" fontSize="10.5" fill="currentColor">{"2. @(done) reached after it: misses it ✕"}</text>
+    <text x="10" y="178" fontSize="10.5" fill="currentColor">{"3. wait (done.triggered) after it: passes ✓"}</text>
+    <text x="10" y="198" fontSize="10.5" fill="currentColor">{"4. wait (done.triggered) at 11 ns: blocks ✕"}</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">Two time slots, left to right, not to scale. The numbered circles mark where each waiter reaches its statement. Only the triggered state outlasts the trigger, and only until time advances (§15.5.2, §15.5.3).</figcaption>
+</figure>
+
+</details>
+
 So `wait (done.triggered);` succeeds whether it runs before the trigger or after it in the same time slot (§15.5.3). It turns the edge-like trigger into a level that lasts for the rest of the time slot. Use it for **one-shot waits** whose trigger may already have happened at this time.
 
 It has two limits:
@@ -197,6 +261,25 @@ Which fix to choose:
 | make your trigger safe for waiters that arm before the NBA region | `->> ev` | it fires in the NBA region (§15.5.1) |
 | know that something happened at an earlier time | a flag, a counter or a mailbox | an event forgets as soon as time advances |
 | check that several events happen in a given order | `wait_order` | covered below (§15.5.4) |
+
+<ArchitectureDiagram
+  title="Choosing a wait: two questions"
+  caption="Dotted arrows: answer the questions top to bottom. If the waiter can arrive in a later time slot, no event form remembers the trigger, so keep the news in state. Inside a loop, wait with @(ev), and trigger with ->> if the trigger can fire earlier in the same time slot. For a one-shot wait, use wait (ev.triggered), or ->> at the trigger (§15.5.1, §15.5.2, §15.5.3)."
+  legend={false}
+  nodes={[
+    { id: "q1", label: "later time slot?", sublabel: "can the waiter arrive then?", col: 0, row: 0 },
+    { id: "state", label: "flag/counter/mailbox", sublabel: "keep the news in state", col: 1, row: 0, state: "active" },
+    { id: "q2", label: "inside a loop?", sublabel: "is the wait repeated?", col: 0, row: 1 },
+    { id: "loop", label: "@(ev) in the loop", sublabel: "->> if the slot is shared", col: 1, row: 1, state: "active" },
+    { id: "once", label: "wait (ev.triggered)", sublabel: "or ->> at the trigger", col: 0, row: 2, state: "active" }
+  ]}
+  edges={[
+    { from: "q1", to: "state", style: "control", label: "yes" },
+    { from: "q1", to: "q2", style: "control", label: "no" },
+    { from: "q2", to: "loop", style: "control", label: "yes" },
+    { from: "q2", to: "once", style: "control", label: "no" }
+  ]}
+/>
 
 ### Event variables are handles: assignment, merging and `null`
 
@@ -307,20 +390,23 @@ endtask
 ```
 
 <ArchitectureDiagram
-  title="Three names, one synchronization object for req"
+  title="Four names, one synchronization object for req"
   caption="In the Make It Work example, tb_top's req, the requester's property rq.req and the responder's argument req all refer to one object, so a trigger through any of these names wakes processes waiting through any other. check_order's argument first is a fourth name for the same object. The object that rq.req received at construction loses its last name when new() merges it."
   legend={false}
   gapX={100}
+  spreadAnchors={true}
   nodes={[
     { id: "tb", label: "req", sublabel: "tb_top variable", col: 0, row: 0 },
     { id: "cls", label: "rq.req", sublabel: "requester property", col: 0, row: 1 },
     { id: "resp", label: "req", sublabel: "responder argument", col: 0, row: 2 },
-    { id: "obj", label: "object for req", sublabel: "queue + triggered state", col: 1, row: 1 }
+    { id: "first", label: "first", sublabel: "check_order argument", col: 0, row: 3 },
+    { id: "obj", label: "object for req", sublabel: "queue + triggered state", col: 1, row: 1, rowSpan: 2 }
   ]}
   edges={[
     { from: "tb", to: "obj", style: "data", label: "refers to" },
     { from: "cls", to: "obj", style: "data", label: "refers to" },
-    { from: "resp", to: "obj", style: "data", label: "refers to" }
+    { from: "resp", to: "obj", style: "data", label: "refers to" },
+    { from: "first", to: "obj", style: "data", label: "refers to" }
   ]}
 />
 
@@ -343,7 +429,42 @@ wait_order (a, b, c) ok = 1; else ok = 0;  // record the result, report nothing
 
 An `else` clause replaces the default error. An `else` that only calls `$display` prints a message but generates no error, so an out-of-order run can still end clean. Report failures with `$error`, or count them.
 
-Here is how `wait_order (a, b, c)` reacts to six trigger orders, each trigger in its own time slot:
+Picture the construct as a cursor that moves along the list:
+
+<ArchitectureDiagram
+  title="wait_order (a, b, c) as a cursor over the list"
+  caption="Dashed arrows: what moves the cursor. Each trigger of the awaited event moves it one step down. A trigger of an event that is still awaited, before its turn, fails the construct. Events already passed may trigger again. Only a, the first event, can be satisfied by its triggered state, and there is no timeout: the cursor can wait forever (§15.5.4)."
+  legend={false}
+  cellWidth={140}
+  gapX={120}
+  spreadAnchors={true}
+  nodes={[
+    { id: "wa", label: "awaiting a", sublabel: "a's triggered state counts", col: 0, row: 0 },
+    { id: "wb", label: "awaiting b", sublabel: "a may trigger again", col: 0, row: 1 },
+    { id: "wc", label: "awaiting c", sublabel: "a and b may trigger again", col: 0, row: 2 },
+    { id: "ok", label: "succeeds", sublabel: "the process continues", col: 0, row: 3, state: "ok" },
+    { id: "fail", label: "fails", sublabel: "else branch, or $error", col: 1, row: 0, rowSpan: 2, state: "error" }
+  ]}
+  edges={[
+    { from: "wa", to: "wb", style: "causal", label: "a fires" },
+    { from: "wb", to: "wc", style: "causal", label: "b fires" },
+    { from: "wc", to: "ok", style: "causal", label: "c fires" },
+    { from: "wa", to: "fail", style: "causal", label: "b or c fires" },
+    { from: "wb", to: "fail", style: "causal", label: "c fires" }
+  ]}
+/>
+
+Here is how `wait_order (a, b, c)` reacts to six trigger orders, each trigger in its own time slot. Predict each result from the picture before you open the table:
+
+- a, b, c
+- a, a, b, c
+- a, b, a, c
+- a, c
+- b
+- a, b, then nothing
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your six predictions</summary>
 
 | Triggers, in time order | Result | Rule (§15.5.4) |
 |---|---|---|
@@ -353,6 +474,8 @@ Here is how `wait_order (a, b, c)` reacts to six trigger orders, each trigger in
 | a, c | fails at c | c triggered while b was still awaited |
 | b | fails at b | b triggered while a was still awaited |
 | a, b, then nothing | still waiting | `wait_order` has no timeout |
+
+</details>
 
 Three pitfalls:
 
@@ -420,6 +543,37 @@ wait (done.triggered);  // also passes if done fired earlier at this time`}
     <rect x="6" y="174" width="308" height="34" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
     <text x="14" y="195" fontSize="11" fill="currentColor">{"Time advances: done.triggered is 0 again"}</text>
   </svg>
+</VisualRecap>
+
+<VisualRecap
+  title="An event variable is a name; wait_order is a cursor"
+  rule="Assignment re-points a name for later waits and never moves a process already waiting on the old object, so merge handles before any process waits. wait_order succeeds when the awaited events fire left to right, fails when an awaited event fires before its turn, has no timeout, and lets only its first event be satisfied by the triggered state."
+  code={`function new(event req);
+  this.req = req;        // merge with the caller's object
+endfunction
+
+wait_order (req, ack)
+  else $error("ack without req");`}
+  mistake="Writing req = this.req; in a constructor, which re-points the argument and leaves the class with a private object, or re-pointing a name after a process has started waiting on it."
+  inTestbench="Event handles passed to constructors and task arguments, a handle comparison such as rq.req == req to prove a merge, and a wait_order checker with a watchdog around it."
+>
+  <ArchitectureDiagram
+    title="Merged names share one object and its waiting queue"
+    caption="Solid arrows: the variable refers to that object. this.req = req made the class property a second name for tb_top's object, so a trigger through either name wakes the responder waiting in that object's queue (§15.5.5.1)."
+    legend={false}
+    cellWidth={130}
+    gapX={110}
+    spreadAnchors={true}
+    nodes={[
+      { id: "rtb", label: "req", sublabel: "tb_top variable", col: 0, row: 0 },
+      { id: "rcls", label: "rq.req", sublabel: "class property", col: 0, row: 1 },
+      { id: "robj", label: "one object", sublabel: "queue: responder", col: 1, row: 0, rowSpan: 2, state: "active" }
+    ]}
+    edges={[
+      { from: "rtb", to: "robj", style: "data", label: "refers to" },
+      { from: "rcls", to: "robj", style: "data", label: "refers to" }
+    ]}
+  />
 </VisualRecap>
 
 ## Make It Work
@@ -549,6 +703,34 @@ Error: [28] handshake out of order: ack without req
 PASS=3 FAIL=1
 ```
 
+<SequenceDiagram
+  title="One round of the handshake, and the injected bug"
+  caption="Read top to bottom: simulation time runs down the page. Every waiter is armed before the trigger it needs, so no trigger finds an empty queue. Rounds 1 and 2 repeat round 0 at 22 and 34 ns. In the second run only check_order is waiting on ack at t = 28 ns, so only its wait_order fails (§15.5.2, §15.5.3, §15.5.4)."
+  columnWidth={130}
+  participants={[
+    { id: "requester", label: "requester", sublabel: "rq.run(N)" },
+    { id: "responder", label: "responder", sublabel: "task" },
+    { id: "check", label: "check_order", sublabel: "task" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns" },
+    { kind: "note", from: "responder", label: "@(req): armed" },
+    { kind: "note", from: "check", label: "wait_order (req, ack): armed" },
+    { kind: "divider", label: "t = 10 ns · round 0" },
+    { kind: "async", from: "requester", to: "responder", label: "-> req: wakes the responder" },
+    { kind: "note", from: "check", label: "req seen: now awaiting ack" },
+    { kind: "self", from: "requester", label: "wait (ack.triggered)" },
+    { kind: "divider", label: "t = 12 ns" },
+    { kind: "async", from: "responder", to: "requester", label: "-> ack: wakes the requester", tone: "active" },
+    { kind: "note", from: "check", label: "ack seen: in_order++, wait_order restarts" },
+    { kind: "note", from: "responder", label: "back in @(req), 10 ns early" },
+    { kind: "divider", label: "Second run only · t = 28 ns" },
+    { kind: "note", from: "requester", to: "responder", label: "in #10 and in @(req): neither waits on ack" },
+    { kind: "note", from: "check", label: "bug_injector: -> ack with no req", tone: "error" },
+    { kind: "self", from: "check", label: "wait_order fails: out_of_order++, $error", tone: "error" }
+  ]}
+/>
+
 Why no trigger can be lost, and why the log order is fixed:
 
 - The responder is armed at `@(req)` from t = 0, and again right after each `ack`, 10 ns before the next request.
@@ -587,6 +769,20 @@ The full syntax is `->> [delay_or_event_control] ev;` (§15.5.1, Syntax 15-1). T
 ->> repeat (2) @(posedge clk) done;   // NBA region of the second posedge clk
 ```
 
+<TimingDiagram
+  title="->> with an event control never blocks"
+  caption="The x-axis is rising edges of clk. The process runs both clocked ->> statements just after edge 0 and carries straight on. sampled fires in the NBA region of edge 1, the next posedge, and done in the NBA region of edge 2, the second posedge (§15.5.1, Annex A.6.5)."
+  edges={3}
+  signals={[
+    { name: "clk", kind: "clock" }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "after this edge: both ->> statements run, the process moves on" },
+    { edge: 1, tone: "drive", label: "sampled fires (NBA region)" },
+    { edge: 2, tone: "drive", label: "done fires (NBA region)" }
+  ]}
+/>
+
 It behaves like an intra-assignment delay on a nonblocking assignment: the current process schedules the trigger and moves on.
 
 **Program blocks (tool-dependent).** Nonblocking assignments made from the Reactive region set update in the Re-NBA region (§4.4.2.8), but §15.5.1 names only the NBA region for `->>`. The standard does not say where a `->>` executed in a `program` block triggers, so do not build on the difference.
@@ -615,6 +811,23 @@ So a same-time-slot `->`/`@` pair can pass on one simulator, fail on another, an
 
 Interleaving also means `data = 42; -> data_ready;` is not atomic: other processes may run between the two statements (§4.7). A waiter still sees the new data, because nothing can wake it on `data_ready` before the trigger. So update the data first, then trigger.
 
+<SequenceDiagram
+  title="Interleaving between data = 42 and -> data_ready"
+  caption="Read top to bottom: scheduler order at one simulation time, with the consumer already waiting. Another process may run between the producer's two statements (§4.7), but nothing wakes the consumer before the trigger, so it reads 42. Reversing the two statements would let it wake before the write."
+  columnWidth={130}
+  participants={[
+    { id: "producer", label: "producer" },
+    { id: "other", label: "other process" },
+    { id: "consumer", label: "consumer", sublabel: "in @(data_ready)" }
+  ]}
+  messages={[
+    { kind: "self", from: "producer", label: "data = 42;" },
+    { kind: "note", from: "other", label: "may run here: the pair is not atomic" },
+    { kind: "async", from: "producer", to: "consumer", label: "-> data_ready", tone: "active" },
+    { kind: "self", from: "consumer", label: "wakes and reads data: 42" }
+  ]}
+/>
+
 **Tool-dependent:** what you see when a process loops without advancing time. A `wait` whose condition is already true does not block (§9.4.3), so the loop never hands control back to the scheduler, and the standard does not say what happens next. Expect simulation time to freeze while the simulator stays busy, until a tool-specific limit or your job's wall-clock timeout ends the run. Give every regression job a wall-clock timeout.
 
 ### Expert: from `event` to `uvm_event`
@@ -627,6 +840,14 @@ Interleaving also means `data = 42; -> data_ready;` is not atomic: other process
 - `wait_on()` (§10.1.1.2.2) returns at once while the event is on, which lasts across time until `reset()`.
 - It does not count or queue triggers.
 - **`reset()` and waiting processes (uvm-core impl.).** In uvm-core 2020.3.1, `reset()` points the wrapped event at a new synchronization object (`m_event = e;`). A process still blocked in `wait_trigger()` or `wait_ptrigger()` stays on the old object, like T1 in the merge example above, and never wakes. `reset(1)` triggers the waiting processes first (§10.1.1.2.8).
+
+The three waits side by side, for a waiter that arrives after the trigger:
+
+| Form on this page | `uvm_event` wait | Trigger earlier in the same time slot | Trigger at an earlier time | IEEE 1800.2-2020 |
+|---|---|---|---|---|
+| `@(ev)` | `wait_trigger()` | missed: the same race | missed | §10.1.1.2.4 |
+| `wait (ev.triggered)` | `wait_ptrigger()` | caught | missed | §10.1.1.2.5 |
+| no event form: a flag that stays set | `wait_on()` | caught | caught, until `reset()` | §10.1.1.2.2 |
 
 So replacing `@(ev)` with `wait_trigger()` does not fix a race. `wait_ptrigger()` fixes it within a time slot, and `wait_on()` across time. UVM components can also look events up by name in a `uvm_event_pool` (§10.4.1) instead of sharing handles directly.
 

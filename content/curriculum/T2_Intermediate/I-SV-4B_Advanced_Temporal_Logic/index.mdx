@@ -38,6 +38,36 @@ Five words from [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/i
 - In `antecedent |-> consequent`, each match of the antecedent starts one check of the consequent on the same tick; `|=>` starts it one tick later (§16.12.7).
 - Each attempt ends as a **pass**, a **failure**, a **vacuous success** (the antecedent never matched, so nothing was checked), or **disabled** (the `disable iff` condition was true). An attempt that the end of the trace interrupts is still **open**; the visualizers on this page show it as PENDING, and the strength section below says what the standard calls it.
 
+The diagrams and visualizers on this page mark those outcomes with the same glyphs:
+
+| Glyph | Outcome | Meaning |
+|---|---|---|
+| ✓ | pass | the attempt's property held |
+| ✕ | failure | the attempt's property did not hold |
+| ○ | vacuous success | the antecedent never matched, so nothing was checked |
+| ⊘ | disabled | the `disable iff` condition was true |
+| … | open (PENDING) | the end of the trace interrupted the attempt |
+
+The third bullet is the one to picture: one attempt, several matches.
+
+<TimingDiagram
+  title="One attempt of a ##[1:3] b, three matches"
+  caption="x-axis: rising clock edges 0 to 5; each column is the value sampled at that edge. a is sampled high at edge 1 and b at edges 2, 3 and 4. The shaded band is the attempt that starts at edge 1: its sequence a ##[1:3] b matches three times, with end points at edges 2, 3 and 4 (the dots m1, m2, m3). The attempts that start at the other edges see a low and have no match."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "b", kind: "bit", values: [0, 0, 1, 1, 1, 0] }
+  ]}
+  highlights={[{ from: 1, to: 4, tone: "attempt", label: "The attempt that starts at edge 1 and its window, edges 2 to 4" }]}
+  markers={[
+    { edge: 1, tone: "info", short: "start", label: "Edge 1: a sampled 1, the attempt starts" },
+    { edge: 2, tone: "info", short: "m1", label: "Match 1 ends at edge 2: a ##1 b" },
+    { edge: 3, tone: "info", short: "m2", label: "Match 2 ends at edge 3: a ##2 b" },
+    { edge: 4, tone: "info", short: "m3", label: "Match 3 ends at edge 4: a ##3 b" }
+  ]}
+/>
+
 ### Repetition: counting events
 
 **Repetition** says how many times an expression (or a sequence) must match and whether the matches must be back to back (§16.9.2). There are three kinds:
@@ -66,11 +96,41 @@ So `start |=> ack[->2] ##1 done` needs `done` on the tick right after the second
 
 **What the explorer showed.** `start |=> ack[*2] ##1 done` fails at edge 3, because the consecutive form needs `ack` at edges 2 *and* 3. `ack[->2]` ends at edge 4, the second `ack`, so `done` must be high at edge 5; it is not, and the attempt fails at edge 5. `ack[=2]` may end at edge 5, where `ack` is still low, so `done` at edge 6 completes the match: it passes at edge 6. Now toggle `ack` at edge 5 to 1. `[=2]` fails as well: a third `ack` arrived before `done`.
 
+Here is the same trace with the Annex F derivation drawn on it. `ack[->2]` is `(!ack[*0:$] ##1 ack)` taken twice: the first pass ends at edge 2, the second at edge 4. `ack[=2]` appends `##1 !ack[*0:$]`, which may take zero quiet ticks (ending at edge 4) or more (ending at edge 5, 6, … until a third `ack`).
+
+<TimingDiagram
+  title="Where ack[*2], ack[->2] and ack[=2] can end on the explorer's trace"
+  caption="x-axis: rising clock edges 0 to 7; each column is the value sampled at that edge. start is sampled high at edge 1, ack at edges 2 and 4, done at edge 6. The blue band (edges 2 to 4) is ack[->2]: two passes of !ack[*0:$] ##1 ack, ending on the second ack. The narrow band at edge 5 is the quiet tick that ack[=2] may add. ack[*2] ##1 done fails at edge 3 (ack is 0 there); ack[->2] ##1 done fails at edge 5 (done is 0 there); ack[=2] ##1 done uses the end at edge 5 and passes at edge 6."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "start", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "ack", kind: "bit", values: [0, 0, 1, 0, 1, 0, 0, 0] },
+    { name: "done", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  highlights={[
+    { from: 2, to: 4, tone: "info", label: "ack[->2]: first pass of !ack[*0:$] ##1 ack ends at edge 2, the second at edge 4" },
+    { from: 5, to: 5, tone: "attempt", label: "ack[=2] adds ##1 !ack[*0:$]: the quiet tick at edge 5" }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "A1", label: "Attempt A1 starts: start sampled 1" },
+    { edge: 3, tone: "fail", short: "[*2]", label: "start |=> ack[*2] ##1 done fails at edge 3: ack is 0, so the beats are not back to back" },
+    { edge: 4, tone: "info", short: "->2", label: "ack[->2] ends at edge 4, the second ack; ack[=2] can also end here" },
+    { edge: 5, tone: "fail", short: "[->2]", label: "start |=> ack[->2] ##1 done fails at edge 5: done is 0 on the tick after the second ack" },
+    { edge: 6, tone: "pass", short: "[=2]", label: "start |=> ack[=2] ##1 done passes at edge 6: ack[=2] ended at the quiet tick 5, and done is 1 at edge 6" }
+  ]}
+/>
+
 **Choosing between them.**
-- A burst whose beats must come back to back: `[*N]`.
-- "The Nth occurrence, and then on the very next tick…": `[->N]`.
-- "N occurrences, and the next step may come after any quiet gap": `[=N]`.
-- "Wait for the first one": `b[->1]`. It is the workhorse of handshake checks, because it matches on exactly one tick, the first `b`.
+
+| The rule says | Write | On the trace above |
+|---|---|---|
+| A burst whose beats must come back to back | `[*N]` | `ack[*2]` needs `ack` at edges 2 and 3 |
+| "The Nth occurrence, and then on the very next tick…" | `[->N]` | `ack[->2]` ends at edge 4, so the next step is due at edge 5 |
+| "N occurrences, and the next step may come after any quiet gap" | `[=N]` | `ack[=2]` can end at edge 4, 5, 6, … until a third `ack` |
+| "Wait for the first one" | `b[->1]` | `ack[->1]` ends at edge 2, the first `ack` |
+
+`b[->1]` is the workhorse of handshake checks, because it matches on exactly one tick, the first `b`.
 
 ### Fusion with ##0
 
@@ -83,7 +143,36 @@ So `start |=> ack[->2] ##1 done` needs `done` on the tick right after the second
 a ##1 b ##1 (c && d) ##1 e ##1 f
 ```
 
+<TimingDiagram
+  title="The §16.7 example: ##0 overlaps one tick"
+  caption="x-axis: rising clock edges 0 to 6; each column is the value sampled at that edge. The cyan band is a ##1 b ##1 c (edges 1 to 3) and the blue band is d ##1 e ##1 f (edges 3 to 5). With ##0 the bands share edge 3, where c && d must both be 1, and the whole match ends at edge 5. With ##1 in place of ##0, d ##1 e ##1 f would have to start at edge 4 (d at 4, e at 5, f at 6), so the match would end one tick later."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "b", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] },
+    { name: "c", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "d", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "e", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] },
+    { name: "f", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  highlights={[
+    { from: 1, to: 3, tone: "attempt", label: "a ##1 b ##1 c: edges 1 to 3" },
+    { from: 3, to: 5, tone: "info", label: "d ##1 e ##1 f: edges 3 to 5" }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "start", label: "Edge 1: a sampled 1, the sequence starts" },
+    { edge: 3, tone: "info", short: "c&&d", label: "Edge 3: the left sequence ends and the right one starts on the same tick, so c && d must hold" },
+    { edge: 5, tone: "pass", short: "end", label: "Edge 5: f sampled 1, the fused sequence matches" }
+  ]}
+/>
+
 The everyday use is "when the event finally comes, something else must be true on that same tick": `req |=> ack[->1] ##0 data_ok`. `ack[->1]` ends on the first `ack`, and `##0` checks `data_ok` on that tick.
+
+**Predict, then check.** The specification says "data is valid in the cycle where ack is high". On one trace, `req` is sampled high at edge 1, the first `ack` is at edge 5, and `data_ok` is high only at edge 6. Decide which form you would use, `req |=> ack[->1] ##0 data_ok` or `req |=> ack[->1] ##1 data_ok`, and what each one reports on this trace, before you open the check.
+
+<details>
+<summary>Check your prediction: the two forms on the trace</summary>
 
 <TimingDiagram
   title="##0 checks on the same tick, ##1 one tick later"
@@ -102,7 +191,9 @@ The everyday use is "when the event finally comes, something else must be true o
   ]}
 />
 
-**Predict, then check.** Before reading the caption, decide which form you would use if the specification says "data is valid in the cycle where ack is high". That is the `##0` form, and on this trace the design under test (DUT) is wrong. The `##1` form would have passed a buggy design, which is why "`##0` waits one cycle" is the most expensive misconception in this module.
+For a specification that says "data is valid in the cycle where ack is high", use the `##0` form, and on this trace the design under test (DUT) is wrong. The `##1` form would have passed a buggy design, which is why "`##0` waits one cycle" is the most expensive misconception in this module.
+
+</details>
 
 **Two rules about empty matches** (§16.9.2.1). An empty match (from `[*0]`) has no tick to fuse with, so `a[*0] ##0 b` never matches, while `1'b1 ##0 b` is just `b`. And `##0` means "same tick" only when both sides use one clock. When the clock changes between them, `##0` waits for the next tick of the new clock unless the two ticks coincide (§16.13.1); the [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking) lesson owns that rule.
 
@@ -115,7 +206,33 @@ A typical handshake rule combines repetition and an interval: `req |=> busy thro
 
 **Try it in the explorer above.** Select **Operator family → Conditions over time**. The trace has `req` at edge 1, `busy` high at edges 2 to 5 and `done` at edge 6. Predict all three results first.
 
+<details>
+<summary>Check your prediction: the conditions trace drawn out</summary>
+
+<TimingDiagram
+  title="throughout and within on the conditions trace"
+  caption="x-axis: rising clock edges 0 to 7; each column is the value sampled at that edge. req is sampled high at edge 1, busy at edges 2 to 5, done at edge 6. The cyan band (edges 2 to 6) is the match of done[->1]: busy throughout done[->1] is busy[*0:$] intersect done[->1], so busy must also hold on every tick of that band, the done tick included, and it fails at edge 6. The blue band (edges 2 to 5) is busy[*4]: done[->1] within busy[*4] needs done inside it, and the window closes at edge 5 without done."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "busy", kind: "bit", values: [0, 0, 1, 1, 1, 1, 0, 0] },
+    { name: "done", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  highlights={[
+    { from: 2, to: 6, tone: "attempt", label: "done[->1] matches over edges 2 to 6; throughout needs busy on all of them" },
+    { from: 2, to: 5, tone: "info", label: "busy[*4]: the four-tick window, edges 2 to 5" }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "A1", label: "Attempt A1 starts: req sampled 1" },
+    { edge: 5, tone: "fail", short: "within", label: "done[->1] within busy[*4] fails at edge 5: the busy window closed without done" },
+    { edge: 6, tone: "fail", short: "thr.", label: "busy throughout done[->1] fails at edge 6: busy is 0 on the done tick; req |=> done[->1] passes here" }
+  ]}
+/>
+
 **What it showed.** `req |=> done[->1]` passes at edge 6. `busy throughout done[->1]` fails at edge 6, because `busy` is low on the tick where `done` arrives. `done[->1] within busy[*4]` fails at edge 5: the four-tick `busy` window is edges 2 to 5, and `done` arrives after it closes. Toggle `busy` at edge 6 to 1 and the `throughout` form passes, which is the "last tick counts" rule.
+
+</details>
 
 ### Combining sequences: and, intersect, or
 
@@ -124,6 +241,19 @@ All three start both operands on the same tick (§16.9.5–§16.9.7):
 - `s1 and s2` needs both to match; the result ends when the **later** one ends.
 - `s1 intersect s2` needs both to match with the **same** end tick. `throughout` and `within` are built from it.
 - `s1 or s2` needs either one; each operand's matches are matches of the result.
+
+| Operator | Operands start | Both must match? | Result ends at | Clause |
+|---|---|---|---|---|
+| `s1 and s2` | on the same tick | yes | the later of the two end ticks | §16.9.5 |
+| `s1 intersect s2` | on the same tick | yes, with equal end ticks | that shared end tick | §16.9.6 |
+| `s1 or s2` | on the same tick | no, either one | the end tick of each operand match | §16.9.7 |
+
+Annex F.3.4.2.4 shows how `and` relates to `intersect`: `s1 and s2` is `((s1 ##1 1[*0:$]) intersect s2) or (s1 intersect (s2 ##1 1[*0:$]))`. One operand is extended by zero or more ticks on which anything may happen (`1[*0:$]`), so that both end together and `intersect` can apply.
+
+**Predict, then check.** In `start |=> (a[->1] OP b[->1])`, `start` is sampled high at edge 1, `a` first rises to 1 at edge 3 and `b` at edge 5. Using the table, decide at which edge `or`, `and` and `intersect` each match, if at all.
+
+<details>
+<summary>Check your prediction: and, intersect and or on the trace</summary>
 
 <TimingDiagram
   title="and, intersect and or on one trace"
@@ -142,6 +272,8 @@ All three start both operands on the same tick (§16.9.5–§16.9.7):
   ]}
 />
 
+</details>
+
 When to use each one in a testbench:
 - `and`: two independent events must both happen before you continue, in either order. `(wr_done[->1] and rd_done[->1]) ##1 idle` waits for both.
 - `intersect`: force two descriptions to cover exactly the same ticks, usually to bound a length: `(busy[*1:8]) intersect (start ##1 done[->1])`.
@@ -153,7 +285,10 @@ Properties also have `and` and `or` (§16.12.4, §16.12.5). They combine the res
 
 A range creates several matches. `##[1:3] gnt` from one tick matches at every tick in the window where `gnt` is high. `first_match(seq)` keeps only the match (or matches) of each attempt with the **earliest** end tick and discards the rest (§16.9.8). Whether that changes the result depends on where the sequence sits.
 
-**Before more sequence.** Compare form A, `req |-> ##[1:3] gnt ##1 ack`, with form B, `req |-> first_match(##[1:3] gnt) ##1 ack`, on one trace:
+**Before more sequence.** Compare form A, `req |-> ##[1:3] gnt ##1 ack`, with form B, `req |-> first_match(##[1:3] gnt) ##1 ack`, on one trace. **Predict first:** `req` is at edge 1, `gnt` at edges 2 and 3, and `ack` only at edge 4. Which form passes, which fails, and at which edge?
+
+<details>
+<summary>Check your prediction: forms A and B on the trace</summary>
 
 <TimingDiagram
   title="first_match before more sequence"
@@ -172,9 +307,35 @@ A range creates several matches. `##[1:3] gnt` from one tick matches at every ti
   ]}
 />
 
+</details>
+
 Which is right depends on the specification. If it says "ack follows the *first* grant", form B is the correct check and form A hides a late `ack`.
 
-**In an antecedent.** Each match of the antecedent starts its own consequent check, and every one must pass (§16.12.7). With `req` at edge 1, `gnt` at edges 2 and 3, and `ack` high only at edge 2:
+**In an antecedent.** Each match of the antecedent starts its own consequent check, and every one must pass (§16.12.7). Form C is `req ##[1:3] gnt |-> ack` and form D is `first_match(req ##[1:3] gnt) |-> ack`. **Predict first:** with `req` at edge 1, `gnt` at edges 2 and 3, and `ack` high only at edge 2, how many consequent checks does each form start, and what does each report?
+
+<details>
+<summary>Check your prediction: forms C and D, edge by edge</summary>
+
+<TimingDiagram
+  title="Two antecedent matches, two consequent checks"
+  caption="x-axis: rising clock edges 0 to 4; each column is the value sampled at that edge. The antecedent req ##[1:3] gnt started at edge 1 matches twice: the green band ends at edge 2 (first gnt) and the red band at edge 3 (second gnt). Form C checks ack at both end points: it passes at edge 2 and fails at edge 3, so the attempt fails. Form D keeps only the earliest match, checks ack at edge 2 only, and passes."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req", kind: "bit", values: [0, 1, 0, 0, 0] },
+    { name: "gnt", kind: "bit", values: [0, 0, 1, 1, 0] },
+    { name: "ack", kind: "bit", values: [0, 0, 1, 0, 0] }
+  ]}
+  highlights={[
+    { from: 1, to: 2, tone: "pass", label: "Antecedent match 1: req at 1, gnt at 2; ack is 1 at edge 2" },
+    { from: 3, to: 3, tone: "fail", label: "Antecedent match 2 ends at edge 3 (gnt at 3); ack is 0 at edge 3" }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "A1", label: "Attempt A1 starts: req sampled 1" },
+    { edge: 2, tone: "pass", short: "C,D", label: "Edge 2: the first antecedent match ends and ack is 1; the check passes for C and for D" },
+    { edge: 3, tone: "fail", short: "C", label: "Edge 3: form C's second antecedent match ends and ack is 0, so form C fails; form D discarded this match" }
+  ]}
+/>
 
 | Edge | `req` | `gnt` | `ack` | Form C: `req ##[1:3] gnt \|-> ack` | Form D: `first_match(req ##[1:3] gnt) \|-> ack` |
 |---|---|---|---|---|---|
@@ -183,6 +344,8 @@ Which is right depends on the specification. If it says "ack follows the *first*
 | 3 | 0 | 1 | 0 | antecedent match 2 ends; `ack` is 0: **fails** | later match discarded |
 
 Form C demands an `ack` after *every* grant in the window; form D after the first one only. Real checks of "the first response after a request" usually need D.
+
+</details>
 
 **When it changes nothing.** Around a whole consequent, `first_match` has no effect: one match is enough for a sequence property to hold, so `strong(seq)` and `strong(first_match(seq))` agree, and so do the weak forms (§16.12.2). Do not sprinkle it everywhere; put it in an antecedent or before more sequence.
 
@@ -207,7 +370,20 @@ A **property** is what an assertion asserts: a sequence, an implication, or one 
 
 **Which strength do you get by default?** A plain sequence used as a property is **weak** in `assert property` and `assume property`, and **strong** in `cover property` (§16.12.2). Write `strong(seq)` or `weak(seq)` to choose. So `req |=> ##[1:$] ack` in an assertion never fails because `ack` is missing: the weak sequence has seen no bad state yet.
 
+| Where a plain sequence `seq` is used | It means | To choose the other strength |
+|---|---|---|
+| `assert property`, `assume property` | `weak(seq)` (§16.12.2) | write `strong(seq)` |
+| `cover property` | `strong(seq)` (§16.12.2) | write `weak(seq)` |
+| `expect` (Push Further) | `strong(seq)` (Annex F.3.4.3.1) | write `weak(seq)` |
+
 **What the standard says about an open attempt.** On a finite run, §16.12.21 defines four levels: *holds strongly*, *holds* (no bad state, all obligations met, but a longer run might still break it), *pending* (no bad state, but an obligation is not met yet) and *fails*. An open weak attempt holds; an open strong attempt is pending; neither is a failure. The visualizers on this page use PENDING for any attempt the trace end interrupted, weak or strong.
+
+| Level (§16.12.21) | Bad state seen? | Future obligations met? | On a longer run | Example from this page |
+|---|---|---|---|---|
+| holds strongly | no | yes | holds on any extension | `req \|=> ##[1:4] ack` after `ack` arrived inside the window |
+| holds | no | yes | may or may not hold | an open weak attempt: `req \|=> ##[1:$] ack` still waiting at the end |
+| pending | no | no | may or may not hold | an open strong attempt: `req \|=> s_eventually ack` still waiting at the end |
+| fails | yes | may or may not be | never holds | `req \|=> ##[1:4] ack` with no `ack` in the window (edge 8 below) |
 
 <TimingDiagram
   title="A bounded wait fails during the run; an unbounded weak wait never does"
@@ -227,6 +403,11 @@ A **property** is what an assertion asserts: a sequence, an implication, or one 
 
 **`always` in practice.** A concurrent assertion outside an `initial` procedure already starts an attempt at every tick, so `assert property (always p)` there is redundant. The explicit `always` belongs inside a property, as in the standard's `a ##1 b |=> always c`, or in an assertion placed in an `initial` procedure, which runs a single attempt from the first tick (§16.12.11).
 
+| Where `assert property (p)` is written | Attempts it starts | What `always p` adds |
+|---|---|---|
+| In a module or interface, outside procedural code | one at every tick (the implicit `always`) | nothing: it is redundant |
+| In an `initial` procedure | a single attempt, from the first tick | it makes that one attempt check `p` on every tick |
+
 ### Safety, liveness and unbounded waits
 
 - A **safety** property is one whose every failure happens at a finite time: "busy never drops before done". Simulation can catch all of its failures (§16.12.15).
@@ -234,7 +415,31 @@ A **property** is what an assertion asserts: a sequence, an implication, or one 
 - In simulation, turn liveness into safety by **bounding** the wait: `##[1:16] ack` instead of `##[1:$] ack`. The bound comes from the specification (a timeout) or from what you can justify for the design.
 - Unbounded ranges also cost simulation time: every attempt stays alive until it resolves, so an unbounded wait started on many ticks keeps many attempts in memory at once. How much that costs is tool-dependent; Push Further has the detail.
 
+| Kind | Example | Can it fail at a finite time? | Can a simulation report it failed? | How to check it |
+|---|---|---|---|---|
+| Safety | "busy never drops before done": `req \|=> busy throughout done[->1]` | yes | yes, at the tick where `busy` drops | simulate it as written |
+| Liveness | `req \|=> s_eventually ack` | no (§16.12.15) | no: at the end of the run an unmet strong obligation is only pending (§16.12.21) | bound it for simulation, or prove it with a formal tool ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)) |
+| Bounded wait | `req \|=> ##[1:16] ack` | yes, when the window closes without `ack` | yes | the safety rewrite of the liveness rule |
+
 ### Where these assertions live in a testbench
+
+<ArchitectureDiagram
+  title="Where temporal assertions live"
+  caption="Each node names the lesson that teaches it. Plain lines are structure: the interface connects to the DUT pins, and a checker is bound into RTL you may not edit. Arrows carry failure reports: in the worked example below they go to $error; in a UVM environment they go through UVM reporting. The scoreboard stands apart: it checks data that completes out of order or is transformed, which SVA should not."
+  nodes={[
+    { id: "jif", label: "interface", sublabel: "assertions · F4B", kind: "interface", col: 0, row: 0 },
+    { id: "eng", label: "DUT", sublabel: "RTL", kind: "dut", col: 1, row: 0 },
+    { id: "rpt", label: "UVM reporting", sublabel: "A-UVM-7", kind: "generic", col: 0, row: 1 },
+    { id: "chk", label: "checker", sublabel: "bound · I-SV-4C", kind: "generic", col: 1, row: 1 },
+    { id: "scb", label: "scoreboard", sublabel: "ref model · A-UVM-6", kind: "scoreboard", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "jif", to: "eng", style: "structural", label: "pins" },
+    { from: "chk", to: "eng", style: "structural", label: "bind" },
+    { from: "jif", to: "rpt", style: "data", label: "fail" },
+    { from: "chk", to: "rpt", style: "data", label: "fail" }
+  ]}
+/>
 
 - **Interfaces.** Protocol rules belong next to the signals, in the interface that bundles them ([F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)), so every testbench that uses the interface gets the checks. The worked example below does exactly that.
 - **Bind and checkers.** To attach checks to RTL you may not edit, wrap them in a checker and `bind` it to the design: [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).
@@ -423,6 +628,17 @@ Here is the run, edge by edge. Edge k is the rising edge at 5 + 10k ns, and each
   ]}
 />
 
+The diagram stops at edge 12. This table follows every job to the end of the run (edge k is at 5 + 10k ns; every result was traced by hand from the code above, like the expected output):
+
+| Job | `len` | `req` sampled at | `done` sampled at | `a_busy` | `a_len` | `a_done_ok` | `c_b2b` (`done ##1 req`) |
+|---|---|---|---|---|---|---|---|
+| 1 | 3 | edge 3 (35 ns) | edge 6 | passes at edge 6 | passes at edge 7 | passes at edge 6 | hit: `done` at 6, `req` at 7 |
+| 2 | 3 | edge 7 (75 ns) | edge 10 | **fails at edge 10 (105 ns)** | passes at edge 10 | passes at edge 10 | hit: `done` at 10, `req` at 11 |
+| 3 | 1 | edge 11 (115 ns) | edge 12 | passes at edge 12 | passes at edge 13 | passes at edge 12 | hit: `done` at 12, `req` at 13 |
+| 4 | 5 | edge 13 (135 ns) | edge 18 | passes at edge 18 (185 ns) | passes at edge 19 | passes at edge 18 | no request follows |
+
+After job 4, `run_job` returns at edge 18, `repeat (2) @(jif.cb)` waits for edges 19 and 20, and edge 20 is at 205 ns: the `DONE` line.
+
 Why each line looks the way it does:
 
 - **The single failure at 105 ns.** Job 2's `a_busy` attempt started at edge 7. `done[->1]` ends at edge 10, and `throughout` needs `busy` on that tick too; the bug cleared it one tick early. The other three jobs keep `busy` high through their `done` tick and pass (job 4 passes at edge 18, 185 ns).
@@ -441,6 +657,21 @@ Why each line looks the way it does:
 5. **Bound every wait** that the specification bounds, and add `first_match` when a range is followed by more sequence.
 6. **Add a `cover`** for the trigger and the interesting corners, so a passing assertion is known to have been exercised.
 7. **Give each assertion one rule and a message that names it**, so the log tells you which rule broke.
+
+<details>
+<summary>The procedure applied to the job engine</summary>
+
+| Step | What it produced in the worked example |
+|---|---|
+| 1. Rule sentence | R1: "after a request, busy is high on every tick up to and including done" |
+| 2. Trigger as antecedent | `req \|=>`: the check starts on the tick after the request |
+| 3. Waiting operator | `done[->1]` for "the first done", with `busy throughout` for "while waiting" |
+| 4. `##0` or `##1` | R1 needs neither: `throughout` already includes the done tick. R3 (`a_done_ok`) uses `##0 !err` to check `err` on the done tick |
+| 5. Bound and `first_match` | R1's wait is unbounded. R3 bounds it with `##[0:7]` and adds `first_match`, because more sequence (`##0 !err`) follows the range |
+| 6. Cover | `c_b2b` covers one interesting corner, a request on the tick after `done`; the bench has no separate cover of the trigger `req` |
+| 7. One rule, named message | three assertions; each `$error` names its rule, such as "a_busy failed at 105 ns: busy low before the done tick" |
+
+</details>
 
 ### Debugging temporal assertions
 
@@ -478,6 +709,20 @@ These items are for working engineers and interview preparation. The core path a
 
 `not` reverses the result and also the strength of its operand (§16.12.3). The standard's own example: `assert property (@clk not a ##1 b);` treats `a ##1 b` as weak, and a weak sequence holds when the clock stops right after `a`. The negation then fails, although no `b` ever followed. Write `assert property (@clk not strong(a ##1 b));` for "never `a` followed by `b`". The same reasoning explains why "`never` checks" are written with `not strong(...)` in assertion libraries.
 
+<TimingDiagram
+  title="The clock stops right after a: not flips a weak sequence"
+  caption="x-axis: rising clock edges 0 to 3; the clock stops after edge 3, so there is no edge 4. a is sampled high only at edge 3, and b is never high. For the attempt at edge 3, not a ##1 b fails: the weak a ##1 b holds on a trace whose clock stops after a, and not turns that into a failure. not strong(a ##1 b) holds there: strong(a ##1 b) needs the tick at edge 4 that never comes (§16.12.15), so it is false and its negation is true. The attempts at edges 0 to 2 see a low, so a ##1 b fails there and both negations hold."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "a", kind: "bit", values: [0, 0, 0, 1] },
+    { name: "b", kind: "bit", values: [0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 3, tone: "fail", short: "not", label: "Edge 3: not a ##1 b fails because the weak a ##1 b holds when the clock stops; not strong(a ##1 b) holds" }
+  ]}
+/>
+
 ### Expert: abort properties versus disable iff
 
 | | `disable iff (c)` | `accept_on(c)` / `reject_on(c)` | `sync_accept_on(c)` / `sync_reject_on(c)` |
@@ -493,9 +738,37 @@ If the abort condition and the end of the operand's evaluation fall in the same 
 
 `expect (property_spec) action_block` is a blocking procedural statement (§16.17). It starts **one** evaluation at the next clocking event, blocks the calling process until that evaluation passes or fails, then runs the matching action. With no `else` clause, a failure calls `$error`. It is useful in a directed test: `expect (@(posedge clk) ##[1:8] done) else $fatal(1, "job hung");` waits for a job with a built-in timeout, without a separate watchdog process.
 
+<SequenceDiagram
+  title="What expect does to the calling process"
+  caption="Read top to bottom: the order of events for one expect statement (§16.17). The process blocks at the expect, one evaluation starts at the next clocking event, and the process resumes only when that evaluation succeeds or fails."
+  participants={[
+    { id: "proc", label: "test process", kind: "test" },
+    { id: "eval", label: "property evaluation", kind: "generic" }
+  ]}
+  messages={[
+    { from: "proc", to: "eval", label: "expect (@(posedge clk) ##[1:8] done)" },
+    { kind: "note", from: "proc", label: "the process blocks" },
+    { kind: "divider", label: "next posedge clk" },
+    { kind: "self", from: "eval", label: "the single evaluation starts" },
+    { kind: "self", from: "eval", label: "continues on later ticks until it succeeds or fails" },
+    { kind: "return", from: "eval", to: "proc", label: "result: success or failure" },
+    { kind: "note", from: "proc", to: "eval", label: "success: the pass statement runs. Failure: the else clause runs ($fatal here); with no else clause, $error" },
+    { kind: "self", from: "proc", label: "resumes after the Observed region in which the evaluation completed" }
+  ]}
+/>
+
+No new evaluation starts until the process executes that `expect` statement again (§16.17).
+
 ### Expert: cover sequence versus cover property
 
 `cover sequence (s)` counts **every** match of each attempt; `cover property (p)` counts at most **one** success per attempt and reports vacuous successes separately (§16.14.3). With ranges this changes the numbers: `cover sequence (req ##[1:3] gnt)` counts three for one `req` followed by three `gnt` ticks, while `cover property` counts one. Choose `cover property` to ask "did this ever happen?" and `cover sequence` to count occurrences.
+
+The trace is the one-attempt, three-match picture from the Recap, with `req` in place of `a` and `gnt` in place of `b`:
+
+| Statement | What it counts for each attempt | For `req` at edge 1 and `gnt` at edges 2, 3 and 4 |
+|---|---|---|
+| `cover sequence (req ##[1:3] gnt)` | every match, with multiplicity | 3 matches (end points at edges 2, 3 and 4) |
+| `cover property (req ##[1:3] gnt)` | at most one success; vacuous successes are counted separately | 1 success |
 
 ### Expert: empty matches and degenerate sequences
 
@@ -536,6 +809,27 @@ Further staff-level prompts to practise aloud:
 - "When would you write `reject_on` instead of adding the abort signal to `disable iff`?"
 
 ## Practice & Reinforce
+
+### One-glance operator map
+
+Read the left column aloud and recall the operator before you look right. Every row is a rule from this page.
+
+| The rule says | Write | Watch out |
+|---|---|---|
+| "N times, back to back" | `x[*N]` | ends on the Nth consecutive tick |
+| "the Nth one, then at once" | `x[->N] ##1 next` | ends exactly on the Nth `x` |
+| "N of them, then any quiet gap" | `x[=N] ##1 next` | no further `x` before `next` |
+| "the first one" | `x[->1]` | weak: bound it if it must fail |
+| "on that same tick" | `##0` | fuses ticks; never waits a cycle |
+| "held while waiting, the end included" | `c throughout s` | `c` must also hold on the last tick |
+| "somewhere inside that window" | `s1 within s2` | `s1` must start and end inside `s2` |
+| "both, in either order" | `s1 and s2` | ends when the later one ends |
+| "both, ending together" | `s1 intersect s2` | needs equal end ticks |
+| "either way to finish" | `s1 or s2` | every match of either counts |
+| "only the earliest match" | `first_match(s)` | matters in an antecedent or before more sequence |
+| "within N ticks" | `##[1:N] x` | bounded: can fail in simulation |
+| "eventually, with no deadline" | `s_eventually x` | liveness: never fails in simulation |
+| "never a followed by b" | `not strong(a ##1 b)` | plain `not a ##1 b` fails when the clock stops after `a` |
 
 ### Retrieval quiz
 
@@ -695,6 +989,26 @@ The four broken versions:
 - (b) `##1` checks `rsp_err` one tick after the response, where it is not valid. Use `##0`.
 - (c) A weak, unbounded wait: a missing response is never a failure (§16.12.2). Bound it to 8 ticks.
 - (d) Without `first_match`, the range keeps looking after the first response; the next transfer's clean response, still inside the 8-tick window, satisfies the attempt and hides the error.
+
+<TimingDiagram
+  title="Broken version (d): a later response hides an error"
+  caption="x-axis: rising clock edges 0 to 6; each column is the value sampled at that edge. A request is accepted at edge 1. Its response arrives at edge 3 with rsp_err = 1; the next request is accepted at edge 4 and its clean response arrives at edge 5, two ticks later and still inside the first attempt's window (edges 2 to 9). The fixed a_rsp_ok keeps only the first response and fails at edge 3. Broken version (d) also tries the response at edge 5, where rsp_err is 0, and reports a pass for the attempt from edge 1."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req_vld", kind: "bit", values: [0, 1, 0, 0, 1, 0, 0] },
+    { name: "req_rdy", kind: "bit", values: [0, 1, 0, 0, 1, 0, 0] },
+    { name: "rsp_vld", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0] },
+    { name: "rsp_err", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] }
+  ]}
+  highlights={[{ from: 2, to: 5, tone: "attempt", label: "The window of the attempt from edge 1 starts at edge 2; edges 2 to 5 are drawn" }]}
+  markers={[
+    { edge: 1, tone: "info", short: "A1", label: "Edge 1: req_vld && req_rdy, the first request is accepted and attempt A1 starts" },
+    { edge: 3, tone: "fail", short: "fixed", label: "Edge 3: the first response has rsp_err = 1, so the fixed a_rsp_ok fails for A1" },
+    { edge: 4, tone: "info", short: "A4", label: "Edge 4: the next request is accepted" },
+    { edge: 5, tone: "pass", short: "(d)", label: "Edge 5: broken version (d) uses this clean response and reports a pass for A1, hiding the error" }
+  ]}
+/>
 
 Next step: the data check ("the response carries the request's data plus one") needs a per-attempt local variable; it is the kata of [Local Variables in Sequences](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables).
 

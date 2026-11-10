@@ -34,6 +34,23 @@ Four terms, defined once:
 
 Every object operation has the same three layers. You call the public method; it picks a policy; the policy asks the object for its fields twice, first through field automation, then through your hook.
 
+<ArchitectureDiagram
+  title="Three layers behind one compare() call"
+  caption="Follow the arrows in number order. The method you call picks a policy (the default one if you pass none); the policy runs field automation first, then your hook. print, copy, pack and unpack have the same shape with their own policy and hook, as the table below lists."
+  nodes={[
+    { id: "call", label: "compare(rhs)", sublabel: "the method you call", kind: "generic", col: 0, row: 0 },
+    { id: "pol", label: "uvm_comparer", sublabel: "default if none passed", kind: "generic", col: 0, row: 1 },
+    { id: "auto", label: "do_execute_op", sublabel: "field macros, by flag", kind: "generic", col: 0, row: 2 },
+    { id: "hook", label: "do_compare", sublabel: "your hook, if enabled", kind: "generic", col: 1, row: 1 }
+  ]}
+  gapX={96}
+  edges={[
+    { from: "call", to: "pol", style: "causal", label: "picks" },
+    { from: "pol", to: "auto", style: "causal", label: "1. runs" },
+    { from: "pol", to: "hook", style: "causal", label: "2. calls" }
+  ]}
+/>
+
 | You call | Policy (IEEE 1800.2-2020) | Your hook | What the policy does |
 | --- | --- | --- | --- |
 | `print()`, `sprint()` | `uvm_printer` (§16.2) | `do_print(printer)` | Formats fields as a table, tree or one line |
@@ -137,6 +154,18 @@ A flag combines four kinds of bits:
 | Type check | `set_check_type(b)` | 1 | Compare the two objects' types before their fields (§16.3.4.2) |
 | Recursion | `set_recursion_policy(p)` | `UVM_DEFAULT_POLICY` (deep) | How object fields are compared (§16.3.4.1) |
 
+**What each knob can change.** Read across a row (the gate and the message code are uvm-core 2020.3.1, `uvm_comparer.svh` and `uvm_comparer_defines.svh`):
+
+| Knob | Which fields the macros compare | `get_result()` | `MISCMP` lines | `compare()` return |
+| --- | --- | --- | --- | --- |
+| `set_threshold(n)` (0: no fields skipped) | Yes: once the count reaches `n`, the remaining macro fields are skipped; direct `compare_field_*` calls in a hand-written `do_compare` are not gated (the `` `uvm_compare_* `` macros are) | Only through the skipped fields | Only through the skipped fields | No: the gate closes only after a miscompare is counted, so `compare()` already returns 0 |
+| `set_show_max(n)` | No | No | Yes: only the first `n` per-field lines print (0: all); the summary adds `(n shown)` when more were counted | No |
+| `set_verbosity(v)` | No | No | Yes: `UVM_INFO` lines are hidden when `v` is above the run's verbosity (the default `UVM_LOW` against `+UVM_VERBOSITY=UVM_NONE`) | No |
+| `set_severity(s)` | No | No | Yes, their severity: as `UVM_ERROR`, each printed `MISCMP` line, the summary included, counts in the report summary's error total | No |
+| `set_check_type(b)` (the default 1; uvm-core: always 1 inside `compare()`) | Indirectly: a type miscompare counts 1, so with threshold 1 the macros then skip every field | Yes: +1 when the types differ | Yes: one type line | Yes: differing types make it return 0 |
+
+Only the type check can change the return value; the knob itself can only switch it off, and uvm-core's `flush()` turns it back on. The three message knobs change the log (and, as `UVM_ERROR`, the error count), never the bit your scoreboard must check. (In uvm-core, the `flush()` at the start of `compare()` sets `check_type` back to 1; Push Further explains.)
+
 Two details decide most predictions:
 - **The threshold gate is in the macros, not in the comparer.** Each field macro checks `get_result() < get_threshold()` before comparing (uvm-core 2020.3.1, `uvm_comparer_defines.svh`). A `do_compare` that calls `comparer.compare_field_int()` directly always compares and always counts, so a hand-written hook with two differing fields gives `get_result()` = 2 even with the default comparer.
 - **`show_max` limits printing, never counting.** With `show_max` 1 and two counted miscompares, you see one per-field line and the summary `2 Miscompare(s) (1 shown) for object exp@… vs. act@…`, and `get_miscompares()` still holds both.
@@ -160,6 +189,14 @@ if (!exp.compare(act, cmp))
 ```
 
 The comment matters: IEEE 1800.2 §16.3.6 says `get_threshold()` returns 1 again after `flush()`, and `compare()` flushes the comparer first (§5.3.9.1 a). uvm-core 2020.3.1 keeps the threshold, so the code above works there. Make It Work shows the portable version, a comparer subclass that re-applies the threshold in `flush()`.
+
+**Predict, then check.** A scoreboard comparer calls only `set_show_max(10)`, so its threshold is still the default 1. It compares the same `exp` and `act` as the sequence diagram (`addr` and `data` differ; `id` is `UVM_ALL_ON | UVM_NOCOMPARE`). What do `compare()` and `get_result()` give, and which `MISCMP` lines appear?
+
+<details>
+<summary>Check your prediction</summary>
+
+`compare()` returns 0 and `get_result()` is 1. The macros compare `addr` (count 1), the threshold gate then skips `data`, and `id` is excluded by its flag. With one counted miscompare, `show_max` 10 has nothing extra to print: the log has the same two lines as the default comparer above, `Miscompare for exp.addr: lhs = 'h10 : rhs = 'h14` and `1 Miscompare(s) for object exp@… vs. act@…`, with no `(1 shown)`. Raising `show_max` without lowering the threshold shows nothing new.
+</details>
 
 ### Try it: the Policy Explorer
 
@@ -229,7 +266,32 @@ The first block is `exp.print()` (table), the second line `exp.print(uvm_line_pr
 
 ### copy() and clone(): what the copy shares
 
-`copy(rhs)` fills an object you already have; `clone()` creates a new object with `create(get_name())`, copies this object into it, and returns the new object as a `uvm_object` for you to `$cast` (§5.3.5.2, §5.3.8.1). Integral fields are copied by value. The question is what happens to a field that is a **handle**, such as the explorer's `cfg`:
+`copy(rhs)` fills an object you already have; `clone()` creates a new object with `create(get_name())`, copies this object into it, and returns the new object as a `uvm_object` for you to `$cast` (§5.3.5.2, §5.3.8.1). Here is step 4 of Make It Work, `$cast(cpy, exp.clone())`, in uvm-core 2020.3.1:
+
+<SequenceDiagram
+  title="clone() is create() plus copy()"
+  caption="Steps 3 to 7 are copy(): the copier runs field automation first (step 6), then your do_copy hook (step 7), the same three layers as compare(). The caller does the $cast."
+  participants={[
+    { id: "tst", label: "policy_test", sublabel: "run_phase step 4", kind: "test" },
+    { id: "exp", label: "exp", sublabel: "bus_item (rhs)", kind: "generic" },
+    { id: "cpy", label: "new item", sublabel: "becomes cpy", kind: "generic" },
+    { id: "cop", label: "copier", sublabel: "uvm_copier (default)", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tst", to: "exp", label: "exp.clone()" },
+    { kind: "self", from: "exp", label: "create(get_name()): a new bus_item named exp" },
+    { from: "exp", to: "cpy", label: "copy(exp)" },
+    { kind: "self", from: "cpy", label: "no copier passed: default copier; flush() at depth 0" },
+    { from: "cpy", to: "cop", label: "copy_object(new item, exp)" },
+    { from: "cop", to: "cpy", label: "do_execute_op(op): op type UVM_COPY" },
+    { kind: "note", from: "cpy", to: "cop", label: "Macros copy addr, data and id by value. An object field would be created if null, else copied into; UVM_REFERENCE shares the handle." },
+    { from: "cop", to: "cpy", label: "do_copy(exp): user hook enabled" },
+    { kind: "return", from: "exp", to: "tst", label: "the new item, as a uvm_object" },
+    { kind: "self", from: "tst", label: "$cast(cpy, ...) to bus_item" }
+  ]}
+/>
+
+Integral fields are copied by value. The question is what happens to a field that is a **handle**, such as the explorer's `cfg`:
 
 | Implementation of `cfg` in the copy | After `p2.copy(p1)` | Changing `p2.cfg.burst_len` changes `p1`? |
 | --- | --- | --- |
@@ -254,6 +316,16 @@ virtual function void do_copy(uvm_object rhs);
   else $cast(cfg, rhs_.cfg.clone());  // independent sub-object
 endfunction
 ```
+
+<VisualRecap
+  title="What a copy shares"
+  rule="Integral fields are copied by value. For a handle, the field macros copy deep unless its flag has UVM_REFERENCE, which shares the handle (in uvm-core they create the sub-object when the destination handle is null and copy into the existing one otherwise). A hand-written do_copy copies exactly what it says: cfg = rhs_.cfg shares the object, a null-checked $cast(cfg, rhs_.cfg.clone()) makes an independent one. clone() is create(get_name()) followed by copy()."
+  code={`// in do_copy, after the $cast and super.do_copy(rhs)
+if (rhs_.cfg == null) cfg = null;
+else $cast(cfg, rhs_.cfg.clone());  // independent sub-object`}
+  mistake="Assuming copy() is always deep: with UVM_REFERENCE or cfg = rhs_.cfg, changing the copy's sub-object changes the original's."
+  inTestbench="Share a read-only configuration object on purpose; give a scoreboard's saved expected item sub-objects of its own."
+/>
 
 ### pack() and unpack(): the symmetry rule
 
@@ -315,11 +387,78 @@ endfunction
 | 116–131 | 14–16 | `id`, bit 0 first | `'d1` |
 | 132–135 | high half of byte 16 | padding, masked to 0 | — |
 
+<SequenceDiagram
+  title="How pack_bytes() builds the exp stream in uvm-core"
+  caption="uvm-core 2020.3.1 only; the standard leaves the format to the implementation (§16.5.3.2). Step 5 writes the object marker, the note covers the 64 field bits, and steps 8 to 11 turn the two iterators into the header and the return value 68."
+  participants={[
+    { id: "tst", label: "policy_test", sublabel: "run_phase step 5", kind: "test" },
+    { id: "exp", label: "exp", sublabel: "bus_item", kind: "generic" },
+    { id: "pk", label: "packer", sublabel: "uvm_packer (default)", kind: "generic" }
+  ]}
+  messages={[
+    { from: "tst", to: "exp", label: "exp.pack_bytes(bytes)" },
+    { kind: "self", from: "exp", label: "no packer passed: uvm_packer::get_default()" },
+    { from: "exp", to: "pk", label: "flush(): depth 0, both iterators = 64" },
+    { from: "exp", to: "pk", label: "pack_object(exp)" },
+    { kind: "self", from: "pk", label: "write marker 4'hF: pack iterator 68" },
+    { from: "pk", to: "exp", label: "do_execute_op(op): op type UVM_PACK" },
+    { kind: "note", from: "exp", to: "pk", label: "The macros pack addr (16), data (32) and id (16), bit 0 first: pack iterator 132." },
+    { from: "pk", to: "exp", label: "do_pack(packer): user hook enabled; bus_item adds nothing" },
+    { from: "exp", to: "pk", label: "get_packed_bytes(bytes)" },
+    { kind: "self", from: "pk", label: "132 and 64 into bits 0 to 63; (132 + 7) / 8 = 17 bytes" },
+    { from: "exp", to: "pk", label: "get_packed_size()" },
+    { kind: "return", from: "pk", to: "exp", label: "132 - 64 = 68" },
+    { kind: "return", from: "exp", to: "tst", label: "68" }
+  ]}
+/>
+
 Count it through: `flush()` sets both iterators to 64; the marker moves the pack iterator to 68 and the 64 field bits to 132. `pack_bytes()` returns the number of bits that can be unpacked, 132 − 64 = **68**, and fills (132 + 7) / 8 = **17** bytes: `84 00 00 00 40 00 00 00 0f 01 10 00 e0 af 1c 00 00`. A C model that expects `addr`, `data`, `id` in its first 8 bytes reads nonsense: the fields are not even byte-aligned. §5.3.10.1 warns about exactly this: the stream may contain metadata, so the return value may differ from the stream size.
 
 So use pack and unpack for **SystemVerilog-to-SystemVerilog round trips** through a compatible packer (§16.5.3.1): saving and restoring an object, or moving it between SV components. To hand fields to a C reference model, pass them, or a packed struct, through the Direct Programming Interface, DPI ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)), or build the bytes yourself with the streaming operators (IEEE 1800-2023 §11.4.14).
 
-**The classic mistake: a mis-ordered unpack.** Swap two lines in `do_unpack` so it reads `data` before `addr`, and trace it on the same stream:
+**The classic mistake: a mis-ordered unpack.** Swap two lines in `do_unpack` so it reads `data` before `addr`, and trace it on the same stream.
+
+**Predict first.** `do_pack` wrote `addr` (16 bits, `'h0010`), `data` (32 bits, `'hcafe0001`) and `id` (16 bits, `'d1`) into stream bits 68–131, each field bit 0 first, as the table above lists. The swapped `do_unpack` reads 32 bits into `data`, then 16 bits into `addr`, then 16 bits into `id`. Predict `rx.data`, `rx.addr` and `rx.id`, and whether UVM reports anything.
+
+<details>
+<summary>Check your prediction</summary>
+
+<figure style={{ margin: "1rem 0" }}>
+  <p className="mb-1 text-sm font-semibold">What the swapped do_unpack reads</p>
+  <svg viewBox="0 0 340 158" role="img" aria-label="Two aligned strips for stream bits 68 to 131. Written by do_pack: addr 'h0010 in bits 68 to 83, data bits 15 to 0, 'h0001, in bits 84 to 99, data bits 31 to 16, 'hcafe, in bits 100 to 115, and id 'd1 in bits 116 to 131. Read by the swapped do_unpack: first rx.data takes bits 68 to 99 and gets 'h00010010, wrong; then rx.addr takes bits 100 to 115 and gets 'hcafe, wrong; then rx.id takes bits 116 to 131 and gets 'd1, correct. No error is reported." style={{ width: "100%", maxWidth: 560 }}>
+    <title>What the swapped do_unpack reads</title>
+    <text x="10" y="14" fontSize="10" fill="currentColor">do_pack wrote (each field bit 0 first)</text>
+    <rect x="10" y="22" width="80" height="36" fill="rgba(6,182,212,0.14)" stroke="currentColor" />
+    <text x="50" y="37" fontSize="10" fill="currentColor" textAnchor="middle">addr</text>
+    <text x="50" y="51" fontSize="10" fill="currentColor" textAnchor="middle">'h0010</text>
+    <rect x="90" y="22" width="80" height="36" fill="rgba(6,182,212,0.22)" stroke="currentColor" />
+    <text x="130" y="37" fontSize="10" fill="currentColor" textAnchor="middle">data[15:0]</text>
+    <text x="130" y="51" fontSize="10" fill="currentColor" textAnchor="middle">'h0001</text>
+    <rect x="170" y="22" width="80" height="36" fill="rgba(6,182,212,0.22)" stroke="currentColor" />
+    <text x="210" y="37" fontSize="10" fill="currentColor" textAnchor="middle">data[31:16]</text>
+    <text x="210" y="51" fontSize="10" fill="currentColor" textAnchor="middle">'hcafe</text>
+    <rect x="250" y="22" width="80" height="36" fill="rgba(6,182,212,0.14)" stroke="currentColor" />
+    <text x="290" y="37" fontSize="10" fill="currentColor" textAnchor="middle">id</text>
+    <text x="290" y="51" fontSize="10" fill="currentColor" textAnchor="middle">'d1</text>
+    <text x="10" y="72" fontSize="10" fill="currentColor">68</text>
+    <text x="90" y="72" fontSize="10" fill="currentColor" textAnchor="middle">84</text>
+    <text x="170" y="72" fontSize="10" fill="currentColor" textAnchor="middle">100</text>
+    <text x="250" y="72" fontSize="10" fill="currentColor" textAnchor="middle">116</text>
+    <text x="330" y="72" fontSize="10" fill="currentColor" textAnchor="end">132</text>
+    <text x="10" y="92" fontSize="10" fill="currentColor">the swapped do_unpack reads, in this order</text>
+    <rect x="10" y="100" width="160" height="36" fill="rgba(245,158,11,0.18)" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="90" y="115" fontSize="10" fill="currentColor" textAnchor="middle">1. rx.data, 32 bits</text>
+    <text x="90" y="129" fontSize="10" fill="currentColor" textAnchor="middle">'h00010010 ✗</text>
+    <rect x="170" y="100" width="80" height="36" fill="rgba(245,158,11,0.18)" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="210" y="115" fontSize="10" fill="currentColor" textAnchor="middle">2. rx.addr</text>
+    <text x="210" y="129" fontSize="10" fill="currentColor" textAnchor="middle">'hcafe ✗</text>
+    <rect x="250" y="100" width="80" height="36" fill="rgba(34,197,94,0.16)" stroke="currentColor" />
+    <text x="290" y="115" fontSize="10" fill="currentColor" textAnchor="middle">3. rx.id</text>
+    <text x="290" y="129" fontSize="10" fill="currentColor" textAnchor="middle">'d1 ✓</text>
+    <text x="10" y="152" fontSize="10" fill="currentColor">✗ wrong value · ✓ correct · no error is reported</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The numbers between the strips are stream bit positions. Each read window takes the next bits in order, whatever was written there; the table lists the same three reads.</figcaption>
+</figure>
 
 | Step | `do_unpack` line | Reads stream bits | Value read | Correct value |
 | --- | --- | --- | --- | --- |
@@ -328,6 +467,7 @@ So use pack and unpack for **SystemVerilog-to-SystemVerilog round trips** throug
 | 3 | `` `uvm_unpack_int(id) `` (16 bits) | 116–131 | `id` = `'d1` | `'d1` |
 
 Step 1 takes the 16 bits of `addr` plus the low 16 bits of `data`; step 2 takes the high half of `data`. No error is reported, the bit count still matches, and only a `compare()` against the original reveals the damage. With two fields of equal width the values would simply swap; with different widths they are scrambled.
+</details>
 
 **Nested objects.** Pack a sub-object with `packer.pack_object(cfg)`, which writes a 4-bit null/non-null marker before its fields (§16.5.4.2). On unpack, `unpack_object` needs an allocated object, or `null` if the stream holds a null (§16.5.4.3–§16.5.4.4), so peek first:
 
@@ -339,6 +479,21 @@ packer.unpack_object(cfg);   // also consumes the marker when the object was nul
 ```
 
 uvm-core reports `UVM/BASE/PACKER/UNPACK/NN2N` if you pass a null handle for a non-null object.
+
+<VisualRecap
+  title="Unpack mirrors pack"
+  rule="do_unpack reads the same fields, in the same order, with the same widths, as do_pack wrote them (§5.3.10.2). The packer stores no field names, so a mismatch scrambles values with no error. The stream's length and contents are implementation dependent (§16.5.3.2); it is guaranteed to unpack only in a compatible packer (§16.5.3.1)."
+  code={`// in do_pack, after super.do_pack(packer)
+\`uvm_pack_int(addr);
+\`uvm_pack_int(data);
+\`uvm_pack_int(id);
+// in do_unpack: same order, same widths
+\`uvm_unpack_int(addr);
+\`uvm_unpack_int(data);
+\`uvm_unpack_int(id);`}
+  mistake="Swapping two lines in do_unpack, or decoding pack_bytes() output in a C model: in uvm-core the stream starts with 64 bits of packer state and a 4-bit object marker."
+  inTestbench="SystemVerilog-to-SystemVerilog round trips, checked with compare() after unpacking; fields for a C model go through DPI or the streaming operators instead."
+/>
 
 ### Field macros or hand-written hooks?
 
@@ -648,7 +803,17 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
-Read it against the rules: the default comparer reported `addr` and skipped `data` (threshold 1); `scb_comparer` reported both; `id` differs but never appears (`UVM_NOCOMPARE`); the `print()` lines carry no `UVM_INFO` prefix because they bypass the report server; the round trip restores every field although the stream starts with 8 bytes of packer state; and `bus_item_hooks`, with the same default comparer, counts both `addr` and `data` (`get_result=2`) but prints one per-field line and `(1 shown)`, because its direct `compare_field_int` calls have no threshold gate.
+Read it against the rules, one `run_phase` step at a time:
+
+| Step | What the log shows | The rule behind it |
+| --- | --- | --- |
+| 1, default comparer | It reported `addr` and skipped `data`: `compare=0 get_result=1` | Threshold 1 |
+| 2, `scb_comparer` | It reported both: `get_result=2` | Threshold 0, `show_max` 10 |
+| 1 and 2 | `id` differs but never appears | `UVM_NOCOMPARE` |
+| 3, three text views | The `print()` lines carry no `UVM_INFO` prefix | They bypass the report server |
+| 4, `clone()` | `exp.data` is still `0xcafe0001` after `cpy.data = 0` | The clone is a separate object |
+| 5, pack and unpack | The round trip restores every field (`compare=1`), although the stream starts with 8 bytes of packer state | `do_unpack` mirrors `do_pack` (here, the macros do both) |
+| 6, `bus_item_hooks` | With the same default comparer it counts both `addr` and `data` (`get_result=2`) but prints one per-field line and `(1 shown)` | Its direct `compare_field_int` calls have no threshold gate |
 
 **Run it.** Compile uvm-core 2020.3.1 (`uvm_pkg`) and `policy_demo.sv` with your simulator, then run `tb_top`; `run_test("policy_test")` selects the test, so no `+UVM_TESTNAME` is needed. Check the command-line options in your simulator's UVM guide (tool-dependent).
 
@@ -659,6 +824,14 @@ Read it against the rules: the default comparer reported `addr` and skipped `dat
 4. Give the scoreboard its own comparer (threshold 0, `show_max` 10, re-applied in `flush()`) and raise `` `uvm_error `` yourself when `compare()` returns 0.
 5. If you pack, mirror `do_pack` in `do_unpack` and test the round trip with `compare()`. Do not decode the stream outside SystemVerilog.
 6. Check copies of items with handles: decide per handle whether it is shared or cloned.
+
+Steps 1, 2 and 6 come down to three questions per class:
+
+| Question | If yes | If no |
+| --- | --- | --- |
+| Is the field DUT behaviour the scoreboard must check? | Compare it: `UVM_ALL_ON`, or a `compare_field_int` call in `do_compare` | It is bookkeeping: `UVM_ALL_ON \| UVM_NOCOMPARE`, or leave it out of `do_compare` |
+| Is the item compared or copied at a high rate? | Hand-written hooks through the policy APIs (the B.2.2 NOTE) | Field macros are fine |
+| Must a copy's sub-object be independent? | Clone it in `do_copy`, or use a field macro without `UVM_REFERENCE` | Share it: `cfg = rhs_.cfg`, or `UVM_REFERENCE` |
 
 **Checklist before moving on:**
 - [ ] I can draw the three layers of one `compare()` call: policy, field automation in `do_execute_op`, then my `do_*` hook.
@@ -675,6 +848,16 @@ Read it against the rules: the default comparer reported `addr` and skipped `dat
 §16.3.6 describes the threshold as permission: `do_compare` or `do_execute_op` "may return as quickly as possible" once `get_result()` reaches it. In uvm-core 2020.3.1 the only code that honours it is the gate in the field macros and the `` `uvm_compare_* `` macros (`m_uvm_compare_threshold_begin` in `uvm_comparer_defines.svh`). `compare_field_int()`, `compare_object()` and your `do_compare()` never stop on their own, and `print_msg()` keeps counting.
 
 The portability trap: §16.3.6 says `get_threshold()` returns 1 if `set_threshold` has not been called "since the last call to flush", and `compare()` calls `flush()` at depth 0 (§5.3.9.1 a). A literally conforming library would therefore undo `cmp.set_threshold(0)` on every `compare()`. uvm-core's `flush()` resets the result, the miscompare string and `check_type`, but keeps the threshold, `show_max`, verbosity, severity and recursion policy. **Tool-dependent.** The robust pattern is the Make It Work `scb_comparer`, whose `flush()` calls `super.flush()` and re-applies the threshold.
+
+What a comparer's `flush()` resets, read literally from the standard and as uvm-core implements it:
+
+| After `flush()` | IEEE 1800.2-2020 text | uvm-core 2020.3.1 (tool-dependent) |
+| --- | --- | --- |
+| `get_result()`, `get_miscompares()` | 0 and `""`: the reset "includes" these two (§16.3.2.2) | 0 and `""` |
+| `get_threshold()` | 1, unless `set_threshold` was called since the flush (§16.3.6) | Kept |
+| `get_check_type()` | 1 only if `set_check_type` was never called since construction; flush is not mentioned (§16.3.4.2) | Reset to 1 |
+| `show_max`, verbosity, severity, recursion policy | Defaults tied only to construction; flush is not mentioned (§16.3.5.1–§16.3.5.3, §16.3.4.1) | Kept |
+| Policy extensions | Not cleared by `flush()` (§16.1.2.3) | Kept |
 
 ### Expert: Tolerance and filtering, two ways
 
@@ -726,6 +909,13 @@ if (comparer.get_extension(ignore_ts_ext::get_type()) == null)
 
 The extension keeps the rule with the item that owns the field, and the same item can compare strictly in one scoreboard and loosely in another.
 
+| Aspect | 1. Comparer subclass | 2. Policy extension |
+| --- | --- | --- |
+| Where the rule lives | In the comparer, keyed on the field name `"data"` | In the item's own `do_compare`, which asks `get_extension()` |
+| Works on field-macro fields | Yes: the macros pass each field's name to `compare_field_int` | Only on fields the item compares in its own hook |
+| Weakness | Rename the field and the tolerance silently stops applying | Every item class that should honour the extension needs code that reads it |
+| Survives `flush()` | Yes: it is the comparer's own code | Yes: extensions are not cleared by `flush()` (§16.1.2.3) |
+
 ### Expert: Packed streams are implementation-defined
 
 The normative facts are short: a stream is only guaranteed to unpack in a **compatible** packer, meaning one whose state retrieval returns identical streams for identical fields (§16.5.3.1), and its "length and contents … are implementation dependent" (§16.5.3.2). The details below are uvm-core 2020.3.1 (`uvm_packer.svh`, `uvm_object.svh`) and are **tool-dependent**:
@@ -751,6 +941,14 @@ The real fix is to add `UVM_ALL_ON`. When migrating a legacy code base, grep for
 - The field macros special-case only `UVM_REFERENCE`. A field flagged `UVM_SHALLOW` is created or copied into, and its own object fields are still deep-copied and deep-compared.
 - `uvm_comparer::flush()` sets `check_type` back to 1, and `compare()` flushes at depth 0, so `cmp.set_check_type(0); a.compare(b, cmp)` still checks types. To compare a derived item with a base item field by field, override `flush()` as in `scb_comparer`, or compare through a common base `do_compare` yourself.
 - The type check counts as a miscompare. With threshold 1, comparing an `err_item` with a `bus_item` reports `Miscompare for exp.type: lhs = "err_item" : rhs = "bus_item"`, then the summary line, and no field results.
+
+The three policies side by side, for an object field registered with `` `uvm_field_object `` (the uvm-core columns are **tool-dependent**):
+
+| Flag | IEEE 1800.2 meaning (§16.3.4.1, §16.6.3) | uvm-core copy | uvm-core compare | uvm-core pack |
+| --- | --- | --- | --- | --- |
+| `UVM_DEEP` (the default) | Recurse into the sub-object | Create if the destination is null, else copy into it | Compares the sub-object's fields | Packed through `pack_object_with_meta` |
+| `UVM_SHALLOW` | The sub-object's own object fields are handled as references | As `UVM_DEEP` | As `UVM_DEEP` | As `UVM_DEEP` |
+| `UVM_REFERENCE` | The handle only | Shares the handle | Compares the handles | Left out |
 
 Cycles are detected per policy: a comparer asked to compare a pair it has already seen in this operation warns `UVM/COPIER/LOOP` (sic), and a copy loop warns `UVM/COPY/LOOP`. And the copy macro copies **into** an existing destination sub-object; it creates one only when the destination handle is null (`uvm_copy_object` in `uvm_copier_defines.svh`), so a pre-built destination keeps its identity.
 
@@ -966,6 +1164,18 @@ Further questions to practise aloud:
 ### Flashcards
 
 The deck for this lesson covers the call order, the comparer defaults, the flag rule, `convert2string`, copy depth and the pack rules. Review it after the quiz.
+
+**One-glance summary.** The rules this lesson keeps coming back to, with the trap each one sets:
+
+| Operation | The rule | The trap |
+| --- | --- | --- |
+| Every operation | The policy runs field automation (`do_execute_op`) first, then your `do_*` hook if the user hook is enabled | Registering a field in both: it is processed twice |
+| Field flags | A field joins only the operations its flag names; a `UVM_NO*` bit beats its positive bit | `UVM_NOCOMPARE` or `UVM_HEX` alone: the field leaves every operation (`UVM/FIELDS/NO_FLAG`) |
+| `compare()` | Returns 0 if the miscompare count grew or `do_compare()` returned 0; `MISCMP` lines are `UVM_INFO` at `UVM_LOW` by default | Ignoring the return value: the test passes with bad data |
+| Comparer knobs | The threshold (default 1) stops only the field macros and `` `uvm_compare_* `` macros; `show_max` (default 1) limits printed lines, never the count | Expecting `show_max` alone to reveal more miscompares |
+| Text | `print()` bypasses the report server; `sprint()` returns the same text; `convert2string()` is empty unless you write it | Logging `convert2string()` from a field-macro class |
+| `copy()` / `clone()` | Field macros copy deep unless `UVM_REFERENCE`; a handle assignment shares; `clone()` is `create()` plus `copy()` | A saved expected item that shares a sub-object |
+| `pack()` / `unpack()` | Unpack the same fields in the same order and widths; the stream is implementation-defined | Decoding the stream in C |
 
 ### Kata 1: a scoreboard compare, two ways
 

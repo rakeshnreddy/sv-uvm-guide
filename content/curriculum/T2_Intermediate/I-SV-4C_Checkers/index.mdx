@@ -14,6 +14,25 @@ sources:
 - **Why it matters:** The RTL (register-transfer-level design code) you must check is often locked: another team owns it, it is third-party IP, or it is under change control. Inline assertions need an edit to that source every time a check changes. A checker packages the checks once, and `bind` attaches it to every instance of a module, to a chosen list of instances, or to one instance, while the RTL files stay untouched. The same checker can then travel to the next project, and to **formal verification**, where a tool proves a property for every legal input sequence instead of simulating chosen ones.
 - **The Analogy:** `bind` is a heart-monitor patch. You stick it on the patient's skin and read the vital signs without surgery. *Where it breaks:* the patient's "body" does change. After elaboration each target holds a new instance with its own hierarchical path, coverage and assertion-control scope. And a patch cannot hurt the patient, but a bound unit can: a bound module, or a checker with an output argument, can write to the design's variables. A bind is non-intrusive only if you keep it that way.
 
+<ArchitectureDiagram
+  title="bind at a glance: the source stays, the elaborated design grows"
+  caption="Left: the files you write. Right: the design the tool builds at elaboration, inside the bench's top module tb_top; u_tx is one of the bench's FIFOs. fifo.sv is never edited, and it defines every fifo instance; the bind inserts u_chk inside u_tx as if it were written at the end of fifo (§23.11), so its path is tb_top.u_tx.u_chk. A bind that names the module fifo gives every other fifo instance in tb_top its own u_chk too."
+  gapX={96}
+  nodes={[
+    { id: "qt_binds", label: "fifo_binds.sv", sublabel: "bind fifo … u_chk (…)", kind: "generic", col: 0, row: 0 },
+    { id: "qt_src", label: "fifo.sv", sublabel: "source file: no edit", kind: "dut", col: 0, row: 1, state: "ok" },
+    { id: "qt_tx", label: "tb_top.u_tx (fifo)", kind: "dut", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "qt_chk", label: "u_chk", sublabel: "inserted at elaboration", kind: "generic", col: 1, row: 0, state: "active" },
+    { id: "qt_body", label: "fifo body", sublabel: "built from fifo.sv", kind: "dut", col: 1, row: 1 },
+    { id: "qt_other", label: "every other fifo", sublabel: "in tb_top: own u_chk", kind: "dut", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "qt_binds", to: "qt_chk", style: "causal", label: "inserts" },
+    { from: "qt_src", to: "qt_body", style: "structural", label: "defines" },
+    { from: "qt_src", to: "qt_other", style: "structural", label: "defines" }
+  ]}
+/>
+
 **You will be able to:**
 1. Write a `checker` with formal arguments, assertions, a cover and a checker variable, instantiate it, and explain what a checker may not contain.
 2. Write `bind` for a module type, an instance list and a single instance path, and predict the hierarchical path of every bound instance.
@@ -48,6 +67,15 @@ Three rules should hold on every instance: no write while `full`, no read while 
 - **In `tb_top`, beside each instance.** You must wire `full` and `empty` out to `tb_top`, repeat the checks per instance, and copy each `DEPTH` by hand. Internal signals stay out of reach unless you write hierarchical references.
 - **In an interface that the agent uses** (the testbench unit that drives and monitors one bus). It sees only the interface's signals, never the FIFO's internals.
 - **In a separate unit that the tool inserts into every `fifo` instance.** It sees every name inside each instance, gets each instance's own `DEPTH`, and needs no RTL edit. That separate unit is a checker, and the insertion is `bind`.
+
+The four homes side by side:
+
+| Home | Sees the FIFO's internal signals | Gets each instance's `DEPTH` | RTL left unedited |
+|---|---|---|---|
+| Inline in `fifo` | ✓ yes | ✓ yes | ✕ no |
+| In `tb_top`, beside each instance | ✕ no (only through hierarchical references) | ✕ no, copied by hand | ✓ yes |
+| In the agent's interface | ✕ no, only the interface's signals | ✕ no, not from the FIFO | ✓ yes |
+| Bound checker | ✓ yes | ✓ yes | ✓ yes |
 
 ### The checker construct
 
@@ -120,11 +148,55 @@ Two rules make this work (§17.5, §17.7.3):
 - In a checker's `always_ff`, every expression except the event control reads the **sampled** value: the value from the Preponed region, the same snapshot the assertions use. So `level` is computed from the same values that the assertions see, and it can never race with the RTL's flops.
 - The nonblocking assignment to `level` lands in the **Re-NBA** region, late in the time slot, after the RTL's own NBA updates. The assertions sample `level` at the next edge, together with the flags the RTL computed at this edge.
 
+<SequenceDiagram
+  title="One rising edge: where count and level update"
+  caption="Read top to bottom: every step between the two dividers happens in one time slot at a rising edge (for example t = 35 ns), and the dividers mark the edges. The checker computes level from the same Preponed snapshot the assertions use, in Reactive, and level updates in Re-NBA, after the RTL's NBA update of count (§17.5, §17.7.3)."
+  columnWidth={220}
+  participants={[
+    { id: "rtl", label: "fifo (RTL)", kind: "dut" },
+    { id: "chk", label: "fifo_chk", sublabel: "checker", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "posedge clk" },
+    { kind: "note", from: "rtl", to: "chk", label: "Preponed: one snapshot of wr_en, rd_en, full, empty and level, used by the assertions and by the checker's always_ff" },
+    { kind: "self", from: "rtl", label: "Active: always_ff schedules count <=" },
+    { kind: "self", from: "rtl", label: "NBA: count updates; full and empty follow" },
+    { kind: "self", from: "chk", label: "Observed: assertions evaluate" },
+    { kind: "self", from: "chk", label: "Reactive: always_ff computes level" },
+    { kind: "self", from: "chk", label: "Re-NBA: level updates" },
+    { kind: "divider", label: "next posedge clk" },
+    { kind: "note", from: "rtl", to: "chk", label: "Preponed: the new full, empty and level are sampled together" }
+  ]}
+/>
+
 `always_comb` and `always_latch` in a checker read **current** values instead, and they are the only checker `always` procedures that may use blocking assignments (§17.5). (F3B names all the regions: [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index).)
+
+| In a checker | `always_ff` | `always_comb`, `always_latch` |
+|---|---|---|
+| Values its expressions read | sampled (Preponed) values, except the event control (§17.5) | current values (§17.5) |
+| Assignments to checker variables | nonblocking only (§17.7.1) | blocking allowed (§17.5) |
 
 ### Predict a checker at work
 
 The waveform below shows `fifo_chk`, complete with `level`, watching a FIFO of depth 2. Reset ends just after edge 1. The stimulus writes at edges 2, 3 and 4, then reads at edges 5 and 6, ignoring the fact that this FIFO holds only two items. **Before you read the markers, predict:** at which edge does an assertion fail, and which one? At which edge is the cover reported?
+
+<TimingDiagram
+  title="fifo_chk on a FIFO with DEPTH 2 (tb_top.u_tx), before the markers"
+  caption="Each column is the value sampled at that rising edge; edge k is at 10k + 5 ns. Compare wr_en with full and rd_en with empty in each column, apply the cover's sequence, then open the reveal to check."
+  edges={9}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "wr_en", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 0, 0] },
+    { name: "rd_en", kind: "bit", values: [0, 0, 0, 0, 0, 1, 1, 0, 0] },
+    { name: "full", kind: "bit", values: [undefined, 0, 0, 0, 1, 1, 0, 0, 0] },
+    { name: "empty", kind: "bit", values: [undefined, 1, 1, 0, 0, 0, 0, 1, 1] },
+    { name: "level", kind: "bus", values: [0, 0, 0, 1, 2, 2, 1, 0, 0] }
+  ]}
+/>
+
+<details>
+<summary>Reveal the markers and the edge-by-edge reading</summary>
 
 <TimingDiagram
   title="fifo_chk on a FIFO with DEPTH 2 (tb_top.u_tx)"
@@ -151,6 +223,8 @@ What the waveform shows:
 - **Edge 4:** `full` (which became 1 just after edge 3) and `wr_en` are both 1 in the same sample, so `full |-> !wr_en` fails. The RTL ignores that write, so `level` stays at 2 and `a_flags_match_level` keeps passing: the checker's model and the RTL agree that the third item was dropped.
 - **Edge 7:** the cover's attempt started at edge 4, where `$rose(full)` was true, and `empty` is 1 for the first time since then at edge 7. A `cover property` counts at most one success per attempt (§16.14.3), so the message prints once.
 - **`level` changes in the same column as the flags**, by design. Like the RTL's internal count, it is updated just after each edge (in Re-NBA rather than NBA) and sampled at the next edge, so `a_flags_match_level` always compares values from the same cycle.
+
+</details>
 
 ### Instantiating a checker directly
 
@@ -196,6 +270,13 @@ Three rules come with it (§16.14.7):
 
 The locked `fifo` declares no default clocking, so binding `data_stable_chk` into it without `.clk(...)` is an elaboration error. Make It Work's debugging table lists the fix.
 
+What the two inferred defaults become, at a glance (§16.14.7):
+
+| A formal defaulting to | Gets, when this is in force at the instantiation point (for a bound checker: the target declares it) | Gets, when none is in force (the locked `fifo`) | Gets, when the formal is connected explicitly |
+|---|---|---|---|
+| `$inferred_clock` | a clock: that clock | an error | the connection, always |
+| `$inferred_disable` | a `default disable iff`: that disable condition | `1'b0`: never disabled, so false failures during reset | the connection, always |
+
 ### bind: one statement, three forms
 
 `bind` has the shape *where* + *what*: a target, then an ordinary instantiation of a checker, module, interface or program (§23.11). It is a statement, not a compiler directive (there is no backtick), and it may be written in a module, in an interface or at **compilation-unit scope**, the space outside every module in a file (§23.11). Teams usually collect binds in one file, such as `fifo_binds.sv`.
@@ -213,6 +294,12 @@ bind fifo : tb_top.u_rx, tb_top.u_tx fifo_chk_pkg::fifo_state_cov u_cov (
 // 3. Instance form: exactly one instance gets u_log (a bound module, not a checker).
 bind tb_top.u_dbg fifo_logger u_log (.clk, .wr_en, .full, .din);
 ```
+
+| Form | Shape | Reaches | In this bench |
+|---|---|---|---|
+| Module | `bind fifo …` | every instance of `fifo`, designwide | `u_chk` in all three FIFOs |
+| Module : instance list | `bind fifo : tb_top.u_rx, tb_top.u_tx …` | only the listed instances of `fifo` | `u_cov` in `u_rx` and `u_tx` |
+| Instance | `bind tb_top.u_dbg …` | exactly that one instance | `u_log` in `u_dbg` |
 
 The rules behind all three forms (§23.11):
 
@@ -257,6 +344,9 @@ For each of the four bind forms, **predict the full path of every `chk_inst` bef
 
 <BindDirectiveVisualizer />
 
+<details>
+<summary>Open the debrief after you have tried all four forms</summary>
+
 Debrief, scenario by scenario:
 
 - **Every `ahb_slave`:** both `tb_top.dut.u_slave_0.chk_inst` and `tb_top.dut.u_slave_1.chk_inst`. `u_spi` gets nothing, because it is a `spi_ctrl`, not an `ahb_slave`.
@@ -264,6 +354,8 @@ Debrief, scenario by scenario:
 - **One instance path:** only `tb_top.dut.u_slave_0.chk_inst`.
 - **Two binds, same name:** an elaboration error. A bound instance name may not clash with any name already in the target, including a name added by another bind (§23.11). Rename one of them, for example `cov_inst`.
 - **The distractor `tb_top.chk_inst` is never right.** Where the `bind` is written decides nothing about where the instance goes. A bind may be written in a module, an interface or at compilation-unit scope (§23.11), and the instance always lands inside its target.
+
+</details>
 
 ### Where a bound checker's names come from
 
@@ -298,7 +390,50 @@ Two consequences:
 - **Name the checker by its package:** `fifo_chk_pkg::fifo_chk`. Declarations in the compilation-unit scope (`$unit`, the space outside every module) are not visible in a bind statement (§23.11), and the RTL usually does not import your verification package. A package-scoped name works from anywhere, provided the package is compiled first: the standard requires a package to be compiled before anything that refers to it (§3.12, §26.3). The bind file itself may come before or after the RTL, because targets are resolved at elaboration.
 - **Never hide a design signal inside the checker body.** `assert property (rst_n |-> …)` inside a package checker, with `rst_n` not a formal, looks in the package, not in the `fifo`. Make every design signal a formal and connect it in the bind.
 
+**Check yourself: five names, three scopes.** Take the module-form bind of `fifo_chk` from the three forms above, in the Make It Work bench, where `tb_top` also declares its own `wr_en`. For each name, say where it resolves and what goes wrong when you get that scope wrong:
+
+1. `.wr_en` in the bind's port list.
+2. `DEPTH` in `.depth(DEPTH)`.
+3. `rst_n`, written inside the checker body without being a formal.
+4. A formal declared `event clk = $inferred_clock` and left unconnected.
+5. The checker's name, if `fifo_chk` were declared at compilation-unit scope instead of in the package.
+
+<details>
+<summary>Check your answers</summary>
+
+1. **`.wr_en`** resolves in the target `fifo` (its own port), not `tb_top` (§23.11).
+   *Symptom when the scope is wrong:* a bench-only name such as `tx_wr` is an elaboration error; a bench name the target also has connects silently to the target's signal.
+2. **`DEPTH`** resolves in each target: 4 in `u_rx`, 2 in `u_tx`, 8 in `u_dbg` (§23.11).
+   *Symptom when the scope is wrong:* if you expect `DEPTH` to resolve in `tb_top`, you look in the wrong place: `tb_top` has no `DEPTH`, and an actual the target lacks would be an elaboration error. It is the target's own parameter that each instance reads. Typing a literal per instance instead breaks the day a `DEPTH` changes.
+3. **`rst_n` in the body** resolves in the declaring package, `fifo_chk_pkg` (§17.2).
+   *Symptom when the scope is wrong:* not found, or some package object of that name; never the `fifo`'s reset.
+4. **`$inferred_clock`** resolves at the instantiation point: the end of the target `fifo` (§16.14.7).
+   *Symptom when the scope is wrong:* `fifo` has no default clocking, so an elaboration error.
+5. **`fifo_chk` in `$unit`** resolves nowhere: `$unit` is not visible in a bind (§23.11).
+   *Symptom when the scope is wrong:* checker not found; declare it in a package and write `fifo_chk_pkg::fifo_chk`.
+
+</details>
+
 ### Parameterized and generated targets
+
+<ArchitectureDiagram
+  title="One bind, three depths"
+  caption="One module-form bind statement creates three fifo_chk checker instances. The bind carries only the name DEPTH; each .depth(DEPTH) actual is resolved inside its own target fifo, so the checker in u_rx gets 4, the one in u_tx 2 and the one in u_dbg 8 (§23.11)."
+  cellWidth={110}
+  gapX={24}
+  spreadAnchors={true}
+  nodes={[
+    { id: "pd_bind", label: "bind fifo … .depth(DEPTH)", sublabel: "one statement in fifo_binds.sv", kind: "generic", col: 0, row: 0, colSpan: 3 },
+    { id: "pd_rx", label: "u_rx.u_chk", sublabel: "own DEPTH: 4", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "pd_tx", label: "u_tx.u_chk", sublabel: "own DEPTH: 2", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "pd_dbg", label: "u_dbg.u_chk", sublabel: "own DEPTH: 8", kind: "generic", col: 2, row: 1, state: "active" }
+  ]}
+  edges={[
+    { from: "pd_bind", to: "pd_rx", style: "causal", label: "creates" },
+    { from: "pd_bind", to: "pd_tx", style: "causal", label: "creates" },
+    { from: "pd_bind", to: "pd_dbg", style: "causal", label: "creates" }
+  ]}
+/>
 
 **Parameters.** A checker cannot take `#(...)`, so pass the target's parameter as an input argument: `.depth(DEPTH)` resolves `DEPTH` inside each target, so `u_rx` gets 4, `u_tx` 2 and `u_dbg` 8 from one bind statement. For data whose width depends on a parameter, use **untyped** formals, as `data_stable_chk` does: an untyped formal takes the width of its actual, and `$bits(data)` reports it. When a check genuinely needs a parameter or a type parameter (for example to size a `generate` loop or instantiate a submodule), bind a **module** instead: modules take `#(...)`, and its parameter values also resolve in the target.
 
@@ -318,6 +453,19 @@ endmodule
 bind tb_top.dut.g_lane[2].u_fifo fifo_chk_pkg::fifo_state_cov u_cov (
   .clk, .rst_n, .full, .empty);
 ```
+
+<ArchitectureDiagram
+  title="Binding into generated copies"
+  caption="The four copies the g_lane loop builds inside tb_top.dut. The module-form bind of fifo_chk reaches every copy, so each holds u_chk. The instance-form bind above names one copy by constant index, so only g_lane[2].u_fifo also holds u_cov."
+  legend={false}
+  nodes={[
+    { id: "gl_dut", label: "tb_top.dut (lanes)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "gl_0", label: "g_lane[0].u_fifo", sublabel: "u_chk", kind: "dut", col: 0, row: 0 },
+    { id: "gl_1", label: "g_lane[1].u_fifo", sublabel: "u_chk", kind: "dut", col: 1, row: 0 },
+    { id: "gl_2", label: "g_lane[2].u_fifo", sublabel: "u_chk + u_cov", kind: "dut", col: 0, row: 1, state: "active" },
+    { id: "gl_3", label: "g_lane[3].u_fifo", sublabel: "u_chk", kind: "dut", col: 1, row: 1 }
+  ]}
+/>
 
 - A bind target path may contain constant indices into generate blocks (Annex A.9.3 `hierarchical_identifier`).
 - Give every generate block you want to target a name. An unnamed block has no name that can be used in a hierarchical path; tools show it as `genblk<n>` (§27.6), but that name is for external tools, not for your bind file.
@@ -341,12 +489,49 @@ The standard names the intended use of checkers directly: "verification library 
 
 ### Common mistakes
 
-1. **"`bind` edits or recompiles the target's source."** It does neither. The file is untouched; the instance exists only in the elaborated design, so changing a bind needs a new elaboration, not an RTL edit.
-2. **"A checker can contain anything a module can."** It cannot: no nets, no module instances, no tasks, no plain `always`, no parameters (the table above).
-3. **"Binding to a module type affects one instance."** It affects every instance designwide.
-4. **Writing actuals with the bench's names.** `.wr_en(tx_wr)` fails if the target has no `tx_wr`. Worse, if the target happens to have a signal with the bench's name, the bind silently connects to the target's signal.
-5. **`initial level = 0;` in a checker.** Assigning a checker variable in `initial` is illegal (§17.7.1); initialize it in its declaration.
-6. **Expecting a package checker to inherit a clock.** It inherits nothing; declare `default clocking` inside it, or use `$inferred_clock` and accept the error when the target has no clock.
+Each card names a mistake. Say why it is wrong, and what the fix is, before you open it.
+
+<details>
+<summary>1. Believing that bind edits or recompiles the target's source</summary>
+
+**"`bind` edits or recompiles the target's source."** It does neither. The file is untouched; the instance exists only in the elaborated design, so changing a bind needs a new elaboration, not an RTL edit.
+
+</details>
+
+<details>
+<summary>2. Believing that a checker can contain anything a module can</summary>
+
+**"A checker can contain anything a module can."** It cannot: no nets, no module instances, no tasks, no plain `always`, no parameters (the table above).
+
+</details>
+
+<details>
+<summary>3. Believing that binding to a module type affects one instance</summary>
+
+**"Binding to a module type affects one instance."** It affects every instance designwide.
+
+</details>
+
+<details>
+<summary>4. Writing the bind's actuals with the bench's signal names</summary>
+
+**Writing actuals with the bench's names.** `.wr_en(tx_wr)` fails if the target has no `tx_wr`. Worse, if the target happens to have a signal with the bench's name, the bind silently connects to the target's signal.
+
+</details>
+
+<details>
+<summary>5. Initializing a checker variable in an initial procedure</summary>
+
+**`initial level = 0;` in a checker.** Assigning a checker variable in `initial` is illegal (§17.7.1); initialize it in its declaration.
+
+</details>
+
+<details>
+<summary>6. Expecting a checker declared in a package to inherit a clock</summary>
+
+**Expecting a package checker to inherit a clock.** It inherits nothing; declare `default clocking` inside it, or use `$inferred_clock` and accept the error when the target has no clock.
+
+</details>
 
 ### Recap
 
@@ -543,10 +728,36 @@ endmodule
 
 The coverage report (format tool-dependent) shows all three bins of `tb_top.u_tx.u_cov.cg` hit, and `is_full` of `tb_top.u_rx.u_cov.cg` missed: `u_rx` never held more than three items. There is no `u_cov` under `u_dbg`, because the instance list did not name it. The cover `c_fill_then_drain` matched only under `tb_top.u_tx.u_chk`.
 
+The same results, one row per instance:
+
+| Instance | `u_chk` assertions | `c_fill_then_drain` | `u_cov.cg` coverage | Logger |
+|---|---|---|---|---|
+| `tb_top.u_rx` (DEPTH 4) | no failure | no match | `is_full` missed | none bound |
+| `tb_top.u_tx` (DEPTH 2) | `a_no_write_when_full` fails at 45 ns | matched at 75 ns | all three bins hit | none bound |
+| `tb_top.u_dbg` (DEPTH 8) | no failure | no match | no `u_cov`: not in the instance list | `u_log` prints writes at 25, 35 and 45 ns |
+
 How to read it:
 
 - **One bind, three behaviours.** The module form put `u_chk` in all three FIFOs, and each got its own `depth` (4, 2 and 8) from its own `DEPTH`. Only `u_tx` holds two items, so only its checker fails, at 45 ns: the same edge 4 you predicted on the waveform.
-- **The 45 ns lines come in a fixed order.** The logger's `$display` runs in the Active region of the edge; the assertion's fail statement runs later in the same time slot, in the Reactive region (§16.14.1).
+- **The 45 ns lines come in a fixed order.** The logger's `$display` runs in the Active region of the edge; the assertion's fail statement runs later in the same time slot, in the Reactive region (§16.14.1, §4.4.2.5, §4.4.2.6).
+
+<SequenceDiagram
+  title="The time slot at t = 45 ns"
+  caption="Read top to bottom: all steps happen in the one time slot at t = 45 ns (edge 4). The logger's always procedure runs in Active; the assertion is evaluated in Observed, which schedules its fail statement in Reactive (§4.4.2.5), and action blocks execute in Reactive (§4.4.2.6, §16.14.1), so the write a2 line always prints before the error line."
+  columnWidth={220}
+  participants={[
+    { id: "log", label: "u_dbg.u_log", sublabel: "bound module", kind: "generic" },
+    { id: "chk", label: "u_tx.u_chk", sublabel: "bound checker", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "posedge clk at t = 45 ns" },
+    { kind: "note", from: "log", to: "chk", label: "Preponed: u_tx.u_chk samples wr_en = 1 and full = 1" },
+    { kind: "self", from: "log", label: "Active: $display prints write a2" },
+    { kind: "self", from: "chk", label: "Observed: a_no_write_when_full fails" },
+    { kind: "self", from: "chk", label: "Reactive: the fail statement calls $error", tone: "error" }
+  ]}
+/>
+
 - **The coverage tells you what was never tested.** `u_rx` was never full, so its `is_full` bin and its cover are empty. A stimulus change is needed before anyone can claim the full-FIFO behaviour of the depth-4 FIFO is verified.
 - **`tb_top` never connected `full` or `empty`**, and the checkers still read them. That is the bound checker's view from inside each instance.
 
@@ -584,7 +795,11 @@ How to read it:
 
 ### Expert: Checker scheduling and sampled procedures
 
-Inside a checker, constructs that react to changes (clocking events, continuous assignments) and all blocking statements run in the **Reactive** region, like a program block; nonblocking assignments to checker variables update in **Re-NBA**, after the Reactive and Re-Inactive regions have emptied (§17.7.3). Four consequences:
+Inside a checker, constructs that react to changes (clocking events, continuous assignments) and all blocking statements run in the **Reactive** region, like a program block; nonblocking assignments to checker variables update in **Re-NBA**, after the Reactive and Re-Inactive regions have emptied (§17.7.3). Select Observed, Reactive and Re-NBA in the map below to see where each sits in the time slot, then read the four consequences.
+
+<TimeSlotRegionMap />
+
+Four consequences:
 
 - `always_ff @clk a <= s.triggered;` works in a checker. The sequence's `triggered` value is set in the Observed region, and the checker reads it later, in Reactive. Read in the Active region, it would always be `1'b0` (§17.7.3).
 - §17.7.3 names clocking events among the change-sensitive constructs it schedules in the Reactive region. A covergroup clocked with `@(posedge clk)` inside a checker can therefore sample values that the design already updated at that edge, not the Preponed snapshot the assertions use. Simulators differ in how closely they follow this (tool-dependent), so `fifo_state_cov` in Make It Work only makes claims that hold either way. When the exact sample point matters, give the covergroup a custom `sample()` with arguments and call it from a sequence match item, as the second §17.6 example does: by-value arguments of a match-item call carry sampled values (§16.11).
@@ -604,6 +819,12 @@ checker same_bits (bit [63:0] a, b, event clk);
   a1: assert property (@clk a[idx] == b[idx]);
 endchecker
 ```
+
+| `same_bits` | In a formal tool | In a simulator |
+|---|---|---|
+| `idx` | every value from 0 to 63 at once (no assumptions restrict it here) | one random value, held for the whole run (`rand const`) |
+| What `a1` checks | every bit position, so it is equivalent to `a == b` | one bit position per run |
+| Same as an all-bits checker? | yes (§17.7) | no: the standard says the two are not equivalent in simulation (§17.7) |
 
 The checker's `assume` statements that mention its active free variables form its **assume set**. A simulator solves the assume set at each of its clock events, before the Observed region, to pick values for the free variables (§17.7.2); there is no `randomize()` call, and a solution that leads to a later "dead end" still counts as a solution. This is why §17.1 calls checkers building blocks for "abstract auxiliary models" in formal verification: the same checker drives a symbolic model in formal and a random one in simulation. [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) uses bound checkers this way.
 
@@ -632,9 +853,26 @@ Source: IEEE 1800-2023 §16.14.7, §17.3, §23.3.2.3, §23.3.2.4.
 
 Non-intrusive is a discipline, not a guarantee of the language:
 
-- A checker's output argument must be connected to a variable or net, and it is written by an implicit continuous assignment in Reactive (§17.3). Bound into RTL and connected to an RTL variable, it writes into the design, and it can create a second driver.
+- A checker's output argument must be connected to a variable or net, and it is written by an implicit continuous assignment in Reactive (§17.3). Bound into RTL, it writes into the design. Connected to an RTL net (a `wire`) that the design already drives, it creates a second driver, and the net's value is resolved from both drivers (§6.6), silently. Connected to an RTL variable that the design already assigns, procedurally or continuously, it is an elaboration error, because a variable may not mix procedural and continuous assignments or have more than one continuous assignment (§6.5). Connected to a variable the RTL only reads, it elaborates and silently changes what the design sees.
 - A bound module can do anything a module can, including `force` statements and drives on design signals.
 - Even a pure checker changes the elaborated design: it adds instance paths, coverage items and scopes that `$assertoff` and waveform tools see. Code-coverage and hierarchy-comparison flows see the extra instances; whether and how to exclude them is tool-dependent.
+
+<ArchitectureDiagram
+  title="Two routes out of a bound checker"
+  caption="An output argument is an implicit continuous assignment executed in Reactive (§17.3): it writes into the design. Connected to an RTL net the design already drives, as here, it becomes a second driver, and the net's value is resolved from both (§6.6). Connected instead to a variable the RTL's always_ff already writes, it is an elaboration error (§6.5); the silent variable case is a variable the RTL only reads. The observation-only route reports through $error and leaves the design untouched."
+  gapX={80}
+  nodes={[
+    { id: "ni_ff", label: "RTL assign", sublabel: "the design's own driver", kind: "dut", col: 0, row: 0 },
+    { id: "ni_var", label: "RTL net (wire)", sublabel: "two drivers: resolved", kind: "dut", col: 0, row: 1, state: "error" },
+    { id: "ni_chk", label: "bound checker", sublabel: "output assigns in Reactive", kind: "generic", col: 0, row: 2 },
+    { id: "ni_rep", label: "report / log", sublabel: "observation only", kind: "generic", col: 1, row: 2, state: "ok" }
+  ]}
+  edges={[
+    { from: "ni_ff", to: "ni_var", style: "data", label: "drives" },
+    { from: "ni_chk", to: "ni_var", style: "data", label: "output" },
+    { from: "ni_chk", to: "ni_rep", style: "data", label: "$error" }
+  ]}
+/>
 
 Keep bound units observation-only, and route any result to the testbench through reporting, not through output arguments connected to RTL.
 
@@ -688,6 +926,23 @@ Attempt each question before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="Checkers and bind on one card"
+  rule="bind inserts an instance into each target at elaboration, as if written at the end of the target (§23.11); its actuals resolve in the target, other names in the checker body (neither formals nor its own declarations) in its declaring package (§17.2), and inferred clock and disable at the instantiation point (§16.14.7)."
+  code={"bind fifo fifo_chk_pkg::fifo_chk u_chk (\n  .clk, .rst_n, .wr_en, .rd_en, .full, .empty, .depth(DEPTH));"}
+  mistake="Believing bind edits the RTL file, or that the module form reaches only one instance: the file never changes, and every instance of the module gets its own copy."
+  inTestbench="Teams collect the binds in one file (here fifo_binds.sv) at compilation-unit scope, with the checker package compiled first; the bound paths, such as tb_top.u_tx.u_chk, are what you use in waveform viewers, $assertoff calls and coverage reports."
+>
+
+| Question | Answer |
+|---|---|
+| Where does the instance go? | inside each target: target path + `.` + instance name |
+| Which targets? | module: every instance; module : list: the listed ones; instance path: exactly one |
+| Where do names resolve? | actuals: the target; body: the declaring package; `$inferred_*`: the instantiation point |
+| What may a checker not hold? | nets, module instances, tasks, plain `always`, parameters |
+
+</VisualRecap>
 
 ### Retrieval quiz
 

@@ -17,6 +17,18 @@ sources:
 - **Why it matters:** RTL never loses power on its own. A simulation of plain RTL keeps every register alive, so a block that is switched off at the wrong moment, a missing clamp, or a lost register value stays invisible until silicon. Load the UPF and the same simulation shows those bugs as X values in the logic that stays on.
 - **The Analogy:** The RTL is a building's floor plan; the UPF is its electrical plan. It has circuit breakers (power switches), a fuse at every doorway so a dark room's wiring cannot feed junk into the lit rooms (isolation), a battery backup for one filing cabinet (retention), an emergency-lighting circuit that never goes off (always-on logic), and transformers between rooms wired for different voltages (level shifters). *Where it breaks:* a dark room keeps its furniture. A powered-down block in simulation loses everything: every register becomes X. And when the lights come back, nothing returns by itself until a reset or a restore puts values back.
 
+The analogy at a glance (each row is taught in its own subsection below):
+
+| In the building | In the chip | Written in UPF with |
+|---|---|---|
+| floor plan | RTL: the logical intent | (the `.sv` files, unchanged) |
+| electrical plan | UPF: the power intent | the `.upf` side file |
+| circuit breaker | power switch | `create_power_switch` |
+| fuse at a doorway | isolation | `set_isolation` |
+| battery backup for one filing cabinet | retention | `set_retention` |
+| emergency-lighting circuit | always-on logic | a power domain whose primary supply never switches |
+| transformer between rooms | level shifter | `set_level_shifter` |
+
 **You will be able to:**
 1. Explain why power intent is written in a UPF side file, and how a simulator and the implementation tools apply it to RTL that never changes.
 2. Write IEEE 1801 power intent for a two-domain design: power domains, supply ports, nets and sets, a power switch, and isolation, retention and level-shifter strategies.
@@ -119,6 +131,22 @@ set_isolation iso_wake -domain PD_WAKE -applies_to inputs -source SS_CPU \
 ```
 
 The second half is the part people forget. The island keeps running, so anything it reads from the switched part of the CPU turns to X when that part powers down. Those inputs need isolation too (`-source SS_CPU` picks only the inputs driven from the switched supply). The supply-set commands are explained in the next subsection.
+
+<ArchitectureDiagram
+  title="Carving an always-on island out of u_cpu"
+  caption="The box is the instance u_cpu. -elements {u_cpu} puts u_cpu and everything below it in PD_CPU, but -elements {u_cpu/u_wake} is more specific, so u_wake goes to PD_WAKE, powered by the never-switched SS_AON. The solid arrow is data from the switched part of the CPU into the island: it passes through iso_wake (clamp 0, enabled by cpu_iso_en), so while cpu_iso_en is active the island reads 0, not X, even when PD_CPU is off."
+  cellWidth={140}
+  gapX={110}
+  legend={false}
+  nodes={[
+    { id: "ucpu", label: "u_cpu (instance)", kind: "generic", col: 0, row: 0, colSpan: 2, container: true },
+    { id: "rest", label: "rest of u_cpu", sublabel: "PD_CPU · switched", kind: "dut", col: 0, row: 0 },
+    { id: "wake", label: "u_cpu/u_wake", sublabel: "PD_WAKE · always on", kind: "generic", col: 1, row: 0, state: "ok" }
+  ]}
+  edges={[
+    { from: "rest", to: "wake", style: "data", label: "iso_wake" }
+  ]}
+/>
 
 <ArchitectureDiagram
   title="The two-domain example: soc_top with a switchable CPU"
@@ -232,7 +260,33 @@ This is the heart of power-aware simulation, and the rules are short. When a dom
 
 Two words to keep apart: **corruption** is what happens *inside* the off domain (values become X); **X-propagation** is what happens next, when that X travels into logic that is still on.
 
+<ArchitectureDiagram
+  title="Corruption inside, X-propagation across the boundary"
+  caption="PD_CPU is off. Inside it, corruption has made every register and output X. The upper arrow is an output covered by an isolation strategy: iso_cpu passes the clamp value, here 0, down to u_top. The lower arrow is an output with no isolation: it carries the X straight into u_top in PD_TOP, which is still powered: that is X-propagation. The arrows are data."
+  cellWidth={130}
+  gapX={90}
+  spreadAnchors
+  legend={false}
+  nodes={[
+    { id: "pdc", label: "PD_CPU (off)", kind: "generic", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "cpux", label: "u_cpu", sublabel: "corrupted: all X", kind: "dut", col: 0, row: 0, rowSpan: 2, state: "error" },
+    { id: "pdt", label: "PD_TOP (on)", kind: "generic", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "isoc", label: "iso_cpu", sublabel: "clamp 0", kind: "generic", col: 1, row: 0 },
+    { id: "topx", label: "u_top", sublabel: "reads 0 and X", kind: "generic", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "cpux", to: "isoc", style: "data", label: "X" },
+    { from: "isoc", to: "topx", style: "data", label: "0" },
+    { from: "cpux", to: "topx", style: "data", label: "X" }
+  ]}
+/>
+
 Here is the example traced through one power cycle. `ctx_reg` (context) is retained; `scratch` is not. Both outputs are isolated with clamp value 0.
+
+**Predict, then check.** Use the four rules above. Before the domain powers down, `ctx_reg` holds `A5`, `scratch` holds `3C`, and `ctx_reg` is saved while powered. Isolation goes on before power-off. The PMU then powers up, resets the domain, restores `ctx_reg`, and only then releases isolation. Write down (a) what `ctx_reg` and `scratch` hold the moment power is back, before the reset, and (b) what `u_top` sees on `cpu_data_out` right after the restore, while isolation is still on.
+
+<details>
+<summary>Check your prediction: the trace table</summary>
 
 | Signal (type) | Running | Power off (isolation on) | Power back on | After domain reset | After restore | After isolation release |
 |---|---|---|---|---|---|---|
@@ -240,6 +294,10 @@ Here is the example traced through one power cycle. `ctx_reg` (context) is retai
 | `scratch` (`logic [7:0]`) | `3C` | X | X | `00` | `00` | `00` |
 | `cpu_data_out` as `u_top` sees it | `A5` | `00` (clamp) | `00` | `00` | `00` | `A5` |
 | `cpu_scr_out` as `u_top` sees it | `3C` | `00` (clamp) | `00` | `00` | `00` | `00` |
+
+(a) Both are X when power is back: power returning restores nothing (rule 3). (b) `u_top` still sees the clamp `00`, although `ctx_reg` is already `A5` again: the restored value reaches `u_top` only when isolation is released (rule 4).
+
+</details>
 
 **Misconception: "a powered-down block's outputs read 0."** Only *isolated* outputs read their clamp, and the clamp can be 0 or 1 (or Z, or a latched value). An output with no isolation reads X in a 4-state simulation. Worse, a 2-state output reads 0, which looks like a clean, idle signal, so a missing isolation cell can hide behind a `bit` type.
 
@@ -335,6 +393,16 @@ Three ways to lose the value, each one a real bug:
 
 **Misconception: "isolation and retention are interchangeable."** They solve different problems on different sides of the boundary. Isolation protects the *always-on receivers* from X while the source is off; it keeps nothing. Retention keeps *selected state inside* the switched domain for after power-up; it protects nobody while the domain is off. A domain that is switched off normally needs isolation on its outputs, and retention only if some of its state must survive. `-clamp_value latch` holds an output's last value at the boundary; it does not retain the register behind it.
 
+| | Isolation (`set_isolation`) | Retention (`set_retention`) |
+|---|---|---|
+| Protects | the always-on receivers, from X | selected state, for after power-up |
+| Where it acts | on the domain-boundary ports that `-applies_to` and its filters select (here the outputs of `PD_CPU`, with the cells in the parent) | on the registers named by `-elements`, inside the switched domain |
+| When it acts | while the isolation signal is active: the whole off period | save while powered, before power-off; restore after power-on and after the domain reset |
+| Its supply | always-on `-isolation_supply_set` | always-on `-retention_supply_set` |
+| Its controls | `-isolation_signal` and `-isolation_sense` | `-save_signal` and `-restore_signal`, each with a sense |
+| Keeps a register's value? | no; even `-clamp_value latch` only holds the output | yes, for the named `-elements` |
+| Needed when | signals from logic that can switch off feed logic that stays on | some state must survive the power-down |
+
 ### Level shifters
 
 When two domains run at different voltages, a signal crossing between them needs a **level shifter**: a 0.8 V high may not read as a reliable 1 at 1.2 V, and a 1.2 V signal can overstress 0.8 V logic. A **level-shifter strategy** (`set_level_shifter`, 1801-2018 §6.46) says where shifters are required; the implementation tools insert the cells.
@@ -346,6 +414,17 @@ set_level_shifter ls_cpu -domain PD_CPU -applies_to both -rule both -location se
 - `-applies_to inputs|outputs|both` and `-rule low_to_high|high_to_low|both` select the crossings; `-threshold` sets the voltage difference below which no shifter is needed.
 - The strategy needs both voltages, which come from the power states (next subsection): `SS_AON` at 1.2 V and `SS_CPU` at 0.8 V.
 - In RTL simulation a level shifter is mostly invisible: values pass through unchanged. 1801-2018 §9.9 defines its simulation semantics, but most level-shifter bugs (missing, redundant or wrongly placed shifters) are found by static checking tools, not by simulation (tool-dependent).
+
+Two questions decide which protection a signal crossing between two domains needs:
+
+| Do the two domains run at different voltages? | Can the source switch off while the receiver stays on? | The crossing needs |
+|---|---|---|
+| no | no | nothing |
+| yes | no | a level shifter (none if the difference is below `-threshold`) |
+| no | yes | isolation |
+| yes | yes | both; implementation tools often merge them into one enable-level-shifter cell (tool-dependent) |
+
+The `cpu_data_out` crossing is the last row, drawn here:
 
 <ArchitectureDiagram
   title="A CPU output crossing from 0.8 V to 1.2 V"
@@ -502,11 +581,76 @@ Each of these wrong orders produces a specific bug:
 - Power states name the supply combinations and their simstates; legal transitions become verification scenarios.
 - Order: stop clock, isolate, save, off … on, reset, restore, clock on, release.
 
+<VisualRecap
+  title="The safe power cycle"
+  rule="Stop the clock, isolate, save and power off; then power on, reset, restore, restart the clock, and release isolation last."
+  code={"set_isolation iso_cpu -domain PD_CPU -applies_to outputs \\\n  -isolation_supply_set SS_AON -clamp_value 0 \\\n  -isolation_signal cpu_iso_en -isolation_sense high -location parent"}
+  mistake="Powering the isolation cells from the switched supply (-isolation_supply_set SS_CPU): they lose power with the CPU and drive X instead of the clamp."
+  inTestbench="E-PWR-1 turns each legal power-state transition into a power-cycle sequence, checks the order with power-aware assertions (isolation on before power drops), and covers every state and arrow."
+>
+  <ArchitectureDiagram
+    title="Safe order for one power cycle of PD_CPU"
+    caption="Read the left column down (power down), then the right column down (power up). Each box names the PMU output that makes the step. Dashed arrows are the order. The wrong-order table under Power-down and power-up sequencing lists the bug that each misordering causes."
+    cellWidth={130}
+    gapX={64}
+    gapY={40}
+    legend={false}
+    nodes={[
+      { id: "dn", label: "power down", kind: "generic", col: 0, row: 0, rowSpan: 4, container: true },
+      { id: "d1", label: "stop clock", sublabel: "cpu_clk_en = 0", kind: "generic", col: 0, row: 0 },
+      { id: "d2", label: "isolate", sublabel: "cpu_iso_en = 1", kind: "generic", col: 0, row: 1 },
+      { id: "d3", label: "save", sublabel: "cpu_save pulse", kind: "generic", col: 0, row: 2 },
+      { id: "d4", label: "power off", sublabel: "cpu_pwr_en = 0", kind: "generic", col: 0, row: 3 },
+      { id: "up", label: "power up", kind: "generic", col: 1, row: 0, rowSpan: 5, container: true },
+      { id: "u1", label: "power on", sublabel: "cpu_pwr_en = 1", kind: "generic", col: 1, row: 0 },
+      { id: "u2", label: "reset", sublabel: "cpu_rst_n pulse", kind: "generic", col: 1, row: 1 },
+      { id: "u3", label: "restore", sublabel: "cpu_restore pulse", kind: "generic", col: 1, row: 2 },
+      { id: "u4", label: "clock on", sublabel: "cpu_clk_en = 1", kind: "generic", col: 1, row: 3 },
+      { id: "u5", label: "release", sublabel: "cpu_iso_en = 0", kind: "generic", col: 1, row: 4 }
+    ]}
+    edges={[
+      { from: "d1", to: "d2", style: "causal" },
+      { from: "d2", to: "d3", style: "causal" },
+      { from: "d3", to: "d4", style: "causal" },
+      { from: "u1", to: "u2", style: "causal" },
+      { from: "u2", to: "u3", style: "causal" },
+      { from: "u3", to: "u4", style: "causal" },
+      { from: "u4", to: "u5", style: "causal" }
+    ]}
+  />
+</VisualRecap>
+
 ## Make It Work
 
 ### A two-domain SoC under power intent
 
 This example puts the whole lesson in four files: the RTL, a testbench, the UPF, and the testbench lines that drive the supplies. The RTL and testbench are plain IEEE 1800-2023 SystemVerilog and run on any simulator **without** the UPF. That first run proves the point of objective 1: the same RTL, simulated with and without power intent, behaves differently.
+
+<ArchitectureDiagram
+  title="The four inputs and the two runs"
+  caption="Run 1 gives any IEEE 1800-2023 simulator the two SystemVerilog files only. Run 2 gives a power-aware simulator the same two files, unchanged, plus the UPF and the supply-drive lines (which need the tool's UPF package). The arrows are the files each run reads."
+  cellWidth={150}
+  gapX={90}
+  gapY={30}
+  spreadAnchors
+  legend={false}
+  nodes={[
+    { id: "fsoc", label: "soc_top.sv", sublabel: "RTL: PMU, CPU, u_top", kind: "dut", col: 0, row: 0 },
+    { id: "ftb", label: "tb_top.sv", sublabel: "testbench", kind: "generic", col: 0, row: 1 },
+    { id: "fupf", label: "power_intent.upf", sublabel: "power intent", kind: "generic", col: 0, row: 2 },
+    { id: "fdrv", label: "supply drive", sublabel: "supply_on lines", kind: "generic", col: 0, row: 3 },
+    { id: "run1", label: "run 1", sublabel: "any simulator, no UPF", kind: "generic", col: 1, row: 0, rowSpan: 2 },
+    { id: "run2", label: "run 2", sublabel: "power-aware simulator", kind: "generic", col: 1, row: 2, rowSpan: 2 }
+  ]}
+  edges={[
+    { from: "fsoc", to: "run1", style: "data" },
+    { from: "ftb", to: "run1", style: "data" },
+    { from: "fsoc", to: "run2", style: "data" },
+    { from: "ftb", to: "run2", style: "data" },
+    { from: "fupf", to: "run2", style: "data" },
+    { from: "fdrv", to: "run2", style: "data" }
+  ]}
+/>
 
 **`soc_top.sv`** holds the always-on PMU, the switchable CPU, the always-on consumer `u_top`, and `soc_top`, which wires them together.
 
@@ -780,6 +924,18 @@ Without the UPF nothing powers down, isolation has no effect, and `cpu_save` and
 
 Read run 2 against the sequencing waveform: the clamp from 75, corruption at 105, nothing restored at 155, reset at 165, `A5` back at 185, and the release at 215 with no X ever reaching `u_top`.
 
+The two logs side by side, with the values copied from the lines above. Rows marked "same" print identical values in both runs:
+
+| Time (ns) | PMU step | Run 1 (no UPF): `ctx_reg scratch` · `u_top` sees | Run 2 (UPF): `ctx_reg scratch` · `u_top` sees | Why run 2 differs |
+|---|---|---|---|---|
+| 35, 65 | loaded, `CLK_OFF` | `a5 3c` · `a5 3c` | same | isolation is not on yet |
+| 75–95 | `ISO_ON`, `SAVE`, `SAVED` | `a5 3c` · `a5 3c` | `a5 3c` · **`00 00`** | the clamp |
+| 105 | `OFF` | `a5 3c` · `a5 3c` | **`xx xx`** · `00 00` | corruption; the clamp hides it |
+| 155 | `PWR_ON` | `a5 3c` · `a5 3c` | **`xx xx`** · `00 00` | power returning restores nothing |
+| 165, 175 | `RST_ON`, `RST_OFF` | `00 00` · `00 00` | same | the domain reset works in both runs |
+| 185–205 | `RESTORE`, `RESTORED`, `CLK_ON` | `00 00` · `00 00` | **`a5`** `00` · `00 00` | the restore brings back the context |
+| 215 | `RUN` | `00 00` · `00 00` | `a5 00` · **`a5`** `00` | isolation released after the restore |
+
 ### How to write power intent for a new block
 
 1. **List the domains.** Which instances switch off together? Which logic must stay on (PMU, wake detectors)? Write `create_power_domain` for each, with explicit `-elements`.
@@ -791,6 +947,18 @@ Read run 2 against the sequencing waveform: the clamp from 75, corruption at 105
 7. **Write the power states**, with voltages and simstates, and list the legal transitions.
 8. **Write the PMU order down** (clock, isolate, save, off … on, reset, restore, clock, release) and make the PMU's controls reset to safe values.
 9. **Simulate with the supplies driven,** read the tool's power report, then check the log against your expected-behaviour table.
+
+Where each step lives in the example above:
+
+| Steps | In the Make It Work files |
+|---|---|
+| 1 | `power_intent.upf`, section `# 1. Power domains` |
+| 2 | section `# 2. Supply network` |
+| 3 | section `# 3. Supply sets` (the two `associate_supply_set` lines) |
+| 4, 5, 6 | section `# 4. Strategies on the PD_CPU boundary` (`set_isolation`, `set_retention`, `set_level_shifter`) |
+| 7 | section `# 5. Power states`; the legal transitions are the PD_CPU state picture under Power states |
+| 8 | module `pmu` in `soc_top.sv` (its `step_t` order and its `always_comb` decode) |
+| 9 | the supply-drive snippet, then **Run it** and the two expected logs |
 
 ### Symptom, cause and fix
 
@@ -820,6 +988,13 @@ Read run 2 against the sequencing waveform: the clamp from 75, corruption at 105
 ### Expert: editions, legacy commands and mixed-version IP
 
 - **History that interview questions turn on.** The UPF 1.0 split commands `set_isolation_control` and `set_retention_control` were already **deprecated** in IEEE 1801-2013 (§6.42 and §6.50 of that edition), and `create_pst`, `add_pst_state`, `add_port_state` and `set_domain_supply_net` were already **legacy**. In 1801-2018 the split commands are gone from the command list (clause 6), and the PST commands and `set_domain_supply_net` remain as legacy (§6.4, §6.6, §6.23, §6.43; Annex D lists the replacements).
+
+  | Command | In 1801-2013 | In 1801-2018 | What new UPF uses instead |
+  |---|---|---|---|
+  | `set_isolation_control` | deprecated (§6.42) | gone from the command list | the control options inside `set_isolation` |
+  | `set_retention_control` | deprecated (§6.50) | gone from the command list | the control options inside `set_retention` |
+  | `create_pst`, `add_pst_state`, `add_port_state` | legacy (`create_pst` is §6.19) | legacy (§6.23, §6.6, §6.4) | `add_power_state` with simstates |
+  | `set_domain_supply_net` | legacy (§6.39) | legacy (§6.43) | see Annex D |
 - **1801-2024 (UPF 4.0)** lists as legacy or deprecated the `-domain` option of `create_supply_net`, `create_supply_port` and `create_power_switch`, the value conversion table commands, and `set_retention`'s `-save_condition`, `-restore_condition` and `-retention_condition` (1801 working group, DVCon 2025). That is why this lesson's supply commands carry no `-domain`.
 - **`upf_version` is per file, semantics are per design** (Bhargava, Siemens, secondary source). Each UPF file can declare its syntax, but a tool applies one edition's semantics to the whole design. An SoC that loads an old IP file therefore gets the new semantics for that IP's commands, whatever its file says. Migrate IP UPF rather than relying on the tool's compatibility mode.
 - **CPF**, the Si2 Common Power Format, is the other power format you may meet in older flows; the 1801 working group cites contributions from CPF 2.0 and 2.1 into IEEE 1801.
@@ -828,6 +1003,11 @@ Read run 2 against the sequencing waveform: the clamp from 75, corruption at 105
 
 - A supply set or domain can satisfy several power-state definitions at once. From UPF 3.0 the standard defines one **current power state** per object, and the simstate of the current state drives simulation (Bhargava, secondary source; IEEE 1801-2018 §4.7, §4.8 and §9.3–§9.6 cover the normative rules). UPF 3.0 also predefines `UNDEFINED` and `ERROR` states for every object, and `ON` and `OFF` for supply sets.
 - The intermediate simstates model reduced-voltage operation. In summary, `CORRUPT_ON_ACTIVITY` and `CORRUPT_ON_CHANGE` corrupt logic when its inputs are active or its outputs change, and the `CORRUPT_STATE_ON_ACTIVITY` and `CORRUPT_STATE_ON_CHANGE` variants apply the same idea to sequential state only; §4.8 has the exact rules. Use them for low-voltage states in which the domain is powered but cannot switch reliably.
+
+  | Corrupts when (summary, secondary source) | All logic | Sequential state only |
+  |---|---|---|
+  | its inputs are active | `CORRUPT_ON_ACTIVITY` | `CORRUPT_STATE_ON_ACTIVITY` |
+  | its outputs change | `CORRUPT_ON_CHANGE` | `CORRUPT_STATE_ON_CHANGE` |
 - **Refining states.** `add_power_state … -update` adds to or changes an existing definition. Marschner and Biggs (Mentor and Arm, DVCon) recommend refining by deriving new, mutually exclusive sub-states instead of editing existing ones, so that no other state's meaning changes underneath it.
 
 ### Expert: corruption corner cases
@@ -843,7 +1023,44 @@ Read run 2 against the sequencing waveform: the clamp from 75, corruption at 105
 - **Clock conditions.** Many retention cells need the clock held low at the save and restore events. 1801-2024 expresses this with `-save_event_condition`, `-restore_event_condition`, `-restore_period_condition` and `-powerdown_period_condition`, for example `-save_event_condition {!UPF_GENERIC_CLOCK}`; these replace the legacy `-save_condition` family.
 - **Edge-sensitive controls.** A single retention pin often saves on one edge and restores on the other: `-save_signal {RET posedge} -restore_signal {RET negedge}` (here `RET` is a control signal, not the RET power state), as in the 2013 tutorial and the 1801-2024 working group examples.
 
+<TimingDiagram
+  title="One retention pin: save on the rising edge, restore on the falling edge"
+  caption="Edges are PMU clock edges, with the domain clock already stopped; values[k] is the value sampled at rising edge k, drawn as changing just after edge k-1. RET is one control signal used as -save_signal {RET posedge} and -restore_signal {RET negedge}. Its rising edge copies ctx_reg (A5) into the shadow; power-off corrupts ctx_reg but not the shadow; the domain reset writes 00 while RET is still high; the falling edge, after the reset has ended, copies A5 back. Each marker sits on the edge where that change is made. Hatched means X."
+  edges={9}
+  signals={[
+    { name: "pmu clk", kind: "clock" },
+    { name: "RET", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "VDD_CPU", kind: "bus", values: ["0.8 V", "0.8 V", "0.8 V", "OFF", "OFF", "0.8 V", "0.8 V", "0.8 V", "0.8 V"] },
+    { name: "cpu_rst_n", kind: "bit", values: [1, 1, 1, 1, 1, 1, 0, 1, 1] },
+    { name: "ctx_reg", kind: "bus", values: ["A5", "A5", "A5", undefined, undefined, undefined, "00", "00", "A5"] },
+    { name: "shadow", kind: "bus", values: ["empty", "A5", "A5", "A5", "A5", "A5", "A5", "A5", "A5"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "save", label: "RET rises while powered: the posedge saves A5 into the shadow" },
+    { edge: 2, tone: "info", short: "off", label: "power off: ctx_reg is corrupted to X, the shadow keeps A5" },
+    { edge: 5, tone: "drive", short: "rst", label: "domain reset after power-up: ctx_reg becomes 00" },
+    { edge: 7, tone: "pass", short: "restore", label: "RET falls after the reset has ended: the negedge restores A5" }
+  ]}
+/>
+
 ### Expert: successive refinement and IP reuse
+
+<ArchitectureDiagram
+  title="Successive refinement: three layers of one power intent"
+  caption="Read top to bottom. The IP ships a constraint UPF: its domains, its supply sets and which ports need isolation. The SoC adds a configuration UPF: which supplies and which control nets. Implementation refines it with cells and wiring. Each layer adds detail to the one above it. The dashed arrows are the order in which the layers are written (§4.9)."
+  cellWidth={240}
+  gapY={50}
+  legend={false}
+  nodes={[
+    { id: "rc", label: "constraint UPF (IP)", sublabel: "domains, supply sets, isolation needs", kind: "generic", col: 0, row: 0 },
+    { id: "rf", label: "configuration UPF (SoC)", sublabel: "supplies, control nets", kind: "generic", col: 0, row: 1 },
+    { id: "ri", label: "implementation UPF", sublabel: "cells and wiring", kind: "generic", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "rc", to: "rf", style: "causal", label: "configure" },
+    { from: "rf", to: "ri", style: "causal", label: "refine" }
+  ]}
+/>
 
 - **Constraint, configuration and implementation UPF** (§4.9): an IP ships a constraint UPF (domains, supply sets, which ports need isolation) that the SoC configures (which supplies, which control nets) and implementation refines (cells and wiring). §1.3 explicitly allows RTL simulation with only abstract domains and supply sets.
 - **Applying IP UPF:** `load_upf ip.upf -scope u_ip` (§6.33) runs an IP's file at its instance. `set_scope` (§6.52) and `set_design_top` (§6.42) set where commands apply. The SoC file then associates its own supply sets with the IP's, for example `associate_supply_set {SS_SOC_AON u_ip/SS_IP_AON}` as in the 1801 working group's 2025 examples.

@@ -35,6 +35,16 @@ A class-based testbench starts its components as separate processes, usually wit
 
 Without a channel you would share a queue and poll it, for example with `while (q.size() == 0) #1;`. Polling wakes the consumer every interval even when there is nothing to do, delays every hand-off by up to one interval, and gives you no way to slow a fast producer down. A mailbox fixes all three. A consumer that calls `get()` on an empty mailbox is suspended and resumes by itself when a message arrives. A producer that calls `put()` on a full bounded mailbox is suspended until there is room. That automatic slowing of the producer is called **backpressure**.
 
+**Polling or waiting, side by side:**
+
+| Situation | Shared queue polled with `while (q.size() == 0) #1;` | Mailbox: blocking `get()` and `put()` |
+|---|---|---|
+| The consumer has nothing to do | wakes at every interval to look again | suspended in `get()`; it does no work while it waits |
+| A message arrives | noticed at the next poll, up to one interval late | the consumer resumes in the time slot where the message appears |
+| The producer is faster than the consumer | nothing slows it down, and the queue grows | a bounded mailbox suspends it in `put()` until there is room: backpressure |
+
+The polling costs in the middle column are general practice, not rules of the standard; Push Further returns to them.
+
 ### The picture: one FIFO, two waiting lines
 
 <figure className="not-prose my-6">
@@ -47,18 +57,18 @@ Without a channel you would share a queue and poll it, for example with `while (
   </defs>
   <rect x="1" y="1" width="338" height="144" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.25" />
   <text x="12" y="20" fontSize="11.5" fontWeight="600" fill="currentColor">Full: mbx = new(3) holds 3 messages</text>
-  <rect x="12" y="30" width="84" height="32" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <rect x="12" y="30" width="84" height="32" rx="6" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
   <text x="54" y="44" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">gen_a waits</text>
   <text x="54" y="57" textAnchor="middle" fontSize="9.5" fill="currentColor">in put(t3)</text>
-  <rect x="12" y="70" width="84" height="32" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <rect x="12" y="70" width="84" height="32" rx="6" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
   <text x="54" y="84" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">gen_b waits</text>
   <text x="54" y="97" textAnchor="middle" fontSize="9.5" fill="currentColor">in put(t4)</text>
   <line x1="96" y1="46" x2="109" y2="59" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" markerEnd="url(#isv5-mbx-arrow)" />
   <line x1="96" y1="86" x2="109" y2="73" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" markerEnd="url(#isv5-mbx-arrow)" />
   <rect x="112" y="49" width="120" height="34" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
-  <rect x="113" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
-  <rect x="153" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
-  <rect x="193" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
+  <rect x="113" y="50" width="38" height="32" className="fill-indigo-500/20" />
+  <rect x="153" y="50" width="38" height="32" className="fill-indigo-500/20" />
+  <rect x="193" y="50" width="38" height="32" className="fill-indigo-500/20" />
   <line x1="152" y1="49" x2="152" y2="83" stroke="currentColor" strokeOpacity="0.6" />
   <line x1="192" y1="49" x2="192" y2="83" stroke="currentColor" strokeOpacity="0.6" />
   <text x="132" y="70" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor">t2</text>
@@ -82,10 +92,10 @@ Without a channel you would share a queue and poll it, for example with `while (
   <line x1="152" y1="201" x2="152" y2="235" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
   <line x1="192" y1="201" x2="192" y2="235" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
   <text x="172" y="222" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">empty</text>
-  <rect x="264" y="180" width="68" height="34" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <rect x="264" y="180" width="68" height="34" rx="6" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
   <text x="298" y="194" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">c1 waits</text>
   <text x="298" y="207" textAnchor="middle" fontSize="9.5" fill="currentColor">since 10 ns</text>
-  <rect x="264" y="222" width="68" height="34" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <rect x="264" y="222" width="68" height="34" rx="6" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
   <text x="298" y="236" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">c2 waits</text>
   <text x="298" y="249" textAnchor="middle" fontSize="9.5" fill="currentColor">since 12 ns</text>
   <line x1="232" y1="212" x2="262" y2="199" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#isv5-mbx-arrow)" />
@@ -182,6 +192,26 @@ Three rules follow from the table:
 - **Test a `try_` result with `> 0`.** The standard promises a positive integer on success, not the value 1, and a negative result is a failure that `if (m.try_get(v))` would take for success.
 - **Nothing is ever overwritten.** No call replaces or drops a stored message. On a full mailbox, `put()` waits and `try_put()` returns 0.
 - **Inside a function, only the functions are available.** A function cannot call a task (§13.4), so function code can use `try_put()`, `try_get()`, `try_peek()` and `num()`, but not `put()`, `get()` or `peek()`. You will meet this in UVM, where an analysis `write()` method is a function.
+
+**Check yourself.** Cover the table above. `mailbox #(int) m = new(1);` already holds one message, so it is full. For each of the six calls `put(x)`, `try_put(x)`, `get(v)`, `try_get(v)`, `peek(v)` and `try_peek(v)`, decide whether it waits or completes at once, and what each function returns. Then do the same for an empty mailbox, and for one that holds a message but is not full.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary>Check: the six calls in each state</summary>
+
+⏸ means the call suspends the caller; ✓ means it completes at once. All messages and variables have the same type.
+
+| Call | Empty | Holds messages, not full | Full (bounded only) |
+|---|---|---|---|
+| `put(x)` | ✓ stores `x` at the tail | ✓ stores `x` at the tail | ⏸ waits for a free slot |
+| `try_put(x)` | ✓ stores `x`, returns > 0 | ✓ stores `x`, returns > 0 | ✓ returns 0, stores nothing |
+| `get(v)` | ⏸ waits for a message | ✓ removes the oldest into `v` | ✓ removes the oldest into `v` |
+| `try_get(v)` | ✓ returns 0 | ✓ removes the oldest, returns > 0 | ✓ removes the oldest, returns > 0 |
+| `peek(v)` | ⏸ waits for a message | ✓ copies the oldest, leaves it queued | ✓ copies the oldest, leaves it queued |
+| `try_peek(v)` | ✓ returns 0 | ✓ copies the oldest, returns > 0 | ✓ copies the oldest, returns > 0 |
+
+An unbounded mailbox, made with `new()`, is never full, so only the first two columns apply to it (§15.4.1, §15.4.4). In a typeless mailbox, a message whose type does not match `v` makes `get()` and `peek()` a run-time error, and makes `try_get()` and `try_peek()` return a negative value with nothing removed (§15.4.5 to §15.4.8).
+
+</details>
 
 ### A mailbox carries handles, not objects
 
@@ -317,6 +347,22 @@ A mailbox comes in two kinds:
 - **Parameterized (typed):** `mailbox #(txn) m;` carries one type. The compiler checks that every argument of `put`, `try_put`, `get`, `try_get`, `peek` and `try_peek` has a type equivalent to `txn`, so mismatches are compile errors (§15.4.9).
 - **Typeless:** `mailbox m;` is the default `mailbox #(dynamic_type)`. One mailbox can carry any singular type: it records the type of each message and checks it at run time (§15.4.5, §15.4.9).
 
+**Predict.** A typeless mailbox `m` holds one message, the `int` 5, put from an `int` variable. `string s;` has never been written. The code runs `if (m.try_get(s)) $display("took a string");`. Does the line print, has `s` been written, and what is left in the mailbox? Two facts you need: the method table says what `try_get()` returns in each case, and an `if` takes any nonzero known value as true (§12.4).
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary>Check your prediction</summary>
+
+| What happens | Why |
+|---|---|
+| `try_get(s)` returns a negative integer | the message type, `int`, is not equivalent to `string` (§15.4.6) |
+| the `if` takes that result as true, so `took a string` prints | a negative value is nonzero (§12.4) |
+| `s` was never written | a message is retrieved only when its type is equivalent to the variable's (§15.4.6) |
+| the `int` 5 is still the only message in `m` | nothing was removed |
+
+The fix is `if (m.try_get(s) > 0)`, or better, a typed `mailbox #(int)`, where `m.try_get(s)` does not compile (§15.4.9).
+
+</details>
+
 The same calls behave differently in the two kinds. The variables are `int i = 5;`, `int x;` and `string s;`. Row 1 puts one message, and rows 2 to 4 are three separate alternatives, each starting with that message as the only one in the mailbox:
 
 | Step | Typeless: `mailbox m = new();` | Typed: `mailbox #(int) m = new();` |
@@ -338,6 +384,28 @@ Every message must be **singular**: one value or one handle (§15.4.3). An unpac
 - **Several producers:** messages are stored in the order in which their `put()` calls complete. Two producers that put in the same time slot are ordered by the scheduler, which the standard leaves open (§4.7), so the order can differ between simulators. If the consumer needs the source or the order, carry it in the transaction, as an id or a timestamp, or give each producer its own mailbox.
 - **Several consumers waiting in `get()`:** the mailbox keeps waiting processes in the order they arrived, and the first to arrive receives the next message (§15.4.5). The standard does not say which of two `get()` calls in the same time slot arrives first. In the picture, `c1` has waited since 10 ns, so it is ahead of `c2`.
 - **Each message goes to exactly one `get()`:** several consumers share the work; they do not each receive a copy. For broadcast, give each consumer its own mailbox, or in UVM use an analysis port ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). Only `peek()` lets several processes see the same message, and for a class they all see the same handle.
+
+<SequenceDiagram
+  title="Two consumers waiting in get() on one empty mailbox"
+  caption="The empty half of the picture above, run forward in time. c1 has waited since 10 ns and c2 since 12 ns, so the first message goes to c1 and the second to c2: each message goes to exactly one get(). The final note is the part the standard leaves open."
+  columnWidth={140}
+  participants={[
+    { id: "prod", label: "gen", sublabel: "producer", kind: "generic" },
+    { id: "mbx", label: "mbx", sublabel: "empty mailbox", kind: "fifo" },
+    { id: "c1", label: "c1", sublabel: "consumer", kind: "generic" },
+    { id: "c2", label: "c2", sublabel: "consumer", kind: "generic" }
+  ]}
+  messages={[
+    { from: "c1", to: "mbx", label: "get(v) at 10 ns: empty, c1 waits" },
+    { from: "c2", to: "mbx", label: "get(v) at 12 ns: empty, c2 waits behind c1" },
+    { from: "prod", to: "mbx", label: "put(t5)" },
+    { kind: "return", from: "mbx", to: "c1", label: "c1's get() returns t5 (first to wait, §15.4.5)" },
+    { from: "prod", to: "mbx", label: "put(t6)" },
+    { kind: "return", from: "mbx", to: "c2", label: "c2's get() returns t6" },
+    { kind: "divider", label: "What if c1 and c2 had called get() in the same time slot?" },
+    { kind: "note", from: "c1", to: "c2", label: "The scheduler decides which arrives first (§4.7); the mailbox then keeps that arrival order (§15.4.5)." }
+  ]}
+/>
 
 Never let a result depend on which of several equal waiters is served first. If the order matters, make it explicit, with one mailbox per consumer or a single thread that hands out the work.
 
@@ -386,6 +454,52 @@ When every process is suspended and nothing else is scheduled, simulation simply
 - A mailbox stores handles. Create a new object, or a copy, for every message.
 - Bound the stimulus path for backpressure; never let a monitor block.
 - Messages are FIFO, and processes waiting in `get()` are served in arrival order, but the standard leaves the order of same-time arrivals and of waiting `put()` callers open.
+
+<VisualRecap
+  title="Two tubes: one that pushes back, one that never does"
+  rule="A mailbox is a FIFO of handles: put() waits only while a bounded mailbox is full, get() and peek() wait while it is empty, and the try_ functions never wait. They return a positive value on success and 0 when the mailbox is full (try_put) or empty (try_get, try_peek); try_get and try_peek return a negative value on a type mismatch in a typeless mailbox."
+  code={`mailbox #(txn) gen2drv = new(2); // bounded: backpressure
+mailbox #(txn) mon2scb = new();  // unbounded: never full
+t = new();                       // a new object per message
+gen2drv.put(t);                  // waits while gen2drv is full`}
+  mistake="One object reused for every message: put() stores the handle, so every queued message is the same object and the consumer reads the producer's last write. The second classic: a bounded observation path, which suspends the monitor in put() so it misses bus transactions."
+  inTestbench="Generator to driver: bounded and small. Monitor to scoreboard, and expected items: unbounded. Each mailbox is created once and both ends hold its handle; at the end of the test, num() == 0 shows that nothing was left unchecked."
+>
+  <svg viewBox="0 0 340 162" role="img" aria-label="Two mailboxes. Top, the stimulus path gen2drv made with new(2): gen puts into a mailbox whose two slots are both full, so put() waits until drv's get() frees a slot. Bottom, the observation path mon2scb made with new(): mon puts into a mailbox with no limit, so put() never waits, and scb gets from it." style={{ width: "100%", maxWidth: 400, height: "auto" }}>
+    <text x="8" y="16" fontSize="11" fontWeight="600" fill="currentColor">Stimulus path: gen2drv = new(2)</text>
+    <rect x="8" y="28" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="32" y="46" textAnchor="middle" fontSize="11" fill="currentColor">gen</text>
+    <line x1="56" y1="42" x2="92" y2="42" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M92,38 L99,42 L92,46 Z" fill="currentColor" fillOpacity="0.7" />
+    <text x="76" y="35" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
+    <rect x="100" y="28" width="100" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    <rect x="101" y="29" width="48" height="26" className="fill-indigo-500/20" />
+    <rect x="151" y="29" width="48" height="26" className="fill-indigo-500/20" />
+    <line x1="150" y1="28" x2="150" y2="56" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="125" y="46" textAnchor="middle" fontSize="10" fill="currentColor">msg</text>
+    <text x="175" y="46" textAnchor="middle" fontSize="10" fill="currentColor">msg</text>
+    <line x1="200" y1="42" x2="238" y2="42" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M238,38 L245,42 L238,46 Z" fill="currentColor" fillOpacity="0.7" />
+    <text x="222" y="35" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
+    <rect x="246" y="28" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="270" y="46" textAnchor="middle" fontSize="11" fill="currentColor">drv</text>
+    <text x="8" y="74" fontSize="10" fill="currentColor">Full: put() waits until a get() frees a slot.</text>
+    <text x="8" y="98" fontSize="11" fontWeight="600" fill="currentColor">Observation path: mon2scb = new()</text>
+    <rect x="8" y="110" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="32" y="128" textAnchor="middle" fontSize="11" fill="currentColor">mon</text>
+    <line x1="56" y1="124" x2="92" y2="124" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M92,120 L99,124 L92,128 Z" fill="currentColor" fillOpacity="0.7" />
+    <text x="76" y="117" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
+    <rect x="100" y="110" width="100" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="5 3" />
+    <text x="150" y="128" textAnchor="middle" fontSize="10" fill="currentColor">no limit</text>
+    <line x1="200" y1="124" x2="238" y2="124" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M238,120 L245,124 L238,128 Z" fill="currentColor" fillOpacity="0.7" />
+    <text x="222" y="117" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
+    <rect x="246" y="110" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="270" y="128" textAnchor="middle" fontSize="11" fill="currentColor">scb</text>
+    <text x="8" y="156" fontSize="10" fill="currentColor">Never full: put() never waits, so no beat is missed.</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -625,6 +739,30 @@ endmodule
 - Each item is driven at one rising edge and observed at the next: the monitor's clocking block samples the value from just before the edge (§14.13), and the drive landed in the Re-NBA region of the previous edge (§14.16). [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) shows where both regions sit in a time slot.
 - The test ends on a condition, five items checked, not on a delay. `pending=0` comes from `gen2scb.num()` and proves no expected item was left over. The watchdog fires only if something hangs.
 
+<TimingDiagram
+  title="Worked example on the bus"
+  caption="x-axis: rising clock edges 0 to 9; edge k is at 5 + 10k ns, so edge 0 is 5 ns and edge 9 is 95 ns. Each valid and data value is what mon_cb samples at that edge, the value from just before it (§14.13). ◆ marks an edge where drv writes an item through drv_cb; the write lands in Re-NBA after that edge (§14.16), so the monitor first samples it at the next edge, where ✓ marks the scoreboard's match. data keeps its last value while valid is 0. Not drawn: put id=3 completes at edge 1 (15 ns) and put id=4 at edge 3 (35 ns)."
+  edges={10}
+  cycleWidth={28}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1] },
+    { name: "data", kind: "bus", values: ["00", "a0", "a0", "a1", "a1", "a2", "a2", "a3", "a3", "a4"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "id0", label: "5 ns: drv drives id=0 data=a0" },
+    { edge: 1, tone: "pass", short: "1", label: "15 ns: check 1 of 5, item 0 matches a0" },
+    { edge: 2, tone: "drive", short: "id1", label: "25 ns: drv drives id=1 data=a1" },
+    { edge: 3, tone: "pass", short: "2", label: "35 ns: check 2 of 5, item 1 matches a1" },
+    { edge: 4, tone: "drive", short: "id2", label: "45 ns: drv drives id=2 data=a2" },
+    { edge: 5, tone: "pass", short: "3", label: "55 ns: check 3 of 5, item 2 matches a2" },
+    { edge: 6, tone: "drive", short: "id3", label: "65 ns: drv drives id=3 data=a3" },
+    { edge: 7, tone: "pass", short: "4", label: "75 ns: check 4 of 5, item 3 matches a3" },
+    { edge: 8, tone: "drive", short: "id4", label: "85 ns: drv drives id=4 data=a4" },
+    { edge: 9, tone: "pass", short: "5", label: "95 ns: check 5 of 5, item 4 matches a4; SCB_SUMMARY prints and $finish runs" }
+  ]}
+/>
+
 The trace below follows `gen2drv` through the same run. Read the last two columns together: whenever the mailbox is full, the generator waits, and it resumes in the time slot where the driver's `get()` frees a slot.
 
 | Time (ns) | What happens | `gen2drv` afterwards, oldest first | Generator |
@@ -681,7 +819,44 @@ Error: [75] SCB: id=3 expected data=a3, saw a4
 
 At 15 ns and 35 ns the scoreboard's error and the generator's line share a time slot, so they may print in the other order (§4.7).
 
+<TimingDiagram
+  title="The shared-handle bug on the bus"
+  caption="Same frame as the clean run: x-axis is rising clock edges 0 to 9, edge k at 5 + 10k ns, and each valid and data value is what mon_cb samples at that edge. ◆ marks a drive, with the id the driver's handle holds at that moment. Below each check glyph is the value the scoreboard expected from its gen2scb snapshot: ✕ at edges 1, 3, 5 and 7 are the four mismatches, and the ✓ at edge 9 is the one accidental match."
+  edges={10}
+  cycleWidth={28}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1] },
+    { name: "data", kind: "bus", values: ["00", "a3", "a3", "a4", "a4", "a4", "a4", "a4", "a4", "a4"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "id3", label: "5 ns: drv drives id=3 data=a3, although it took the first message" },
+    { edge: 1, tone: "fail", short: "a0", label: "15 ns: id=0 expected data=a0, saw a3" },
+    { edge: 2, tone: "drive", short: "id4", label: "25 ns: drv drives id=4 data=a4" },
+    { edge: 3, tone: "fail", short: "a1", label: "35 ns: id=1 expected data=a1, saw a4" },
+    { edge: 4, tone: "drive", short: "id4", label: "45 ns: drv drives id=4 data=a4" },
+    { edge: 5, tone: "fail", short: "a2", label: "55 ns: id=2 expected data=a2, saw a4" },
+    { edge: 6, tone: "drive", short: "id4", label: "65 ns: drv drives id=4 data=a4" },
+    { edge: 7, tone: "fail", short: "a3", label: "75 ns: id=3 expected data=a3, saw a4" },
+    { edge: 8, tone: "drive", short: "id4", label: "85 ns: drv drives id=4 data=a4" },
+    { edge: 9, tone: "pass", short: "a4", label: "95 ns: id=4 expected a4 and saw a4, an accidental match; SCB_SUMMARY matches=1 mismatches=4" }
+  ]}
+/>
+
 **Why the driver drives id 3 first.** At 0 ns the generator writes ids 0, 1, 2 and 3 into the same object before its fourth `put()` suspends it. When the first clock edge arrives at 5 ns, the driver's handle refers to that object, which now holds id 3. From then on the driver always reads whatever the generator wrote last, so id 4 repeats. The scoreboard's snapshots, taken with `copy()`, are still correct, so it reports four mismatches and one accidental match. The symptom depends on timing; the cause, one object, does not. Restore the `new()` inside the loop and the clean log returns.
+
+The steps at 0 ns, in one legal order. `txn@1` is the generator's only object.
+
+| Step | `txn@1` holds | `gen2drv`, oldest first | The driver's handle `t` |
+|---|---|---|---|
+| 0 ns: write id 0, `put(t)` | id=0, data=a0 | `txn@1` | none yet |
+| 0 ns: write id 1, `put(t)`; the mailbox is now full | id=1, data=a1 | `txn@1`, `txn@1` | none yet |
+| 0 ns: write id 2, `put(t)` suspends the generator | id=2, data=a2 | `txn@1`, `txn@1` | none yet |
+| 0 ns: the driver's `get(t)` takes the oldest, so `put()` id 2 completes | id=2, data=a2 | `txn@1`, `txn@1` | `txn@1`, waiting for the first edge |
+| 0 ns: write id 3, `put(t)` suspends the generator again | id=3, data=a3 | `txn@1`, `txn@1` | `txn@1` |
+| 5 ns: first rising edge, the driver drives `t.data` | id=3, data=a3 | `txn@1`, `txn@1` | `txn@1`: drives id=3 data=a3 |
+
+The simulator may run these processes in another order at 0 ns (§4.7), but every legal order reaches the state of the last 0 ns row: three `put()` calls complete, the driver holds `txn@1`, and the object already holds id 3 when the first edge arrives.
 
 ### How to add a channel to a bench
 
@@ -711,6 +886,16 @@ At 15 ns and 35 ns the scoreboard's error and the generator's line share a time 
 - One message can release several processes waiting in `peek()`, because the message stays queued; a waiting `get()`, if there is one, then removes it. As long as a message remains, every process blocked in `peek()` or `get()` is released, and a process still waiting once no message remains keeps waiting (§15.4.7). So whether a `peek()` waiter sees a message can depend on whether a `get()` waiter ahead of it took it first.
 - Design consequence: fair or ordered service between equal waiters is not a mailbox feature. Build it explicitly, with one mailbox per consumer or a dispatcher thread.
 
+**Guaranteed or open, at a glance:**
+
+| Question | What the standard says | Status |
+|---|---|---|
+| In what order do messages leave? | strict FIFO (§15.4.3) | guaranteed |
+| In what order are processes waiting in `get()` served? | the mailbox preserves their arrival order (§15.4.5) | guaranteed |
+| Which of two `get()` calls in one time slot arrives first? | the scheduler decides (§4.7, §15.4.5) | open |
+| Which producer waiting in `put()` completes first when a slot frees? | nothing is stated | tool-dependent |
+| Who sees a message when processes wait in both `peek()` and `get()`? | as long as the message remains, every process blocked in `peek()` or `get()` is released; once a `get()` removes it, those still waiting keep waiting (§15.4.7) | guaranteed, but the outcome depends on the waiting order |
+
 Sources: IEEE 1800-2023 §4.7, §15.4.3, §15.4.5, §15.4.7; the order of waiting `put()` callers is tool-dependent.
 
 ### Expert: the three results of try_get and try_peek
@@ -728,6 +913,16 @@ Sources: IEEE 1800-2023 §13.4, §15.4.4, §15.4.6, §15.4.8, §15.4.9; uvm-core
 - `get()`, `peek()`, `try_get()` and `try_peek()` take a `ref` argument, and an argument passed by reference must have a type equivalent to the formal, with no casting (§13.5.2). A `mailbox #(base_txn)` that carries objects of derived classes is therefore read into a `base_txn` handle and then `$cast` to the derived type (§6.24.2); passing a derived-class variable to `get()` does not compile. [I-SV-1: Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) covers the cast.
 - `peek()` on a class message gives every peeking process the same handle, so they all share one object: the aliasing rule again.
 
+**What a message can be, and how to read it back:**
+
+| Case | Result | Clause |
+|---|---|---|
+| an `int` or a packed struct | allowed: a singular value | §15.4.3 |
+| a class handle | allowed: the mailbox stores the handle, not a copy of the object | §8.12, §15.4.3 |
+| an unpacked struct, union or array | not singular, so not a legal message; whether a simulator rejects it is tool-dependent | §15.4.3, Annex P |
+| `get()` from a `mailbox #(base_txn)` into a derived-class variable | does not compile: a `ref` argument needs an equivalent type | §13.5.2 |
+| `get()` into a `base_txn` variable, then `$cast` to the derived type | correct | §6.24.2 |
+
 Sources: IEEE 1800-2023 §6.24.2, §13.5.2, §15.4.3 to §15.4.8, Annex G.4, Annex P.
 
 ### Expert: extending the built-in mailbox class
@@ -743,6 +938,13 @@ Sources: IEEE 1800-2023 §8.14, §8.20, §15.2, §26.7, Annex G.4.
 - `num()` is exact only until the next `put()` or `get()` by any process (§15.4.2). Use it for end-of-test accounting and debug prints, never to decide whether a `put()` or `get()` will wait.
 - There is no method that empties a mailbox or reports its bound (Annex G.4). On a reset, drain it with `while (m.try_get(x) > 0);` and keep the bound in a parameter.
 - To wait until a message exists without taking it, call `peek()`: it blocks while the mailbox is empty and leaves the message for the real consumer (§15.4.7). A `wait (m.num() > 0)` may never wake: the standard requires re-evaluation when data members that the method reads change (§9.4.2), but it does not describe a mailbox's internals, so the behaviour is tool-dependent.
+
+```systemverilog
+// snippet: draining and waiting without num(), from the bullets above
+while (m.try_get(x) > 0);             // on reset: drain; in a typeless mailbox this stops at a type mismatch
+m.peek(x);                            // wait until a message exists, without taking it
+// avoid: wait (m.num() > 0);         // may never wake: tool-dependent (§9.4.2)
+```
 
 Sources: IEEE 1800-2023 §9.4.2, §15.4.2, §15.4.7, Annex G.4.
 

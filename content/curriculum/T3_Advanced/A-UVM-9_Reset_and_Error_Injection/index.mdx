@@ -17,6 +17,17 @@ sources:
 - **Why it matters:** Chips reset in the middle of work (watchdogs, software resets, power events), and error paths (parity, ECC, error responses) are where bugs hide. A bench that is not reset-aware fails on a correct DUT, and the usual "fix", demoting every error during the test, then hides the real bugs too. The skill is to make reset and injected errors *accounted for*, not *tolerated*.
 - **The Analogy:** A power cut in a restaurant kitchen during service. Each cook drops the dish in hand (the driver releases its item), the runner throws away half-plated dishes (the monitor discards the partial transfer), the inspector tears up the list of what each table is still owed (the scoreboard flushes), and the manager restarts service (the virtual sequence). Error injection is a mystery shopper who orders something deliberately wrong: the kitchen must refuse it, and the complaint that follows is expected, but only that complaint, from that table, that many times; every other complaint is real. *Where it breaks:* a real kitchen notices a power cut by itself, while every testbench component must be written to notice reset; and a report catcher is code that can silence any complaint at all, so it has to be written as narrowly as a list of named mystery shoppers.
 
+The analogy, one row per bench job:
+
+| In the kitchen | In the bench |
+|---|---|
+| A cook drops the dish in hand | The driver gives its item back with `item_done()` |
+| The runner throws away half-plated dishes | The monitor discards the partial transfer |
+| The inspector tears up the list of what each table is still owed | The scoreboard flushes its expectations |
+| The manager restarts service | The virtual sequence restarts stimulus |
+| A mystery shopper orders something deliberately wrong | The test injects an error (a request with bad parity) |
+| The one expected complaint: that table, that many times | A narrow report catcher: one reporter, one ID, a count |
+
 **You will be able to:**
 1. **Write** a reset-aware driver (stop, release the current item safely, wait for deassertion) and monitor (discard partial transactions), and **flush** the scoreboard's expectations on reset.
 2. **Choose** a reset strategy (reset-aware `run_phase` threads, or run-time phase jumping and its hazards) and **write** a mid-test reset virtual sequence with `stop_sequences()` and `kill()`.
@@ -32,18 +43,44 @@ sources:
 
 Terms from earlier lessons are linked; the new ones are defined here. The UVM features this lesson uses are sequence control (IEEE 1800.2-2020 §14.2.5.11, §15.3.2.14), callbacks (§10.7), the factory (§8) and report catchers (§6.6).
 
+**Reset and timing:**
+
 - **Reset, assert, release:** reset returns the DUT to a known state. This bench's reset, `rst_n`, is **active low**: it is *asserted* when 0 and *released* (deasserted) when 1. A **synchronous** reset acts only at a clock edge, like this lesson's DUT; an **asynchronous** reset acts the moment it changes.
 - **Sampled value, time slot:** a clocking-block input holds the value its signal had just before the clock edge (input skew `#1step`), which is the value the DUT's flip-flops use at that edge; a time slot is all the activity at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index), [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
 - **In flight, partial transaction:** a transfer that has started but not completed. Here: a request on the bus that the DUT has not yet accepted, or a request accepted whose response (`rdata`, `err`) has not yet been sampled.
 - **Flush:** throw away stored items or expectations that can never be matched.
+
+The reset words on one waveform. Each value is the one sampled at a rising edge, the way a clocking block sees it:
+
+<TimingDiagram
+  title="Reset vocabulary on one waveform"
+  caption="The x-axis is rising clock edges 0 to 4; each value is the one sampled at that edge. rst_n is active low: it is driven to 0 between edges 0 and 1, so edge 1 is the first edge that samples it as 0 (asserted), and it is released (driven to 1) between edges 2 and 3, so edge 3 is the first edge that samples it as 1 again. The request accepted at edge 0 is in flight until its response edge, edge 1, which falls in reset, so it never completes."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [1, 0, 0, 1, 1] },
+    { name: "valid", kind: "bit", values: [1, 0, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", short: "0", label: "edge 0: a request is accepted; it is in flight until its response edge, edge 1" },
+    { edge: 1, tone: "fail", short: "1", label: "edge 1: reset asserted (first edge sampled 0); the in-flight request is now a partial transaction, never completed" },
+    { edge: 3, tone: "pass", short: "3", label: "edge 3: first edge that samples the released reset as 1" }
+  ]}
+/>
+
+**Errors and how they are judged:**
+
 - **Error injection:** deliberately illegal stimulus, sent to check that the DUT detects and handles it. **Expected error:** an error report the test caused on purpose.
 - **Protocol checker:** code that reports `` `uvm_error `` when the bus breaks a rule. Here it lives in the monitor.
 - **Report catcher:** an object of a `uvm_report_catcher` subclass (IEEE 1800.2-2020 §6.6). The report server runs every registered catcher on each report *before* counting it; a catcher can change its severity, ID, message or action, pass it on (`THROW`), or swallow it (`CAUGHT`). **Demote** means lowering the severity, for example from `UVM_ERROR` to `UVM_INFO`: the message is still printed but no longer counted as an error ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) shows where catchers sit in the report pipeline).
+- **Parity:** one extra bit chosen so that the number of 1s is even. Flip any one bit and the parity is wrong, which is how hardware detects a corrupted request.
+- **Mutant:** a copy of the code with one deliberate defect. A check you trust is one you have seen fail on a mutant.
+
+**UVM machinery this lesson uses:**
+
 - **Virtual sequence:** a sequence that runs on no sequencer of its own and starts other sequences on the agents' sequencers ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index); applied to several agents in [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
 - **Run-time phases and phase jumps:** the twelve phases from `pre_reset_phase` to `post_shutdown_phase` that run beside `run_phase`, and `phase.jump()`, which ends a phase early and restarts the schedule elsewhere ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
 - **Callback** and **factory override:** hooks a component calls so a test can change its behaviour ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)); replacing a type wherever the factory creates it ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
-- **Parity:** one extra bit chosen so that the number of 1s is even. Flip any one bit and the parity is wrong, which is how hardware detects a corrupted request.
-- **Mutant:** a copy of the code with one deliberate defect. A check you trust is one you have seen fail on a mutant.
 
 ### The bench you are extending
 
@@ -56,7 +93,7 @@ The DUT is I-UVM-3C's `mem_dut`, a 16-entry, 8-bit memory with a one-cycle reque
 | `rst_n` (input) | Synchronous, active low. At an edge where `rst_n` is 0 the DUT accepts nothing, every location and `rdata` become `00`, and `err` becomes 0. |
 | Reset and responses | A request is accepted only at an edge where `rst_n` is 1. Its response belongs to the next edge; if `rst_n` is 0 there, the transfer is **aborted** and its response is not valid. |
 
-To control reset from a test, `rst_n` moves into a small interface, `rst_if`, with one clocking block; `tb_top` still applies the power-on reset. **Predict** before you read the caption: which component sees the reset first, and how does the scoreboard find out about it without touching any pin?
+To control reset from a test, `rst_n` moves into a small interface, `rst_if`, with one clocking block; `tb_top` still applies the power-on reset. **Find it in the diagram:** which component sees the reset first, and how does the scoreboard find out about it without touching any pin?
 
 <ArchitectureDiagram
   title="The mem bench extended for reset and error injection"
@@ -101,7 +138,12 @@ To control reset from a test, `rst_n` moves into a small interface, `rst_if`, wi
   ]}
 />
 
+<details>
+<summary>Check what you found</summary>
+
 **Debrief.** Only the pins carry reset, so the components that read pins see it first: the driver through `drv_cb` and the monitor through `mon_cb`, at the same clock edge as the DUT. Nothing else touches a pin. The scoreboard learns about reset the way it learns about everything else, from the monitor: a second analysis port, `rst_ap`, publishes "reset asserted" and "reset released". The test acts on reset through the virtual sequence, which is also what *causes* the mid-test reset here. The catcher is attached to one reporter, the monitor, because that is the only component allowed to raise the expected error.
+
+</details>
 
 ### What reset does to a transfer in flight
 
@@ -115,7 +157,26 @@ Reset can arrive at any edge, so at that edge every component holds some state. 
 | Sequences | items they are waiting to send | be stopped, then restarted by whoever owns the scenario |
 | Test | its objection | keep the run alive across the reset |
 
-Here is the reset this lesson's test applies. Values are the ones **sampled at each rising edge**, which is what the clocking blocks and the DUT's flip-flops see; edge 0 is 225 ns and edge 6 is 285 ns. Before you read the markers, **predict**: at 245 ns a read of address 5 is on the bus and the read of address 4, accepted at 235 ns, still waits for its data. What happens to each?
+Here is the reset this lesson's test applies. Values are the ones **sampled at each rising edge**, which is what the clocking blocks and the DUT's flip-flops see; edge 0 is 225 ns and edge 6 is 285 ns.
+
+<TimingDiagram
+  title="Reset asserted in the middle of a transfer: the sampled values"
+  caption="The x-axis is rising clock edges 0 to 6, 10 ns apart: edge 0 is 225 ns and edge 6 is 285 ns. Each value is the one sampled at that edge. rst_n is sampled 0 at edges 2, 3 and 4 (245, 255 and 265 ns). The marked version, with what each component does, is in the reveal below."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [1, 1, 0, 0, 0, 1, 1] },
+    { name: "valid", kind: "bit", values: [1, 1, 1, 0, 0, 0, 1] },
+    { name: "we", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1] },
+    { name: "addr", kind: "bus", values: ["3", "4", "5", "5", "5", "5", "2"] },
+    { name: "rdata", kind: "bus", values: ["2d", "3c", "4b", "00", "00", "00", "00"] }
+  ]}
+/>
+
+Before you open the marked waveform, **predict**: at 245 ns a read of address 5 is on the bus and the read of address 4, accepted at 235 ns, still waits for its data. What happens to each? Use the rules in the bench table above: a request is accepted only at an edge where `rst_n` is 1, and a transfer whose response edge sees reset is aborted.
+
+<details>
+<summary>Check your prediction: the marked waveform and what each component does</summary>
 
 <TimingDiagram
   title="Reset asserted in the middle of a transfer, and how the agent and scoreboard react"
@@ -153,6 +214,8 @@ The number under each marker is the edge time in ns. What each marker stands for
 | 285 ns | pass | the first request after reset is accepted (a write to address 2) |
 
 **Debrief.** At 245 ns the read of address 5 was never accepted: the DUT was in reset at the edge that would have accepted it. The driver sees the same thing (it samples `rst_n` as 0 at that edge), so it gives the item back instead of reporting it done. The read of address 4 *was* accepted at 235 ns, and its data `4b` is even on the bus, but its response edge is 245 ns, where reset is asserted: by this protocol's rule the transfer is aborted, so the monitor discards it rather than publishing it. Neither read reaches the scoreboard, and the scoreboard does not expect them: its expectations about memory are flushed in the same time slot. Nothing is driven or published until reset is released.
+
+</details>
 
 ### The reset-aware driver
 
@@ -296,11 +359,26 @@ endfunction
 
 `write_rst()` is the second `write()` a scoreboard needs: `` `uvm_analysis_imp_decl(_rst) `` (Annex B.5.22) declares a class `uvm_analysis_imp_rst` whose `write()` calls `write_rst()` on its owner. For a queue-based scoreboard, the same function deletes the prediction queues and calls `flush()` on any FIFO of *predictions* (§12.2.8.2.6), counting what it threw away so that a reset that discards too much stays visible. Reset the model to what the **specification** says reset does, not to whatever the RTL happens to do.
 
+Expectations and observations, side by side:
+
+| | Expectations | Observations |
+|---|---|---|
+| What they are | what the scoreboard believes the DUT still owes or holds | transfers the monitor saw complete |
+| In a queue-based scoreboard | queued predictions for responses that have not arrived | completed transfers waiting in an analysis FIFO |
+| In `mem_sb` (state-based) | `model[16]`, what each address holds | items in `item_fifo`, published before the reset |
+| On reset | delete the predictions, or reset the model to the specification's values (`00` here), counting what was thrown away | check them first: `while (item_fifo.try_get(t)) check_item(t);` |
+| If the bench gets it wrong | false `SCB_MISMATCH` after reset, or predictions reported missing in `check_phase` | real results are thrown away unchecked |
+
 **See it in a model.** The coordination model from A-UVM-8 has a reset option. Choose **cfg, then data**, open **Show advanced**, tick the reset box (reset at 80 ns for 20 ns, which clears the DUT's enable bit `EN` and discards data in flight), and try the three **Testbench reset handling** choices. **Predict first**: which of *ignore reset*, *flush scoreboard* and *flush + restart vseq* passes, and how many items does each of the other two report missing?
 
 <MultiAgentCoordinationVisualizer />
 
+<details>
+<summary>Check your prediction</summary>
+
 **Debrief.** *Ignore reset* reports 5 items `SCB/MISSING`: D1 to D4 were discarded or sent during reset, and D5 reached a DUT whose `EN` reset had cleared, yet the scoreboard still expects them all. *Flush scoreboard* forgets D1 and D2, but still reports D3, D4 and D5: the model's input monitor saw D3 and D4 *during* reset (a reset-aware monitor would not have), and the virtual sequence kept sending into an unconfigured DUT. Only *flush + restart vseq* passes (4 matched, 2 flushed): reset is a whole-bench event, so the scoreboard, the monitor and the stimulus must all react. The model's restart code kills the virtual sequence with `disable fork`; in uvm-core 2020.3.1 that triggers the `SEQPRTZMB` warning described in Push Further, which is why this lesson's bench stops sequences explicitly.
+
+</details>
 
 ### Choosing a reset strategy
 
@@ -309,7 +387,7 @@ There are two ways to organize the reaction to a mid-test reset.
 | | Reset-aware `run_phase` threads (this lesson) | Run-time phase jumping |
 |---|---|---|
 | How | Drivers, monitors and scoreboards notice reset themselves (above); the test or a virtual sequence stops and restarts stimulus. `run_phase` never ends early. | On reset, `phase.jump(uvm_reset_phase::get())` ends the current run-time phase (say `main_phase`) and restarts the schedule at `reset_phase` (IEEE 1800.2-2020 §9.3.1.9.1; `uvm_domain::jump`, §9.4.2.4). |
-| Who must cooperate | Every component, through its own reset handling | Every component that uses the run-time phases, which must re-run `reset_phase`, `configure_phase` and `main_phase` correctly |
+| Who must cooperate | Every component, through its own reset handling | Every component that uses the run-time phases, which must re-run every phase from `reset_phase` to `main_phase` (`reset_phase`, `configure_phase`, `main_phase` and the pre/post phases between them) correctly |
 | Drivers and monitors | Handle reset in `run_phase` | **Still** handle reset in `run_phase`: it runs in parallel to the run-time phases (§9.8.1.5) and a jump does not touch it |
 | Sequences | Stopped explicitly (`kill()`, `stop_sequences()`) at a chosen moment | Killed with the jumping phase's processes (Annex F.2.5.2: "All processes related to phase are being killed"), wherever they were |
 | Objections | The test's objection spans the reset | The jumping phase's objections are cleared (uvm-core 2020.3.1, `uvm_phase_hopper.svh`) |
@@ -332,6 +410,29 @@ virtual task main_phase(uvm_phase phase);
 endtask
 ```
 
+<SequenceDiagram
+  title="A phase jump on reset, in uvm-core 2020.3.1"
+  caption="The jump only sets flags; the phaser does the rest later, in this order (uvm_phase_hopper.svh): it logs PH_JUMP, ends main_phase (its phase_ended callbacks run), moves it to UVM_PHASE_JUMPING, kills main_phase's processes (seq dies wherever it was), clears its objection and schedules reset_phase. The run_phase threads of the driver, monitor and scoreboard are never touched."
+  participants={[
+    { id: "main", label: "uvm_test_top", sublabel: "main_phase thread", kind: "test" },
+    { id: "seq", label: "seq", sublabel: "mem_wr_rd_seq", kind: "sequence" },
+    { id: "ph", label: "phaser", sublabel: "uvm-core", kind: "generic" },
+    { id: "run", label: "drv, mon, sb", sublabel: "run_phase threads", kind: "generic" }
+  ]}
+  messages={[
+    { from: "main", to: "seq", label: "seq.start(env.agt.sqr), in fork…join_any" },
+    { kind: "divider", label: "@(negedge rst_vif.rst_n)" },
+    { kind: "self", from: "main", label: "phase.jump(uvm_reset_phase::get()): sets the target and the end-early flag only" },
+    { kind: "self", from: "main", label: "join_any returns; drop_objection(this)" },
+    { kind: "self", from: "ph", label: "PH_JUMP at UVM_MEDIUM: main is jumping to reset; main_phase ends (phase_ended callbacks)" },
+    { from: "ph", to: "seq", label: "UVM_PHASE_JUMPING: main_phase's processes killed", tone: "error" },
+    { kind: "note", from: "seq", label: "seq dies wherever it was, perhaps with its item still held by the driver" },
+    { kind: "self", from: "ph", label: "clear main_phase's objection; schedule reset_phase" },
+    { kind: "self", from: "ph", label: "the schedule resumes at reset_phase: every phase from reset_phase (post_reset, pre_configure, configure, post_configure, pre_main) to main_phase runs again" },
+    { kind: "note", from: "run", label: "untouched: the run_phase threads still need their own reset handling", tone: "error" }
+  ]}
+/>
+
 The jump is not immediate: `jump()` only sets flags, and the phase ends when the phaser next processes it (uvm-core logs `PH_JUMP` at `UVM_MEDIUM`). When it does, the thread running `seq.start()` is killed, so `seq` dies wherever it was. This snippet drops its own objection as soon as `jump()` returns; any objection still raised in the phase is cleared rather than dropped.
 
 ### The mid-test reset virtual sequence
@@ -353,7 +454,10 @@ errs.start(sqr, this);                // new sequence objects after reset
 again.start(sqr, this);
 ```
 
-`stop_sequences()` (IEEE 1800.2-2020 §15.3.2.14) "tells the sequencer to kill all sequences and child sequences currently operating on the sequencer, and remove all requests, locks, and responses that are currently queued". `kill()` (§14.2.5.11) does the same for one sequence and its children, on its default sequencer. **Predict** before you read the diagram: why does the virtual sequence wait until 255 ns, one edge *after* reset is first sampled, before calling `stop_sequences()`?
+`stop_sequences()` (IEEE 1800.2-2020 §15.3.2.14) "tells the sequencer to kill all sequences and child sequences currently operating on the sequencer, and remove all requests, locks, and responses that are currently queued". `kill()` (§14.2.5.11) does the same for one sequence and its children, on its default sequencer. **Predict** before you open the diagram: why does the virtual sequence wait until 255 ns, one edge *after* reset is first sampled, before calling `stop_sequences()`? (One more fact you need: the item the driver took with `get_next_item()` stays in the sequencer's request FIFO until the driver calls `item_done()`, and at 245 ns the driver and the virtual sequence wake at the same clock edge.)
+
+<details>
+<summary>Check your prediction: the mid-test reset, step by step</summary>
 
 <SequenceDiagram
   title="Mid-test reset: who does what, in which order"
@@ -392,7 +496,17 @@ again.start(sqr, this);
   ]}
 />
 
-**Debrief.** At 245 ns the driver and the virtual sequence wake at the same clock edge, in an order the simulator chooses. In uvm-core 2020.3.1, `uvm_sequencer::stop_sequences()` also empties the request FIFO, which still holds the item the driver took (`uvm_sequencer.svh`). If it ran first at 245 ns, the driver's `item_done()` that follows would find nothing: `UVM_FATAL ... [SQRBADITMDN] Item_done() called with no outstanding requests.` Waiting one edge makes the order certain. Three more rules hold the scenario together:
+**Debrief.** At 245 ns the driver and the virtual sequence wake at the same clock edge, in an order the simulator chooses. In uvm-core 2020.3.1, `uvm_sequencer::stop_sequences()` also empties the request FIFO, which still holds the item the driver took (`uvm_sequencer.svh`). If it ran first at 245 ns, the driver's `item_done()` that follows would find nothing: `UVM_FATAL ... [SQRBADITMDN] Item_done() called with no outstanding requests.` Waiting one edge makes the order certain.
+
+| At the reset edge, what runs first | What happens (uvm-core 2020.3.1) |
+|---|---|
+| the driver's `item_done()` | it removes the read of 5 from the request FIFO; a `stop_sequences()` that follows finds the FIFO empty: safe |
+| `sqr.stop_sequences()` | it empties the request FIFO first; the driver's `item_done()` then finds nothing: `UVM_FATAL [SQRBADITMDN]` |
+| this bench: `stop_sequences()` one edge later, at 255 ns | the driver released its item at 245 ns, so the order is certain |
+
+</details>
+
+Three more rules hold the scenario together:
 - **New objects after reset.** `errs` and `again` are fresh sequence objects. Restarting the killed `traffic` would restart its body from the beginning, which is rarely what the scenario means, and uvm-core's own source calls reusing a sequence object "not recommended" (`uvm_sequence_base.svh`).
 - **Children, not orphans.** `start(sqr, this)` makes each sequence a child of the virtual sequence, so `vseq.kill()` would stop all of them too (uvm-core's `m_kill()` kills every child).
 - **Objections across reset.** The test raises its objection before starting the virtual sequence and drops it when the virtual sequence returns, so the run can never end during the reset. Never raise objections inside sequences you will kill: `kill()` drops the *automatic* objection (§14.2.4.4), but uvm-core's `stop_sequences()` does not drop it for a top-level sequence, and an objection raised by hand in a killed thread is never dropped; the run then ends at the timeout.
@@ -425,6 +539,32 @@ Injected errors need a knob in the stimulus. `mem_item` gets a random bit `par_e
 | **Factory override** | Every `mem_item` the factory creates becomes an error-capable `mem_err_item` | Random error density, with no sequence edits, in sequences that randomize their items (`mem_rand_seq`); it does nothing where items are filled in by hand (`mem_wr_rd_seq::send()` never calls `randomize()`) | `mem_item::type_id::set_type_override(mem_err_item::get_type());` (§8.2.4.2.5) |
 | **Driver callback** | The driver corrupts an item just before driving it | Errors at the pin level, below any sequence: every Nth request, or only on one agent instance | `uvm_callbacks#(mem_drv, mem_drv_cb)::add(env.agt.drv, flip);` (§10.7.2.3.1) |
 
+<ArchitectureDiagram
+  title="Where each injection mechanism acts on the stimulus path"
+  caption="Read the left column top to bottom: a sequence creates an item through the factory, randomizes it (post_randomize() sets par) or fills it in by hand as send() does, and hands it through the sequencer to the driver, which calls pre_drive() just before it drives the pins. The error sequence chooses whole items; the factory override changes the item's type, so it matters only where randomize() is called (not in mem_wr_rd_seq::send()); the driver callback corrupts par at the last moment, below every sequence. Line styles: solid with a filled arrow = the item on its way; dotted = the sequencer-driver handshake; plain = the pin connection; dashed (right column only) = where a mechanism acts."
+  cellWidth={130}
+  gapX={84}
+  nodes={[
+    { id: "seq", label: "sequence", sublabel: "creates items", kind: "sequence", col: 0, row: 0 },
+    { id: "item", label: "mem_item", sublabel: "randomize()", kind: "generic", col: 0, row: 1 },
+    { id: "sqr", label: "sqr", sublabel: "mem_sqr", kind: "sequencer", col: 0, row: 2 },
+    { id: "drv", label: "drv", sublabel: "pre_drive() hook", kind: "driver", col: 0, row: 3 },
+    { id: "pins", label: "mem_if0", sublabel: "valid ... par", kind: "interface", col: 0, row: 4 },
+    { id: "m1", label: "error sequence", sublabel: "mem_par_err_seq", kind: "sequence", col: 1, row: 0 },
+    { id: "m2", label: "factory override", sublabel: "mem_err_item", kind: "generic", col: 1, row: 1 },
+    { id: "m3", label: "driver callback", sublabel: "mem_par_flip_cb", kind: "generic", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "seq", to: "item", style: "data", label: "create()" },
+    { from: "item", to: "sqr", style: "data", label: "finish_item()" },
+    { from: "sqr", to: "drv", style: "control", label: "get_next_item()" },
+    { from: "drv", to: "pins", style: "structural", label: "drv_cb" },
+    { from: "m1", to: "seq", style: "causal", label: "chooses" },
+    { from: "m2", to: "item", style: "causal", label: "overrides" },
+    { from: "m3", to: "drv", style: "causal", label: "flips par" }
+  ]}
+/>
+
 The callback hook is one line in the driver, `` `uvm_do_callbacks(mem_drv, mem_drv_cb, pre_drive(this, req)) `` (Annex B.4.3), called after the reset check and before the drive. The mechanics of callbacks are [A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)'s; here is the use:
 
 ```systemverilog
@@ -436,6 +576,11 @@ uvm_callbacks#(mem_drv, mem_drv_cb)::add(env.agt.drv, flip);
 
 **Pitfall: a soft default that silently wins.** Suppose `mem_err_item` added `constraint c_inject { par_err dist {1 := 1, 0 := 7}; }`, a constraint with a *new* name. The base's `soft par_err == 0` does not conflict with it, because "nonzero distribution weights do not change the solution space" (IEEE 1800-2023 §18.5.3), and a soft constraint is discarded only when it conflicts (§18.5.13). So `par_err` stays 0 and no error is ever injected. `mem_err_item` therefore *replaces* the base constraint by giving its own the same name, `c_par_ok` (§18.5.2). Whatever mechanism you use, check from the log that errors were actually injected.
 
+| The subclass names its dist | Constraints in force | Values `par_err` can take | Injection rate |
+|---|---|---|---|
+| `c_inject` (a new name) | the base's `soft par_err == 0` **and** the dist | the dist allows 0 and 1, so the soft constraint does not conflict and holds: only 0 | never |
+| `c_par_ok` (the base's name) | only the dist: it replaces the soft default | 0 or 1, weighted 7 : 1 | 1 in 8 |
+
 ### Expected errors in the scoreboard and the checkers
 
 An injected error touches two kinds of checking, and both must expect it:
@@ -444,6 +589,15 @@ An injected error touches two kinds of checking, and both must expect it:
 - **The protocol checker fires, correctly.** The monitor's parity check reports `` `uvm_error("MEM_PARITY", ...) `` on every request with bad parity. During injection that report is *expected*, but the check is right: on any other day, bad parity means a broken requester. Turning the check off for the injection test would also hide a requester that sends bad parity by accident. Instead, the test accounts for the expected reports with a narrow catcher.
 
 **Accounting means three numbers agree** at the end of the test: the errors the test planned to inject (2), the bad-parity requests the scoreboard saw and saw rejected (`n_err_expected`, `n_err_seen`), and the reports the catcher demoted (`n_demoted`). If the checker missed an injected error, or a reset swallowed one, or the catcher demoted one too many, the counts disagree and the test reports `ERR_ACCOUNT`. When the number of injections is random (a callback or an override), the planned number is the injector's own count, read at the end of the test.
+
+The `ERR_ACCOUNT` line prints the four counts, each kept by a different part of the bench:
+
+| `ERR_ACCOUNT` field | Kept by | Counts | Here | If it differs from `injected` |
+|---|---|---|---|---|
+| `injected` | the test: `N_INJECT`, or the injector's `n_injected` when injection is random | errors the test meant to inject | 2 | (the reference) |
+| `demoted` | `catcher.n_demoted` | `MEM_PARITY` errors from the monitor that the catcher demoted | 2 | lower: the checker missed an injected error, or a reset aborted it; higher: the catcher demoted a report that was not an injected one |
+| `predicted` | `env.sb.n_err_expected` | observed requests with `par != good_par()` | 2 | lower: a reset aborted an injected request; higher: a requester sent bad parity by accident |
+| `flagged` | `env.sb.n_err_seen` | responses with `err` = 1 from the DUT | 2 | the DUT missed or invented an error response (`SCB_ERR_RSP` reports it too); lower also when a reset aborted an accepted injected request (`predicted` is lower too) |
 
 ### Report catchers: demote only what you expect
 
@@ -466,11 +620,33 @@ A narrow catcher limits what it touches in three ways:
 2. **One severity and one ID.** `get_severity()` and `get_id()` (§6.6.3.2, §6.6.3.5) must be `UVM_ERROR` and `MEM_PARITY`.
 3. **A count.** It demotes no more reports than the plan allows, `n_allowed()`, and counts what it demoted. With a fixed plan that is `expected`, set by the test before the run. When the number of injected errors is random, a fixed number cannot work: the catcher would demote the first `expected` reports and pass the rest on as errors, failing a correct DUT. The limit must then follow the injector's live count, `injector.n_injected` (see the density test in Make It Work).
 
+The three gates applied to reports this bench could raise during `mem_reset_err_test` (gate 1 is the registration, so a report from another component never reaches `catch()`):
+
+| Report | Gate 1: from `env.agt.mon`? | Gate 2: `UVM_ERROR` and `MEM_PARITY`? | Gate 3: `n_demoted < n_allowed()`? | Result |
+|---|---|---|---|---|
+| the 1st planned `MEM_PARITY` | yes | yes | 0 < 2: yes | demoted: `[expected 1 of 2]` |
+| the 2nd planned `MEM_PARITY` | yes | yes | 1 < 2: yes | demoted: `[expected 2 of 2]` |
+| a third, unplanned `MEM_PARITY` | yes | yes | 2 < 2: no | `THROW` unchanged: counted as `UVM_ERROR` |
+| `MON_X` | yes | no | not reached | `THROW` unchanged: counted as `UVM_ERROR` |
+| `SCB_MISMATCH` from `env.sb` | no: `catch()` is never called | not reached | not reached | counted as `UVM_ERROR` |
+| `ERR_ACCOUNT` as an error, from `uvm_test_top` | no | not reached | not reached | counted as `UVM_ERROR` |
+
 It demotes with `set_severity(UVM_INFO)` (§6.6.4.1) and returns `THROW` (§6.6.5), so the report is still printed and reviewable. In uvm-core 2020.3.1, changing the severity also switches the action to the new severity's default (display, no count) unless the catcher calls `set_action()` itself (`uvm_report_catcher.svh`). Returning `CAUGHT` instead would drop the report silently: the server stops processing it, so it is neither printed nor counted (§6.5.1.2.14).
 
 **Misconception: "demoting all errors during injection is fine."** It is the most dangerous line a test can contain. While it is active, a real DUT bug reports `UVM_ERROR`, the catcher demotes it with the expected ones, and the run passes. The broader the catcher (every ID, every reporter, no count), the more it hides, including the test's own accounting error. The same goes for `+uvm_set_action=...,UVM_ERROR,UVM_NO_ACTION`, which removes errors before they are even counted ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
 
+What each way of handling an expected error leaves behind, in uvm-core 2020.3.1 (`uvm_report_server.svh`, `uvm_report_catcher.svh`):
+
+| Handling | Printed? | In the severity and ID counts? | In the catcher summary? |
+|---|---|---|---|
+| demote with `set_severity(UVM_INFO)`, return `THROW` | yes, as `UVM_INFO`, with its ID and time | yes, under `UVM_INFO` and its own ID | "Number of demoted UVM_ERROR reports" |
+| return `CAUGHT` | no | no | "Number of caught UVM_ERROR reports" |
+| `+uvm_set_action=...,UVM_ERROR,UVM_NO_ACTION` | no | no | no |
+
 Here is one injected error, from the sequence to the end-of-test accounting. **Predict:** at which time, and in which component, does the expected report become `UVM_INFO`, and when does the scoreboard learn that the DUT rejected the write?
+
+<details>
+<summary>Check your prediction: one injected error, step by step</summary>
 
 <SequenceDiagram
   title="One injected error, through the catcher and the accounting"
@@ -506,11 +682,18 @@ Here is one injected error, from the sequence to the end-of-test accounting. **P
 
 **Debrief.** The demotion happens at 285 ns inside the report server, before the report is counted (step 5 to step 8). The scoreboard knows nothing about the catcher: it receives the transfer one edge later (step 11) and judges the DUT's `err` response from its own prediction (the note under step 11). The two lines of defence are independent on purpose, and the accounting at the end ties them together.
 
+</details>
+
 **See a narrow and a broad catcher on a real log.** The report pipeline explorer from I-UVM-1D runs `crc_inject_test`: its sequence corrupts the CRC (a checksum) of packets 2 and 4, so the monitor raises two expected `CRC` errors; packet 5 then exposes a *real* DUT bug through an `SCB` error. Use its **Report catcher** knob. **Predict the `UVM_ERROR` count** for `none`, for `crc_demoter` (demotes `CRC` errors whose text contains "bad CRC") and for `error_swallower` (returns `CAUGHT` for every `UVM_ERROR`).
 
 <TelemetryEventBusVisualizer />
 
+<details>
+<summary>Check your counts</summary>
+
 **Debrief.** With no catcher, 3 errors are counted (the two `CRC` errors and the `SCB` mismatch; the interface assertion's `$error` never enters UVM). `crc_demoter` leaves 1: the real bug still fails the run, and the two demoted reports appear as `UVM_INFO`. `error_swallower` leaves 0: the run "passes" with a real bug in it, and the swallowed reports are not even printed. `crc_demoter` is narrow by ID and text but has no count: a third, unplanned `CRC` error would be demoted as well. `mem_err_catcher` adds the reporter and the count.
+
+</details>
 
 ### Keeping real failures visible
 
@@ -519,6 +702,13 @@ A catcher, a flush and an injection knob are all code that can be wrong in a way
 - **A negative control.** Run the same test on a DUT with a planted bug and require it to fail. `mem_dut`'s parameter `BUG = 1` writes the data of a bad-parity write anyway (it still raises `err`); the read of address 2 then returns `a5` instead of `00`, and the run must end with `UVM_ERROR : 1`. A test that passes on the mutant DUT is broken, whatever it reports on the good one.
 - **Count what was caught.** The catcher counts its demotions, the test compares them with the plan, and uvm-core prints a catcher summary (`Number of demoted UVM_ERROR reports`) before the report summary whenever a catcher exists (`uvm_report_catcher.svh`). A regression script can require that number to equal the planned injections, from outside the simulation, where no catcher can reach.
 - **Demote, never swallow.** A demoted report is still in the log, with its ID, at its time; a caught one is gone.
+
+Every run lands in one of four cells. A bench you can trust puts the correct DUT in "true pass" and the mutant in "true fail":
+
+| | Run passes | Run fails |
+|---|---|---|
+| **DUT correct** (`BUG = 0`) | true pass | false failure: the bench is wrong |
+| **DUT mutant** (`BUG = 1`) | false pass: the bench hides the bug | true fail: the negative control works |
 
 ### Coverage: reset × state and error × response
 
@@ -561,6 +751,23 @@ rst_cg.sample(pending == null ? RST_IDLE : (pending.we ? RST_WR_PENDING : RST_RD
 
 The scoreboard would sample `err_cg` for every request it checks. In this lesson's run, the reset lands with a read pending and a request on the bus, which is 1 of the 6 reset cells.
 
+The two crosses as grids. `rst_cg`'s `ctx_x_req` (6 goal cells; the cell this run reaches is marked):
+
+| What reset cut off (`cp_ctx`) | No request on the bus (`cp_req` 0) | A request on the bus (`cp_req` 1) |
+|---|---|---|
+| `RST_IDLE` | goal | goal |
+| `RST_WR_PENDING` | goal | goal |
+| `RST_RD_PENDING` | goal | goal, **hit at 245 ns**: the read of 4 pending, the read of 5 on the bus |
+
+`err_cg`'s `we_x_par_x_err` (8 combinations, 4 of them `ignore_bins`):
+
+| Request | `err` 0 (`none`) | `err` 1 (`flagged`) |
+|---|---|---|
+| read, good parity | goal | ignored: a DUT bug |
+| read, bad parity | ignored: a DUT bug | goal |
+| write, good parity | goal | ignored: a DUT bug |
+| write, bad parity | ignored: a DUT bug | goal |
+
 ### Debugging: symptom, cause, fix
 
 | Symptom in the log | Cause | Fix |
@@ -584,6 +791,14 @@ The scoreboard would sample `err_cg` for every request it checks. In this lesson
 - Inject errors with an error sequence (directed), a factory override (density, randomized items only) or a driver callback (pin level), and check that they were injected. When the count is random, account against the injector's live count.
 - The scoreboard predicts error responses; the checker's reports are demoted by a catcher narrowed to one reporter, one ID and a count; the test compares the counts; a mutant DUT run proves real failures still fail.
 - Cover reset × state and error × response.
+
+<VisualRecap
+  title="Reset and error injection"
+  rule="Reset is a bench-wide event and an injected error is an accounted event: every component drops what reset destroyed, and every expected error is predicted, demoted narrowly, counted, and shown to leave real failures failing."
+  code={"release_item(\"reset at its accept edge\");  // drv: item_done()\nrst_ap.write(MEM_RST_ASSERTED);             // mon: pending is discarded\nforeach (model[i]) model[i] = '0;           // sb: after checking item_fifo\nuvm_report_cb::add(env.agt.mon, catcher);   // one reporter only"}
+  mistake="Letting expectations survive reset, calling stop_sequences() in the same edge as the driver's item_done(), or demoting every error during injection: the first fails a correct DUT, the second can end in SQRBADITMDN, the third passes a broken one."
+  inTestbench="mem_drv gives its item back and waits; mem_mon discards the pending read and publishes rst_ap; mem_sb checks item_fifo, then clears model to 00; mem_reset_err_vseq stops the sequencer at 255 ns and starts new errs and again objects; mem_err_catcher on env.agt.mon demotes MEM_PARITY at most twice; check_phase compares injected, demoted, predicted and flagged; BUG = 1 must fail."
+/>
 
 ## Make It Work
 
@@ -1489,6 +1704,16 @@ How to read it:
 - **The times:** the first 21 requests are accepted from 35 to 235 ns; reset is sampled at 245, 255 and 265 ns; the three requests of `errs` are accepted at 285, 295 and 305 ns; the 32 requests of `again` at 315 to 625 ns. The test drops its objection at 625 ns, the last read's data is published at 635 ns, and the 20 ns drain ends `run_phase` at 645 ns.
 - **The 14 INFO reports** include the two demoted `MEM_PARITY` reports, still listed under their ID, and the catcher summary itself, which uvm-core issues (and counts) just before it composes the report summary.
 
+Where `matches=21` comes from, sequence by sequence:
+
+| Sequence | Requests accepted | Accepted at | Reads that match |
+|---|---|---|---|
+| `traffic` (`mem_wr_rd_seq`, cut by the reset) | 21: 16 writes, then the reads of addresses 0 to 4 | 35 to 235 ns | 4: addresses 0 to 3 (the read of 4 was aborted; the read of 5 was never accepted) |
+| reset | none | `rst_n` sampled 0 at 245, 255, 265 ns | — |
+| `errs` (`mem_par_err_seq`) | 3 | 285, 295, 305 ns | 1: the read of address 2 returns `00` |
+| `again` (`mem_wr_rd_seq`) | 32: 16 writes, 16 reads | 315 to 625 ns | 16 |
+| **total** | | | **21** = 4 + 1 + 16 |
+
 ### Expected output: the density test
 
 `mem_par_density_test` injects through the driver callback, so the count is not written anywhere in the test. Its 40 items are accepted back to back from 35 to 425 ns, and the callback corrupts items 8, 16, 24, 32 and 40, so the monitor reports `MEM_PARITY` at 105, 185, 265, 345 and 425 ns. Each `pre_drive()` call raises `flip.n_injected` one edge before the monitor's report, so the catcher's limit is always one ahead of its demotions. This is an abridged hand trace; the random fields of each request, and the number of matches, change with the seed:
@@ -1514,6 +1739,9 @@ The four counts agree, and they come from four independent places: the injector,
 
 Set `.BUG(1)` on the DUT in `tb_top`: a write with bad parity is still flagged with `err`, but its data is written. Rerun `mem_reset_err_test`. **Predict** the `UVM_ERROR` count and the line that causes it, then compare:
 
+<details>
+<summary>Check your prediction: the BUG = 1 log</summary>
+
 ```text
 UVM_INFO @ 285 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 1 of 2] bad parity on WRITE addr=2: par=1, expected 0
 UVM_INFO @ 305 ns: uvm_test_top.env.agt.mon [MEM_PARITY] [expected 2 of 2] bad parity on READ  addr=3: par=1, expected 0
@@ -1529,6 +1757,8 @@ UVM_FATAL :    0
 
 The error accounting is still perfect (the DUT *did* flag both errors), but the read of address 2 returns `a5`. `SCB_MISMATCH` is not `MEM_PARITY`, so the catcher passes it on untouched and the run fails. At 305 ns the monitor's report comes first: the scoreboard's thread checks the read only after the monitor's thread has moved on. Set `.BUG(0)` again before you go on.
 
+</details>
+
 ### How to make your own bench reset-aware and injection-ready
 
 1. **Write the reset rule into the protocol table:** which edges accept nothing, what the DUT's state becomes, and which responses an assertion aborts.
@@ -1541,6 +1771,21 @@ The error accounting is still perfect (the DUT *did* flag both errors), but the 
 8. **Catcher:** one ID, one reporter (`uvm_report_cb::add(component, catcher)`), a count, demote with `THROW`; attach it in `start_of_simulation_phase`.
 9. **Account:** in the test's `check_phase`, compare planned, demoted, predicted and flagged. For random injection, the plan is the injector's live count, and the catcher's limit follows it.
 10. **Negative control:** a DUT mutant that the test must fail on; and require the catcher summary to match the plan.
+
+Where each step lives in this lesson's bench:
+
+| Step | File in Make It Work |
+|---|---|
+| 1. Reset rule | the bench table at the top of this lesson; `mem_dut.sv` implements it |
+| 2. Driver | `mem_drv.svh` (`mem_drv`) |
+| 3. Monitor | `mem_mon.svh` (`mem_mon`, `rst_ap`) |
+| 4. Scoreboard flush | `mem_sb.svh` (`write_rst()`, `flush_on_reset()`) |
+| 5. Reset scenario | `mem_vseqs.svh` (`mem_reset_err_vseq`), driving reset through `rst_if.sv` (`rst_if0.cb`); the objection in `mem_tests.svh` |
+| 6. Injection knob | `mem_item.svh` (`mem_item`, `mem_err_item`); the other two mechanisms in `mem_seqs.svh` (`mem_par_err_seq`) and `mem_drv.svh` (`mem_par_flip_cb`) |
+| 7. Predict error responses | `mem_sb.svh` (`check_item()`) |
+| 8. Catcher | `mem_err_catcher.svh`; attached in `mem_tests.svh` |
+| 9. Account | `mem_tests.svh` (`check_phase`) |
+| 10. Negative control | `mem_dut.sv` (`BUG`), set in `tb_top.sv` |
 
 **Checklist before moving on:**
 - [ ] The driver calls `item_done()` for an item that reset prevents from being accepted, and drives nothing until reset is released.
@@ -1564,6 +1809,18 @@ The error accounting is still perfect (the DUT *did* flag both errors), but the 
 - **`post_body()` and `post_start()`: standard versus implementation.** §14.2.5.11 says they "are executed" after a kill. In uvm-core 2020.3.1 they run inside the process that `kill()` terminates, and the source comment on `kill()` says they "will not be executed". Put cleanup in `do_kill()`, which both call.
 - **Objections.** Both the standard (§14.2.4.4) and uvm-core drop a sequence's *automatic* phase objection when it is killed with `kill()`. uvm-core's `stop_sequences()` kills through `kill_sequence()` and `m_kill()`, which do not drop a top-level sequence's automatic objection (only children killed through `kill()` drop theirs), so the phase can hang: `kill()` such sequences, or keep objections in the test as this bench does. A `raise_objection()` written by hand in a killed thread is never dropped.
 - **Process guards (uvm-core only).** If the process that called `start()` is killed while the sequence runs (by `disable fork` or a phase jump), `uvm_sequence_base.svh` reports `UVM_WARNING [SEQPRTZMB]` and calls `kill()` itself; if the process `start()` forked is killed, it reports `[SEQBDYZMB]`. Kill the sequence first, then the thread.
+
+The two calls side by side (IEEE 1800.2-2020, with uvm-core 2020.3.1 behaviour marked):
+
+| | `kill()` (§14.2.5.11) | `stop_sequences()` (§15.3.2.14) |
+|---|---|---|
+| Called on | one sequence | the sequencer |
+| Stops | that sequence and its children | every sequence registered on the sequencer |
+| Requests waiting for arbitration, and locks | removed | removed, with the queued responses |
+| Request FIFO (uvm-core) | left alone | emptied, and the `get_next_item` bookkeeping cleared |
+| Driver's `item_done()` afterwards for an item it still holds | safe | `UVM_FATAL [SQRBADITMDN]` |
+| `do_kill()` | called | called (through `kill_sequence()`, uvm-core) |
+| Automatic phase objection | dropped (§14.2.4.4) | not dropped for a top-level sequence (uvm-core) |
 
 **Interview angle (try it first):** "Your reset test dies with `SQRBADITMDN` on one simulator and passes on another. Why?"
 
@@ -1816,6 +2073,12 @@ Bench P expects `2d` at address 2 after the reset: where did that value come fro
 <summary>Worked solution</summary>
 
 1. **Verdicts.** Bench P, `BUG = 0`: **false failure** (the DUT is correct). Bench P, `BUG = 1`: right verdict (fail), wrong reason (it blames a stale `2d`, not the written `a5`). Bench Q, `BUG = 0`: right (pass). Bench Q, `BUG = 1`: **false pass**, a real bug and `UVM_ERROR : 0`.
+
+   | | Run passes | Run fails |
+   |---|---|---|
+   | **DUT correct** (`BUG = 0`) | bench Q: true pass | bench P: false failure |
+   | **DUT mutant** (`BUG = 1`) | bench Q: false pass | bench P: fails, for the wrong reason |
+
 2. **Mutants.**
    - **Bench P: the scoreboard is not flushed.** `flush_on_reset()` no longer clears `model` (for example, the `foreach (model[i]) model[i] = '0;` line was deleted), so the value written to address 2 before the reset (`{2, ~2}` = `2d`) survives. The read after reset returns the DUT's reset value `00` and mismatches. Pending expectations do not survive reset.
    - **Bench Q: the catcher is too broad.** Its `catch()` demotes every `UVM_ERROR` (no ID check and no limit; it still counts `n_demoted`), it is attached with `uvm_report_cb::add(null, catcher)`, and it no longer rewrites the message (no `[expected k of 2]` prefix). With the correct DUT only the two planned errors exist, so it looks fine; with the bug it demotes the real `SCB_MISMATCH`.

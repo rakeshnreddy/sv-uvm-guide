@@ -43,6 +43,25 @@ A UVM TB is a tree of components: a test, an environment (**env**) and, inside i
 
 Three things must happen in a strict order. First, build the tree: a parent can create its children only after it exists itself. Second, connect the components: a connection needs both ends to exist. Third, run in simulation time, and only afterwards collect and judge the results. If each component did these things whenever it liked, a driver could start before its connection existed.
 
+<ArchitectureDiagram
+  title="Why the steps must come in this order"
+  caption="Read top to bottom. Each step needs what the step above it produced: a connection needs both components to exist, and running needs the connections. Only the run step takes simulation time."
+  cellWidth={170}
+  cellHeight={52}
+  gapY={52}
+  nodes={[
+    { id: "s-build", label: "build", sublabel: "create every component", col: 0, row: 0 },
+    { id: "s-connect", label: "connect", sublabel: "wire the components together", col: 0, row: 1 },
+    { id: "s-run", label: "run", sublabel: "time passes: drive and watch", col: 0, row: 2 },
+    { id: "s-judge", label: "judge", sublabel: "collect and check the results", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "s-build", to: "s-connect", style: "causal", label: "both ends exist" },
+    { from: "s-connect", to: "s-run", style: "causal", label: "wired" },
+    { from: "s-run", to: "s-judge", style: "causal", label: "run ends" }
+  ]}
+/>
+
 UVM therefore owns the schedule. Every component inherits one method per phase (the **phasing interface**, IEEE 1800.2-2020 §13.1.4). Almost all of them do nothing by default, and you override only the ones you need. UVM calls each one on every component at the right moment. You never call a phase method yourself.
 
 ### The common phases: order, direction and purpose
@@ -81,6 +100,30 @@ connect_phase (bottom-up): drv, mon, agt, scb, env, uvm_test_top
 final_phase   (top-down):  uvm_test_top, env, agt, drv, mon, scb
 ```
 
+<ArchitectureDiagram
+  title="The traced tree with each component's visit number"
+  caption="The same tree as the text block above. Each sublabel gives the component's position in the build_phase order and in the connect_phase order; final_phase uses the build order. scb comes after agt only because of name order in uvm-core 2020.3.1, not because of creation order (env creates scb first)."
+  cellWidth={104}
+  gapX={24}
+  cellHeight={56}
+  gapY={44}
+  nodes={[
+    { id: "t-top", label: "uvm_test_top", sublabel: "build 1, connect 6", kind: "test", col: 1, row: 0 },
+    { id: "t-env", label: "env", sublabel: "build 2, connect 5", kind: "env", col: 1, row: 1 },
+    { id: "t-agt", label: "agt", sublabel: "build 3, connect 3", kind: "agent", col: 0, row: 2, colSpan: 2 },
+    { id: "t-scb", label: "scb", sublabel: "build 6, connect 4", kind: "scoreboard", col: 2, row: 2 },
+    { id: "t-drv", label: "drv", sublabel: "build 4, connect 1", kind: "driver", col: 0, row: 3 },
+    { id: "t-mon", label: "mon", sublabel: "build 5, connect 2", kind: "monitor", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "t-top", to: "t-env", style: "structural" },
+    { from: "t-env", to: "t-agt", style: "structural" },
+    { from: "t-env", to: "t-scb", style: "structural" },
+    { from: "t-agt", to: "t-drv", style: "structural" },
+    { from: "t-agt", to: "t-mon", style: "structural" }
+  ]}
+/>
+
 The visualizer below uses a slightly bigger tree, with a sequencer `sqr` in the agent as well. Before you open it, **predict**: in `connect_phase`, which component is called first, and which is called last? Then click `connect` in the phase map, pick your answer in the "Who is called first?" experiment, and step through the calls.
 
 <UvmPhaseTimelineVisualizer />
@@ -97,6 +140,34 @@ Beside `run_phase`, UVM runs a second schedule of twelve task phases, the **run-
 pre_reset → reset → post_reset → pre_configure → configure → post_configure
 → pre_main → main → post_main → pre_shutdown → shutdown → post_shutdown
 ```
+
+<ArchitectureDiagram
+  title="run_phase beside the twelve run-time phases"
+  caption="Dashed arrows are execution order. Both branches start after start_of_simulation_phase, and extract_phase starts only after both have ended. Each right-hand box stands for three run-time phases in the order of its sublabel, where pre_ and post_ abbreviate pre_configure and post_configure (and the same for shutdown). run_phase and post_shutdown_phase share extract_phase as their successor, which makes them sibling phases (§9.6)."
+  cellWidth={160}
+  gapX={48}
+  cellHeight={52}
+  gapY={48}
+  spreadAnchors
+  nodes={[
+    { id: "p-sos", label: "start_of_simulation_phase", col: 0, row: 0, colSpan: 2 },
+    { id: "p-run", label: "run_phase", sublabel: "a task phase, like the twelve", col: 0, row: 1, rowSpan: 4, state: "active" },
+    { id: "p-reset", label: "reset", sublabel: "pre_reset, reset, post_reset", col: 1, row: 1 },
+    { id: "p-cfg", label: "configure", sublabel: "pre_, configure, post_", col: 1, row: 2 },
+    { id: "p-main", label: "main", sublabel: "pre_main, main, post_main", col: 1, row: 3 },
+    { id: "p-shut", label: "shutdown", sublabel: "pre_, shutdown, post_", col: 1, row: 4 },
+    { id: "p-ext", label: "extract_phase", col: 0, row: 5, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "p-sos", to: "p-run", style: "causal", label: "starts" },
+    { from: "p-sos", to: "p-reset", style: "causal", label: "starts" },
+    { from: "p-reset", to: "p-cfg", style: "causal", label: "then" },
+    { from: "p-cfg", to: "p-main", style: "causal", label: "then" },
+    { from: "p-main", to: "p-shut", style: "causal", label: "then" },
+    { from: "p-run", to: "p-ext", style: "causal", label: "ends" },
+    { from: "p-shut", to: "p-ext", style: "causal", label: "ends" }
+  ]}
+/>
 
 `run_phase` "runs in parallel to the run-time phases" (§9.8.1.5). Both start after `start_of_simulation_phase`, and `extract_phase` starts only after both have ended. A **domain** is a named group of phases that advance together. The common phases belong to the **common** domain, the twelve run-time phases to the **uvm** domain, and every component is in both by default (§13.1.4.4.1). So all components step through `reset`, then `configure`, then `main` together: `configure_phase` starts for everyone when the last component's `reset_phase` work is done.
 
@@ -144,6 +215,37 @@ phase.drop_objection(this, "requests sent");
 5. It calls `phase_ready_to_end(phase)` on every component. If a component raises an objection there, UVM goes back to step 3 and later asks again.
 6. The phase ends. Threads still running in it "are forcibly and immediately killed" (§9.6), including everything they forked.
 
+<ArchitectureDiagram
+  title="How a task phase ends in uvm-core 2020.3.1"
+  caption="The six steps above as a flowchart (uvm_phase_hopper.svh). Step 3 has two outcomes: wait for the objections, or skip the wait when none was raised. Step 5 has two outcomes too: if no component raises, the phase ends; a raise inside phase_ready_to_end sends the phase back to step 3, and UVM asks at most 20 rounds by default (§9.3.1.3.3–6). Each new round waits on the phase and its siblings again, so steps 3 and 4 repeat together."
+  cellWidth={150}
+  gapX={64}
+  cellHeight={50}
+  gapY={46}
+  nodes={[
+    { id: "e-fork", label: "1. fork the tasks", sublabel: "one thread per component", col: 0, row: 0 },
+    { id: "e-nba", label: "2. wait for NBA", sublabel: "of the first time slot", col: 0, row: 1 },
+    { id: "e-raised", label: "3. raised yet?", sublabel: "objection total above 0", col: 0, row: 2, state: "active" },
+    { id: "e-wait", label: "wait: all dropped", sublabel: "and every drain time passed", col: 0, row: 3 },
+    { id: "e-skip", label: "skip the wait", sublabel: "traced as skipping phase", col: 1, row: 3 },
+    { id: "e-sib", label: "4. wait siblings", sublabel: "until they hold no objection", col: 0, row: 4 },
+    { id: "e-prte", label: "5. ask components", sublabel: "phase_ready_to_end on each", col: 0, row: 5, state: "active" },
+    { id: "e-again", label: "loop: go to step 3", sublabel: "at most 20 rounds", col: 1, row: 5 },
+    { id: "e-end", label: "6. phase ends", sublabel: "running threads are killed", col: 0, row: 6, state: "ok" }
+  ]}
+  edges={[
+    { from: "e-fork", to: "e-nba", style: "causal", label: "then" },
+    { from: "e-nba", to: "e-raised", style: "causal", label: "then" },
+    { from: "e-raised", to: "e-wait", style: "causal", label: "yes" },
+    { from: "e-raised", to: "e-skip", style: "causal", label: "no" },
+    { from: "e-wait", to: "e-sib", style: "causal", label: "then" },
+    { from: "e-skip", to: "e-sib", style: "causal", label: "then" },
+    { from: "e-sib", to: "e-prte", style: "causal", label: "then" },
+    { from: "e-prte", to: "e-end", style: "causal", label: "nobody raised" },
+    { from: "e-prte", to: "e-again", style: "causal", label: "raise" }
+  ]}
+/>
+
 Two consequences decide most end-of-test bugs:
 
 - **Raise before anything consumes time.** If `run_phase` has no objection at the step-2 check and the schedule is idle, step 4 passes at once and the phase ends in the same time slot. A `raise_objection` placed after `#10ns` never executes: the thread is killed first. The test "passes" at 0 ns having checked nothing.
@@ -159,6 +261,31 @@ Two consequences decide most end-of-test bugs:
 | 50 ns | `phase_ready_to_end`: the scoreboard raises 1 | 1/1 | 0/1 | 0/1 | 0/1 |
 | 65 ns | The scoreboard drops; `uvm_test_top`'s drain starts again | 0/0 | 0/0 | 0/0 | 0/1 |
 | 75 ns | The drain ends; `uvm_top` is 0; `phase_ready_to_end` raises nothing; `run_phase` ends | 0/0 | 0/0 | 0/0 | 0/0 |
+
+<TimingDiagram
+  title="The Make It Work run, 0 to 75 ns"
+  caption="The x-axis is simulation time in 5 ns steps: column k is t = 5k ns (column 8 is 40 ns, column 15 is 75 ns), and each value is the one after everything at that time has happened; a change is drawn just before the column where it has happened. test obj and scb obj are the objections raised by uvm_test_top and env.scb; top total is uvm_top's total; pending is the scoreboard's pending count. The shaded spans are the two 10 ns drains (40 to 50 ns and 65 to 75 ns). r0 to r3 mark the four responses at 35, 45, 55 and 65 ns, P the phase_ready_to_end round at 50 ns, where two responses are pending and the scoreboard raises, and end the round at 75 ns, where nothing is pending and run_phase ends."
+  edges={16}
+  cycleWidth={14}
+  signals={[
+    { name: "test obj", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "scb obj", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0] },
+    { name: "top total", kind: "bus", values: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "pending", kind: "bus", values: [1, 1, 2, 2, 3, 3, 4, 3, 3, 2, 2, 1, 1, 0, 0, 0] }
+  ]}
+  highlights={[
+    { from: 8, to: 10, tone: "info", label: "first drain on uvm_test_top: 40 to 50 ns" },
+    { from: 13, to: 15, tone: "info", label: "second drain on uvm_test_top: 65 to 75 ns" }
+  ]}
+  markers={[
+    { edge: 7, tone: "sample", short: "r0", label: "35 ns: response 0 checked" },
+    { edge: 9, tone: "sample", short: "r1", label: "45 ns: response 1 checked" },
+    { edge: 10, tone: "pending", short: "P", label: "50 ns: phase_ready_to_end, 2 responses pending, the scoreboard raises" },
+    { edge: 11, tone: "sample", short: "r2", label: "55 ns: response 2 checked" },
+    { edge: 13, tone: "sample", short: "r3", label: "65 ns: response 3 checked, the scoreboard drops" },
+    { edge: 15, tone: "pass", short: "end", label: "75 ns: phase_ready_to_end raises nothing, run_phase ends" }
+  ]}
+/>
 
 Notice where the drain sits: between `uvm_test_top` and its parent. A drain time belongs to one object, and it runs every time that object's total falls to zero.
 
@@ -213,6 +340,18 @@ uvm_root::get().set_timeout(10us, 1);
 - From the command line, `+UVM_TIMEOUT=<integer>,<YES|NO>` sets it (uvm-core impl., not in IEEE 1800.2-2020). Push Further explains its units and the `NO` option.
 
 **Drain time is not a hang safety net.** It starts only when a count reaches zero. If an objection is never dropped, the count never reaches zero, the drain never starts, and only the timeout ends the run.
+
+**The three tools side by side.**
+
+| | Drain time | `phase_ready_to_end` | Timeout |
+|---|---|---|---|
+| What starts it | This object's total reaching 0 | All objections to the phase and its siblings dropped | `run_phase` starting (the watchdog thread) |
+| What it follows | A fixed guess at the latency | The component's real pending work | Absolute simulation time |
+| Saves in-flight responses? | Only if it is longer than the latency | Yes | No |
+| Ends a hang? | No: it never starts while an objection is held | No | Yes, with `UVM_FATAL [PH_TIMEOUT]`; extract, check and report do not run |
+| Cost when nothing is pending | The full drain, each time the total reaches 0 | None: it returns at once | None |
+| Where you set it | The test's `run_phase`, before the drop, on `phase.get_objection()` | The component that knows what is pending, usually the scoreboard | The test's `build_phase`, before `run_phase` starts |
+| Clause | §10.5.1.3.7 | §13.1.4.3.2 | F.7.3.3, §9.8.1.5 |
 
 Try the scenarios below; each is a real end-of-test bug. Pick a preset, **predict** when `run_phase` ends, and only then look at the timeline.
 
@@ -312,6 +451,27 @@ cfg_done.wait_ptrigger();    // safe even if trigger() ran earlier in this time 
 | `wait_off()` | when `reset()` turns the event off (at once if it is already off) | §10.1.1.2.3 |
 | `trigger(data)` | — wakes every waiter, turns the event on and stores the optional data | §10.1.2.2.4 |
 | `reset(wakeup)` | — turns the event off; with `wakeup = 1` it first wakes the waiters | §10.1.1.2.8 |
+
+<ArchitectureDiagram
+  title="The three states of a uvm_event"
+  caption="Dashed arrows are what moves the event between states. Each sublabel lists the waits that return at once in that state; 'on, triggered' means triggered in the current time slot. Every other wait blocks until the next change. wait_trigger() never returns at once, in any state. reset() from either 'on' state turns the event off; the diagram draws it from the later-slot state only. A new uvm_event starts off, and a further trigger() keeps it in 'on, triggered'."
+  cellWidth={125}
+  gapX={110}
+  cellHeight={56}
+  gapY={76}
+  spreadAnchors
+  nodes={[
+    { id: "ev-trig", label: "on, triggered", sublabel: "wait_ptrigger, wait_on", col: 0, row: 0, state: "active" },
+    { id: "ev-on", label: "on", sublabel: "wait_on", col: 1, row: 0 },
+    { id: "ev-off", label: "off", sublabel: "wait_off", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "ev-off", to: "ev-trig", style: "causal", label: "trigger()" },
+    { from: "ev-trig", to: "ev-on", style: "causal", label: "slot ends" },
+    { from: "ev-on", to: "ev-trig", style: "causal", label: "trigger()" },
+    { from: "ev-on", to: "ev-off", style: "causal", label: "reset()" }
+  ]}
+/>
 
 The race behind `wait_trigger()` is the SystemVerilog race you met in [I-SV-5: Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events). The visualizer below models the plain `event` that `uvm_event` wraps: `wait_trigger()` behaves like `@(done)` and `wait_ptrigger()` like `wait (done.triggered)`. **Predict**: with `->` and `@(done)`, does the consumer always wake? Then flip the scheduler order.
 
@@ -626,6 +786,27 @@ The standard says how a phase ends (§9.6, §13.1.4.3.2) but not exactly when an
 - Beside an active schedule, `run_phase` stays open until `post_shutdown_phase` ends. A raise on `run_phase` made before then still counts, because each `phase_ready_to_end` round checks every sibling again (`uvm_phase::wait_for_self_and_siblings_to_drop`). If the test's `run_phase` raises at 10 ns and drops at 510 ns while `main_phase` objects until 300 ns, `run_phase` ends at 510 ns.
 - `phase_ready_to_end` is called even after "No objections raised, skipping phase", so a component can hold open, from there, a phase that nobody objected to.
 
+<ArchitectureDiagram
+  title="Where uvm-core looks for the first objection"
+  caption="Read top to bottom: the regions that matter here of the phase's first time slot (t = 0 for run_phase), then the next time slot. Observed, Reactive and the later regions are left out. The check runs back in the Active region, when the NBA update wakes uvm_wait_for_nba_region's @(nba), and reads the objection total. This is uvm-core 2020.3.1 behaviour beside an idle schedule (uvm_phase_hopper.svh), not a rule of IEEE 1800.2. A raise in the Active or Inactive region is seen by the check; a raise that waits for a later time slot never executes, because the phase ends in this slot and kills the thread."
+  cellWidth={200}
+  cellHeight={50}
+  gapY={44}
+  nodes={[
+    { id: "r-active", label: "Active region", sublabel: "raise as the first statement: counts", col: 0, row: 0, state: "ok" },
+    { id: "r-inactive", label: "Inactive region", sublabel: "raise after #0: counts", col: 0, row: 1, state: "ok" },
+    { id: "r-nba", label: "NBA region", sublabel: "nonblocking assignments update", col: 0, row: 2 },
+    { id: "r-check", label: "uvm-core check", sublabel: "back in Active, after the NBA update", col: 0, row: 3, state: "active" },
+    { id: "r-next", label: "next time slot", sublabel: "raise after #1ps: thread killed first", col: 0, row: 4, state: "error" }
+  ]}
+  edges={[
+    { from: "r-active", to: "r-inactive", style: "causal", label: "then" },
+    { from: "r-inactive", to: "r-nba", style: "causal", label: "then" },
+    { from: "r-nba", to: "r-check", style: "causal", label: "then" },
+    { from: "r-check", to: "r-next", style: "causal", label: "total 0: phase ends" }
+  ]}
+/>
+
 Teach and code to "raise before the first statement that can consume time". It works in every implementation.
 
 ### Expert: timeout mechanics and the `+UVM_TIMEOUT` plusarg
@@ -638,9 +819,49 @@ Teach and code to "raise before the first statement that can consume time". It w
   - The watchdog reads the value once, just after `run_phase` starts, and runs only in `run_phase`. It bounds hangs in the run-time phases too, because `run_phase` waits for the schedule. If the value is 0 at that moment, the watchdog waits for a non-zero value, so `set_timeout(0)` disables it.
   - With `+UVM_PHASE_TRACE`, the timeout also prints each phase's outstanding objections before the fatal.
 
+<SequenceDiagram
+  title="Which timeout the watchdog uses (uvm-core 2020.3.1)"
+  caption="Time runs down the page. uvm_root's build_phase runs before the test's because build is top-down, so the plusarg is applied first. The watchdog reads the value once, just after run_phase starts. 'none' means nothing after the comma, which acts like YES. The fatal says Explicit timeout after any set_timeout call, and Default timeout (9200 s) if nobody set one. All of this is uvm-core implementation (uvm_root.svh, uvm_phase_hopper.svh); IEEE 1800.2 defines only set_timeout and its overridable flag (F.7.3.3)."
+  participants={[
+    { id: "cl", label: "command line", kind: "generic" },
+    { id: "root", label: "uvm_root", sublabel: "build_phase", kind: "generic" },
+    { id: "tst", label: "test", sublabel: "build_phase", kind: "test" },
+    { id: "wd", label: "watchdog", sublabel: "in run_phase", kind: "generic" }
+  ]}
+  messages={[
+    { from: "cl", to: "root", label: "+UVM_TIMEOUT=n,YES or +UVM_TIMEOUT=n,NO" },
+    { kind: "self", from: "root", label: "YES or none: set_timeout(n,1); NO: set_timeout(n,0)" },
+    { kind: "divider", label: "the test's build_phase runs next (top-down)" },
+    { from: "tst", to: "root", label: "set_timeout(10us, 1)" },
+    { kind: "note", from: "root", to: "tst", label: "After YES the test's value replaces n. After NO the call is ignored with info NOTIMOUTOVR." },
+    { kind: "divider", label: "run_phase starts" },
+    { from: "wd", to: "root", label: "read the timeout, once" },
+    { kind: "return", from: "root", to: "wd", label: "the value in force now" },
+    { kind: "divider", label: "simulation time reaches that value while run_phase is still open" },
+    { kind: "self", from: "wd", label: "UVM_FATAL [PH_TIMEOUT]: Explicit timeout or Default timeout", tone: "error" }
+  ]}
+/>
+
 ### Expert: time units of `set_timeout` and `set_drain_time`
 
-Tool-dependent. `set_timeout(10us)` and `set_drain_time(this, 10ns)` pass a `time` value. A time literal "is interpreted as a realtime value scaled to the current time unit" (IEEE 1800-2023 §5.8), the time unit of the code that calls the method. uvm-core then waits with `#(value)` inside `uvm_pkg`, so the number is read again in `uvm_pkg`'s time unit. If your TB and `uvm_pkg` are compiled with different time units, the timeout and drain time are scaled wrongly, by a factor of 1000 for ns against ps. `+UVM_TIMEOUT`'s integer is in `uvm_pkg`'s unit. Compile uvm-core and the TB with the same time unit and precision, and print `$time` at the first drain or timeout to confirm.
+Tool-dependent. `set_timeout(10us)` and `set_drain_time(this, 10ns)` pass a `time` value. A time literal "is interpreted as a realtime value scaled to the current time unit" (IEEE 1800-2023 §5.8), the time unit of the code that calls the method. uvm-core then waits with `#(value)` inside `uvm_pkg`, so the number is read again in `uvm_pkg`'s time unit. If your TB and `uvm_pkg` are compiled with different time units, the timeout and drain time are scaled wrongly. `+UVM_TIMEOUT`'s integer is in `uvm_pkg`'s unit. Compile uvm-core and the TB with the same time unit and precision, and print `$time` at the first drain or timeout to confirm.
+
+**Predict.** The test calls `set_drain_time(this, 10ns)` from a TB compiled with a time unit of 1 ns, while `uvm_pkg` was compiled with a time unit of 1 ps. The literal is scaled to the TB's unit and passed as a number; `uvm_pkg` then waits that number of its own units. How long does the drain really last?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+10 ps, a thousand times too short. `10ns` in the TB becomes the number 10, and `#10` inside `uvm_pkg` means 10 ps. In general the scaling is wrong by a factor of 1000 for ns against ps. The table shows three of the four combinations:
+
+| TB time unit | `uvm_pkg` time unit | Number passed | What `set_drain_time(this, 10ns)` waits |
+|---|---|---|---|
+| 1 ns | 1 ns | 10 | 10 ns, as intended |
+| 1 ns | 1 ps | 10 | 10 ps: 1000 times too short |
+| 1 ps | 1 ns | 10000 | 10 µs: 1000 times too long |
+
+The same scaling applies to `set_timeout`. Printing `$time` when the first drain ends shows which row you are in.
+
+</details>
 
 ### Expert: domains, `sync` and phase jumps
 
@@ -673,6 +894,13 @@ Tool-dependent. `set_timeout(10us)` and `set_drain_time(this, 10ns)` pass a `tim
 - `set_propagate_mode(0)` (§10.5.1.3.2) sends raises and drops straight to `uvm_top` instead of through each ancestor. It cannot be changed while the objection is raised or draining.
 - A top sequence can own the objection: `set_automatic_phase_objection(1)` raises before `pre_start` and drops after `post_start` (§14.2.4.3–4), and `get_starting_phase()` gives the phase to object to (§14.2.4.1). The standard warns against it for a sequence with a `forever` loop, which would never drop. I-UVM-3A teaches it.
 - Performance profiling of objections belongs to [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index).
+
+| Who raises, and how | Raises and drops per test | Risk | When to use it |
+|---|---|---|---|
+| Every driver, per transaction | Two per item, each walking every ancestor up to `uvm_top` | Slow in a deep, busy environment; the phase can end in the gap between two items | Avoid |
+| The test, once around its stimulus | One raise and one drop | None beyond a forgotten drop | The default on this page |
+| The top sequence, with `set_automatic_phase_objection(1)` (§14.2.4.3–4) | One raise before `pre_start`, one drop after `post_start` | A sequence with a `forever` loop never drops | When the top sequence owns the stimulus (I-UVM-3A) |
+| Any of these, with `set_propagate_mode(0)` (§10.5.1.3.2) | Unchanged, but each goes straight to `uvm_top` instead of through each ancestor | It cannot be changed while the objection is raised or draining | Deep hierarchies with frequent raises, when no ancestor in between needs its own total (uvm-core skips them) |
 
 ### Interview angles
 
@@ -943,6 +1171,67 @@ Change the Make It Work env so that it creates three children, in this order: `s
 2. The order among `bus`, `cov` and `scb`. The standard fixes parents before children (top-down) and children before parents (bottom-up), but not the order of siblings. uvm-core visits them in name order because it stores children in an array indexed by name. Code must never depend on it.
 
 </details>
+
+### One-page summary: phase order and concurrency
+
+Use this card to check yourself before the flashcards, and come back to it when you write a new component.
+
+<VisualRecap
+  title="UVM phasing on one page"
+  rule="build and final run top-down and every other function phase bottom-up, all in zero time; run_phase runs beside the twelve run-time phases and cannot end before post_shutdown_phase; a task phase ends when its objections and its siblings' objections have all dropped and stayed dropped through any drain time and phase_ready_to_end, not when its task returns."
+  code={`// build_phase       top-down    create children
+// connect_phase     bottom-up   connect ports and handles
+task run_phase(uvm_phase phase);   // beside the 12 run-time phases
+  phase.raise_objection(this);     // first, before any delay
+  // ... stimulus ...
+  phase.drop_objection(this);      // the phase may now end
+endtask
+// extract, check, report: bottom-up after run_phase; final: top-down`}
+  mistake="Connecting in build_phase (the child's port does not exist yet), putting a driver loop in main_phase (it is killed when main_phase ends), or expecting main_phase to start after run_phase ends."
+  inTestbench="Every component creates its children in build_phase and connects them in connect_phase; drivers and monitors loop in run_phase with no objection; the test or a top sequence owns the objection; scoreboards judge in check_phase and report in report_phase."
+>
+  <svg viewBox="0 0 340 262" role="img" aria-label="The nine common phases from top to bottom. build is top-down; connect, end_of_elaboration and start_of_simulation are bottom-up and, with build, run at time 0. run, a task phase, runs in parallel with the twelve run-time phases from pre_reset to post_shutdown. extract, check and report are bottom-up and final is top-down; they run when run ends." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="40" y="16" fontSize="11" fill="currentColor">↓ top-down</text>
+    <text x="124" y="16" fontSize="11" fill="currentColor">↑ bottom-up</text>
+    <text x="210" y="16" fontSize="11" fill="currentColor">∥ in parallel</text>
+    <rect x="40" y="34" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="47" fontSize="11" fontFamily="monospace" fill="currentColor">build</text>
+    <text x="192" y="47" fontSize="12" textAnchor="end" fill="currentColor">↓</text>
+    <rect x="40" y="56" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="69" fontSize="11" fontFamily="monospace" fill="currentColor">connect</text>
+    <text x="192" y="69" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="78" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="91" fontSize="11" fontFamily="monospace" fill="currentColor">end_of_elaboration</text>
+    <text x="192" y="91" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="100" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="113" fontSize="11" fontFamily="monospace" fill="currentColor">start_of_simulation</text>
+    <text x="192" y="113" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="122" width="160" height="46" rx="4" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    <text x="48" y="149" fontSize="11" fontFamily="monospace" fill="currentColor">run</text>
+    <text x="192" y="149" fontSize="12" textAnchor="end" fill="currentColor">∥</text>
+    <rect x="40" y="172" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="185" fontSize="11" fontFamily="monospace" fill="currentColor">extract</text>
+    <text x="192" y="185" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="194" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="207" fontSize="11" fontFamily="monospace" fill="currentColor">check</text>
+    <text x="192" y="207" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="216" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="229" fontSize="11" fontFamily="monospace" fill="currentColor">report</text>
+    <text x="192" y="229" fontSize="12" textAnchor="end" fill="currentColor">↑</text>
+    <rect x="40" y="238" width="160" height="18" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="48" y="251" fontSize="11" fontFamily="monospace" fill="currentColor">final</text>
+    <text x="192" y="251" fontSize="12" textAnchor="end" fill="currentColor">↓</text>
+    <path d="M 32 34 H 28 V 118 H 32" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="24" y="80" fontSize="11" textAnchor="end" fill="currentColor">t=0</text>
+    <rect x="206" y="122" width="130" height="46" rx="6" fill="none" stroke="rgb(6,182,212)" strokeDasharray="4 3" />
+    <text x="212" y="137" fontSize="11" fill="currentColor">12 run-time phases</text>
+    <text x="212" y="151" fontSize="11" fontFamily="monospace" fill="currentColor">pre_reset…</text>
+    <text x="212" y="164" fontSize="11" fontFamily="monospace" fill="currentColor">post_shutdown</text>
+    <path d="M 204 172 H 208 V 256 H 204" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="214" y="211" fontSize="11" fill="currentColor">when run_phase</text>
+    <text x="214" y="225" fontSize="11" fill="currentColor">ends</text>
+  </svg>
+</VisualRecap>
 
 ### Flashcards
 

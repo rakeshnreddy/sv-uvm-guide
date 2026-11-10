@@ -68,7 +68,7 @@ The picture below shows both lifetimes at once. The sequencer and the driver are
   ]}
 />
 
-Two consequences follow. First, a sequence item has no component parent and runs no phases, even while it sits in a sequencer. Second, data that a component keeps must be copied if the sender may change it later: a scoreboard that stores the monitor's handle sees every later edit the monitor makes to that object.
+Two consequences follow. First, a sequence item has no component parent and runs no phases, even while it sits in a sequencer. Second, data that a component keeps must be copied if the sender may change it later: a scoreboard that stores the monitor's handle sees every later edit the monitor makes to that object. The heap view in [I-SV-1 copying and cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) draws that aliasing handle by handle, and the debug challenge "the scoreboard whose expected items change" in [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index) shows it in a scoreboard.
 
 ### The UVM class family tree
 
@@ -143,6 +143,26 @@ The same tree as text, with the clause that declares each class:
 
 Two notes keep the picture honest. First, §1.4.3 allows an implementation to insert extra classes between a class and the base it is declared to extend; uvm-core 2020.3.1, for example, puts `uvm_sequencer_param_base` between `uvm_sequencer_base` and `uvm_sequencer`. Second, the role-specific component classes such as `uvm_monitor` add little or no behaviour of their own. Extending the one that matches the role still matters: it documents intent, and code can recognise the role with `$cast`, for example to find every agent in an environment.
 
+**Predict: pick the base class.** Apply the three questions (a fixed place in the tree for the whole test? phase methods? data that is sent or shared?) to each class below, and name the base class you would extend before you open the answer.
+1. A checker that compares every observed transfer with a prediction for the whole test, connected to the monitor's analysis port in `connect_phase`.
+2. A response that the driver returns for one transfer and that nobody keeps afterwards.
+3. A set of environment knobs (number of agents, scoreboard on or off) that the test fills in and the env reads.
+4. A class whose `body` generates 20 `bus_item`s when it is started on a sequencer.
+5. A coverage collector that samples every transfer the monitor publishes, for the whole test.
+
+<details>
+<summary>Check your choices</summary>
+
+| # | Base class | Kind | Why |
+|---|---|---|---|
+| 1 | `uvm_scoreboard` | Component | It lives for the whole test at one place in the tree and uses `connect_phase`. |
+| 2 | `uvm_sequence_item` | Data object | It is created per transfer and dropped when no handle refers to it. |
+| 3 | `uvm_object` | Data object | It is data shared by handle; it needs no parent and no phases. |
+| 4 | `uvm_sequence #(bus_item)` | Data object | A sequence runs code on a sequencer, but it has no parent component and no phases (§14.3.1). |
+| 5 | `uvm_subscriber #(bus_item)` | Component | It is fixed in the tree for the whole test and receives transfers through its analysis export (§13.9.1). |
+
+</details>
+
 ### Registering a class: what the utils macros give you
 
 Every UVM class you write gets one **utils macro** inside its body: `` `uvm_object_utils(T) `` for data objects and `` `uvm_component_utils(T) `` for components (IEEE 1800.2-2020 Annex B.2.1.2 and B.2.1.3). The macro registers the class with the **factory**, the UVM service that creates objects by type and lets a test substitute a subclass without editing the code that asks for one ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) covers overrides).
@@ -205,7 +225,53 @@ Every component has a **leaf name** (`get_name()`) and a **full name** (`get_ful
 | `my_agent::build_phase`: `create("drv", this)` | `drv` | `agt` | `uvm_test_top.env.agt.drv` | 4 |
 | `uvm_driver::new` (inside `drv`'s constructor) | `seq_item_port` | `drv` | `uvm_test_top.env.agt.drv.seq_item_port` | 5 |
 
+<ArchitectureDiagram
+  title="The worked example's component tree, with the depth of each component"
+  caption="Each box is drawn inside its parent: uvm_test_top holds env, env holds agt and scb, agt holds drv, mon and sqr. The top row is not a component: it is the call in my_test::build_phase that creates env. Each sublabel gives the class (for the containers) and the get_depth() value. The port symbols on drv, sqr, mon and scb are children of those components too, one level deeper: drv's seq_item_port is at depth 5. The arrows show where bus_items travel at run time, through the two connections made in connect_phase."
+  cellWidth={140}
+  gapX={48}
+  gapY={96}
+  nodes={[
+    { id: "top", label: "uvm_test_top", sublabel: "my_test · depth 1", kind: "test", col: 0, row: 0, colSpan: 2, rowSpan: 4, container: true },
+    { id: "env", label: "env", sublabel: "my_env · depth 2", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "tbp", label: "my_test::build_phase", sublabel: 'create("env", this)', col: 0, row: 0, colSpan: 2 },
+    { id: "agt", label: "agt", sublabel: "my_agent · depth 3", kind: "agent", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", sublabel: "depth 4", kind: "sequencer", col: 0, row: 1 },
+    { id: "drv", label: "drv", sublabel: "depth 4", kind: "driver", col: 0, row: 2 },
+    { id: "mon", label: "mon", sublabel: "depth 4", kind: "monitor", col: 1, row: 2 },
+    { id: "scb", label: "scb", sublabel: "depth 3", kind: "scoreboard", col: 1, row: 3 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "top", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "sqr.export", to: "drv.port", style: "data", label: "bus_item" },
+    { from: "mon.ap", to: "scb.imp", style: "data", label: "bus_item" }
+  ]}
+/>
+
 `get_depth()` counts levels below `uvm_root`: the root is 0 and the test is 1 (§13.1.3.8). The last row is a surprise for most people: **ports, exports and imps are children too**. §5.5 gives every `uvm_port_base` "the properties of components", a hierarchical path and a parent, so they share the name space of your components. In uvm-core 2020.3.1 each port is backed by a child component, so ports also appear in `get_children`, `get_num_children` and `print_topology`.
+
+**Predict.** Use the rules above: a full name is the parent's full name, a dot and the leaf name; the depth counts levels below `uvm_root`; and a `null` parent means "child of `uvm_root`", whose name is empty. Give `get_full_name()` and `get_depth()` for:
+1. `ap`, built in `my_monitor::build_phase` with `new("ap", this)`;
+2. `rsp_port`, built by `uvm_driver::new` inside `drv`, like `seq_item_port`;
+3. `scb`, if `my_env::build_phase` passed `null` instead of `this`: `create("scb", null)`. Would a setting scoped to `uvm_test_top.env.scb` reach it?
+
+<details>
+<summary>Check your names and depths</summary>
+
+| Component | `get_full_name()` | `get_depth()` |
+|---|---|---|
+| `ap` | `uvm_test_top.env.agt.mon.ap` | 5 |
+| `rsp_port` | `uvm_test_top.env.agt.drv.rsp_port` | 5 |
+| `scb` with a `null` parent | `scb` | 1 |
+
+The orphan `scb` sits next to `uvm_test_top` in `print_topology`, and a setting scoped to `uvm_test_top.env.scb` never reaches it, because settings match against the full name. Nothing reports the mistake. Whether its own `build_phase` still runs in that build pass is implementation-dependent (see [Phase traversal order is not a contract](#expert-phase-traversal-order-is-not-a-contract)).
+
+</details>
 
 **Name rules** (§13.1.2.1):
 - The full name must be unique, and a leaf name uses only `A`–`Z`, `a`–`z`, `0`–`9` and `_ - [ ] ( ) { }`. Never put a dot in a leaf name: it would look like an extra level.
@@ -213,6 +279,35 @@ Every component has a **leaf name** (`get_name()`) and a **full name** (`get_ful
 - Names are not cosmetic. Configuration settings, factory instance overrides and message filters all match against the full name. A child built with the wrong parent or name silently misses every setting aimed at its intended path.
 
 **When can a component be created?** No later than the build phase. All phases before `run_phase` execute at simulation time 0 (§9.8.1), and the standard calls components quasi-static (§5.1); top-level components may even exist before `run_test` (F.7.3.1 f). uvm-core 2020.3.1 enforces the window in `uvm_component::new`: once the build phase has finished, constructing any component is `UVM_FATAL … [ILLCRT] It is illegal to create a component ('scb' under 'uvm_test_top.env') after the build phase has ended.`
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 214" role="img" aria-labelledby="iuvm1a-window-title" style={{ width: "100%", maxWidth: 420, height: "auto" }}>
+  <title id="iuvm1a-window-title">The component creation window across the common phases. Five phases run in order: build, connect, end_of_elaboration, start_of_simulation and run. The first four all execute at simulation time 0. Creating a component is allowed in build; in connect and every later phase uvm-core 2020.3.1 stops with the fatal ILLCRT.</title>
+  <path d="M40 8 H34 V144 H40" fill="none" stroke="currentColor" strokeWidth="1.3" strokeOpacity="0.7" />
+  <text x="22" y="76" transform="rotate(-90 22 76)" textAnchor="middle" fontFamily="ui-sans-serif, system-ui, sans-serif" fontSize="10.5" fill="currentColor">time 0 (§9.8.1)</text>
+  <g fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontSize="11" fill="currentColor" textAnchor="middle">
+    <rect x="46" y="8" width="150" height="28" rx="6" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.6" />
+    <text x="121" y="26" fontWeight="600">build</text>
+    <rect x="46" y="44" width="150" height="28" rx="6" fill="none" stroke="currentColor" />
+    <text x="121" y="62">connect</text>
+    <rect x="46" y="80" width="150" height="28" rx="6" fill="none" stroke="currentColor" />
+    <text x="121" y="98">end_of_elaboration</text>
+    <rect x="46" y="116" width="150" height="28" rx="6" fill="none" stroke="currentColor" />
+    <text x="121" y="134">start_of_simulation</text>
+    <rect x="46" y="152" width="150" height="28" rx="6" fill="none" stroke="currentColor" />
+    <text x="121" y="170">run</text>
+  </g>
+  <g fontFamily="ui-sans-serif, system-ui, sans-serif" fontSize="10.5" fill="currentColor">
+    <text x="206" y="26" fontWeight="600">✓ create here</text>
+    <text x="206" y="62">✗ ILLCRT fatal</text>
+    <text x="206" y="98">✗ ILLCRT fatal</text>
+    <text x="206" y="134">✗ ILLCRT fatal</text>
+    <text x="206" y="170">✗ ILLCRT fatal</text>
+    <text x="8" y="202">Every later phase, through final: also ILLCRT.</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The common phases top to bottom, in execution order. Shaded: the only phase in which a component may be created. All phases before run execute at simulation time 0 (§9.8.1). The ILLCRT fatal is uvm-core 2020.3.1's check in uvm_component::new; the standard itself only calls components quasi-static (§5.1).</figcaption>
+</figure>
 
 **Explore the tree.** The explorer below is built on a tested model of uvm-core 2020.3.1 and draws the same tree as the worked example. Before you open it, predict: in which order does `build_phase` visit `scb` and `agt`, given that `my_env` creates `scb` first? Then switch to `connect_phase` and predict whether `env` runs before or after its children.
 
@@ -243,6 +338,30 @@ You will use the **hierarchy API** (§13.1.3) to inspect the tree in debug code,
 
 `lookup` versus `find`: `lookup` walks an exact path and returns `null` (uvm-core adds a warning) when any level is missing. `find` matches a glob-style pattern against every full name, so `"*.agt.*"` also matches the ports under `drv`; it warns when several components match and returns the first.
 
+**Predict.** Each call below runs inside `my_test` (that is, `uvm_test_top`) after the worked example's build. Using the table and the paragraph above, predict what each returns, and whether uvm-core adds a warning.
+1. `lookup("env.agt.drv")`
+2. `lookup("agt.drv")`
+3. `lookup(".uvm_test_top.env.scb")`
+4. `lookup("env.*.drv")`
+5. `uvm_root::get().find("*.mon")`
+6. `uvm_root::get().find("*.agt.*")`
+
+<details>
+<summary>Check your lookups</summary>
+
+| # | Returns | uvm-core 2020.3.1 warning |
+|---|---|---|
+| 1 | `drv` (`uvm_test_top.env.agt.drv`) | none |
+| 2 | `null`: `uvm_test_top` has no child named `agt` | `[Lookup Error] Cannot find child agt` |
+| 3 | `scb`: the leading `.` starts the path at `uvm_root` | none |
+| 4 | `null`: `lookup` takes no wildcards | `[Lookup String Error] Malformed look up string: env.*.drv` |
+| 5 | `mon`, the only full name that ends in `.mon` | none |
+| 6 | The first of several matches (`drv`, `mon`, `sqr` and the ports below them) | `[MMATCH] Found N components matching '*.agt.*'. Returning first match, …` (N is the number of matches) |
+
+When nothing matches, `find` returns `null` with a `CMPNFD` warning. Which match comes first in row 6 depends on the implementation, so code that needs one component should use `lookup` or a pattern that matches exactly one.
+
+</details>
+
 `print_topology` is the standard way to answer "what did my build actually create?". Call it in `end_of_elaboration_phase`, when the tree is complete and connected. Each child prints if its `print_enabled` bit is 1, the default (§13.1.2.2); uvm-core clears it on a sequencer's internal FIFOs to keep the table short. uvm-core also offers `uvm_root::get().set_enable_print_topology(1)`, which prints the tree automatically as end of elaboration starts; it is not in the standard.
 
 ### What super.build_phase really does
@@ -252,6 +371,31 @@ Every `build_phase` you write should start with `super.build_phase(phase);`. In 
 In uvm-core 2020.3.1, some base classes do more in their `build_phase`, and all of it is skipped without `super`:
 - `uvm_agent::build_phase` looks up `is_active` in the configuration database. §13.4.2.2 only says `get_is_active()` returns `UVM_ACTIVE` "unless overridden via the configuration database"; where the lookup happens is uvm-core's choice.
 - `uvm_sequencer_base::build_phase` reads `wait_for_sequences_count`, and `uvm_sequencer_param_base::build_phase` links its internal response FIFO to the sequencer. A sequencer subclass that skips `super` fails later with `UVM_FATAL … [SEQRNULL]` on the first response written through `rsp_port`.
+
+<SequenceDiagram
+  title="What super.build_phase runs when the phasing engine builds agt"
+  caption="Read top to bottom; the calls nest. Both configuration lookups happen inside the super chain, and my_agent's own create calls run only after super returns. apply_config_settings when use_automatic_config() returns 1 is the standard (§13.1.4.1.1); the is_active lookup in uvm_agent::build_phase is uvm-core 2020.3.1."
+  columnWidth={150}
+  participants={[
+    { id: "eng", label: "phasing engine", kind: "generic" },
+    { id: "my", label: "my_agent", sublabel: "build_phase", kind: "agent" },
+    { id: "ua", label: "uvm_agent", sublabel: "build_phase", kind: "agent" },
+    { id: "uc", label: "uvm_component", sublabel: "build_phase", kind: "generic" }
+  ]}
+  messages={[
+    { from: "eng", to: "my", label: "build_phase(phase) on uvm_test_top.env.agt" },
+    { from: "my", to: "ua", label: "super.build_phase(phase)" },
+    { from: "ua", to: "uc", label: "super.build_phase(phase)" },
+    { kind: "self", from: "uc", label: "use_automatic_config() is 1: apply_config_settings" },
+    { kind: "return", from: "uc", to: "ua", label: "return" },
+    { kind: "self", from: "ua", label: "look up is_active for this full name" },
+    { kind: "return", from: "ua", to: "my", label: "return" },
+    { kind: "self", from: "my", label: 'mon = my_monitor::type_id::create("mon", this)' },
+    { kind: "self", from: "my", label: "if get_is_active() == UVM_ACTIVE: create drv and sqr" },
+    { kind: "return", from: "my", to: "eng", label: "return" },
+    { kind: "divider", label: "without super: neither lookup runs; the create calls still do" }
+  ]}
+/>
 
 Skipping `super.build_phase` compiles and prints nothing, and the children you create yourself are still built. What breaks is configuration, silently. Switch the explorer to **Forgotten super.build_phase**, predict what `uvm_test_top.env.agt` ends up with when the test made it passive, then toggle the call back in.
 
@@ -278,7 +422,12 @@ The rules behind the hooks:
 - **`convert2string`** is for your own log lines, typically `` `uvm_info("MON", t.convert2string(), UVM_HIGH) ``. `print()` writes a multi-line table straight to the output, not through the reporting system.
 - **`copy` versus `clone`**: `copy` fills an object you already have. `clone` creates a new object of the same dynamic type and returns it as a `uvm_object`, so you `$cast` it back: `if (!$cast(twin, orig.clone())) …`.
 
-Trace the object demo from the worked example, one statement at a time:
+Trace the object demo from the worked example, one statement at a time.
+
+**Predict first.** `orig` is a `bus_item` with `addr` `'h40`, `data` `'ha5` and `write` 1. The demo then (2) clones it into `twin`, (3) renames `twin`, (4) compares the two, (5) sets `twin.data` to `'ha6`, (6) compares again, (7) runs `twin.copy(orig)` and (8) compares a third time. For steps 2, 4, 6 and 8, predict the result: is `twin` a new object, and what name does it carry? What does each `compare` return, and is anything logged, at which severity? Then open the trace.
+
+<details>
+<summary>Check your predictions: the full trace</summary>
 
 | # | Statement | `orig` (addr, data, write) | `twin` | Result and log |
 |---|---|---|---|---|
@@ -293,7 +442,19 @@ Trace the object demo from the worked example, one statement at a time:
 
 Step 6 holds the most important practitioner fact on this page. In uvm-core 2020.3.1 the default comparer reports a miscompare as `UVM_INFO` with ID `MISCMP` at `UVM_LOW` verbosity, and shows only the first miscompare per object. **A failing `compare()` does not fail the test.** A scoreboard must check the return value and raise its own `` `uvm_error ``.
 
+</details>
+
 **Field macros versus hand-written hooks.** Instead of writing the hooks, you can list fields between `` `uvm_object_utils_begin(T) `` and `` `uvm_object_utils_end `` with `` `uvm_field_int(addr, UVM_DEFAULT) `` and similar macros, and `copy`, `compare`, `print`, `pack` and `record` handle them automatically (B.2.2). The B.2.2 NOTE states the trade-off: the field macros "may not be as run-time efficient nor as flexible as direct implementations of the do_* methods". Hand-written hooks are explicit, easy to step through in a debugger and faster; field macros are short and hard to get wrong for plain fields. Both can be combined: the macro-generated part runs first, then your `do_*` hook. [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers the flags and the policy classes in depth.
+
+| | Field macros (B.2.2) | Hand-written `do_*` hooks |
+|---|---|---|
+| What you write | One `` `uvm_field_* `` line per field between `_utils_begin` and `_utils_end` | A `do_copy`, `do_compare` and `do_print` body, plus `convert2string` |
+| Run-time cost | "may not be as run-time efficient" (B.2.2 NOTE) | Direct code: the usual choice for an item copied and compared millions of times |
+| Flexibility | "nor as flexible" (B.2.2 NOTE): per-field flags only | Any logic you need |
+| Debugging | Generated code inside a macro expansion | Ordinary code you can step through |
+| Typical bug | Hard to get wrong for plain fields | A field added to the class but not to the hooks is silently skipped by `copy` and `compare` |
+| A member that is a class handle | `` `uvm_field_object ``: created and copied recursively unless flagged `UVM_REFERENCE` (uvm-core) | An assignment in `do_copy` copies the handle; clone the member for a separate copy |
+| Used together | The macro-generated part runs first | Then your `do_*` hook runs |
 
 ### Pitfalls and misconceptions
 
@@ -316,6 +477,31 @@ Step 6 holds the most important practitioner fact on this page. In uvm-core 2020
 | Simulation stops at end of elaboration | `UVM_FATAL … [BUILDERR] stopping due to build errors` | Any `UVM_ERROR` during build, such as `ILLCLN` (F.7.3.6) | Fix the first error in the log |
 | A component ignores its configuration; `print_topology` shows it next to `uvm_test_top` | none | It was created with a `null` parent, so its full name is just its leaf name | Pass `this` as the parent |
 | Compile error at a `` `uvm_object_utils `` line | tool-dependent | The object constructor has an argument without a default | `function new(string name = "…");` |
+
+<VisualRecap
+  title="Objects and components"
+  rule="A data object is created whenever it is needed and travels by handle; a component is created once, no later than build_phase, with type_id::create(name, this), and its parent and leaf name fix the full name that configuration and overrides match."
+  code={"class bus_item extends uvm_sequence_item;\n  `uvm_object_utils(bus_item)\n  function new(string name = \"bus_item\");\n    super.new(name);\n  endfunction\nendclass\n\nclass my_env extends uvm_env;\n  `uvm_component_utils(my_env)\n  my_agent agt;\n  function new(string name, uvm_component parent);\n    super.new(name, parent);\n  endfunction\n  function void build_phase(uvm_phase phase);\n    super.build_phase(phase);\n    agt = my_agent::type_id::create(\"agt\", this);\n  endfunction\nendclass"}
+  mistake="Passing null instead of this as the parent (the component lands next to uvm_test_top and misses every setting scoped to its intended path), skipping super.build_phase (automatic configuration never runs), or trusting compare() to fail the test (in uvm-core a miscompare is only UVM_INFO MISCMP)."
+  inTestbench="my_test calls uvm_root::get().print_topology() in end_of_elaboration_phase to show every full name it built; a scoreboard checks the value compare() returns and raises its own uvm_error."
+>
+  <svg viewBox="0 0 340 128" role="img" aria-label="Two panels. Data object: created at any time, no parent and no phases, passed by handle, has copy, clone and compare. Component: built in build_phase, one parent and a full name, runs phases, never cloned." style={{ width: "100%", maxWidth: 360, height: "auto" }}>
+    <rect x="4" y="4" width="160" height="120" rx="8" fill="none" stroke="currentColor" />
+    <rect x="176" y="4" width="160" height="120" rx="8" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.6" />
+    <g fontFamily="ui-sans-serif, system-ui, sans-serif" fontSize="11" fill="currentColor">
+      <text x="16" y="26" fontWeight="600">Data object</text>
+      <text x="16" y="50">created at any time</text>
+      <text x="16" y="70">no parent, no phases</text>
+      <text x="16" y="90">passed by handle</text>
+      <text x="16" y="110">copy · clone · compare</text>
+      <text x="188" y="26" fontWeight="600">Component</text>
+      <text x="188" y="50">built in build_phase</text>
+      <text x="188" y="70">one parent, full name</text>
+      <text x="188" y="90">runs the phases</text>
+      <text x="188" y="110">never cloned</text>
+    </g>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
@@ -525,6 +711,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict before you read the output.** Using what the explorer and the object trace showed: in what order will `print_topology` list `agt`'s three children, and what count will the report summary show for `UVM_ERROR`?
+
+<details>
+<summary>Expected output and how to read it</summary>
+
 **Expected output** (illustrative: derived by hand from uvm-core 2020.3.1, not captured from a simulator run). The `file(line)` part of each message is omitted, `@<id>` stands for instance ids that differ per run, and the topology table is **abridged**: the real table also lists the sequencer's exports and a few of its fields, and column widths depend on the printer.
 
 ```text
@@ -573,6 +764,8 @@ UVM_FATAL :    0
 ```
 
 Read it against the model. `agt` has three children, and the order `drv mon sqr` is uvm-core's name order, not the creation order `mon drv sqr`. `drv` sits at depth 4 because ports such as `seq_item_port` hang below it at depth 5. The two `MISCMP` lines are `UVM_INFO`, so the summary still shows `UVM_ERROR : 0`. The `orig.print()` table is written straight to the output, so it is not counted as a message.
+
+</details>
 
 **Run it.** No simulator ships with this site, so the steps are tool-neutral:
 1. Compile uvm-core 2020.3.1: `src/uvm_pkg.sv`, with `src` on the include path.
@@ -646,6 +839,30 @@ Sources: IEEE 1800.2-2020 §1.4.4, §9.5, §9.7; IEEE 1800-2023 §7.9.6 (`next()
 
 ### Expert: clone, create and the factory
 
+<SequenceDiagram
+  title="clone() never asks the factory; type_id::create always does"
+  caption="Top: orig.clone() from the object demo, as uvm-core 2020.3.1 implements it. The new object comes from the class's own macro-generated create(), which calls new directly, and starts with the name orig. Bottom, for contrast: type_id::create asks the factory, which may return an override."
+  columnWidth={150}
+  participants={[
+    { id: "test", label: "my_test", sublabel: "start_of_simulation_phase", kind: "test" },
+    { id: "orig", label: "orig", sublabel: "bus_item", kind: "generic" },
+    { id: "twin", label: "twin", sublabel: "the new bus_item", kind: "generic" },
+    { id: "fac", label: "factory", sublabel: "via bus_item::type_id", kind: "generic" }
+  ]}
+  messages={[
+    { from: "test", to: "orig", label: "clone()" },
+    { from: "orig", to: "twin", label: 'create(get_name()): new("orig")' },
+    { from: "orig", to: "twin", label: "copy(orig)" },
+    { kind: "self", from: "twin", label: "do_copy(orig): addr, data, write" },
+    { kind: "return", from: "orig", to: "test", label: "twin, returned as a uvm_object" },
+    { kind: "note", from: "test", to: "fac", label: "the factory is never consulted, so no override applies" },
+    { kind: "divider", label: "by contrast" },
+    { from: "test", to: "fac", label: 'bus_item::type_id::create("req")' },
+    { kind: "note", from: "fac", label: "an override may choose a subclass (I-UVM-1B)" },
+    { kind: "return", from: "fac", to: "test", label: "a bus_item or its override" }
+  ]}
+/>
+
 - In uvm-core, `clone()` is exactly `create(get_name())` followed by `copy(this)` (`uvm_object.svh`). The `create()` generated by `` `uvm_object_utils `` calls `new()` or `new(name)` directly (`uvm_object_defines.svh`), so **a clone never consults the factory**: it keeps the dynamic type of the source, whatever overrides exist. Use `T::type_id::create` when you want an override to apply.
 - A subclass without its own utils macro inherits its parent's `create()`, so its clone is the *parent* type and `$cast` back to the subclass fails. The subclass's `type_id` is also the parent's, so `sub::type_id::create(…)` returns a parent-type object that cannot be assigned to a subclass handle (IEEE 1800-2023 §8.16).
 - If `create()` returns `null`, `clone()` warns `CRFLD` and returns `null`: typical of a class registered only with `` `uvm_field_utils_begin ``, which "do[es] not perform factory registration nor implement the get_type_name and create methods" (B.2.1.1).
@@ -654,6 +871,15 @@ Sources: IEEE 1800.2-2020 §1.4.4, §9.5, §9.7; IEEE 1800-2023 §7.9.6 (`next()
 Sources: IEEE 1800.2-2020 §5.3.5.1, §5.3.5.2, §5.3.8.2, B.2.1.1; IEEE 1800-2023 §8.16; uvm-core 2020.3.1 `src/base/uvm_object.svh`, `src/macros/uvm_object_defines.svh`, `src/base/uvm_copier.svh`, `src/macros/uvm_copier_defines.svh`.
 
 ### Expert: Hooks and policies, do_* versus field macros
+
+The four comparer settings behind the bullets below, as the standard defines them:
+
+| Setting | Value until its setter is called | Setter | What it controls | Clause |
+|---|---|---|---|---|
+| `get_show_max()` | 1 | `set_show_max` | The maximum number of miscompare messages one compare operation generates | §16.3.5.1 |
+| `get_verbosity()` | `UVM_LOW` | `set_verbosity` | The verbosity of the comparer's messages | §16.3.5.2 |
+| `get_severity()` | `UVM_INFO` | `set_severity` | The severity of the comparer's messages | §16.3.5.3 |
+| `get_threshold()` | 1, and 1 again after every `flush()` | `set_threshold` | `do_compare` or `do_execute_op` may return once `get_result()` reaches it; 0 means compare every field | §16.3.6 |
 
 - §5.3.6 and §5.3.9 say the `do_print` and `do_compare` implementations "shall use the policy's APIs": `printer.print_field_int` (§16.2.3.9) and `comparer.compare_field_int` (§16.3.3.2). A `do_compare` that tests `addr == rhs_.addr` itself still returns the right bit, but the comparer cannot count, show or report the miscompare.
 - In uvm-core, `compare()` returns 0 if your `do_compare` returns 0 *or* if the comparer's miscompare count grew during the call, so a hook that calls `compare_field_int` but ignores its result still fails correctly.
@@ -672,6 +898,13 @@ Sources: IEEE 1800.2-2020 §5.3.6, §5.3.9, §5.3.13, §16.2.3.9, §16.3.3.2, §
 Sources: IEEE 1800.2-2020 §5.3.12, §13.1.5.1, §13.1.5.2; uvm-core 2020.3.1 `src/base/uvm_component.svh`, `src/macros/uvm_global_defines.svh`.
 
 ### Expert: Abstract and parameterized registration
+
+| Macro | Registers with the factory | Type name for by-name lookup | Generates `create()` | Use it for |
+|---|---|---|---|---|
+| `` `uvm_object_utils(T) ``, `` `uvm_component_utils(T) `` | Yes | Yes | Objects: yes. Components: no in uvm-core 2020.3.1 | Concrete, non-parameterized classes (B.2.1.2, B.2.1.3) |
+| `` `uvm_object_param_utils(T) ``, `` `uvm_component_param_utils(T) `` | Yes | No: by-name requests such as `+UVM_TESTNAME` cannot find it | As the non-parameterized form | Parameterized classes (B.2.1.2, B.2.1.3) |
+| `` `uvm_object_abstract_utils(T) ``, `` `uvm_component_abstract_utils(T) `` | Yes, with an abstract registry | Yes (the `abstract_param` forms: no) | No in uvm-core 2020.3.1: a `virtual class` cannot be constructed | Abstract classes (B.2.1.2, B.2.1.3) |
+| `` `uvm_field_utils_begin(T) `` … `` `uvm_field_utils_end `` | No | No (no `get_type_name`) | No | Field automation with your own `create` and `get_type_name`, or field macros for an abstract class (B.2.1.1) |
 
 - **Abstract classes.** A `virtual class` cannot be constructed, so it cannot use `` `uvm_object_utils `` or `` `uvm_component_utils ``. Use `` `uvm_object_abstract_utils `` or `` `uvm_component_abstract_utils `` (B.2.1.2, B.2.1.3): they register an abstract registry, so overrides can still target the type. uvm-core's own `uvm_env` and `uvm_agent` are registered this way, which is why a user class without its own macro cannot be created through the inherited `type_id`.
 - **Parameterized classes.** Use the `*_param_utils` forms. They register no type name, so "name-based lookup with the factory for parameterized classes is not possible" (B.2.1.2): `+UVM_TESTNAME` and other by-name requests cannot find them. Type-based overrides still work ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).

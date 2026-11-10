@@ -50,6 +50,49 @@ The key fact is that the phases **overlap**. The address phase of any transfer h
 
 **The hook: a two-stage bridge.** Picture a bridge with a gate at the near end and an unloading bay at the far end. While truck A unloads at the bay (A's data phase), truck B stands at the gate stating its destination (B's address phase). On the next clock edge both move up one stage. A **gatekeeper** reads each destination and opens the right factory's door: this is the **decoder**, which turns the address into a select signal (HSELx) for one slave. A **return window** passes each factory's cargo back to the master: this is the **multiplexor**, which routes the selected slave's HRDATA and its transfer response (HRESP) back (§1.1, §1.1.3).
 
+<figure className="not-prose my-6">
+<svg viewBox="0 0 360 214" role="img" aria-labelledby="amba2-bridge-title amba2-bridge-desc" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="amba2-bridge-title">The two-stage bridge: one AHB pipeline cycle</title>
+  <desc id="amba2-bridge-desc">Two stages side by side. The gate on the left is the address phase: truck B states HADDR equals B. The bay on the right is the data phase: truck A unloads A's data. An arrow labelled next edge runs from the gate to the bay. Under the gate, the gatekeeper is the decoder, which turns HADDR into HSELx. Under the bay, the return window is the multiplexor, which sends HRDATA and HRESP back to the master.</desc>
+  <defs>
+    <marker id="amba2-bridge-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="10" y="40" width="140" height="74" rx="6" />
+    <rect x="210" y="40" width="140" height="74" rx="6" />
+  </g>
+  <g fill="none" stroke="currentColor" strokeWidth="1.2" strokeDasharray="4 3">
+    <rect x="10" y="144" width="140" height="62" rx="6" />
+    <rect x="210" y="144" width="140" height="62" rx="6" />
+    <line x1="80" y1="114" x2="80" y2="144" />
+    <line x1="280" y1="114" x2="280" y2="144" />
+  </g>
+  <line x1="152" y1="85" x2="206" y2="85" stroke="currentColor" strokeWidth="1.6" markerEnd="url(#amba2-bridge-arrow)" />
+  <g fill="currentColor" fontSize="11" fontWeight="600" textAnchor="middle">
+    <text x="80" y="30">GATE: address phase</text>
+    <text x="280" y="30">BAY: data phase</text>
+    <text x="80" y="70">truck B</text>
+    <text x="280" y="70">truck A</text>
+  </g>
+  <g fill="currentColor" fontSize="11" textAnchor="middle">
+    <text x="80" y="92">states HADDR = B</text>
+    <text x="280" y="92">unloads A's data</text>
+  </g>
+  <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <text x="180" y="77">next edge</text>
+    <text x="80" y="162">gatekeeper</text>
+    <text x="80" y="178">= decoder</text>
+    <text x="80" y="194">HADDR to HSELx</text>
+    <text x="280" y="162">return window</text>
+    <text x="280" y="178">= multiplexor</text>
+    <text x="280" y="194">HRDATA, HRESP back</text>
+  </g>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">One cycle of the pipeline: B's address phase (the gate) overlaps A's data phase (the bay), and on the next edge that completes them both trucks move up one stage. The dashed boxes are the two interconnect blocks the hook names (IHI0033B.b §1.1, §1.3, §3.1).</figcaption>
+</figure>
+
 **Waiting.** A slave that needs more time drives its **HREADYOUT** output low; the interconnect combines every slave's HREADYOUT into one **HREADY** signal that all components see (§3.1). An edge where HREADY is low is a **wait state**. A slave can only stretch the data phase; it cannot ask for a longer address phase (§1.3). Because the next address waits at the gate while the current truck is still unloading, a wait holds both: "extending the data phase of the transfer to address B has the effect of extending the address phase of the transfer to address C" (IHI0033B.b §3.1, Figure 3-5).
 
 <ArchitectureDiagram
@@ -146,11 +189,26 @@ AHB is not "slow": the specification presents it as a bus for high-performance d
 - **The lanes are not fully independent.** A write response waits for its write data, read data waits for its address, and handshakes follow the dependency rules (§A3.3, §A3.3.1). The next two sections show exactly which dependencies exist.
 - **Some traffic keeps its order.** Transactions from one master with the same ID, in the same direction (all reads or all writes), return their responses in issue order (§A5.3), and in AXI4 write data arrives in the order of the write addresses (§A5.4.1).
 
+**The two protocols side by side.** Read each row as "one road with two stages" against "five lanes".
+
+| | AHB: two-stage bridge (IHI0033B.b) | AXI: lanes into an interchange (IHI0022E) |
+|---|---|---|
+| Shape of a transfer | an address phase, then a data phase, on one set of buses; each address phase overlaps the previous data phase (§1.3, §3.1) | five one-way channels, each with its own handshake (§A1.3) |
+| How a slave makes the master wait | drives HREADYOUT low; the single HREADY that every component sees holds the data phase and the next address phase (§3.1) | the destination of a channel holds back that channel's transfer with its own handshake signal (§A3.2.1); other channels are tied only by the listed dependencies (§A3.3); on B and R the slave is the source, so it can also make the master wait by delaying BVALID or RVALID (§A3.2.1) |
+| Work in flight | one address phase and one data phase at a time on the bus (§3.1) | multiple outstanding transactions, tagged with IDs (§A1.3, §A5.3) |
+| Where arbitration lives | outside the protocol: a master has no request or grant signals, and a multi-master system needs an interconnect (§2.2, §4.1) | outside the interface: AXI defines the interface, and the interconnect behind it routes the traffic (§A1.3.2) |
+| How the answer comes back | HRESP, from the selected slave through the multiplexor (§1.1, §1.3) | a write gets one response on its own channel; a read gets a response with every data beat (§A3.4.4) |
+
 ### The five channels: who sends what, who drives VALID and READY
 
 Every channel carries a **payload** (the information signals) plus two handshake signals. The **source** of the payload drives **VALID** ("the information on the wires is real"); the **destination** drives **READY** ("I can take it") (IHI0022E §A3.2.1, Table A3-1). One hook covers all five: **VALID travels with the payload; READY travels against it.**
 
 **Predict first.** On the write response channel B, who drives BREADY? Decide, then check the picture.
+
+The B channel carries the slave's write response back to the master. Use the hook above, then open the check.
+
+<details>
+<summary>Check: the five channels drawn, and the channel table to memorize</summary>
 
 <figure className="not-prose my-6">
 <svg viewBox="0 0 360 322" role="img" aria-labelledby="amba2-drv-title amba2-drv-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
@@ -209,6 +267,10 @@ The same picture as a table, which is the one to memorize:
 | AR (read address) | ARADDR, ARLEN, ARSIZE, ARBURST, ARID | master → slave | master | slave | none | none |
 | R (read data) | RDATA, RRESP, RLAST, RID | slave → master | slave | master | RLAST | RRESP, one per beat |
 
+</details>
+
+Coming back to look up a driver? The channel table to memorize is inside the check above: open it for every channel's payload, VALID and READY drivers, last-beat signal and response.
+
 Two details to keep. The write data and read data channels have a **LAST** signal that marks the final transfer of a burst (§A1.3.1). And there is **no read response channel**: the read response travels on R with the data, one RRESP per beat, while a write gets one BRESP for the whole burst (§A3.4.4). The four response values are OKAY (normal success), EXOKAY (an exclusive access succeeded), SLVERR (the slave reports an error) and DECERR (decode error: no slave at that address, usually returned by the interconnect) (§A3.4.4).
 
 ### The mail-delivery hook, and where it breaks
@@ -222,6 +284,24 @@ Now give each channel an everyday object. You (the master) are a customer; the s
 | B | the delivery receipt | one write response per transaction |
 | AR | the order form | address and control, one per transaction |
 | R | the goods, each item with its own packing slip | one data beat with its RRESP per handshake; RLAST on the final beat |
+
+<SequenceDiagram
+  title="The mail hook as a sequence: one AXI4 write, then one read"
+  caption="Read top to bottom. The label (AW) and the boxes (W) are separate hand-overs whose order is free; only the receipt (B) has to wait, for both. On the read, the goods (R) come only after the order form (AR) is accepted, and every beat carries its own response (IHI0022E §A3.3, §A3.3.1, §A3.4.4)."
+  participants={[
+    { id: "mst", label: "master", sublabel: "the customer" },
+    { id: "slv", label: "slave", sublabel: "the store" }
+  ]}
+  messages={[
+    { kind: "async", from: "mst", to: "slv", label: "AW: the label (address and control)" },
+    { kind: "async", from: "mst", to: "slv", label: "W beats: the boxes, WLAST on the last" },
+    { kind: "note", from: "mst", to: "slv", label: "AW and W may be accepted in either order, or on the same edge" },
+    { kind: "return", from: "slv", to: "mst", label: "B: the receipt, only after the AW and WLAST handshakes" },
+    { kind: "divider", label: "later: a read" },
+    { kind: "async", from: "mst", to: "slv", label: "AR: the order form" },
+    { kind: "return", from: "slv", to: "mst", label: "R beats: the goods, each with its RRESP, RLAST on the last" }
+  ]}
+/>
 
 **A write is two hand-overs in either order, then the receipt.** The label and the box go to separate counters. Either may be accepted first, or both on the same edge (IHI0022E §A3.3). Only the receipt has an order: in AXI4 the store mails it after it has accepted the label *and* the last box (§A3.3.1, AXI4 write response dependency). A read is an order form, then the goods; read data can never arrive before its order has been accepted (§A3.3, §A3.3.1).
 
@@ -253,6 +333,15 @@ The complete rule set, all from IHI0022E §A3.2.1 unless marked:
 4. **READY is free:** the destination may wait for VALID before raising READY, may raise READY before VALID arrives, and may lower READY again before VALID arrives.
 5. **No combinational paths:** on master and slave interfaces no output may depend combinationally on an input.
 6. **The only cross-channel dependencies:** RVALID only after the AR handshake; in AXI4, BVALID only after the AW handshake and the W handshake that carries WLAST (§A3.3.1). Apart from these, the protocol defines no relationship between channels (§A3.3).
+
+**The four states at one edge.** Every rising ACLK edge of a channel is in one of these four boxes. This grid is the one picture to memorize for rules 1 to 4.
+
+| At a rising edge | READY = 0 (door closed) | READY = 1 (door open) |
+|---|---|---|
+| **VALID = 0** (no parcel held out) | nothing happens | the door is open with nothing to take: legal, no transfer (rule 4) |
+| **VALID = 1** (parcel held out) | the courier waits: VALID and the payload must stay as they are until a transfer (rule 3) | **transfer** at this edge (rule 1) |
+
+From the bottom-left box, the next edge is either the bottom-left box again (still waiting, same payload) or the bottom-right box (the transfer): VALID may not fall, and the payload may not change, before a transfer. The protocol puts no such hold on READY, so it may move between the columns at any edge.
 
 **Where the courier breaks.** A real courier may wait for the door to open before holding out the parcel. An AXI source may not: rule 2. The door, however, is free to wait for the courier.
 
@@ -296,6 +385,12 @@ Edge 3. VALID was high at edges 1 and 2 with READY low, so D0 was still waiting;
 
 </details>
 
+**Try it on a model.** The explorer below runs one channel's handshake edge by edge. Pick a scenario, predict the edge that completes the transfer, then click READY cells to change the destination's choices and watch the transfer edge move. The last scenario is another spot-the-violation. B-AXI-1 uses the same explorer for the full five-channel rules.
+
+<InteractiveWrapper>
+  <AxiChannelHandshakeVisualizer focus="handshake" />
+</InteractiveWrapper>
+
 ### Misconceptions to unlearn
 
 1. **"Write data must follow the write address."** Wrong: the protocol defines no order between AW and W, and write data may appear first (IHI0022E §A3.3). A monitor or checker built on this belief raises false errors on legal traffic.
@@ -309,6 +404,29 @@ Edge 3. VALID was high at edges 1 and 2 with READY low, so D0 was still waiting;
 
 Each hook turns into code you will write in the B-AHB and B-AXI lessons. A **driver** is the testbench component that turns transactions into pin activity; a **monitor** watches the pins and rebuilds transactions; a **checker** (often assertions) flags protocol violations; a **scoreboard** compares what the design did with what it should have done.
 
+<ArchitectureDiagram
+  title="Where each AXI hook lives in a testbench"
+  cellWidth={140}
+  gapX={48}
+  spreadAnchors={true}
+  caption="On any one channel, the source side drives VALID and the payload and the destination side drives READY; either side can be the design or a testbench driver. The monitor and the checker only watch the pins. Each sublabel is the hook that component is built from (IHI0022E §A3.2.1, §A3.3)."
+  nodes={[
+    { id: "src", label: "source driver", sublabel: "VALID never waits", kind: "driver", col: 0, row: 0 },
+    { id: "dst", label: "destination driver", sublabel: "random READY", kind: "driver", col: 1, row: 0 },
+    { id: "ifc", label: "AXI interface", sublabel: "AW, W, B, AR, R", kind: "interface", col: 0, row: 1, colSpan: 2 },
+    { id: "mon", label: "monitor", sublabel: "logs only transfers", kind: "monitor", col: 0, row: 2 },
+    { id: "chk", label: "protocol checker", sublabel: "holds, dependencies", kind: "generic", col: 1, row: 2 },
+    { id: "scb", label: "scoreboard", sublabel: "compares items", kind: "scoreboard", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "src", to: "ifc", style: "data", label: "VALID, payload" },
+    { from: "dst", to: "ifc", style: "control", label: "READY" },
+    { from: "ifc", to: "mon", style: "data", label: "samples" },
+    { from: "ifc", to: "chk", style: "data", label: "samples" },
+    { from: "mon", to: "scb", style: "data", label: "item" }
+  ]}
+/>
+
 - **AXI driver (source side):** raise VALID with the payload as soon as the item is ready, without looking at READY, and hold both until the edge where READY is high. Never gate AWVALID on WREADY or WVALID on AWREADY.
 - **AXI driver (destination side, for example a slave responder):** any READY pattern is legal, so randomize it. Back-pressure is how you find bugs in the design's VALID-hold logic.
 - **AXI monitor:** record a transfer only at an edge where VALID and READY are both high. Accept W beats before their AW: queue them, and in AXI4 match them to write addresses in AW order.
@@ -318,6 +436,25 @@ Each hook turns into code you will write in the B-AHB and B-AXI lessons. A **dri
 **When not to use the hooks.** Analogies help you predict and remember; they are never the specification. Write checks from the rules in the specification, with clause numbers in the assertion messages, and use the hooks only to explain a failure.
 
 ### Debugging with the hooks
+
+The two hangs at the top of the table below have the same shape: a loop of waits. The picture shows the second one. Follow the arrows and you come back where you started, so the write channel never sees an edge with WVALID and WREADY both high.
+
+<ArchitectureDiagram
+  title="A wait-for loop: the write-channel deadlock"
+  cellWidth={140}
+  cellHeight={72}
+  gapX={80}
+  spreadAnchors={true}
+  caption="Each dashed arrow reads 'waits for'. The master holds WVALID low until it sees AWREADY, which an AXI source must not do; the slave holds AWREADY low until it sees WVALID, which is legal. Together the two waits close a loop and the write never starts (IHI0022E §A3.3.1, Caution). Breaking the master's wait breaks the loop."
+  nodes={[
+    { id: "mw", label: "master: WVALID", sublabel: "illegal wait", col: 0, row: 0, state: "error" },
+    { id: "sa", label: "slave: AWREADY", sublabel: "legal wait", col: 1, row: 0 }
+  ]}
+  edges={[
+    { from: "mw", to: "sa", style: "causal", label: "waits" },
+    { from: "sa", to: "mw", style: "causal", label: "waits" }
+  ]}
+/>
 
 | Symptom in the log or waveform | Likely cause | Fix |
 |---|---|---|
@@ -477,6 +614,68 @@ The assertion `a_hold` (a concurrent assertion, as taught in [I-SV-4A](/curricul
 4. **Check the only dependencies.** Each B comes after its AW handshake and its WLAST handshake; each R beat comes after its AR handshake. Do not demand any other order.
 5. **On AHB, find the HREADY-low edges.** At each one, both the current data phase and the next address phase are held. Read address and control only at edges where HREADY is high.
 
+**Try the method.** Apply steps 1 to 4 to this AXI4 trace of one single-beat write and one two-beat read. The payloads are not drawn; assume each one holds while its VALID waits. List every transfer with its edge and channel, then decide whether anything breaks a rule.
+
+<TimingDiagram
+  title="Apply the method: one write and one read"
+  caption="Columns are rising ACLK edges 0 to 6; the value in column k is the value sampled at edge k. BREADY and RREADY are high throughout."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "WLAST", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] },
+    { name: "BREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 1, 0, 0, 0, 0] },
+    { name: "ARREADY", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 1, 0, 0] },
+    { name: "RREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] }
+  ]}
+/>
+
+<details>
+<summary>Answer: the trace, read step by step</summary>
+
+1. **Transfers.** W at edge 1 (with WLAST), AR at edge 2, AW at edge 3, the first R beat at edge 3, B at edge 4, and the last R beat (RLAST) at edge 4.
+2. **Holds.** ARVALID waited at edge 1 and was still high at edge 2; AWVALID waited at edge 2 and was still high at edge 3. Both held until their transfers.
+3. **Labels.** One write (AW, W, B) and one two-beat read (AR, R, R).
+4. **Dependencies.** B at edge 4 comes after both the AW handshake (edge 3) and the WLAST handshake (edge 1). Both R beats come after the AR handshake (edge 2). W before AW is legal (IHI0022E §A3.3).
+
+Nothing breaks a rule. A checker that demanded AW before W would have flagged edge 1 falsely.
+
+<TimingDiagram
+  title="The same trace with every transfer marked"
+  caption="Columns are rising ACLK edges 0 to 6. Each marker names the transfers at that edge. ARVALID at edge 1 and AWVALID at edge 2 are the two waits, each held to the next edge (IHI0022E §A3.2.1, §A3.3.1)."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "WLAST", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] },
+    { name: "BREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 1, 0, 0, 0, 0] },
+    { name: "ARREADY", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 1, 0, 0] },
+    { name: "RREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pass", label: "W transfer, with WLAST" },
+    { edge: 2, tone: "pass", label: "AR transfer" },
+    { edge: 3, tone: "pass", label: "AW transfer and first R beat" },
+    { edge: 4, tone: "pass", label: "B transfer and last R beat" }
+  ]}
+/>
+
+</details>
+
 **Checklist before moving on:**
 - [ ] I can name the VALID driver and the READY driver for each of the five channels.
 - [ ] I can state the only cross-channel dependencies: R after AR; in AXI4, B after AW and WLAST.
@@ -501,9 +700,51 @@ In an interview, giving the analogy *and* its limit is what separates a memorize
 
 The rule exists so that any legal source can be connected to any legal destination, through any number of register slices and interconnect stages, without a deadlock. If VALID could wait for READY, a destination that legally waits for VALID would never raise READY: neither side moves (IHI0022E §A3.3.1, Caution). The asymmetry is deliberate: READY may depend on VALID, so exactly one side of every channel is allowed to wait.
 
+**Explore the loop.** The simulator below builds the wait-for graph for a write from the waits you tick on each side. First check what you already know: load the **Classic W/AW deadlock** preset, which is the loop from the debugging section, and check that unticking the master's wait clears it while the slave keeps its legal wait.
+
+**Predict first.** The **Latent violation** preset keeps the master's illegal wait (WVALID waits for AWREADY; the master raises AWVALID without waiting) but gives the slave only one wait: AWREADY waits for AWVALID, which is legal. Does this write complete, or does it hang? Decide, then load the preset and open the check.
+
+<details>
+<summary>Check: the Latent violation preset</summary>
+
+The **Latent violation** preset shows why the bug hides: the same master completes against a slave that waits only for AWVALID.
+
+</details>
+
+<InteractiveWrapper>
+  <AxiDeadlockSimulator />
+</InteractiveWrapper>
+
 The ban on combinational paths from inputs to outputs (§A3.2.1) closes the other loop: without it, a READY that depends combinationally on VALID, wired to a VALID that depends combinationally on READY through some other path, would form a combinational loop. AXI4-Stream uses the identical rule for TVALID and TREADY (IHI0051A §2.2.1), so a stream driver written from this lesson is already correct.
 
 **READY defaults are a performance choice.** The specification recommends a default of HIGH for AWREADY and ARREADY, because a default of LOW forces every address transfer to take at least two cycles (§A3.2.2). WREADY, BREADY and RREADY may default HIGH only if that side can always accept in a single cycle (§A3.2.2).
+
+<TimingDiagram
+  title="AWREADY default HIGH: the address transfers at once"
+  caption="Columns are rising ACLK edges 0 to 3. The slave keeps AWREADY high while idle, so the address transfers at the first edge that samples AWVALID high (IHI0022E §A3.2.2)."
+  edges={4}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [1, 1, 1, 1] }
+  ]}
+  markers={[{ edge: 1, tone: "pass", label: "transfer at the first edge with AWVALID high" }]}
+/>
+
+<TimingDiagram
+  title="AWREADY default LOW: at least two cycles"
+  caption="Columns are rising ACLK edges 0 to 3. The slave keeps AWREADY low until it sees AWVALID, so one cycle goes to asserting AWVALID and another to asserting AWREADY (IHI0022E §A3.2.2, Note)."
+  edges={4}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 1, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pending", label: "AWVALID seen; AWREADY still low" },
+    { edge: 2, tone: "pass", label: "transfer, one cycle later" }
+  ]}
+/>
 
 ### Expert: AXI3 legacy write responses
 
@@ -511,15 +752,75 @@ The AXI4 write response dependency (B after both AW and WLAST) was added because
 
 ### Expert: reset and the first handshake
 
-During reset (ARESETn low), a master must drive ARVALID, AWVALID and WVALID low, and a slave must drive RVALID and BVALID low; all other signals may take any value. The earliest a master may raise a VALID is at a rising ACLK edge after ARESETn is high (IHI0022E §A3.1.2). Two consequences for a testbench: VALID-hold assertions need a reset qualifier (for example `disable iff (!aresetn)`), and a driver must not leave VALID high through a mid-test reset. Reset handling across a whole environment is the subject of [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
+During reset (ARESETn low), a master must drive ARVALID, AWVALID and WVALID low, and a slave must drive RVALID and BVALID low; all other signals may take any value. The earliest a master may raise a VALID is at a rising ACLK edge after ARESETn is high (IHI0022E §A3.1.2).
+
+<TimingDiagram
+  title="Leaving reset: the earliest AWVALID"
+  caption="Columns are rising ACLK edges 0 to 5. ARESETn is deasserted just after edge 2 (deassertion is synchronous to ACLK), so edge 3 is the first rising edge with ARESETn high. The master may drive AWVALID high from that edge, and edge 4 is the earliest that samples it high. AWREADY is drawn as X during reset because any value is allowed there (IHI0022E §A3.1.2, Figure A3-1)."
+  edges={6}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARESETn", kind: "bit", values: [0, 0, 0, 1, 1, 1] },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 0, 0, 1, 1] },
+    { name: "AWREADY", kind: "bit", values: [undefined, undefined, undefined, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "first edge with ARESETn high: VALID may be driven high from here" },
+    { edge: 4, tone: "sample", label: "earliest edge that samples AWVALID high" },
+    { edge: 5, tone: "pass", label: "AW transfer" }
+  ]}
+/>
+
+Two consequences for a testbench: VALID-hold assertions need a reset qualifier (for example `disable iff (!aresetn)`), and a driver must not leave VALID high through a mid-test reset. Reset handling across a whole environment is the subject of [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index).
 
 ### Expert: register slices and why the box can beat the label
 
 Each AXI channel moves information in one direction only, and the architecture requires no fixed timing relationship between channels. That is why a **register slice** (a pipeline register on one channel) can be inserted at almost any point, at the cost of one cycle of latency per slice (IHI0022E §A1.3.3). It is also the physical reason W can arrive before AW: if the AW path has more register stages than the W path, the data simply gets there first (§A3.3). A monitor placed after a register slice can therefore see a different AW-to-W order than one placed at the master, and both must accept it.
 
+<ArchitectureDiagram
+  title="One register slice on AW, none on W"
+  cellWidth={140}
+  gapX={48}
+  spreadAnchors={true}
+  caption="The master offers AW and W on the same edge. The AW path has a register slice and the W path does not, so the address reaches the slave one cycle later than the data (more if the slice is stalled). A monitor at the master sees AW and W together; a monitor at the slave can see W first. Both orders are legal (IHI0022E §A1.3.3, §A3.3)."
+  nodes={[
+    { id: "mst", label: "AXI master", sublabel: "offers AW and W at once", col: 0, row: 0, colSpan: 2 },
+    { id: "rs", label: "register slice", sublabel: "AW path, +1 cycle", col: 0, row: 1 },
+    { id: "wp", label: "direct wires", sublabel: "W path, no slice", col: 1, row: 1 },
+    { id: "slv", label: "AXI slave", sublabel: "W can arrive first", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "mst", to: "rs", style: "data", label: "AW" },
+    { from: "mst", to: "wp", style: "data", label: "W" },
+    { from: "rs", to: "slv", style: "data", label: "AW" },
+    { from: "wp", to: "slv", style: "data", label: "W" }
+  ]}
+/>
+
 ### Expert: AHB, why only the data phase can stretch
 
 A slave cannot extend the address phase, so every slave must be able to sample the address in one cycle (IHI0033B.b §1.3). It extends the data phase by driving HREADYOUT low, and the interconnect combines all HREADYOUT signals into the single HREADY every component sees (§3.1). Because HREADY is shared, the next transfer's address phase stretches too, and every slave must sample HSELx, address and control only when HREADY is high (§4.2). An AHB monitor or slave model that samples the address on every edge double-counts waited transfers. [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index) turns this into the normative timing rules.
+
+<ArchitectureDiagram
+  title="One HREADY for the whole AHB-Lite bus"
+  cellWidth={140}
+  gapX={48}
+  spreadAnchors={true}
+  caption="Each slave drives its own HREADYOUT. The multiplexor passes the selected slave's value on as HREADY, and HREADY goes to the master and to every slave, including slaves that are not selected. That is why one slave's wait holds the next address phase for everyone on this bus (IHI0033B.b Table 2-5, §3.1, §4.3)."
+  nodes={[
+    { id: "hs1", label: "slave 1", sublabel: "drives HREADYOUT_1", col: 0, row: 0 },
+    { id: "hs2", label: "slave 2", sublabel: "drives HREADYOUT_2", col: 1, row: 0 },
+    { id: "hmux", label: "multiplexor", sublabel: "selects one HREADYOUT", col: 0, row: 1, colSpan: 2 },
+    { id: "hmst", label: "AHB master", sublabel: "holds while HREADY is 0", col: 0, row: 2 },
+    { id: "hall", label: "every slave's input", sublabel: "same slaves, HREADY in", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "hs1", to: "hmux", style: "data", label: "HREADYOUT_1" },
+    { from: "hs2", to: "hmux", style: "data", label: "HREADYOUT_2" },
+    { from: "hmux", to: "hmst", style: "data", label: "HREADY" },
+    { from: "hmux", to: "hall", style: "data", label: "HREADY" }
+  ]}
+/>
 
 ### Expert: interview angles
 
@@ -767,6 +1068,38 @@ Decide each case, and name the rule, before you open the answers. "Edge" means a
 **Debug challenge.** Run the two "Break it on purpose" steps in Make It Work and confirm the log you predicted: no transfers and the deadlock error for (a), and an `a_hold` failure at edge 2 for (b).
 
 **Explorer prediction.** If you skipped them, answer both built-in predictions in the explorer (the Writing Data and Reading Data tabs) before you step through.
+
+**One-glance summary.** The four hooks, each with the rule it stands for and the place where the picture stops being true. Check it against your own answers above, then take it into the flashcards.
+
+<figure className="not-prose my-6">
+<div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
+<section aria-label="Hook 1: the two-stage bridge (AHB)" className="min-w-0 rounded-xl border border-border bg-card p-4 text-sm text-foreground">
+<p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">AHB</p>
+<p className="mt-1 text-base font-semibold">1. Two-stage bridge</p>
+<p className="mt-2"><strong>Rule:</strong> each transfer has an address phase and a data phase, and each address phase overlaps the previous data phase. HREADY low holds the current data phase and the next address phase; take address and control only at an edge where HREADY is high (IHI0033B.b §3.1, §4.2).</p>
+<p className="mt-2"><strong>Breaks:</strong> two transfers are on the bridge at once, and the protocol has no arbiter (§2.2, §4.1).</p>
+</section>
+<section aria-label="Hook 2: lanes into an interchange (AXI)" className="min-w-0 rounded-xl border border-border bg-card p-4 text-sm text-foreground">
+<p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">AXI</p>
+<p className="mt-1 text-base font-semibold">2. Lanes into an interchange</p>
+<p className="mt-2"><strong>Rule:</strong> five independent one-way channels, each with its own handshake; a master can have multiple outstanding transactions, tagged with IDs (IHI0022E §A1.3).</p>
+<p className="mt-2"><strong>Breaks:</strong> the interconnect may share buses inside (§A1.3.2), the lanes are not fully independent (B after AW and WLAST, R after AR, §A3.3.1), and same-ID transactions in one direction return in issue order (§A5.3).</p>
+</section>
+<section aria-label="Hook 3: mail delivery (the five channels)" className="min-w-0 rounded-xl border border-border bg-card p-4 text-sm text-foreground">
+<p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">AXI channels</p>
+<p className="mt-1 text-base font-semibold">3. Mail delivery</p>
+<p className="mt-2"><strong>Rule:</strong> AW and W may complete in either order or on the same edge (§A3.3). In AXI4, BVALID only after the AW handshake and the W handshake carrying WLAST; RVALID only after the AR handshake (§A3.3.1).</p>
+<p className="mt-2"><strong>Breaks:</strong> the label travels apart from its box, and a write gets one BRESP while a read gets an RRESP on every beat (§A3.4.4).</p>
+</section>
+<section aria-label="Hook 4: the courier at the door (VALID and READY)" className="min-w-0 rounded-xl border border-border bg-card p-4 text-sm text-foreground">
+<p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Every AXI channel</p>
+<p className="mt-1 text-base font-semibold">4. Courier at the door</p>
+<p className="mt-2"><strong>Rule:</strong> a transfer happens at a rising ACLK edge where VALID and READY are both high. The source must not wait for READY before asserting VALID, and once VALID is high it stays high, with a stable payload, until the transfer. READY may come first, wait for VALID, or drop again before VALID arrives (§A3.2.1).</p>
+<p className="mt-2"><strong>Breaks:</strong> a real courier may wait for the door to open; an AXI source may not.</p>
+</section>
+</div>
+<figcaption className="mt-2 text-sm text-muted-foreground">The four hooks of this lesson on one page: hook 1 for AHB, hooks 2 to 4 for AXI. Each card gives the real rule with its clause, then the limit of the picture.</figcaption>
+</figure>
 
 The flashcards for this lesson follow below, under "Reinforce the essentials".
 

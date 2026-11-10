@@ -17,6 +17,22 @@ sources:
 - **Why it matters:** Most testbench data belongs in native SystemVerilog containers, which are simpler and come with array methods. The UVM containers earn their place in two jobs: sharing one container object between components, and sharing a named event or barrier between agents that have no other connection. They also hide traps that cause silent bugs: `get()` of a missing key *adds* that key, `compare()` returns 1 whatever two containers hold, and a barrier taken from the pool starts with a threshold of 0, so it blocks nobody.
 - **The Analogy:** A native container is your backpack: fast, private, and copied whenever you hand it over. A UVM container is a locker in a shared hallway: anyone holding the key (a handle) opens the same locker, and the event pool is a row of lockers labelled by name. *Where it breaks:* the "global" locker is not chosen by name. There is exactly one per type specialization, so every piece of code that uses `uvm_pool #(string,int)`, including a vendor's **verification IP** (VIP: a ready-made, usually third-party, set of agents for a protocol), opens the same one. And a native array declared in a package is shared too; what the UVM container really adds is a handle you can pass and a factory that can create it.
 
+<ArchitectureDiagram
+  title="Three kinds of container, and what to remember about each"
+  caption="Read each row left to right: what the container is, then the behaviour to remember. The badges carry the analogy (backpack, locker, a row of lockers by name). The two red boxes are the traps this lesson traces step by step; the native read on the top row is the habit that makes the uvm_pool trap surprising."
+  cellWidth={170}
+  gapX={56}
+  gapY={24}
+  nodes={[
+    { id: "qt-native", label: "int q[$], aa[string]", sublabel: "native: a variable, copied", kind: "generic", col: 0, row: 0, badge: "backpack" },
+    { id: "qt-native-rule", label: "read of aa[k]", sublabel: "a plain read adds no key", kind: "generic", col: 1, row: 0, state: "ok" },
+    { id: "qt-uvm", label: "uvm_pool, uvm_queue", sublabel: "an object: share its handle", kind: "generic", col: 0, row: 1, badge: "locker" },
+    { id: "qt-uvm-trap", label: "get(k) adds the key", sublabel: "and compare() always returns 1", kind: "generic", col: 1, row: 1, state: "error", badge: "trap" },
+    { id: "qt-sync", label: "event, barrier pool", sublabel: "get(key) creates the object", kind: "generic", col: 0, row: 2, badge: "lockers by name" },
+    { id: "qt-sync-trap", label: "barrier threshold 0", sublabel: "call set_threshold(n) first", kind: "generic", col: 1, row: 2, state: "error", badge: "trap" }
+  ]}
+/>
+
 **You will be able to:**
 1. Choose native containers or `uvm_pool`/`uvm_queue` for a sharing scenario (a handle passed through `uvm_config_db`, a global singleton, factory creation), and justify the choice.
 2. Predict what `uvm_pool` and `uvm_queue` calls do: `get()` of a missing key, `exists`/`delete`/`num`, out-of-range `get`/`insert`/`delete`, and which global instance a specialization returns.
@@ -56,6 +72,26 @@ qb = qa;            // qa and qb are two handles to one object
 qb.push_back(3);    // qa.size() is now 1
 ```
 
+<ArchitectureDiagram
+  title="Two native queues, but one uvm_queue"
+  caption="The state after each snippet. Left: q_b = q_a made a second queue, so the push_back changed only q_b. Right: qb = qa copied the handle, so both handles lead to the one uvm_queue object, and the push_back through qb is visible through qa."
+  cellWidth={170}
+  gapX={56}
+  nodes={[
+    { id: "nq-box", label: "native int q[$]", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "nq-a", label: "q_a", sublabel: "holds '{1, 2}", kind: "generic", col: 0, row: 0 },
+    { id: "nq-b", label: "q_b", sublabel: "holds '{1, 2, 3}", kind: "generic", col: 0, row: 2 },
+    { id: "uq-box", label: "uvm_queue #(int)", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "uq-qa", label: "qa", sublabel: "a handle", kind: "generic", col: 1, row: 0 },
+    { id: "uq-obj", label: "one queue object", sublabel: "holds '{3}, size() = 1", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "uq-qb", label: "qb", sublabel: "a handle", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "uq-qa", to: "uq-obj", style: "structural", label: "refers to" },
+    { from: "uq-qb", to: "uq-obj", style: "structural", label: "refers to" }
+  ]}
+/>
+
 So when two components need *the same* container, you have three options: make the native container a member of an object you already share (for example a configuration object), declare it at package scope where every importer sees it, or use a UVM container and share its handle. The rest of this section is about the third option and when it is worth it.
 
 ### `uvm_pool #(KEY,T)`: a keyed table behind a handle
@@ -73,7 +109,7 @@ So when two components need *the same* container, you have three options: make t
 | `first(key)`, `last(key)`, `next(key)`, `prev(key)` | walk the keys in key order; each returns 0 when there is nothing to move to | §11.2.2.9–§11.2.2.12 |
 | `get_global_pool()`, `get_global(key)` | static: the one global pool of this specialization, and `get(key)` on it | §11.2.2.2–§11.2.2.3 |
 
-**The `get()` trap, traced.** This is the call that surprises nearly everyone. Read the code, predict the right-hand columns, then check:
+**The `get()` trap, traced.** This is the call that surprises nearly everyone. Read the code and, for each of the four steps, predict the pool contents, `num()`, `n` and any log line; then open the check:
 
 ```systemverilog
 // snippet: inside a class method
@@ -86,6 +122,9 @@ if (err_pool.exists("parity")) n = err_pool.get("parity"); // step 3
 err_pool.delete("parity");                                 // step 4
 ```
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
 | Step | Pool contents after the step | `num()` | `n` | Log |
 |---|---|---|---|---|
 | 1 `add("crc", 2)` | `crc: 2` | 1 | 0 | — |
@@ -93,11 +132,16 @@ err_pool.delete("parity");                                 // step 4
 | 3 `exists("parity")` | unchanged (`exists` returned 0, so `get` was skipped) | 2 | 0 | — |
 | 4 `delete("parity")` | unchanged | 2 | 0 | `UVM_WARNING … [POOLDEL]` (uvm-core) |
 
-Step 2 is the trap. A native associative array behaves the other way round, which is why the habit from F2B misleads you:
+Step 2 is the trap.
+
+</details>
+
+A native associative array behaves the other way round, which is why the habit from F2B misleads you:
 
 | Action | Native `int aa[string]` | `uvm_pool #(string,int)` |
 |---|---|---|
 | Read a missing key | returns the default (0) and **adds nothing**; IEEE 1800-2023 §7.8.6 says a warning shall be issued | `get()` returns the default **and adds the key**, with no warning (§11.2.2.4) |
+| Increment, or pass by `ref`, a missing key | `aa[k]++` allocates the entry with its default (or the array's `default:` initial value) before the increment, and so does passing `aa[k]` to a `ref` argument (IEEE 1800-2023 §7.8.7) | no such form: write `add(k, get(k) + 1)`, which relies on `get()` inserting the default |
 | Delete a missing key | no effect and no warning (IEEE 1800-2023 §7.9.2) | no effect; uvm-core warns `POOLDEL` (the standard does not require a warning) |
 | The default value | from IEEE 1800-2023 Table 7-1 (§7.4.5) | the same table: `0` for 2-state types such as `int`, `'x` for 4-state types such as `logic`, `null` for a class handle, `""` for a `string` |
 | Walk the entries | `foreach`, or `first`/`next` | `first`/`next` only: a pool is an object, so `foreach` and the array methods do not apply |
@@ -159,6 +203,47 @@ The catch is the word *one*. The singleton belongs to the **specialization**, no
 
 It is **stricter than a native queue** at the edges. An index equal to or greater than `size()` is rejected: the call warns and changes nothing (§11.3.2.4, §11.3.2.6). uvm-core also rejects a negative index, except the `-1` that means "everything" for `delete`.
 
+**Predict first.** A native `int q[$]` and a `uvm_queue #(int)` each hold `'{5, 9}`, so `size()` is 2. For each call, write down what the native queue does and what the `uvm_queue` does: `insert(2, 7)`; `get(5)` (on the native queue, the read `q[5]`); `delete(5)`; and, on an **empty** queue, `insert(0, 7)`. One more fact you need: a native queue's `insert(i, x)` accepts any index from 0 up to and including `size()`, and appends when the index equals `size()` (IEEE 1800-2023 §7.10.2.2).
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+<figure className="my-4">
+  <svg viewBox="0 0 340 238" role="img" aria-label="Index ruler for a queue holding 5 at index 0 and 9 at index 1, so size() is 2. Native insert: index minus 1 has no effect, indexes 0 and 1 insert, index 2 appends. uvm_queue insert: index minus 1 is ignored, 0 and 1 insert, index 2 is ignored with a QUEUEINS warning. uvm_queue get: index minus 1 and index 2 return the default with a QUEUEGET warning, index 0 returns 5 and index 1 returns 9." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="60" y="16" textAnchor="middle" fontSize="11" fill="currentColor">index −1</text>
+    <text x="130" y="16" textAnchor="middle" fontSize="11" fill="currentColor">0</text>
+    <text x="200" y="16" textAnchor="middle" fontSize="11" fill="currentColor">1</text>
+    <text x="270" y="16" textAnchor="middle" fontSize="11" fill="currentColor">2 = size()</text>
+    <rect x="32" y="24" width="56" height="30" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <rect x="102" y="24" width="56" height="30" rx="5" fill="none" stroke="currentColor" />
+    <rect x="172" y="24" width="56" height="30" rx="5" fill="none" stroke="currentColor" />
+    <rect x="242" y="24" width="56" height="30" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="60" y="43" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">none</text>
+    <text x="130" y="44" textAnchor="middle" fontSize="13" fontWeight="bold" fill="currentColor">5</text>
+    <text x="200" y="44" textAnchor="middle" fontSize="13" fontWeight="bold" fill="currentColor">9</text>
+    <text x="270" y="43" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">the end</text>
+    <text x="16" y="80" fontSize="11" fontWeight="bold" fill="currentColor">native insert(i, 7)</text>
+    <text x="60" y="100" textAnchor="middle" fontSize="12" className="fill-rose-600 dark:fill-rose-400">✕</text>
+    <text x="130" y="100" textAnchor="middle" fontSize="12" className="fill-emerald-600 dark:fill-emerald-400">✓</text>
+    <text x="200" y="100" textAnchor="middle" fontSize="12" className="fill-emerald-600 dark:fill-emerald-400">✓</text>
+    <text x="270" y="100" textAnchor="middle" fontSize="12" className="fill-emerald-600 dark:fill-emerald-400">✓ appends</text>
+    <text x="16" y="132" fontSize="11" fontWeight="bold" fill="currentColor">uvm_queue insert(i, 7)</text>
+    <text x="60" y="152" textAnchor="middle" fontSize="12" className="fill-rose-600 dark:fill-rose-400">✕</text>
+    <text x="130" y="152" textAnchor="middle" fontSize="12" className="fill-emerald-600 dark:fill-emerald-400">✓</text>
+    <text x="200" y="152" textAnchor="middle" fontSize="12" className="fill-emerald-600 dark:fill-emerald-400">✓</text>
+    <text x="270" y="152" textAnchor="middle" fontSize="12" className="fill-rose-600 dark:fill-rose-400">✕</text>
+    <text x="270" y="166" textAnchor="middle" fontSize="10" fill="currentColor">QUEUEINS</text>
+    <text x="16" y="194" fontSize="11" fontWeight="bold" fill="currentColor">uvm_queue get(i)</text>
+    <text x="60" y="214" textAnchor="middle" fontSize="12" className="fill-rose-600 dark:fill-rose-400">✕</text>
+    <text x="60" y="228" textAnchor="middle" fontSize="10" fill="currentColor">QUEUEGET</text>
+    <text x="130" y="214" textAnchor="middle" fontSize="12" fill="currentColor">5</text>
+    <text x="200" y="214" textAnchor="middle" fontSize="12" fill="currentColor">9</text>
+    <text x="270" y="214" textAnchor="middle" fontSize="12" className="fill-rose-600 dark:fill-rose-400">✕</text>
+    <text x="270" y="228" textAnchor="middle" fontSize="10" fill="currentColor">QUEUEGET</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The legal indexes of a queue holding '{5, 9}. ✓ means the call takes effect; ✕ means it changes nothing (a rejected get returns the default value). A native queue accepts the slot at size() for insert; uvm_queue accepts only 0 to size()-1 (§11.3.2.4, §11.3.2.6). Rejecting −1 for get and insert is uvm-core behaviour; the standard states the rule only for an index at or above size(). delete(i) follows the same range, except that delete() with no argument (index −1) empties the queue.</figcaption>
+</figure>
+
 | Call on a queue holding `'{5, 9}` | Native `int q[$]` | `uvm_queue #(int)` |
 |---|---|---|
 | `insert(2, 7)`, index equal to `size()` | appends: `'{5, 9, 7}` (IEEE 1800-2023 §7.10.2.2) | ignored, `QUEUEINS` warning, still `'{5, 9}` (§11.3.2.6) |
@@ -166,7 +251,34 @@ It is **stricter than a native queue** at the edges. An index equal to or greate
 | `delete(5)` | no effect | no effect, `QUEUEDEL` warning (uvm-core) |
 | `insert(0, 7)` on an **empty** queue | `'{7}` | ignored: 0 is not less than `size()`, so use `push_back` |
 
+</details>
+
 **`wait_until_not_empty()` waits; it does not take.** With one consumer, `wait_until_not_empty(); x = q.pop_front();` is fine. With two consumers, both can wake for the same item, and the second `pop_front()` finds an empty queue and returns the default (`null` for a class). IEEE 1800.2 §11.3.2.8 says an implementation shall warn in that case; uvm-core simply calls the native `pop_front`, for which IEEE 1800-2023 §7.10.2.4 says only that a warning *may* be issued, so whether you see anything is tool-dependent. For a blocking hand-off from producer to consumer, use a mailbox ([I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)) or a `uvm_tlm_fifo` ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)): their `get` waits *and* removes in one step.
+
+<SequenceDiagram
+  title="Two consumers, one item"
+  caption="Both waits return while the one item is still in the queue, so both consumers go on to pop it. The work between the wait and the pop makes this certain; when a consumer pops straight after its wait, whether the second one also gets past the wait depends on the order in which the simulator resumes the two processes. A mailbox get() or uvm_tlm_fifo get() would have kept B waiting, because it waits and removes in one call."
+  columnWidth={150}
+  participants={[
+    { id: "prod", label: "producer", kind: "generic" },
+    { id: "q", label: "q", sublabel: "uvm_queue #(my_item)", kind: "generic" },
+    { id: "ca", label: "consumer A", kind: "generic" },
+    { id: "cb", label: "consumer B", kind: "generic" }
+  ]}
+  messages={[
+    { from: "prod", to: "q", label: "push_back(item)" },
+    { from: "ca", to: "q", label: "wait_until_not_empty()" },
+    { kind: "return", from: "q", to: "ca", label: "returns at once: size() is 1" },
+    { from: "cb", to: "q", label: "wait_until_not_empty()" },
+    { kind: "return", from: "q", to: "cb", label: "returns at once: size() is still 1" },
+    { kind: "divider", label: "both consumers do other work before they pop" },
+    { from: "ca", to: "q", label: "pop_front()" },
+    { kind: "return", from: "q", to: "ca", label: "the item; size() is now 0", tone: "active" },
+    { from: "cb", to: "q", label: "pop_front()" },
+    { kind: "return", from: "q", to: "cb", label: "the default value: null", tone: "error" },
+    { kind: "note", from: "q", to: "cb", label: "empty queue: §11.3.2.8 says shall warn; uvm-core calls the native pop_front, which only may warn", tone: "error" }
+  ]}
+/>
 
 `uvm_queue` also has none of the native array methods (`sort`, `find`, `unique`, `sum` and the rest), and `foreach` does not work on it. Walk it with `for (int i = 0; i < q.size(); i++)` and `q.get(i)`.
 
@@ -298,6 +410,39 @@ Three consequences:
 - **Not faster.** A UVM container is the same native container plus a virtual method call on every access, so it is never a speed upgrade, and you lose the array methods. Choose it for sharing, never for performance.
 
 ### Choosing a container
+
+<ArchitectureDiagram
+  title="Which sharing mechanism? Ask top to bottom"
+  caption="Ask the questions in order and stop at the first yes. Each yes leads right to the mechanism; each no leads down to the next question; if every answer is no, the bottom box is what is left: global state that every part of the bench reaches, to be used sparingly. The table below gives the reason for each choice."
+  cellWidth={170}
+  gapX={56}
+  gapY={44}
+  nodes={[
+    { id: "ch-q1", label: "one component only?", sublabel: "such as a scoreboard's list", kind: "generic", col: 0, row: 0 },
+    { id: "ch-a1", label: "native queue or aa", sublabel: "array methods, no call cost", kind: "generic", col: 1, row: 0, state: "ok" },
+    { id: "ch-q2", label: "moving transactions?", sublabel: "items between components", kind: "generic", col: 0, row: 1 },
+    { id: "ch-a2", label: "TLM connection", sublabel: "ports, exports, analysis", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "ch-q3", label: "blocking hand-off?", sublabel: "consumer waits for an item", kind: "generic", col: 0, row: 2 },
+    { id: "ch-a3", label: "mailbox, uvm_tlm_fifo", sublabel: "get waits and removes", kind: "generic", col: 1, row: 2, state: "ok" },
+    { id: "ch-q4", label: "one table, a few users?", sublabel: "components you build", kind: "generic", col: 0, row: 3 },
+    { id: "ch-a4", label: "instance + config_db", sublabel: "or native, in a config object", kind: "generic", col: 1, row: 3, state: "ok" },
+    { id: "ch-q5", label: "named sync point?", sublabel: "config done, all N arrived", kind: "generic", col: 0, row: 4 },
+    { id: "ch-a5", label: "event or barrier pool", sublabel: "wait_on; set_threshold first", kind: "generic", col: 1, row: 4, state: "ok" },
+    { id: "ch-a6", label: "global pool, pkg array", sublabel: "no owner: use sparingly", kind: "generic", col: 0, row: 5, state: "dim" }
+  ]}
+  edges={[
+    { from: "ch-q1", to: "ch-a1", style: "causal", label: "yes" },
+    { from: "ch-q1", to: "ch-q2", style: "causal", label: "no" },
+    { from: "ch-q2", to: "ch-a2", style: "causal", label: "yes" },
+    { from: "ch-q2", to: "ch-q3", style: "causal", label: "no" },
+    { from: "ch-q3", to: "ch-a3", style: "causal", label: "yes" },
+    { from: "ch-q3", to: "ch-q4", style: "causal", label: "no" },
+    { from: "ch-q4", to: "ch-a4", style: "causal", label: "yes" },
+    { from: "ch-q4", to: "ch-q5", style: "causal", label: "no" },
+    { from: "ch-q5", to: "ch-a5", style: "causal", label: "yes" },
+    { from: "ch-q5", to: "ch-a6", style: "causal", label: "no" }
+  ]}
+/>
 
 | Situation | Choose | Why |
 |---|---|---|
@@ -505,6 +650,27 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
+<TimingDiagram
+  title="The Make It Work run on a 20 ns grid"
+  caption="The x-axis is simulation time: column k is t = k × 20 ns, from 0 ns at column 0 to 240 ns at column 12 (this testbench has no clock; the grid only marks time). A value that changes just after a column line changes at that column's time. At 0 ns the test raises its objection and waits at the barrier (1 waiter). At 100 ns (column 5) cfg_agt triggers cfg_done and data_a's wait_on() returns. At 120 ns (column 6) data_a has sent its 2 writes and joins the barrier (2 waiters). At 200 ns (column 10) data_b calls wait_on(), which returns at once because cfg_done is on. At 220 ns (column 11) data_b joins as the third waiter: all three are released, auto-reset sets the count back to 0, the test drops its objection and the run ends. Column 12 shows the state after the release."
+  edges={13}
+  cycleWidth={48}
+  signals={[
+    { name: "cfg_done", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "data_a", kind: "bus", values: ["wait_on", "wait_on", "wait_on", "wait_on", "wait_on", "wait_on", "send", "wait_for", "wait_for", "wait_for", "wait_for", "wait_for", "done"] },
+    { name: "data_b", kind: "bus", values: ["busy", "busy", "busy", "busy", "busy", "busy", "busy", "busy", "busy", "busy", "busy", "send", "done"] },
+    { name: "waiters", kind: "bus", values: [0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 0] },
+    { name: "objection", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "0 ns: the test raises its objection and calls wait_for(): 1 waiter", short: "0 ns" },
+    { edge: 5, tone: "drive", label: "100 ns: cfg_done.trigger(); data_a's wait_on() returns", short: "100 ns" },
+    { edge: 6, tone: "info", label: "120 ns: data_a joins the barrier: 2 waiters", short: "120 ns" },
+    { edge: 10, tone: "pass", label: "200 ns: data_b's wait_on() returns at once, the event is on", short: "200 ns" },
+    { edge: 11, tone: "pass", label: "220 ns: third waiter, all released, count back to 0, objection dropped", short: "220 ns" }
+  ]}
+/>
+
 Read it against the rules:
 - `addr_q` prints its items in decimal through `convert2string()` (`'h1000` is 4096). `print()` would have shown only a header.
 - `data_a` waits from 0 ns and wakes at the trigger at 100 ns. `data_b` calls `wait_on()` at 200 ns, after the trigger, and continues at once because the event is on.
@@ -517,6 +683,20 @@ Read it against the rules:
 
 Make one change at a time, predict the log, then run it:
 
+| # | Change |
+|---|---|
+| 1 | Delete the `set_threshold(3)` line |
+| 2 | In `data_agent`, change `wait_on()` to `wait_trigger()` |
+| 3 | In `cfg_agent`, replace `CFG_DONE` with the literal `"cfg_dn"` |
+| 4 | In `cfg_agent`, replace `uvm_event_pool::get_global(CFG_DONE)` with `uvm_pool #(string, uvm_event)::get_global(CFG_DONE)` |
+| 5 | Replace `addr_q.push_back('h2000)` with `addr_q.insert(addr_q.size(), 'h2000)` |
+| 6 | At the start of `report_phase`, add `if (counts.get("data_c") != 0) ;` |
+
+For each change, write down when the run ends, which warnings, errors or fatals appear, and what `report_phase` prints. Then check:
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your six predictions</summary>
+
 | Change | What you should see | The rule |
 |---|---|---|
 | Delete the `set_threshold(3)` line | Only `RNTST` and `num() = 0`: the run ends at 0 ns with `UVM_ERROR :    2` from `check_phase`. Without the check, this test would *pass* with no traffic | A pool-created barrier has threshold 0, so the test's `wait_for()` returns at once |
@@ -525,6 +705,8 @@ Make one change at a time, predict the log, then run it:
 | In `cfg_agent`, replace `uvm_event_pool::get_global(CFG_DONE)` with `uvm_pool #(string, uvm_event)::get_global(CFG_DONE)` | A run-stopping null-object access at 100 ns at `cfg_done.trigger()` (the message is tool-dependent) | A plain pool stores and returns `null` for a missing class-handle key |
 | Replace `addr_q.push_back('h2000)` with `addr_q.insert(addr_q.size(), 'h2000)` | `UVM_WARNING … [QUEUEINS]`, `addr_q = '{4096}`, each agent sends 1 write, `UVM_WARNING :    1` | `uvm_queue::insert` rejects an index equal to `size()` |
 | At the start of `report_phase`, add `if (counts.get("data_c") != 0) ;` | `data_c = 0` appears in the list and `num() = 3` | Probing with `get()` adds the key |
+
+</details>
 
 ### Debug it: symptom, cause, fix
 
@@ -575,6 +757,34 @@ Staff-level answer to "where should shared state live?": with an owner. The env 
 
 IEEE 1800.2-2020 declares `class uvm_event_pool extends uvm_pool #(string,uvm_event#(uvm_object))` (§10.4.1.1) and `class uvm_barrier_pool extends uvm_pool #(string,uvm_barrier)` (§10.4.2.1). uvm-core 2020.3.1 implements both as typedefs of a helper class: `typedef uvm_object_string_pool #(uvm_event#(uvm_object)) uvm_event_pool;` and `typedef uvm_object_string_pool #(uvm_barrier) uvm_barrier_pool;` (`uvm_pool.svh`). `uvm_object_string_pool` is marked `@uvm-compat` (kept for UVM 1.2 code) and is not part of IEEE 1800.2-2020, so code that names it is not portable; name `uvm_event_pool` and `uvm_barrier_pool` instead.
 
+<ArchitectureDiagram
+  title="The pool classes in the standard and in uvm-core"
+  caption="Top: IEEE 1800.2-2020 declares each synchronization pool as a subclass of a uvm_pool specialization keyed by string (§10.4.1.1, §10.4.2.1). Bottom: uvm-core 2020.3.1 adds a helper class in between and makes the two names typedefs of it. Because the helper redeclares the static m_global_pool, its global is a different object from the one in uvm_pool."
+  cellWidth={170}
+  gapX={56}
+  gapY={70}
+  cellHeight={56}
+  spreadAnchors
+  nodes={[
+    { id: "cm-ieee", label: "IEEE 1800.2-2020", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "cm-ieee-pool", label: "uvm_pool #(string,…)", sublabel: "T is the event or barrier type", kind: "generic", col: 0, row: 0 },
+    { id: "cm-ieee-ev", label: "uvm_event_pool", sublabel: "§10.4.1.1", kind: "generic", col: 0, row: 1 },
+    { id: "cm-ieee-bar", label: "uvm_barrier_pool", sublabel: "§10.4.2.1", kind: "generic", col: 1, row: 1 },
+    { id: "cm-core", label: "uvm-core 2020.3.1", kind: "generic", col: 0, row: 2, colSpan: 2, rowSpan: 3, container: true },
+    { id: "cm-core-pool", label: "uvm_pool #(string,T)", sublabel: "static m_global_pool", kind: "generic", col: 0, row: 2 },
+    { id: "cm-core-osp", label: "uvm_object_string_pool", sublabel: "redeclares m_global_pool", kind: "generic", col: 0, row: 3, badge: "@uvm-compat" },
+    { id: "cm-core-ev", label: "uvm_event_pool", sublabel: "a typedef", kind: "generic", col: 0, row: 4 },
+    { id: "cm-core-bar", label: "uvm_barrier_pool", sublabel: "a typedef", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "cm-ieee-ev", to: "cm-ieee-pool", style: "structural", label: "extends" },
+    { from: "cm-ieee-bar", to: "cm-ieee-pool", style: "structural", label: "extends" },
+    { from: "cm-core-osp", to: "cm-core-pool", style: "structural", label: "extends" },
+    { from: "cm-core-ev", to: "cm-core-osp", style: "structural", label: "typedef" },
+    { from: "cm-core-bar", to: "cm-core-osp", style: "structural", label: "typedef" }
+  ]}
+/>
+
 Two consequences in uvm-core:
 - `uvm_event_pool::get_global_pool()` and `uvm_pool #(string, uvm_event#(uvm_object))::get_global_pool()` return **different** objects, because the helper class redeclares the static handle.
 - §10.4.1's overview says the event pool contains `begin`, `accept` and `end` events by default. That describes the event pool *inside each* `uvm_transaction`: in uvm-core, `accept_tr()`, `begin_tr()` and `end_tr()` fetch those three events from the transaction's own pool by name, which creates them on first use (`uvm_transaction.svh`). A pool you get from `uvm_event_pool::get_global_pool()` or create yourself starts empty in uvm-core.
@@ -599,15 +809,35 @@ endfunction
 
 `clone()` is `create()` plus `copy()`, so each item is only as deep as *its* `do_copy` or field macros make it ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index)). A scoreboard that stores items from a monitor should clone them on entry for the same reason.
 
+**Step through the same rule on a class.** The explorer's shallow-copy program copies a `packet` whose queue property is copied element by element while its nested header handle is shared. That is what `copy()` does to a `uvm_queue #(my_item)`: the list is new, the items in it are not. The deep-copy program shows the independent version. Predict at each gate before you step on.
+
+<ObjectHandleVisualizer scenario="shallow-copy" scenarios={["shallow-copy", "deep-copy"]} />
+
 ### Expert: compare() returns 1, and when it does not
 
 Neither container registers fields or overrides `do_compare`, so `compare()` of two containers of the **same** specialization returns 1 whatever they hold. Two **different** specializations do miscompare in uvm-core, but only on type: the comparer's type check (§16.3.4.2, on by default) compares `get_object_type()`, which differs per specialization. Because both classes declare their type name with `` `uvm_type_name_decl("uvm_pool") `` and `("uvm_queue")`, `get_type_name()` is the same string for every specialization, and uvm-core's message reads "get_object_type() for … does not match get_object_type() for …" rather than naming the two types (`uvm_comparer.svh`). Either way, no element is ever compared.
+
+| `a.compare(b)` in uvm-core, with the default comparer | Equal contents | Different contents |
+|---|---|---|
+| Same specialization (two `uvm_queue #(int)`) | 1 | **1**: nothing is compared |
+| Different specializations (`uvm_queue #(int)` and `uvm_queue #(byte)`) | 0, from the type check only | 0, from the type check only |
+
+Only the row decides the result; the column never does. Turning the type check off with `set_check_type(0)` (§16.3.4.2) makes the bottom row return 1 as well.
 
 ### Expert: factory registration of parameterized containers
 
 Both classes register with `` `uvm_object_param_utils `` (uvm-core source). IEEE 1800.2-2020 B.2.1.2 says the param variants "do not supply a type name when registering the object with the factory. As such, name-based lookup with the factory for parameterized classes is not possible." So `uvm_pool #(string,int)::type_id::create("counts")` and type overrides by type work, but creating or overriding a pool by the string name "uvm_pool" does not. If a project wants to override its shared table type from the command line, wrap it in a non-parameterized subclass registered with `` `uvm_object_utils ``.
 
 ### Expert: memory and performance at scale (tool-dependent)
+
+**Predict:** `counts` is a `uvm_pool #(int, int)` instance that starts empty, and only a monitor touches it. For each of 10,000 transactions, each with a different `txn_id`, the monitor runs `if (counts.get(txn_id) > 0) ...` and never calls `add()`. What does `counts.num()` print in `report_phase`? And what if the line were `if (counts.exists(txn_id) && counts.get(txn_id) > 0) ...`?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+10,000, then 0. Each `get()` of a missing key stores 0 at that key (§11.2.2.4), so every probe leaves one entry behind, and none of them is ever deleted. With `exists()` first, the `&&` stops before `get()` for every missing key, so nothing is added.
+
+</details>
 
 - **Probes grow memory.** Every `get()` of a missing key adds an entry that lives until `delete(key)`; a monitor that probes a pool per transaction with fresh keys leaks for the whole run. `num()` in `report_phase` is a cheap leak check.
 - **No clear-all for pools.** `uvm_pool::delete` needs a key (§11.2.2.7). To empty a pool, walk and delete each key, or drop the handle and create a new instance.
@@ -649,6 +879,22 @@ Both classes register with `` `uvm_object_param_utils `` (uvm-core source). IEEE
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="Named events and barriers: find by key, wait safely, set the count first"
+  rule="uvm_event_pool::get and uvm_barrier_pool::get create the object the first time a key is used, so every party that names the key gets the same object; a waiter that may arrive after the trigger uses wait_on(), and a barrier from the pool starts at threshold 0, so set_threshold(n) must run before the first wait_for()."
+  code={`localparam string CFG_DONE = "cfg_done";               // keys in one package
+uvm_event_pool::get_global(CFG_DONE).wait_on();          // late waiters pass
+uvm_barrier_pool::get_global(TRAFFIC_DONE).set_threshold(3);  // in build_phase`}
+  mistake={`Spelling the key as a literal in two places: get_global("cfg_dn") silently creates a second event that nobody triggers, and the waiter hangs until PH_TIMEOUT.`}
+  inTestbench={`Make It Work: cfg_agt triggers cfg_done for data_a and the late data_b; the test sets the traffic_done threshold to 3 in build_phase, and the run ends when the third party arrives at 220 ns.`}
+>
+  <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+    <li>One key, one object: the pool creates it on first get(), whoever calls first.</li>
+    <li>wait_trigger(): only later triggers. wait_on(): returns at once while the event is on.</li>
+    <li>Barrier: at threshold 0 every wait_for() returns at once; set the threshold in build_phase; with auto-reset (on by default) the count returns to 0 after a release.</li>
+  </ul>
+</VisualRecap>
 
 Start with the quiz, which covers all four objectives. Then do the kata, which is the hands-on core of this lesson, and the debug challenge. The flashcards at the end of this section cover the whole page.
 

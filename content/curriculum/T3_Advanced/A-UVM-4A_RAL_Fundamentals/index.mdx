@@ -18,6 +18,26 @@ sources:
 - **The one idea to keep:** every field holds two values in the model: the **desired** value (what the test wants the DUT to hold) and the **mirrored** value (what the model believes the DUT holds). Neither one is the DUT. Each register call moves desired, mirrored and the DUT in its own way, and a bus access moves the mirror only when something *predicts* it. Backdoor calls, `predict()` and `reset()` set the mirror directly.
 - **The Analogy:** A checkbook register. The *desired* value is the amount you have decided to pay; the *mirror* is the balance in your own ledger; the *DUT* is the bank's real balance. Going to the teller is a **frontdoor** access: the bank applies its own rules. Writing the transaction into your ledger is **prediction**. Fees and interest that the bank applies without telling you are **volatile** fields. Reconciling your ledger with the statement is `mirror(UVM_CHECK)`. *Where it breaks:* your ledger only changes if someone actually writes in it, so with no prediction set up, the mirror never moves after a bus access; `set()` replaces the amount you plan to pay rather than queuing a second payment; and starting a fresh ledger (`reset()`) does nothing to the bank's balance.
 
+<ArchitectureDiagram
+  title="What moves each of the three values"
+  caption="Start at the test. set() moves only the desired value. A frontdoor write or read crosses the bus to the DUT, which applies its own rules; the mirror follows only when that access is predicted (predicted*). Not drawn: predict(), reset() and the backdoor calls set the mirror directly, and reset() never touches the DUT."
+  cellWidth={104}
+  gapX={44}
+  nodes={[
+    { id: "qt-test", label: "test", sublabel: "calls the model", kind: "test", col: 0, row: 0 },
+    { id: "qt-bus", label: "bus access", sublabel: "frontdoor", kind: "generic", col: 2, row: 0 },
+    { id: "qt-des", label: "desired", sublabel: "get()", kind: "reg", col: 0, row: 1 },
+    { id: "qt-mir", label: "mirrored", sublabel: "model's belief", kind: "reg", col: 1, row: 1 },
+    { id: "qt-dut", label: "DUT", sublabel: "the real flops", kind: "dut", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "qt-test", to: "qt-des", style: "causal", label: "set()" },
+    { from: "qt-test", to: "qt-bus", style: "causal", label: "write / read" },
+    { from: "qt-bus", to: "qt-dut", style: "data", label: "transfer" },
+    { from: "qt-bus", to: "qt-mir", style: "causal", label: "predicted*" }
+  ]}
+/>
+
 **You will be able to:**
 1. **Write** a register model from a small spec (RW, RO, W1C, RC, reserved and volatile fields, reset values and one memory) with `uvm_reg_field::configure`, `uvm_reg`, `uvm_mem`, `uvm_reg_block`, `create_map`/`add_reg`/`add_mem` and `lock_model`, choosing map rights, offsets, bus width and endianness.
 2. **Write** a bus adapter (`reg2bus`/`bus2reg` with status) and **integrate** the model into an environment and a `uvm_reg_sequence` (`set_sequencer`, the model handle, a temporary auto-prediction).
@@ -46,6 +66,16 @@ New words, defined once here:
 - An **access policy** says what a write and a read do to a field: `RW` stores the written value, `RO` ignores writes, `W1C` clears each bit written with 1, and so on.
 - A **volatile** field is one the hardware changes by itself, so no bus access tells the model when it changed.
 
+The two doors side by side (details in "Backdoor access and HDL paths"):
+
+| Question | Frontdoor | Backdoor |
+| --- | --- | --- |
+| Uses the bus and the agent? | Yes | No |
+| Takes simulation time? | Yes: one or more bus transfers | No: zero time |
+| Does the DUT's own write logic run? | Yes | No: a deposit only changes the variable |
+| Can a bus monitor see it? | Yes | No |
+| Needs an HDL path? | No | Yes |
+
 ### Why a register model exists
 
 Picture a test for an I2C controller without a model. It writes `'h5` to address `'h0` to enable the controller, waits, reads address `'h8` and masks bit 0 to see whether the transfer finished, then writes `'h1` to `'h8` to clear the flag. Every number in that test is a fact copied from the spec, and three things go wrong:
@@ -54,6 +84,12 @@ Picture a test for an I2C controller without a model. It writes `'h5` to address
 - **Nobody knows what the DUT should hold.** To check a register, the test needs an expected value. Without a model, each test keeps its own scattered copy.
 
 The register model fixes all three. Addresses, bit positions, reset values and policies live in one place, usually generated from the spec. Tests call methods on named registers. The adapter is the only code that knows the bus. And the mirror is a single, shared belief of every register's value.
+
+| What happens | Without a model | With a model |
+| --- | --- | --- |
+| The spec moves the interrupt register from `'h8` to `'hC` | Find and edit every test that hard-coded `'h8` | Change the register description and regenerate one file; tests name `ral.INT_STATUS`, not an address |
+| The same block moves from APB to AXI | Rewrite every test, because each one built APB items | Connect an AXI agent and its adapter; the tests do not change |
+| A test needs the expected value of a register | Each test keeps its own copy | Every test reads the one shared mirror |
 
 ### The model's structure
 
@@ -283,6 +319,27 @@ The standard lists 26 predefined policies, items a) to z), the last being `NOACC
 
 That last point is the volatile pitfall. `INT_STATUS` is writable (W1C) and volatile, so `ral.update()` always writes it, and for a W1C field the update value is the inverse of the desired value. After `ral.reset()` the desired value is 0, so `update()` writes `'h3` and clears any `DONE` or `ERR` flag the hardware has raised and the test has not yet handled. Keep such registers out of bulk `update()` calls and write them explicitly. The map rights matter here too: with `"RO"` rights the same field would act as RO, so `update()` would never write it, but the W1C clear would not be predicted either (Push Further explains why). That is why `INT_STATUS` above is added with `"RW"`.
 
+<SequenceDiagram
+  title="The volatile pitfall: a bulk ral.update() clears an unserviced DONE"
+  caption="uvm-core 2020.3.1 behaviour. After ral.reset(), INT_STATUS's desired value is 'h0. The hardware then raises DONE with no bus access. The test only meant to send a new CTRL value, but update() also finds INT_STATUS in need of an update, computes the W1C update value ~desired = 'h3 and writes it, so the DUT clears DONE and ERR. The bus path (map, adapter, agent) is collapsed into one arrow."
+  participants={[
+    { id: "vp-test", label: "test", kind: "test" },
+    { id: "vp-ral", label: "ral", sublabel: "i2c_reg_block", kind: "reg" },
+    { id: "vp-int", label: "INT_STATUS", sublabel: "W1C, volatile", kind: "reg" },
+    { id: "vp-dut", label: "dut", sublabel: "int_q", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "note", from: "vp-test", to: "vp-int", label: "after ral.reset(): INT_STATUS desired = mirrored = 'h0" },
+    { kind: "self", from: "vp-dut", label: "a transfer ends: DONE = 1, no bus access" },
+    { from: "vp-test", to: "vp-ral", label: "CTRL.set('h6), then ral.update(status)" },
+    { kind: "note", from: "vp-ral", to: "vp-dut", label: "update() writes every register whose needs_update() is 1: CTRL (desired 'h6, mirror 'h0) and INT_STATUS (writable and volatile), in no order to rely on" },
+    { from: "vp-ral", to: "vp-int", label: "update(status)" },
+    { kind: "self", from: "vp-int", label: "W1C update value = ~desired = 'h3" },
+    { from: "vp-int", to: "vp-dut", label: "frontdoor write 'h3" },
+    { kind: "self", from: "vp-dut", tone: "error", label: "W1C: DONE and ERR cleared; the unserviced DONE is lost" }
+  ]}
+/>
+
 ### Address maps: offsets, rights, bus width and endianness
 
 `create_map(name, base_addr, n_bytes, endian, byte_addressing = 1)` (§18.1.2.3) creates a map with:
@@ -293,6 +350,23 @@ That last point is the volatile pitfall. `INT_STATUS` is writable (W1C) and vola
 
 `add_reg(rg, offset, rights = "RW")` (§18.2.3.3) places a register. Its address is the map's base address plus the offset, so `INT_STATUS` sits at `'h0 + 'h08`. Moving the whole block is `set_base_addr()` (§18.2.3.9). The **rights**, `"RW"`, `"RO"` or `"WO"`, are the register's accessibility *through this map*, and "whether a register field can be read or written depends on both the field's configured access policy … and the register's rights in the map" (§18.2.3.3). Use `"RO"` only for a genuinely read-only view, such as a debug port, never to describe a register whose fields are read-only: the fields already say that.
 
+Address = base + offset, for the I2C block as built above and after moving its map:
+
+| Name | Offset | Address with base `'h0` (this lesson) | Address after `default_map.set_base_addr('h4000_0000)` |
+| --- | --- | --- | --- |
+| `CTRL` | `'h00` | `'h0000_0000` | `'h4000_0000` |
+| `STATUS` | `'h04` | `'h0000_0004` | `'h4000_0004` |
+| `INT_STATUS` | `'h08` | `'h0000_0008` | `'h4000_0008` |
+| `NACK_CNT` | `'h14` | `'h0000_0014` | `'h4000_0014` |
+| `BUF` (256 words of 4 bytes) | `'h100` | `'h0000_0100` to `'h0000_04FF` | `'h4000_0100` to `'h4000_04FF` |
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Predict: the map has byte addressing, 4-byte words and base `'h4000_0000`; `BUF` is at offset `'h100`. Which bus address does word 3 of `BUF` use?</summary>
+
+`'h4000_010C`: the base, plus the memory's offset `'h100`, plus 3 words of 4 bytes (`'hC`). Make It Work writes this same word at `'h10C`, with base `'h0`.
+
+</details>
+
 **Registers wider than the bus.** A 64-bit register on this 4-byte map takes two bus accesses. Take a 64-bit `TIMESTAMP` at offset `'h10` in a map whose base is `'h1000`:
 
 | Endianness | Address `'h1010` carries | Address `'h1014` carries |
@@ -301,6 +375,25 @@ That last point is the volatile pitfall. `INT_STATUS` is writable (W1C) and vola
 | `UVM_BIG_ENDIAN` | bits [63:32] | bits [31:0] |
 
 In uvm-core 2020.3.1 the access carrying bits [31:0] is issued first in both cases (by source reading of `uvm_reg_map.svh`). So one `TIMESTAMP.read()` becomes two APB reads, and a wrong endianness swaps the halves. (`TIMESTAMP` is not part of the I2C block; the visualizer's block has a `TX_DATA` register at `'h10`.)
+
+<TimingDiagram
+  title="One TIMESTAMP.read() on the little-endian 4-byte map: two APB reads"
+  caption="The x-axis is rising edges of PCLK, and each value is the one sampled at that edge; the spacing (an idle edge, a setup edge and an access edge per transfer) is that of this lesson's driver. The first read, at 'h1010, returns bits [31:0] (LO) at edge 3; the second, at 'h1014, returns bits [63:32] (HI) at edge 6. PRDATA is shown only during the two transfers; X marks cycles this figure does not show."
+  edges={8}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 0, 1, 1, 0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 0, 1, 0, 0, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [undefined, undefined, 0, 0, 0, 0, 0, 0] },
+    { name: "PADDR", kind: "bus", values: [undefined, undefined, "1010", "1010", "1010", "1014", "1014", "1014"] },
+    { name: "PRDATA", kind: "bus", values: [undefined, undefined, "LO", "LO", undefined, "HI", "HI", undefined] },
+    { name: "PREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 3, tone: "sample", label: "first read completes: bits [31:0] from 'h1010" },
+    { edge: 6, tone: "sample", label: "second read completes: bits [63:32] from 'h1014" }
+  ]}
+/>
 
 **One register, one mirror.** A register can be added to several maps, for example a CPU bus and a debug bus. It still has one set of fields and one mirror, shared by every map. When a register is in more than one map, a frontdoor call must name the map, as in `write(status, v, .map(cpu_map))` (§18.4.4.9). uvm-core silently uses the default map if you forget. Multiple maps, sub-maps and memories in depth belong to [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).
 
@@ -326,10 +419,28 @@ This is the part most testbenches get wrong, so predict before you read on. The 
 | `write(v, UVM_BACKDOOR)` | none (backdoor) | the "mimicked" value | the mimicked value | the mimicked value: the policy applied to the current DUT value |
 | `reset()` | none | the reset value | the reset value | **unchanged** |
 
-Three consequences to memorize:
+Three consequences to memorize. Predict each one, then open it:
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">1. Auto-prediction is on, and `CTRL`'s desired and mirrored values are both 0. How many bus writes does `set('h5); update(); set('h5); update();` send?</summary>
+
 - **`set()` never touches the DUT.** It changes the desired value only; `update()` or `write()` sends it. With auto-prediction on, `set('h5); update(); set('h5); update();` sends *one* write: after the first `update()`, the mirror equals the desired value, so `needs_update()` returns 0.
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">2. No prediction is set up, and `CTRL`'s mirror is 0. The test calls `write(status, 'h5)` and then `mirror(status, UVM_CHECK)`. Does the check pass?</summary>
+
 - **The mirror does not track the DUT by itself.** With no prediction, `write(status, 'h5)` puts `'h5` in the DUT and leaves the mirror at 0, and a following `mirror(status, UVM_CHECK)` reports a mismatch.
+
+</details>
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">3. Auto-prediction is on. `CTRL` has `EN` [0], `IE` [1] and `MODE` [3:2] as RW, and `RSVD` [31:4] as RO with mirror 0. What is `CTRL`'s mirror after `write(status, 'hFFFF_FFFF)`?</summary>
+
 - **The mirror is computed field by field from the policy, not copied from the bus.** Writing `'hFFFF_FFFF` to `CTRL` predicts `'h0000_000F`, because `RSVD` is RO.
+
+</details>
 
 **Implementation notes, labelled.** The standard says `read()`, `peek()` and `poke()` are "affected by the auto-prediction configuration" (§18.4.4.10 to §18.4.4.12). In uvm-core 2020.3.1, `peek()` and `poke()` update the mirror themselves, always, whenever the backdoor access succeeds; only a bus-monitor predictor misses them, because nothing appears on the bus. Portable code may call `predict()` after `poke()`; in uvm-core it is harmless. Likewise §18.4.4.14 says `mirror()` updates the mirror with `predict()` unconditionally, while uvm-core predicts a frontdoor `mirror()` only under auto-prediction (a backdoor `mirror()` always predicts).
 
@@ -353,6 +464,17 @@ The DUT is reset by its reset pin; the model learns about it only when you call 
 
 Option A first reports `UVM_ERROR … value read from DUT (0x0000000000000000) does not match mirrored value (0x0000000000000005)`, then predicts the read value. Option B is the fix: whoever resets the DUT in the middle of a test also calls `ral.reset()`. Reset-aware drivers, monitors and scoreboards are the subject of [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index). A register's or block's `reset()`, of any kind, also releases the register's access lock if a thread was killed in the middle of an access (§18.4.4.5, §18.1.5.3); a `"HARD"` reset also re-arms `W1` and `WO1` fields (§18.5.5.4).
 
+The four `reset()` methods at a glance:
+
+| Call | Default kind | Changes the DUT? | Releases a register's access lock? |
+| --- | --- | --- | --- |
+| `ral.reset()` (block, §18.1.5.3) | `"HARD"` | No | Yes |
+| `ral.CTRL.reset()` (register, §18.4.4.5) | `"HARD"` | No | Yes |
+| `ral.CTRL.EN.reset()` (field, §18.5.5.4) | `"HARD"` | No | No: the lock belongs to the register |
+| `ral.default_map.reset()` (map, §18.2.3.10) | `"SOFT"` | No | Yes in uvm-core 2020.3.1, which resets each register of the map |
+
+Because this lesson's fields define only `"HARD"` reset values, a plain `ral.default_map.reset()` changes no field here: a field with no value for the kind is unchanged.
+
 ### Status, door and check arguments
 
 Every access task shares one argument list. For `uvm_reg::write` (§18.4.4.9):
@@ -375,6 +497,26 @@ task write(output uvm_status_e      status,
 - **`map`** chooses the map when the register is in several.
 - **`parent`** is the sequence the bus items run under; `uvm_reg_sequence` fills it in for you.
 - `mirror()` and `mirror_reg()` take a **`check`** argument (`uvm_check_e`, §17.2.2.3) right after `status`. It defaults to `UVM_NO_CHECK`, so a plain `mirror(status)` only reads and updates. Pass `UVM_CHECK` to compare. The map can also check every read with `set_check_on_read(1)` (§18.2.5.3).
+
+<SequenceDiagram
+  title="What mirror(status, UVM_CHECK) does, in uvm-core 2020.3.1"
+  caption="The old mirror is saved first (step 2). In uvm-core the prediction runs inside the read, before the compare, but the compare uses the value saved at step 2, so the result is the same as comparing first. Volatile fields are left out of the compare by default. The bus path (adapter, agent) is collapsed into the map."
+  participants={[
+    { id: "mc-seq", label: "smoke", sublabel: "uvm_reg_sequence", kind: "sequence" },
+    { id: "mc-reg", label: "CTRL", sublabel: "uvm_reg", kind: "reg" },
+    { id: "mc-map", label: "default_map", sublabel: "uvm_reg_map", kind: "generic" }
+  ]}
+  messages={[
+    { from: "mc-seq", to: "mc-reg", label: "mirror(status, UVM_CHECK)" },
+    { kind: "self", from: "mc-reg", label: "exp = get_mirrored_value(): the old mirror" },
+    { from: "mc-reg", to: "mc-map", label: "frontdoor read" },
+    { kind: "return", from: "mc-map", to: "mc-reg", label: "read value v, status" },
+    { kind: "note", from: "mc-reg", to: "mc-map", label: "status UVM_NOT_OK: mirror() returns here, with no compare" },
+    { kind: "self", from: "mc-reg", label: "do_predict(v): only with set_auto_predict(1)" },
+    { kind: "self", from: "mc-reg", label: "do_check(exp, v): UVM_ERROR if a compared field differs" },
+    { kind: "return", from: "mc-reg", to: "mc-seq", label: "status" }
+  ]}
+/>
 
 **A non-OK access is not predicted.** In uvm-core 2020.3.1 `do_predict()` skips any status other than `UVM_IS_OK`, so a write that ends with `PSLVERR` leaves the mirror where it was. With auto-prediction on, the log looks like this (illustrative):
 
@@ -470,11 +612,38 @@ How the fields correspond:
 | `status` | `slverr`, plus an X test on `data` | `PSLVERR` |
 | `byte_en` | (none: `supports_byte_enable = 0`) | `PSTRB` on APB4, not modelled here |
 
+<ArchitectureDiagram
+  title="Where an X on PRDATA survives, and where it becomes 0"
+  caption="Follow a read from the pins down. PRDATA and apb_item.data are 4-state, so an X survives the driver's sample. In bus2reg(), copying item.data into the 2-state rw.data turns every X or Z bit into 0; only the $isunknown test on the 4-state item can still see the X and set rw.status to UVM_HAS_X. Otherwise status is UVM_NOT_OK on PSLVERR and UVM_IS_OK on a clean read."
+  cellWidth={130}
+  gapX={110}
+  nodes={[
+    { id: "x-pins", label: "PRDATA", sublabel: "4-state pins", kind: "interface", col: 0, row: 0 },
+    { id: "x-item", label: "apb_item.data", sublabel: "logic [31:0]: X kept", kind: "generic", col: 0, row: 1 },
+    { id: "x-adp", label: "bus2reg()", sublabel: "apb_reg_adapter", kind: "generic", col: 0, row: 2 },
+    { id: "x-data", label: "rw.data", sublabel: "2-state: X, Z → 0", kind: "reg", col: 0, row: 3 },
+    { id: "x-sts", label: "rw.status", sublabel: "NOT_OK, HAS_X or IS_OK", kind: "reg", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "x-pins", to: "x-item", style: "data", label: "sampled" },
+    { from: "x-item", to: "x-adp", style: "data", label: "item" },
+    { from: "x-adp", to: "x-data", style: "data", label: "copy" },
+    { from: "x-adp", to: "x-sts", style: "control", label: "$isunknown" }
+  ]}
+/>
+
 What to know about each part:
 - **The register map calls `reg2bus()`**, not the sequencer and not the test. It then starts the returned item on the sequencer given to `set_sequencer()`. If `reg2bus()` returns `null`, the map stops with `UVM_FATAL [RegMem] adapter [adapter] didnt return a bus transaction`.
 - **The map calls `bus2reg()`** when the item finishes, to get the status and, for a read, the data. With `provides_responses = 0` it passes the *request* item, so the driver must copy the read data into the request (this driver does). With `provides_responses = 1` (§19.2.1.2.3) it waits for a separate response item from the driver's `put_response()`. A `uvm_reg_predictor` also calls `bus2reg()` on every item a monitor publishes (A-UVM-4B).
 - **`supports_byte_enable`** (§19.2.1.2.2) says whether the bus item can carry `byte_en`. Byte-enable details and response routing are A-UVM-4B's.
 - **`parent_sequence`** (§19.2.1.2.4) lets the map run every bus item under a sequence you supply; most environments leave it `null`.
+
+Where read data comes from is the one adapter setting the driver must agree with:
+
+| `provides_responses` | `bus2reg()` receives | The driver must | If the driver does the other thing |
+| --- | --- | --- | --- |
+| `0` (this lesson) | the request item, once `item_done()` ends it | copy `PRDATA` into the request item | every read returns 0 with `UVM_IS_OK` |
+| `1` | a response item; the map waits for it in `get_base_response()` (uvm-core) | send a response with `put_response()` | the first access never returns |
 
 ### Frontdoor access, step by step
 
@@ -520,6 +689,17 @@ The backdoor reads or deposits the HDL variable directly. By default it uses the
 - a register implemented by one variable gets it from `configure()`'s third argument, `"ctrl_q"`, so `CTRL` lives at `tb_top.dut.ctrl_q`;
 - a register implemented by several variables, typically one flop per field, lists them with `add_hdl_path_slice(name, offset, size)` (§18.4.6.5), for example `CTRL.add_hdl_path_slice("en_q", 0, 1);`.
 
+The paths this lesson's model ends up with:
+
+| Model object | Its piece of the path | Set by | Full HDL path |
+| --- | --- | --- | --- |
+| `ral` (root block) | `tb_top.dut` | `ral.configure(null, "tb_top.dut")` in the environment | `tb_top.dut` |
+| `CTRL` | `ctrl_q` | `CTRL.configure(this, null, "ctrl_q")` | `tb_top.dut.ctrl_q` |
+| `INT_STATUS` | `int_q` | `INT_STATUS.configure(this, null, "int_q")` | `tb_top.dut.int_q` |
+| `NACK_CNT` | `nack_q` | `NACK_CNT.configure(this, null, "nack_q")` | `tb_top.dut.nack_q` |
+| `STATUS` | none | `STATUS.configure(this, null, "")` | none: `peek()` and `poke()` fail on it |
+| `BUF` | `mem_q` | `BUF.configure(this, "mem_q")` | `tb_top.dut.mem_q` |
+
 Each path belongs to an abstraction **kind**, `"RTL"` by default; you can add `"GATE"` paths for a netlist (§18.1.6.5).
 
 **Four backdoor calls, two behaviours.**
@@ -527,6 +707,15 @@ Each path belongs to an abstraction **kind**, `"RTL"` by default; you can add `"
 - `write(status, v, UVM_BACKDOOR)` *mimics* a bus write (§18.4.4.9): it reads the current value, applies each field's policy, deposits the result, and needs `"RW"` or `"WO"` rights. On `CTRL` holding 0, `write('hFF, UVM_BACKDOOR)` deposits `'h0F`, while `poke('hFF)` deposits `'hFF`.
 - `peek(status, v)` samples the variable without changing it (§18.4.4.12).
 - `read(status, v, UVM_BACKDOOR)` also writes back read side effects: an RC field is cleared in the DUT. In uvm-core its mirror keeps the value read *before* the clear (A-UVM-4B explores this).
+
+The four calls compared, as uvm-core 2020.3.1 implements them:
+
+| Call | What it applies | DUT afterwards | Mirror afterwards | Map rights checked |
+| --- | --- | --- | --- | --- |
+| `poke(status, v)` | nothing: raw deposit | `v`, RO and reserved bits included | `v` | no |
+| `write(status, v, UVM_BACKDOOR)` | each field's write policy, to the current value | the mimicked value | the mimicked value | must be `"RW"` or `"WO"` |
+| `peek(status, v)` | nothing: sample only | unchanged | the value read | no |
+| `read(status, v, UVM_BACKDOOR)` | read side effects (RC cleared, RS set), written back | side effects applied | the value read before the write-back | must be `"RW"` or `"RO"` |
 
 A backdoor deposit also skips the DUT's own write logic. In the worked example, writing `CTRL.EN = 1` through the bus starts a transfer, but poking it does not.
 
@@ -565,6 +754,52 @@ Five decisions turn the model into part of an environment. The worked example ma
 3. **How the mirror is kept.** This lesson calls `default_map.set_auto_predict(1)`: the register predicts its own accesses before `write()` or `read()` returns. It is simple and needs no monitor, but it never sees bus traffic the model did not start, such as firmware running on a processor model. A-UVM-4B replaces it with explicit prediction.
 4. **How tests reach it.** Tests reach registers through the environment's handle, `env.ral`. Register sequences extend `uvm_reg_sequence` (§19.4.1) and receive the block in their `model` member (§19.4.1.3.1). Its helper tasks `write_reg`, `read_reg`, `mirror_reg`, `update_reg`, `peek_reg` and `poke_reg` (§19.4.1.5.1 to §19.4.1.5.6) call the register methods with `parent` set to the sequence, so you never pass it by hand. The map must have a sequencer before any such sequence starts (§18.2.3.6). The sequence itself can be started with `start(null)`, because every bus item gets its sequencer from the map.
 5. **Where the model comes from.** In real projects the model is **generated** from a machine-readable register description, and nobody types the classes above. Common inputs are IP-XACT (IEEE 1685) and SystemRDL (an Accellera standard). Generators include open-source tools such as PeakRDL and commercial tools from the simulator vendors; check each tool's documentation for the formats it reads. Treat the output as read-only: fix a wrong policy or volatility in the description and regenerate. Whether to commit the generated files or regenerate them at build time with a pinned generator version is a team decision (Push Further).
+
+Decisions 1 to 4 in phase order, as the worked example makes them:
+
+<SequenceDiagram
+  title="When the model meets the bus: build_phase, connect_phase, run_phase"
+  caption="build_phase runs top-down, so while the environment's build_phase runs, agent.sequencer is still null; the agent creates it in its own build_phase, later. connect_phase is the first point where set_sequencer() gets a real handle. In run_phase the sequence starts with start(null), because the map supplies the sequencer for every bus item."
+  participants={[
+    { id: "ph-test", label: "test", sublabel: "i2c_reg_test", kind: "test" },
+    { id: "ph-env", label: "env", sublabel: "i2c_env", kind: "env" },
+    { id: "ph-agt", label: "agent", sublabel: "apb_agent", kind: "agent" },
+    { id: "ph-map", label: "default_map", sublabel: "in env.ral", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "build_phase, top-down" },
+    { from: "ph-test", to: "ph-env", label: "create(\"env\", this)" },
+    { kind: "self", from: "ph-env", label: "create agent, ral and adapter; ral.configure, build, reset" },
+    { kind: "note", from: "ph-env", to: "ph-agt", label: "agent.sequencer is still null here" },
+    { kind: "self", from: "ph-agt", label: "create sequencer and driver" },
+    { kind: "divider", label: "connect_phase" },
+    { from: "ph-env", to: "ph-map", label: "set_sequencer(agent.sequencer, adapter)" },
+    { from: "ph-env", to: "ph-map", label: "set_auto_predict(1)" },
+    { kind: "divider", label: "run_phase" },
+    { kind: "self", from: "ph-test", label: "seq.model = env.ral; seq.start(null)" },
+    { kind: "note", from: "ph-test", to: "ph-map", label: "each bus item gets agent.sequencer from the map" }
+  ]}
+/>
+
+Decision 5, the generator flow:
+
+<ArchitectureDiagram
+  title="Where a generated register model comes from"
+  caption="Edit the description, never the output. One machine-readable description (IP-XACT or SystemRDL) goes through a generator at a pinned version, which writes the register package the testbench compiles and, with many tools, the RTL and the documentation too, so all of them agree. A wrong policy or volatility is fixed in the description and regenerated."
+  cellWidth={150}
+  gapX={40}
+  nodes={[
+    { id: "gen-desc", label: "register description", sublabel: "IP-XACT (IEEE 1685) or SystemRDL", kind: "generic", col: 0, row: 0, colSpan: 2, badge: "edit here" },
+    { id: "gen-tool", label: "generator", sublabel: "pinned version", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "gen-pkg", label: "i2c_reg_pkg", sublabel: "read-only output", kind: "reg", col: 0, row: 2 },
+    { id: "gen-rtl", label: "RTL and docs", sublabel: "read-only output", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "gen-desc", to: "gen-tool", style: "data", label: "input" },
+    { from: "gen-tool", to: "gen-pkg", style: "data", label: "writes" },
+    { from: "gen-tool", to: "gen-rtl", style: "data", label: "writes" }
+  ]}
+/>
 
 ### Recap
 
@@ -974,6 +1209,23 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
+The same run as a timeline, one row per register call, with `CTRL`'s three values (desired / mirrored / DUT) after each call:
+
+| Time (ns) | Call (`blk.`, `status` and `value` left out) | Bus access completes | `CTRL` after the call | Printed |
+| --- | --- | --- | --- | --- |
+| 0 | `show("after reset()")` | none | `'h0` / `'h0` / `'h0` | `after reset()` |
+| 45 | `write_reg(CTRL, 'h5)` | write `'h00` | `'h5` / `'h5` / `'h5` | `write CTRL 'h5` |
+| 75 | `read_reg(INT_STATUS)` | read `'h08` | unchanged | `read INT_STATUS = 'h1` |
+| 105 | `write_reg(INT_STATUS, 'h1)` | write `'h08` | unchanged | nothing |
+| 135 | `read_reg(NACK_CNT)` | read `'h14` | unchanged | `read NACK_CNT = 'h1` |
+| 165 | `mirror_reg(CTRL, UVM_CHECK)` | read `'h00` | `'h5` / `'h5` / `'h5` | nothing: no mismatch |
+| 165 | `poke_reg(CTRL, 'h9)`, `peek_reg(CTRL)` | none (backdoor) | `'h9` / `'h9` / `'h9` | `poke 'h9, peek 'h9` |
+| 165 | `CTRL.set('h6)` | none | `'h6` / `'h9` / `'h9` | `set 'h6` |
+| 195 | first `update_reg(CTRL)` | write `'h00` | `'h6` / `'h6` / `'h6` | `update` |
+| 195 | second `update_reg(CTRL)` | none: `needs_update()` is 0 | unchanged | nothing |
+| 225 | `write_mem(BUF, 3, 'hCAFE)` | write `'h10C` | unchanged | nothing |
+| 255 | `read_mem(BUF, 3)` | read `'h10C` | unchanged | `BUF[3] = 'hcafe` |
+
 Read it against the rules:
 - **Timing.** Reset ends at 22 ns. A clocking-block drive with no output skew takes effect in the same time step as the clock edge (IEEE 1800-2023 §14.16), so each APB transfer takes three clock edges from the driver's first edge, so accesses complete at 45, 75, 105, 135, 165, 195, 225 and 255 ns. The `INT_STATUS` clear completes at 105 ns and `write_mem` at 225 ns; they print nothing. `peek` and `poke` take no time, and the second `update_reg()` sends nothing, so no transfer completes at 165 ns from them.
 - **`write CTRL 'h5`.** The desired value moved first (`write()` calls `set()`), and auto-prediction moved the mirror before `write_reg()` returned.
@@ -1036,6 +1288,17 @@ These are the first-day failures of a register environment. The messages are quo
 6. **Smoke-test it with a `uvm_reg_sequence`:** write, read and `mirror(UVM_CHECK)` one RW register, peek and poke it, and check `status` after every call.
 7. **Then run the built-in register tests** (reset values, bit-bash, access), which A-UVM-4B covers.
 
+What each of steps 1 to 6 protects you from, quoting the log where there is a message (each symptom is in "Debug it" above):
+
+| Step | Get it wrong and you see |
+| --- | --- |
+| 1. Model | a register whose mirror never changes (its `build()` not called); `Cannot add map to locked model` (a map after `lock_model()`) |
+| 2. Map | a W1C clear that reaches the DUT while the mirror keeps the 1 (`"RO"` rights) |
+| 3. HDL paths | `No backdoor access available to poke register '…'` |
+| 4. Adapter | reads of 0 with `UVM_IS_OK`, or a first access that never returns (`provides_responses` and the driver disagree) |
+| 5. Build, connect, predict | `REG_NULL_SQR` then `UVM_FATAL [SEQ]` (`set_sequencer()` in `build_phase`); a mirror mismatch on the first `mirror(UVM_CHECK)` (no prediction) |
+| 6. Smoke test | a failed access that went unnoticed, because nobody checked `status` |
+
 **Checklist before moving on:**
 - [ ] I can write a field's `configure()` call from one row of a register spec, including volatility and the reset value.
 - [ ] I can say which map rights a register with a W1C field needs, and what `"RO"` rights would do to it.
@@ -1065,6 +1328,17 @@ Portable habits: call `predict()` yourself after a backdoor access when it matte
 
 One mechanism ties three surprises together. A field's *effective* access depends on the map (§18.5.4.5): through `"RO"` rights, `RW`, `W1C`, `W1S` and similar become `RO`; through `"WO"` rights, `RW`, `WRC` and `WRS` become `WO`; a field whose policy contradicts the rights becomes `NOACCESS`. Prediction uses the effective access of the map the access went through.
 
+The effective access for this lesson's policies, as `uvm_reg_field::get_access()` computes it in uvm-core 2020.3.1 (§18.5.4.5 only says the rights "may" restrict the policy):
+
+| Field policy | Through `"RW"` rights | Through `"RO"` rights | Through `"WO"` rights |
+| --- | --- | --- | --- |
+| `RW` | `RW` | `RO` | `WO` |
+| `RO` | `RO` | `RO` | `NOACCESS` |
+| `WO` | `WO` | `NOACCESS` | `WO` |
+| `W1C` | `W1C` | **`RO`**: the clear is no longer predicted | `W1C` |
+| `RC` | `RC` | `RC` | `NOACCESS` |
+| `WRC` | `WRC` | `RC` | `WO` |
+
 Methods that take no map, such as `needs_update()` and `get_access()`, resolve to the register's default map, and so does a frontdoor call with `map = null`. When a register is in several maps, §18.5.4.5 and §18.4.4.9 say a map "shall be specified"; uvm-core quietly picks the block's default map instead. So "why did `update()` stop writing my W1C register?" usually has the answer "it was added to the default map with `"RO"` rights". The frontdoor does not refuse the write itself: only the backdoor branch checks rights. Two registers may share one address when every field of one is read-only and every field of the other is write-only (uvm-core 2020.3.1, `uvm_reg_map.svh`), which models a read-status and write-command pair; any other overlap draws a `RegModel` warning that the register "maps to same address as" another.
 
 ### Expert: bus width, byte addressing and endianness
@@ -1077,11 +1351,51 @@ By source reading of uvm-core 2020.3.1: a map with `UVM_NO_ENDIAN` reports `UVM/
 
 A system model nests blocks. A sub-block calls `configure(parent, "u_i2c0")` (§18.1.2.2), so its HDL path is relative to its parent. Its map joins the parent's with `parent_map.add_submap(child_map, offset)` (§18.2.3.5), so the same `i2c_reg_block` class can sit at `'h4000_0000` and again at `'h4001_0000`. `set_base_addr()` (§18.2.3.9) relocates a map, and `set_hdl_path_root()` (§18.1.6.11) overrides the path its ancestors would give.
 
+<ArchitectureDiagram
+  title="One i2c_reg_block class, two instances in a system model"
+  caption="Illustrative names (sys_reg_block, cpu_map, u_i2c1). Each sub-block's own map joins the system's root map with add_submap() at that instance's offset, and each sub-block's HDL path is relative to its parent. Only the root map is given a sequencer and an adapter."
+  cellWidth={160}
+  spreadAnchors={true}
+  nodes={[
+    { id: "hb-sys", label: "sys", sublabel: "sys_reg_block (root)", kind: "reg", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "hb-map", label: "cpu_map", sublabel: "root map: set_sequencer here", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "hb-i2c0", label: "u_i2c0", sublabel: "i2c_reg_block, path u_i2c0", kind: "reg", col: 0, row: 1 },
+    { id: "hb-i2c1", label: "u_i2c1", sublabel: "i2c_reg_block, path u_i2c1", kind: "reg", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "hb-map", to: "hb-i2c0", style: "structural", label: "'h4000_0000" },
+    { from: "hb-map", to: "hb-i2c1", style: "structural", label: "'h4001_0000" }
+  ]}
+/>
+
 Two rules follow from uvm-core's implementation. Bus traffic always uses the **root** map's sequencer and adapter, so you call `set_sequencer()` once, at the top. And root block names must be unique: two top-level blocks both named `ral` give `UVM/REG/DUPLROOT` at lock time. System-level register strategy, including what auto-prediction cannot see when several masters share a bus, is in [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index).
 
 ### Expert: backdoor writes, backdoor reads and HDL path forms
 
 `write(…, UVM_BACKDOOR)` is a *simulated* bus write: it peeks, applies each field's policy, and deposits the result, and it fails with `UVM_NOT_OK` unless the map rights are `"RW"` or `"WO"` (uvm-core, `do_write`). `poke()` is a raw deposit with no policy. On `INT_STATUS` holding `'h3`, `write('h1, UVM_BACKDOOR)` deposits `'h2`: W1C clears `DONE`, as software writing `'h1` would. `poke('h1)` deposits `'h1`, which clears `ERR` and keeps `DONE`, the opposite flag. Use `poke()` to force a state, and the backdoor `write()` to imitate software quickly.
+
+<SequenceDiagram
+  title="Backdoor write vs poke on INT_STATUS holding 'h3"
+  caption="uvm-core 2020.3.1 order. The backdoor write first reads the variable, computes each field's result from its policy (W1C: DONE written 1 clears, ERR written 0 keeps), checks the map rights and deposits 'h2. poke() deposits 'h1 as is. Both then predict the mirror to the deposited value."
+  participants={[
+    { id: "bw-test", label: "test", kind: "test" },
+    { id: "bw-reg", label: "INT_STATUS", sublabel: "uvm_reg", kind: "reg" },
+    { id: "bw-dut", label: "int_q", sublabel: "tb_top.dut.int_q", kind: "dut" }
+  ]}
+  messages={[
+    { from: "bw-test", to: "bw-reg", label: "write(status, 'h1, UVM_BACKDOOR)" },
+    { from: "bw-reg", to: "bw-dut", label: "backdoor read" },
+    { kind: "return", from: "bw-dut", to: "bw-reg", label: "'h3" },
+    { kind: "self", from: "bw-reg", label: "per field: DONE 1 & ~1 = 0, ERR 1 & ~0 = 1, so 'h2" },
+    { kind: "self", from: "bw-reg", label: "rights are \"RW\": allowed" },
+    { from: "bw-reg", to: "bw-dut", label: "deposit 'h2 (uvm_hdl)" },
+    { kind: "self", from: "bw-reg", label: "do_predict: mirror 'h2" },
+    { kind: "divider", label: "the same starting value, 'h3, then poke instead" },
+    { from: "bw-test", to: "bw-reg", label: "poke(status, 'h1)" },
+    { from: "bw-reg", to: "bw-dut", label: "deposit 'h1 as is (uvm_hdl)" },
+    { kind: "self", from: "bw-reg", label: "do_predict: mirror 'h1" }
+  ]}
+/>
 
 `read(…, UVM_BACKDOOR)` writes read side effects back into the DUT: RC fields are cleared and RS fields set. In uvm-core its prediction uses the value read before that write-back, so an RC field's mirror keeps the old count while the DUT is 0, and WO fields are masked to 0 in the returned value and the mirror. `peek()` writes nothing back.
 
@@ -1093,6 +1407,27 @@ Each register serializes its own accesses with an internal lock (a semaphore). T
 - `set()` on a field while its register is mid-access warns `UVM/FLD/SET/BSY … may result in loss of desired field value`, a sign of two threads sharing one register without coordination.
 - `uvm_reg::predict()` on a busy register warns, returns 0 (failure) and changes nothing; `uvm_reg_field::predict()` with `UVM_PREDICT_DIRECT` warns and returns 0, yet still overwrites the field's mirror and desired value.
 - If a thread is killed mid-access, for example by a reset handler that kills the running sequences, the lock stays taken and the next access to that register hangs. A register's or block's `reset()` releases it, whatever the reset kind (§18.4.4.5, §18.1.5.3), which is one more reason the reset handler calls `ral.reset()`.
+
+<SequenceDiagram
+  title="A killed thread leaves CTRL's lock taken until reset()"
+  caption="uvm-core 2020.3.1 behaviour. Each register serializes its accesses with a semaphore. Thread A takes CTRL's lock and is killed in the middle of its access, so the lock is never put back and thread B's write waits. A register or block reset() puts the lock back, and B's write proceeds."
+  participants={[
+    { id: "lk-a", label: "thread A", sublabel: "a sequence", kind: "sequence" },
+    { id: "lk-reg", label: "CTRL", sublabel: "uvm_reg", kind: "reg" },
+    { id: "lk-b", label: "thread B", sublabel: "another sequence", kind: "sequence" },
+    { id: "lk-rst", label: "reset handler", kind: "generic" }
+  ]}
+  messages={[
+    { from: "lk-a", to: "lk-reg", label: "write(status, 'h5): takes CTRL's lock" },
+    { kind: "async", from: "lk-rst", to: "lk-a", tone: "error", label: "kills thread A mid-access" },
+    { kind: "note", from: "lk-a", to: "lk-reg", label: "the lock is never put back" },
+    { from: "lk-b", to: "lk-reg", label: "write(status, 'h6)" },
+    { kind: "note", from: "lk-reg", to: "lk-b", tone: "error", label: "B waits for the lock: it hangs here" },
+    { from: "lk-rst", to: "lk-reg", label: "ral.reset()" },
+    { kind: "self", from: "lk-reg", label: "reset(): puts the lock back" },
+    { kind: "return", from: "lk-reg", to: "lk-b", label: "B's write runs and returns status" }
+  ]}
+/>
 
 ### Expert: methodology trade-offs
 
@@ -1142,6 +1477,29 @@ Two more to rehearse aloud, with no single right wording: "A 64-bit counter read
 ## Practice & Reinforce
 
 Start with the quiz, which covers all five objectives. Then do the kata, which is the hands-on core of this lesson, and the debug challenge. Finish in the model lab's **Debug a mismatch** mode (in "Three values per field"): find the hardware-driven field that was configured `volatile = 0` and choose the best of four fixes. The flashcards at the end cover the whole page.
+
+**Warm-up, from memory.** For each of `set`, `randomize`, `update`, `write`, `read`, `mirror(UVM_CHECK)`, `predict`, `peek`, `poke`, `write(UVM_BACKDOOR)` and `reset`, say which of desired, mirrored and DUT it can change, and which only when the access is predicted. Then open the one-glance card.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the one-glance card: what moves each value</summary>
+
+✓ changes it, ✱ changes it only when the access is predicted (auto-prediction or a register predictor), – leaves it alone. Backdoor rows follow uvm-core 2020.3.1, which predicts every successful `peek` and `poke`.
+
+| Call | Desired | Mirrored | DUT |
+| --- | --- | --- | --- |
+| `set(v)` | ✓ per policy | – | – |
+| `randomize()` | ✓ `rand` fields | – | – |
+| `update()` | – | ✱ | ✓ only if `needs_update()` |
+| `write(v)` | ✓ (`set(v)` first) | ✱ per policy | ✓ |
+| `read()` | ✱ follows the mirror | ✱ (RC becomes 0) | read side effects only |
+| `mirror(UVM_CHECK)` | as `read()` | ✱ (the compare uses the old mirror) | read side effects only |
+| `predict(v)` | ✓ | ✓ | – |
+| `peek()` | ✓ the DUT value | ✓ the DUT value | – |
+| `poke(v)` | ✓ raw | ✓ raw | ✓ raw |
+| `write(v, UVM_BACKDOOR)` | ✓ mimicked | ✓ mimicked | ✓ mimicked |
+| `reset()` | ✓ reset value | ✓ reset value | – |
+
+</details>
 
 ### Retrieval quiz
 

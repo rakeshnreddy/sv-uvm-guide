@@ -25,10 +25,14 @@ one does not update them.
 - checkpoint-17: OperatorExplorer and SignednessVisualizer extensions, PackedLayoutExplorer, SubroutineLab and the
   scheduler model v2 (registered, not embedded yet); 6a for I-SV-1 polymorphism-pitfalls, I-SV-2A, I-SV-2B, I-SV-3A, I-SV-3B.
 
-**Held:** timescale-lab, on `components/finish-2026-11-10` (a worktree branch from current main; never merge it as is).
-Its accuracy group 1 failed three rounds on a different edge case each time.
+- checkpoint-18: TimescaleLab (clean after one closing pass); the embed pass placed all five finished components in
+  F1B, F2A (3 lessons), F2D (2), F3A and F3B; 6a for all of T2 except I-UVM-3B, and for T3's A-UVM-4A to 9, B-AMBA-1 and 2,
+  B-APB-1 and B-AHB-1 to 3 (42 lessons). Its first attempt failed on test timeouts under machine load (load average 71):
+  keep to about three lesson workflows while a release runs its local gates.
 
-**Next order:** the embed pass for the released components, 6a for the rest of T2 (I-SV-4A onward), 6a for T3 and T4,
+**Held:** nothing. `components/finish-2026-11-10` holds the finish-pass history only; everything on it is released.
+
+**Next order:** 6a for the rest of T2 (I-UVM-2A onward), 6a for T3 and T4,
 the next components batch (`time-slot-trace-presets` is unblocked), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
 
 ## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list

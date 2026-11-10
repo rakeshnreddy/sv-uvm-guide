@@ -20,6 +20,24 @@ sources:
 - **Why it matters:** Most configuration registers in a chip sit behind an APB bridge, so an APB agent is usually the bus your register model drives (milestone M7) and the configuration agent of a block testbench (M5). APB is also small enough to check completely: every rule fits in a few concurrent assertions. That makes it the cleanest first *complete* protocol agent: driver, monitor, sequences, assertions and a register adapter.
 - **The Analogy:** Handing a form across a service counter. First you lay the form on the counter so the clerk can read it (setup: address, direction and data are valid); one moment later you ring the bell, which means "act on it now" (access: `PENABLE`). The clerk may raise a hand, "wait", for as long as needed (`PREADY` low), and while the hand is up you must not touch the form. When the clerk stamps it the visit is over, and the stamp may say "rejected" (`PSLVERR`). *Where it breaks:* at a real counter a rejected form usually means nothing happened, but an APB write that ends with an error may still have changed the register (IHI 0024E §3.4). And a counter has one clerk, while one APB requester has a separate select line (`PSELx`) for each peripheral.
 
+<TimingDiagram
+  title="The service-counter analogy on one APB transfer"
+  caption="The x-axis is the rising edges of PCLK, the APB clock, numbered 0 to 4; each column shows the value sampled at that edge. Edge 0 is idle (no transfer), edge 1 the setup phase, edge 2 one wait state, edge 3 the completion and edge 4 idle again. The analogy, marker by marker: at edge 1 (form) the form is on the counter, PSEL 1 and PENABLE 0; at edge 2 (bell) the bell is rung (PENABLE 1) and the clerk's hand is up (PREADY 0), so nothing may change; at edge 3 (stamp) PSEL, PENABLE and PREADY are all 1, and PSLVERR 0 means accepted. PREADY at edges 0, 1 and 4 is outside the access phase and means nothing. Where the analogy breaks: a stamp that says rejected (PSLVERR 1 at completion) does not prove the register is unchanged, and each completer has its own PSELx line, unlike a counter with one clerk."
+  edges={5}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 0] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 1, 0] },
+    { name: "PSLVERR", kind: "bit", values: [0, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "form", label: "Setup phase, the form is on the counter: PSEL 1, PENABLE 0; address, direction and data are valid" },
+    { edge: 2, tone: "pending", short: "bell", label: "Access phase, the bell is rung (PENABLE 1), and the clerk's hand is up (PREADY 0): a wait state, nothing may change" },
+    { edge: 3, tone: "pass", short: "stamp", label: "The stamp: PSEL, PENABLE and PREADY are all 1; PSLVERR 0 means accepted" }
+  ]}
+/>
+
 **You will be able to:**
 1. **Predict**, on a waveform, the setup and access phases of an APB transfer (`PSEL`, `PENABLE`), its wait states (`PREADY` low), the edge where it completes, and its error response (`PSLVERR`).
 2. **Write** an APB requester driver, a monitor and the protocol assertions that keep address and control stable from setup to completion, and **debug** a failing transfer from the assertion that fires.
@@ -65,6 +83,29 @@ These are the signals of an APB3 or APB4 interface (Table 2-1; the "Since" colum
 | `PSLVERR` | completer | error at the end of a transfer | APB3 (optional) |
 | `PPROT` | requester | protection type: privileged, non-secure, instruction | APB4 (optional) |
 | `PSTRB` | requester | write strobes, one per byte lane | APB4 (optional) |
+
+How those signals connect one bridge to its peripherals:
+
+<ArchitectureDiagram
+  title="One APB bridge, three completers"
+  caption="The bridge turns main-bus transfers into APB transfers. Each line from the bridge to a completer stands for a bundle: the request signals PADDR, PWRITE, PENABLE and PWDATA (and PSTRB and PPROT on APB4), shared by every completer; that completer's own select line PSELx; and its responses PRDATA, PREADY and PSLVERR back to the bridge. Only the completer whose PSELx is 1 takes part in a transfer. How the bridge combines the three responses (typically a multiplexer driven by the select lines) is an implementation choice, not an APB rule. The UART, GPIO and timer are example peripherals."
+  cellWidth={104}
+  gapX={28}
+  spreadAnchors={true}
+  nodes={[
+    { id: "main", label: "AXI or AHB", sublabel: "main bus", kind: "generic", col: 1, row: 0 },
+    { id: "bridge", label: "APB bridge", sublabel: "requester", kind: "generic", col: 1, row: 1 },
+    { id: "uart", label: "UART", sublabel: "completer", kind: "dut", col: 0, row: 2 },
+    { id: "gpio", label: "GPIO", sublabel: "completer", kind: "dut", col: 1, row: 2 },
+    { id: "timer", label: "timer", sublabel: "completer", kind: "dut", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "main", to: "bridge", style: "structural" },
+    { from: "bridge", to: "uart", style: "structural" },
+    { from: "bridge", to: "gpio", style: "structural" },
+    { from: "bridge", to: "timer", style: "structural" }
+  ]}
+/>
 
 Two facts from §2.1 shape everything that follows. APB has separate read and write data buses, but transfers cannot overlap, because the data buses "do not have their own individual handshake signals" (§2.1.2). And an unaligned `PADDR` is permitted, but the result is UNPREDICTABLE: the completer may use the unaligned address, the aligned one, or answer with an error (§2.1.1). This lesson's sequence items therefore constrain addresses to word alignment.
 
@@ -135,6 +176,20 @@ Here are the first two transfers of this lesson's worked example (Make It Work),
 - **The read completes at edge 6** with `PSLVERR` 1. The completer "must provide the data before the end of the read transfer" (§3.3.1), but after an error the data may be invalid (§3.4): the 0 on `PRDATA` is not a value read from anywhere.
 - **Any number of wait states is legal**, "from zero upwards" (§3.3.2). The protocol has no timeout; a bound is something your testbench chooses (see the assertions below).
 
+The two hold lists side by side (a read has no write data, and drives `PSTRB` low, §3.2):
+
+| Request signal | Unchanged in a write's wait state (§3.1.2) | Unchanged in a read's wait state (§3.3.2) |
+|---|---|---|
+| `PADDR` | yes | yes |
+| `PWRITE` | yes | yes |
+| `PSEL` | yes | yes |
+| `PENABLE` | yes | yes |
+| `PWDATA` | yes | not listed |
+| `PSTRB` | yes | not listed |
+| `PPROT` | yes | yes |
+| `PAUSER` (APB5) | yes | yes |
+| `PWUSER` (APB5) | yes | not listed |
+
 **Misconception: "a transfer completes when `PENABLE` rises."** `PENABLE` rising starts ACCESS (edge 2 here); completion needs `PREADY` as well (edge 3). A monitor that publishes at the first `PENABLE` edge reports writes that have not happened yet and reads with data that is not valid yet.
 
 ### The error response: `PSLVERR`
@@ -149,11 +204,78 @@ Here are the first two transfers of this lesson's worked example (Make It Work),
 
 Typical reasons for an error are an unmapped address, a write to a read-only register, or an access the completer's protection rules forbid. Which of these produce `PSLVERR` is defined by each completer's own specification, not by APB. This lesson's completer errors on unmapped addresses and on writes to its read-only `ID` register.
 
+**Check yourself.** A read has two wait states. The completer drives `PSLVERR` 1 at the first wait-state edge and 0 at the completion edge. Later, a write with no wait state completes with `PSLVERR` 1. What is each transfer's response, and what do you know about the register the write addressed?
+
+<details>
+<summary>Answer, with the waveform</summary>
+
+<TimingDiagram
+  title="PSLVERR counts only at the completion edge"
+  caption="The x-axis is the rising edges of PCLK, numbered 0 to 8; each column shows the value sampled at that edge. The read: SETUP at edge 1, wait states at edges 2 and 3, completion at edge 4. Edge 5 is IDLE. The write: SETUP at edge 6, completion with no wait state at edge 7."
+  edges={9}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 1, 0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 1, 1] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 1, 0] },
+    { name: "PSLVERR", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "vacuous", label: "PSLVERR 1 in a wait state (PREADY 0): not sampled, it means nothing" },
+    { edge: 4, tone: "pass", label: "The read completes with PSLVERR 0: no error" },
+    { edge: 7, tone: "fail", label: "The write completes with PSLVERR 1: an error, yet the register might or might not have changed (§3.4)" }
+  ]}
+/>
+
+- **The read: no error.** Only the completion edge counts, and `PSLVERR` is 0 there. The 1 at edge 2 is not a response and not a violation (keeping it low there is only recommended).
+- **The write: an error**, and nothing more is known from APB: the register may have been updated anyway. Only the completer's own specification says which.
+
+</details>
+
 ### No bursts, no overlap, but back-to-back transfers
 
 **Misconception: "APB supports bursts."** It does not. APB has no burst signals, no transfer IDs and no pipelining: every transfer is one SETUP plus at least one ACCESS cycle (§1.1, §4.1), and two transfers never overlap (§2.1.2). Copying 16 words to an APB peripheral takes 16 separate transfers, so at least 32 cycles.
 
 What APB does allow is **back-to-back** transfers: when another transfer follows, the bus goes from ACCESS straight to SETUP, with `PSEL` staying high and `PENABLE` low for one cycle (§3.1.1, §4.1). That saves only the idle cycle between transfers; each transfer still needs its two cycles. This lesson's driver always idles one cycle, which keeps it simple; the expert section shows a driver that does not.
+
+The same two zero-wait writes (to `0x0`, then `0x4`), first back-to-back, then with one idle cycle between them:
+
+<TimingDiagram
+  title="Two zero-wait writes, back-to-back"
+  caption="The x-axis is the rising edges of PCLK, numbered 0 to 5; each column shows the value sampled at that edge. Both transfers are writes (PWRITE 1, not drawn). PREADY is high in every ACCESS cycle. Write 1: SETUP at edge 1, completion at edge 2. Write 2: SETUP at edge 3, straight after the completion, completion at edge 4. Two transfers take 4 cycles, edges 1 to 4; PSEL never falls between them."
+  edges={6}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 0, 1, 0] },
+    { name: "PADDR", kind: "bus", values: ["0", "0", "0", "4", "4", "4"] },
+    { name: "PREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "Write 1 completes" },
+    { edge: 3, tone: "info", label: "ACCESS to SETUP directly: PSEL stays 1, PENABLE is 0 for one cycle" },
+    { edge: 4, tone: "pass", label: "Write 2 completes" }
+  ]}
+/>
+
+<TimingDiagram
+  title="The same two writes with one idle cycle, as this lesson's driver issues them"
+  caption="The x-axis is the rising edges of PCLK, numbered 0 to 6; each column shows the value sampled at that edge. Both transfers are writes (PWRITE 1, not drawn). Edge 3 is IDLE (PSEL 0), so the two transfers take 5 cycles, edges 1 to 5. For 16 writes that is at least 32 cycles back-to-back and 48 with one idle cycle after each."
+  edges={7}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 0, 0, 1, 0] },
+    { name: "PADDR", kind: "bus", values: ["0", "0", "0", "0", "4", "4", "4"] },
+    { name: "PREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "Write 1 completes" },
+    { edge: 3, tone: "info", label: "IDLE: one cycle with PSEL 0, the only thing back-to-back saves" },
+    { edge: 5, tone: "pass", label: "Write 2 completes" }
+  ]}
+/>
 
 ### APB4: write strobes and protection
 
@@ -162,6 +284,24 @@ APB4 (issue C of the specification) added two optional requester signals (Prefac
 **`PSTRB`, write strobes (§3.2).** One bit per byte lane: `PSTRB[n]` is high when byte lane *n* of `PWDATA` holds data to write. A write with `PSTRB = 4'b0011` on a 32-bit bus changes only bits `[15:0]` of the register; this is a **sparse write**. Two rules matter for every agent:
 - "For read transfers, the Requester must drive all bits of `PSTRB` LOW" (§3.2).
 - `PSTRB` is optional on both sides. A completer without it simply does not support sparse writes; a requester without it connected to a completer with it has the completer's `PSTRB` inputs tied to `PWRITE`, so every write is full width (Table 3-1).
+
+**Check yourself.** A 32-bit register holds `12345678`. A write of `AAAABBBB` completes with `PSTRB = 4'b0011`, and the completer supports `PSTRB`. What does the register hold afterwards?
+
+<details>
+<summary>Answer, lane by lane</summary>
+
+Lane *n* is `PWDATA[8n+7:8n]`, enabled by `PSTRB[n]` (§3.2):
+
+| Lane | Bits | `PSTRB[n]` | Old byte | `PWDATA` byte | New byte |
+|---|---|---|---|---|---|
+| 3 | `[31:24]` | 0 | `12` | `AA` | `12` (kept) |
+| 2 | `[23:16]` | 0 | `34` | `AA` | `34` (kept) |
+| 1 | `[15:8]` | 1 | `56` | `BB` | `BB` (written) |
+| 0 | `[7:0]` | 1 | `78` | `BB` | `BB` (written) |
+
+The register holds `1234BBBB`. This is the worked example's sparse write: its log shows `rdata=1234bbbb` when `DATA` is read back. On a read, all four `PSTRB` bits are 0.
+
+</details>
 
 **`PPROT`, protection type (§3.5).** Three bits that let the completer or the interconnect refuse illegal accesses:
 
@@ -300,6 +440,26 @@ Here is the bug the first detail prevents. A driver variant raises `PSEL` and `P
 2. At each following edge, give up if reset is asserted or the bus left ACCESS (the assertions report why); count a wait state while `PREADY` is 0.
 3. At the completion edge, copy `PRDATA` (reads only) and `PSLVERR`, and publish the item on `ap`.
 
+<ArchitectureDiagram
+  title="apb_monitor as a state machine"
+  caption="The monitor's own steps, drawn like the IDLE, SETUP, ACCESS diagram above. LOOK checks every edge for SETUP and copies the request. COLLECT runs at each following edge: it counts a wait state while PREADY is 0, and goes to PUBLISH at the completion edge (PREADY 1), which publishes a new item on ap. If reset is asserted, or the bus leaves ACCESS before completing, it goes to DISCARD (the arrow labelled abort): nothing is published, and the assertions report why. A wait state (PREADY 0) keeps it in COLLECT and adds one to the wait count. From PUBLISH or DISCARD it looks again at the very next edge."
+  cellWidth={104}
+  gapX={28}
+  nodes={[
+    { id: "look", label: "LOOK", sublabel: "for a SETUP edge", kind: "generic", col: 0, row: 1 },
+    { id: "collect", label: "COLLECT", sublabel: "count waits", kind: "generic", col: 1, row: 0 },
+    { id: "publish", label: "PUBLISH", sublabel: "new item on ap", kind: "generic", col: 2, row: 1 },
+    { id: "discard", label: "DISCARD", sublabel: "reset or left ACCESS", kind: "generic", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "look", to: "collect", style: "control", label: "SETUP" },
+    { from: "collect", to: "publish", style: "control", label: "PREADY 1" },
+    { from: "publish", to: "look", style: "control", label: "next edge" },
+    { from: "collect", to: "discard", style: "control", label: "abort", via: [[1, 2]] },
+    { from: "discard", to: "look", style: "control", label: "next edge" }
+  ]}
+/>
+
 It creates a **new object for every transfer**, because subscribers such as the predictor or a scoreboard may keep the handle. Because it returns at the completion edge and looks again at the very next edge, it also catches back-to-back transfers, whose SETUP edge immediately follows a completion edge. A monitor that waits for `PSEL` to fall before it looks for the next SETUP would miss them.
 
 ### Protocol assertions
@@ -394,6 +554,38 @@ Three decisions in `apb_reg_adapter`, each with a reason:
 - APB3 added `PREADY` and `PSLVERR`; APB4 `PPROT` and `PSTRB` (low on reads); APB5 wake-up, user, parity and RME signals.
 - The agent's driver starts transfers just after an edge; the monitor publishes a new item at each completion; the interface's assertions check every rule, and label the wait bound as policy.
 - The adapter maps `byte_en` to `PSTRB` for writes only and back again in `bus2reg()`, and `PSLVERR` to `UVM_NOT_OK`; an explicit predictor fed by the monitor keeps the mirror right.
+
+<VisualRecap
+  title="One APB transfer at a glance"
+  rule="A transfer is one SETUP cycle (PSEL 1, PENABLE 0) followed by ACCESS cycles (PENABLE 1) until the first edge where PSEL, PENABLE and PREADY are all 1; while PREADY is 0 the request stays unchanged, and PSLVERR counts only at that completion edge."
+  code={`// abridged from a_wait_hold in apb_if
+(psel && penable && !pready) |=> (psel && penable && $stable(paddr)
+                                  && $stable(pwrite) && $stable(pstrb))
+// completion: the only edge that ends a transfer
+psel && penable && pready`}
+  mistake="Taking the PENABLE rise as completion, or raising PENABLE in the first cycle. PENABLE rising only starts ACCESS, completion also needs PREADY, and SETUP is never skipped."
+  inTestbench="The driver drives the request once, in SETUP, and holds it to completion; the monitor publishes a new item at each completion edge; the interface assertions check the SETUP, hold and PSTRB rules and label the wait bound as policy; the adapter maps byte_en to PSTRB for writes only and PSLVERR to UVM_NOT_OK."
+>
+  <TimingDiagram
+    title="A write with one wait state, then a back-to-back read"
+    caption="The x-axis is the rising edges of PCLK, numbered 0 to 6; each column shows the value sampled at that edge. The write: SETUP at edge 1, a wait state at edge 2, completion at edge 3. The read: SETUP at edge 4, straight after the completion, and completion at edge 5."
+    edges={7}
+    signals={[
+      { name: "PCLK", kind: "clock" },
+      { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 1, 1, 0] },
+      { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 0, 1, 0] },
+      { name: "PWRITE", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0] },
+      { name: "PREADY", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0] }
+    ]}
+    markers={[
+      { edge: 1, tone: "info", label: "SETUP of the write" },
+      { edge: 2, tone: "pending", label: "Wait state: the request is frozen" },
+      { edge: 3, tone: "pass", label: "The write completes" },
+      { edge: 4, tone: "info", label: "SETUP of the read, straight from ACCESS" },
+      { edge: 5, tone: "pass", label: "The read completes" }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -1067,6 +1259,18 @@ UVM_FATAL :    0
 [UVM/RELNOTES]     1
 ```
 
+The seven `APB_MON` lines, matched to the test calls that caused them:
+
+| # | Test call | Transfer | Completes | Mirror afterwards |
+|---|---|---|---|---|
+| 1 | `env.regs.CTRL.write(status, 32'h0000_00A5)` | WR `0x0`, 1 wait | 55 ns | `CTRL` = `a5` |
+| 2 | `seq` read of `'h10` | RD `0x10`, 0 waits, `slverr=1` | 85 ns | unchanged: no register at `0x10` |
+| 3 | `env.regs.DATA.write(status, 32'h1234_5678)` | WR `0x4`, 1 wait | 125 ns | `DATA` = `12345678` |
+| 4 | `seq` sparse write | WR `0x4`, `aaaabbbb`, `strb=0011`, 1 wait | 165 ns | `DATA` = `1234bbbb` (`LO` only) |
+| 5 | `env.regs.DATA.mirror(status, UVM_CHECK)` | RD `0x4`, 0 waits | 195 ns | check matches `1234bbbb` |
+| 6 | `env.regs.ID.mirror(status, UVM_CHECK)` | RD `0x8`, 0 waits | 225 ns | check matches `41504231` |
+| 7 | `env.regs.DATA.read(status, value)` | RD `0x4`, 0 waits | 255 ns | `DATA` = `1234bbbb` |
+
 How to read it:
 - **The verdict:** `UVM_ERROR :    0` and `UVM_FATAL :    0`. No assertion fired (each failure would be a `UVM_ERROR [APB_SVA]`), and both `mirror(status, UVM_CHECK)` calls matched; a mismatch would print `UVM_ERROR ... [RegModel] Register ... does not match mirrored value`.
 - **The timing:** the driver starts the first transfer at the first edge after reset is released (25 ns), so its SETUP edge is 35 ns and, with one wait state, it completes at 55 ns. Each later transfer starts at the completion edge of the one before, so it completes 30 ns later if it is a read (IDLE, SETUP, ACCESS) and 40 ns later if it is a write (one more cycle for the wait state): 55, 85, 125, 165, 195, 225 and 255 ns.
@@ -1124,9 +1328,68 @@ end
 - **When it does not.** In uvm-core 2020.3.1 (`seq/uvm_sequencer.svh`), `try_next_item()` waits for the nonblocking-assignment region once (the default `wait_for_sequences_count`) for a sequence to request, and once more for it to supply its item. A sequence that does anything time-consuming between items, or a layered sequencer, misses that window, and the driver falls back to an idle cycle. Back-to-back traffic is therefore something to *measure* with `c_back_to_back`, not to assume.
 - **No glitches.** If two synchronous drives to one clocking output mature in the same Re-NBA region, only the last value is driven (§14.16.2). Driving `PSEL` 0 at completion and 1 again for the next SETUP in *different* iterations of the scheduling loop could glitch it, which is why `drive_transfer()` leaves `PSEL` alone at completion and only `drive_idle()` lowers it.
 
+<SequenceDiagram
+  title="try_next_item() at a completion edge, with and without a ready sequence"
+  caption="One completion edge of the zero-idle driver, in the uvm-core 2020.3.1 implementation (seq/uvm_sequencer.svh; wait_for_sequences() waits for the nonblocking-assignment region, and m_wait_for_sequences_count is 1 by default). The waveforms of both outcomes are the two in the core section No bursts, no overlap: back-to-back, or with one idle cycle."
+  columnWidth={140}
+  participants={[
+    { id: "drv", label: "drv", sublabel: "zero-idle apb_driver", kind: "driver" },
+    { id: "sqr", label: "sqr", sublabel: "apb_sequencer", kind: "sequencer" },
+    { id: "seq", label: "seq", kind: "sequence" }
+  ]}
+  messages={[
+    { kind: "divider", label: "completion edge of transfer n: drive_transfer() returns, item_done() is called" },
+    { from: "drv", to: "sqr", label: "try_next_item(req)" },
+    { kind: "self", from: "sqr", label: "wait_for_sequences(), then choose a waiting request" },
+    { kind: "divider", label: "case 1: seq is already waiting in start_item() for its next item" },
+    { kind: "return", from: "sqr", to: "seq", label: "grant: start_item() returns" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "self", from: "sqr", label: "wait_for_sequences(): the item is found" },
+    { kind: "return", from: "sqr", to: "drv", label: "req, in the same time slot" },
+    { kind: "self", from: "drv", label: "drive SETUP: it matures just after this edge, so the next edge samples SETUP (IEEE 1800-2023 §14.16; whether a drive here counts as coincident with the clocking event can depend on the simulator)" },
+    { kind: "divider", label: "case 2: no sequence has requested within that window" },
+    { kind: "return", from: "sqr", to: "drv", label: "null", tone: "error" },
+    { kind: "self", from: "drv", label: "drive_idle(); get_next_item(req); @(vif.drv_cb) to realign", tone: "error" },
+    { kind: "note", from: "drv", to: "sqr", label: "If a sequence wins arbitration but does not supply its item in time, uvm-core reports a TRY_NEXT_BLOCKED error and also returns null." }
+  ]}
+/>
+
 Interview angle: "How many cycles do 16 APB writes to a zero-wait completer take?" At least 32 back-to-back, about 48 with this lesson's one-idle driver, plus any wait states.
 
 ### Expert: what `PSLVERR` means for the register mirror
+
+**Predict.** Your completer's specification says that an errored write to `CTRL` still takes effect. You register a `uvm_reg_cbs` callback on `CTRL`'s field (`uvm_reg_field_cb::add`), because `post_predict()` is a field callback that `uvm_reg_field::predict` calls (IEEE 1800.2-2020 §18.11.2.6). Its `post_predict()` sets the mirrored value to the written value. With this lesson's adapter, after a `CTRL` write that ends with `PSLVERR`: (a) the callback fixes the mirror; (b) the callback never runs, so the mirror keeps its old value; (c) the callback runs but the test's `write()` then returns `UVM_IS_OK`?
+
+<details>
+<summary>Answer, with the prediction path</summary>
+
+**(b).** The predictor's call to `do_predict()` skips the prediction because the status is `UVM_NOT_OK`, and the `post_predict()` callbacks are called from inside the field prediction that is skipped (uvm-core 2020.3.1, `reg/uvm_reg.svh` and `reg/uvm_reg_field.svh`; IEEE 1800.2-2020 §18.11.2.6). (a) assumes the callback runs on every attempt; (c) mixes up the two threads: the test's status comes from the frontdoor access, not from the predictor.
+
+<SequenceDiagram
+  title="An errored write on the predictor's path"
+  caption="The monitor has published a write to CTRL that completed with PSLVERR 1. Calls in the order uvm_reg_predictor::write() makes them in uvm-core 2020.3.1 (reg/uvm_reg_predictor.svh). The divider separates the test's own thread, where the frontdoor write returns."
+  columnWidth={140}
+  participants={[
+    { id: "pred", label: "predictor", sublabel: "uvm_reg_predictor", kind: "predictor" },
+    { id: "adapter", label: "adapter", sublabel: "apb_reg_adapter", kind: "generic" },
+    { id: "reg", label: "CTRL", sublabel: "uvm_reg", kind: "reg" },
+    { id: "test", label: "test", sublabel: "apb_demo_test", kind: "test" }
+  ]}
+  messages={[
+    { kind: "divider", label: "mon: ap.write(tr) reaches predictor.bus_in" },
+    { from: "pred", to: "adapter", label: "bus2reg(tr, rw), with rw.byte_en preset to all lanes" },
+    { kind: "return", from: "adapter", to: "pred", label: "rw.status = UVM_NOT_OK (PSLVERR 1)" },
+    { kind: "self", from: "pred", label: "build its own uvm_reg_item with that status; call pre_predict(item)" },
+    { kind: "note", from: "pred", to: "adapter", label: "An extended predictor's pre_predict() may call set_status(UVM_IS_OK) on the item here, for writes the completer documents as taking effect." },
+    { from: "pred", to: "reg", label: "do_predict(item, UVM_PREDICT_WRITE, byte_en)" },
+    { kind: "self", from: "reg", label: "status is not UVM_IS_OK: warning PREDICT_NOK, skip prediction", tone: "error" },
+    { kind: "note", from: "reg", label: "No field is predicted, so no post_predict() callback runs.", tone: "error" },
+    { kind: "divider", label: "in the test's thread" },
+    { kind: "return", from: "reg", to: "test", label: "CTRL.write() returns status UVM_NOT_OK" }
+  ]}
+/>
+
+</details>
 
 IHI 0024E §3.4 allows a write that ends with an error to have changed the register or not, and a read with an error to return invalid data. The register layer has to pick one behaviour:
 - In uvm-core 2020.3.1, `uvm_reg::do_predict()` (`reg/uvm_reg.svh`) predicts only when the status is `UVM_IS_OK`; otherwise it warns `PREDICT_NOK` ("status UVM_NOT_OK; skip prediction."). With this lesson's adapter, an errored write therefore leaves the mirror at its old value, and an errored read does not update it either.
@@ -1140,6 +1403,23 @@ Three uvm-core 2020.3.1 details decide whether sparse writes are predicted corre
 - **The predictor's default is "all lanes".** `uvm_reg_predictor::write()` (`reg/uvm_reg_predictor.svh`) sets `rw.byte_en = -1` before it calls `bus2reg()`, "in case they forget to set byte_en". An adapter that does not set it makes every observed sparse write look like a full write.
 - **Prediction is per field, by the field's lowest byte lane.** `uvm_reg::do_predict()` passes each field the enables shifted down to the field's lowest byte, and `uvm_reg_field::do_predict()` (`reg/uvm_reg_field.svh`) skips the field only when the enable of its lowest byte is 0 ("Assume that the entire field is enabled"). A 32-bit field written with `PSTRB = 0011` is predicted *as a whole*. Model registers whose software uses sparse writes with byte-lane-aligned fields, as `DATA` does with `LO` and `HI`.
 - **`supports_byte_enable` gates field-level frontdoor access.** `uvm_reg_field::is_indv_accessible()` refuses individual field access when the adapter does not support byte enables; it also requires the field to be configured as individually accessible and to be alone in its bus-width word. With 32-bit registers on a 32-bit APB that last condition rarely holds, so `field.write()` usually writes the whole register.
+
+**Check yourself.** `DATA` holds `12345678` in the DUT and in the mirror. The monitor then sees a write of `AAAABBBB` with `PSTRB = 4'b0011`, so the DUT holds `1234BBBB`. Predict the mirror, and the result of `DATA.mirror(status, UVM_CHECK)`, for three models: (a) `DATA` is one 32-bit field and `bus2reg()` sets `byte_en` from `PSTRB`; (b) `DATA` has fields `LO[15:0]` and `HI[31:16]` and `bus2reg()` sets `byte_en`; (c) the same two fields, and `bus2reg()` leaves `byte_en` alone.
+
+<details>
+<summary>Answer, field by field</summary>
+
+Each field receives the byte enables shifted down to its lowest byte lane, and is predicted when bit 0 of what it receives is 1:
+
+| Model | Enables each field receives | Fields predicted | Mirror afterwards | `mirror(UVM_CHECK)` |
+|---|---|---|---|---|
+| (a) one field `[31:0]`, `byte_en` = `0011` | `DATA`: `0011` | `DATA`, as a whole | `aaaabbbb` | mismatch with `1234bbbb` |
+| (b) `LO`/`HI`, `byte_en` = `0011` | `LO`: `0011`; `HI`: `00` (shifted by two lanes) | `LO` only | `1234bbbb` | match |
+| (c) `LO`/`HI`, `byte_en` left at the predictor's all-lanes default | `LO` and `HI`: all ones | both | `aaaabbbb` | mismatch with `1234bbbb` |
+
+Only (b), the worked example's model and adapter, keeps the mirror right.
+
+</details>
 
 ### Expert: choosing `PPROT` per register access
 
@@ -1191,6 +1471,19 @@ What a VIP must add for an APB5 interface, each feature gated by the interface p
 ### Expert: recommendations are not rules
 
 Several APB statements are recommendations, and they have changed between issues. IHI 0024C (APB4, 2010) recommended that "the address and write signals are not changed immediately after a transfer, but remain stable until another access occurs" to save power (§3.1.2, Note); IHI 0024E recommends that signals not required to be valid are driven to zero (Appendix A). `PSLVERR` low outside completion is recommended in both. A checker that turns a recommendation into an error will fail correct designs built to the other issue. Keep the rule assertions strict, express recommendations as cover properties or warnings, and state in the VIP's documentation which issue it checks. The same discipline applies to `a_wait_bound`: it is the test's contract with one completer, so make the bound a parameter and put it in the test plan.
+
+The statements this lesson has met, sorted by what a checker should do with them:
+
+| Statement | Source | Kind | How a checker encodes it |
+|---|---|---|---|
+| SETUP lasts one cycle and is followed by ACCESS | IHI 0024E §4.1 | rule | assertion: `a_setup_to_access`, `a_access_from_setup` |
+| the request stays unchanged while `PREADY` is low | §3.1.2, §3.3.2 | rule | assertion: `a_wait_hold` |
+| `PSTRB` all low during reads | §3.2 | rule | assertion: `a_pstrb_read` |
+| `PSLVERR` low outside the completion cycle | §3.4, both issues | recommendation | cover property or warning |
+| address and write signals kept stable after a transfer | IHI 0024C §3.1.2 Note | recommendation, issue C | cover property or warning |
+| signals not required to be valid driven to zero | IHI 0024E Appendix A | recommendation, issue E | cover property or warning |
+| `PWAKEUP` asserted at least one cycle before `PSELx` | §3.7.2 | recommendation | coverage item |
+| at most `MAX_WAIT` wait states | none | testbench policy | parameterized assertion: `a_wait_bound` |
 
 ### Interview angles
 
@@ -1479,6 +1772,25 @@ In `tb_top`, replace `apb_regs dut (...)` with `apb_rand_completer #(.MAX_WAIT(7
 **3. What you should see.** No `APB_SVA` error: the driver drives the request once, in SETUP, and the wait loop drives nothing. `WAIT_STATS` reports eight wait counts, 0 to 7, each on roughly an eighth of the 200 transfers, and `errors=` on roughly a third (addresses `0x10` and `0x14` are two of the six word addresses the sequence can draw); the exact numbers depend on the seed, which is tool-dependent. `c_no_wait`, `c_one_wait` and `c_error` are hit. `c_back_to_back` is not: `apb_driver` always idles one cycle, which the expert section's driver changes. The evidence matters as much as the silence: an assertion that never saw a wait state proves nothing about wait states.
 
 **4. Mutant A.** `a_wait_hold` fails. Its antecedent holds at the first wait-state edge; the driver's drive made there lands just after that edge, so at the next edge `$stable(paddr)` is false: the failure is reported one edge after the first wait state, once per transfer that had at least one wait state. Transfers with zero wait states never execute the loop body, so they never fail, which is about one transfer in eight here and *every* transfer against a zero-wait completer. That is the reason for random waits. Note also what the completer did: it completed the transfer at `addr + 4`, while the monitor's item says `addr`, so a scoreboard would have reported a mysterious data mismatch somewhere else.
+
+<TimingDiagram
+  title="Mutant A: a_wait_hold fails one edge after the first wait state"
+  caption="The x-axis is the rising edges of PCLK, numbered 0 to 7; each column shows the value sampled at that edge. An illustrative pair of transfers. A write to 0x0 with two wait states: SETUP at edge 1, wait states at edges 2 and 3, completion at edge 4. The mutant's drive at edge 2 lands just after it, so edge 3 samples PADDR 4. Then a transfer to 0x8 with zero wait states: SETUP at edge 6, completion at edge 7, and no failure."
+  edges={8}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 1, 0, 1, 1] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 1, 0, 0, 1] },
+    { name: "PADDR", kind: "bus", values: ["0", "0", "0", "4", "4", "4", "8", "8"] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "drive", label: "First wait state: the antecedent holds, and the mutant drives paddr to addr + 4 here" },
+    { edge: 3, tone: "fail", label: "a_wait_hold fails: $stable(paddr) is false (0 at edge 2, 4 at edge 3)" },
+    { edge: 4, tone: "info", label: "The completer completes the write at 0x4, while the monitor's item says 0x0" },
+    { edge: 7, tone: "pass", label: "Zero wait states: the wait loop never runs, nothing fires" }
+  ]}
+/>
 
 **5. Mutant B.** `a_wait_bound` fires on transfers with 17 or more wait states, and nothing else does. This is **not** a protocol bug: APB allows any number of wait states (§3.3.2). It is a mismatch between the testbench's policy (16) and this completer. Raise the interface's `MAX_WAIT` to match the completer's specification, or, if that specification promises at most 16, report the completer.
 

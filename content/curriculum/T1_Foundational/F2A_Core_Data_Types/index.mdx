@@ -621,7 +621,7 @@ What the sandbox showed: `int` kept only the known bits. Its low four bits read 
 <figure className="not-prose my-6">
   <svg viewBox="0 0 360 198" role="img" aria-labelledby="f2a-width-title f2a-width-desc" style={{ width: "100%", maxWidth: 520 }}>
     <title id="f2a-width-title">The five width-and-sign steps for s9 = a + b, as bit strips</title>
-    <desc id="f2a-width-desc">Step 1, size: a is the 8 bits 1100 1000, which is 200, and b is 0110 0100, which is 100. Step 2, context: the widest of a, b and the 9-bit target s9 is 9 bits, so the context is 9 bits. Step 3, sign: both operands are unsigned, so the expression is unsigned. Step 4, extend: each operand gets a zero in a new ninth bit. Step 5, add and store: 1 0010 1100, which is 300, fits in s9. With the 8-bit target s8 instead, the context is max(8, 8, 8) = 8 bits, so the sum is formed in 8 bits and a ninth bit never exists; s8 holds 0010 1100, which is 44. That is why (a8 + b8) >> 1 is 22: there is no carry to shift down.</desc>
+    <desc id="f2a-width-desc">Step 1, size: a is the 8 bits 1100 1000, which is 200, and b is 0110 0100, which is 100. Step 2, context: the widest of a, b and the 9-bit target s9 is 9 bits, so the context is 9 bits. Step 3, sign: both operands are unsigned, so the expression is unsigned. Step 4, extend: each operand gets a zero in a new ninth bit. Step 5, add and store: 1 0010 1100, which is 300, fits in s9. With the 8-bit target s8 instead, the context is max(8, 8, 8) = 8 bits, so the sum is formed in 8 bits and a ninth bit never exists; s8 holds 0010 1100, which is 44. That is why (a8 + b8) >> 1, formed in 8 bits, has no carry to shift down.</desc>
     <defs>
       <pattern id="f2a-width-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
         <rect width="3" height="6" fill="rgba(244,63,94,0.35)" />
@@ -753,7 +753,7 @@ What the sandbox showed: `int` kept only the known bits. Its low four bits read 
     <text x="6" y="178" fontSize="10" fill="currentColor" fillOpacity="0.85">{"struck cell: no 9th bit in an 8-bit context (§11.6.1), so"}</text>
     <text x="6" y="190" fontSize="10" fill="currentColor" fillOpacity="0.85">{"the sum is formed in 8 bits and 300 becomes 44 (§11.6.2)"}</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">Amber cells are the extension bits added in step 4; the cyan cell is the carry that only a 9-bit context can keep. With <code>s8</code> as the target the context is 8 bits (the dashed frame), so the sum is formed in 8 bits and the carry never exists: the struck-through cell outside the frame is a bit that is never computed, not one that is dropped later (§11.6.1, §11.6.2). That is why <code>(a8 + b8) &gt;&gt; 1</code> is 22, not 150, and <code>s8</code> holds 44.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Amber cells are the extension bits added in step 4; the cyan cell is the carry that only a 9-bit context can keep. With <code>s8</code> as the target the context is 8 bits (the dashed frame), so the sum is formed in 8 bits and the carry never exists: the struck-through cell outside the frame is a bit that is never computed, not one that is dropped later (§11.6.1, §11.6.2). That is why <code>s8</code> holds 44, and why an average formed in 8 bits, <code>(a8 + b8) &gt;&gt; 1</code>, has no carry to shift down.</figcaption>
 </figure>
 
 Two traced examples. First `logic [7:0] a = 200, b = 100;` added into targets of two widths:
@@ -775,9 +775,11 @@ Then a signed and an unsigned operand, with `logic signed [3:0] s = -4;` (bits `
 | 4. extend `s` | zero-extended: `0000_1100` = 12 | sign-extended: `1111_1100` = −4 |
 | 5. add and store | 12 + 10, so `r = 22` | −4 + 10, so `r = 6` |
 
-The signed target `r` did not make the first sum signed. Now try the traps yourself. The lab opens on **the lost carry**: predict `s` for each code variant, including the two averages. Then switch the trap to **signed + unsigned** and predict **a + u**, **$signed(a) + u** and **a + $signed(u)**.
+The signed target `r` did not make the first sum signed. Now try the traps yourself. The lab opens on **the lost carry**, with `a8 = 200`, `b8 = 100` and an 8-bit target `s`, at the code variant `s = (9'(a8) + b8) >> 1`. `9'(a8)` is a size cast: it widens `a8` to 9 bits before the add (§6.24.1; [Casting at a glance](#casting-at-a-glance) below has every cast). This variant is the fix; the 8-bit average `s = (a8 + b8) >> 1` is the trap it avoids. Predict `s` for both from the context width, as in the tables above; the shift count 1 does not count toward the context (§11.6.1). Write down both values before you reveal: the reveal checks both.
 
-<SignednessVisualizer scenario="lost-carry" />
+Then step through the variants the reveal has not shown, the 8-bit and 9-bit sums and `s = (a8 + b8 + 0) >> 1`, and predict `s` for each. Last, switch the trap to **signed + unsigned** and predict **a + u**, **$signed(a) + u** and **a + $signed(u)**.
+
+<SignednessVisualizer scenario="lost-carry" initialVariant="size-cast" />
 
 What the lab showed:
 
@@ -1047,6 +1049,10 @@ end
 | `addr` | `c[27:16]` | `12'h0A0` |
 | `data` | `c[15:0]` | `16'hBEEF` |
 
+The explorer runs the same `cmd_t` through three new writes: a whole 32-bit value, one member, then a 16-bit value assigned to the whole of `c`. Predict each result before you apply the statement, and watch which bits each write changes.
+
+<PackedLayoutExplorer mode="struct" preset="cmd_t" />
+
 The classic mistake is to expect an unpacked struct to behave like a vector. It has no bit numbering, so it cannot be compared with a number, sliced or assigned to a `logic [31:0]` without a cast; choose a packed struct for anything that maps onto bits, such as a header. [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums) covers structs and unions in depth.
 
 ### Strings
@@ -1075,6 +1081,10 @@ A **cast** converts a value to another type, size or sign:
 | `enum_t'(expr)` | Static cast to an enum: no range check, so the result may not be a member (§6.19.4) | `state_t'(3)` holds 3, and `name()` is `""` |
 | `$cast(dest, src)` used as a function | Checks the value: assigns and returns 1, or returns 0 and leaves `dest` unchanged (§6.24.2) | `if (!$cast(st, i)) $error(...)` |
 | `$cast(dest, src);` used as a task | Checks the value: an invalid cast is a run-time error, and `dest` is unchanged (§6.24.2) | `$cast(st, i);` |
+
+Try the size, sign and type casts in the lab. It opens on `8'(12'hABC)`; step through the code variants to `int v = int'(w)` with `w = 8'hF0`, predicting each one on the way, and predict `v` before you reveal it. Then compare `int'(signed'(w))`, and notice whether the `int` target or the expression inside the cast decides how `w` is extended.
+
+<SignednessVisualizer scenario="casts" />
 
 Trace a static cast and a checked one for `typedef enum {A, B, C} abc_t;`, starting each time from `e = A`:
 

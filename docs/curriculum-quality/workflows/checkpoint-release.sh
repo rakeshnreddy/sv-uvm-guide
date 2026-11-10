@@ -60,7 +60,13 @@ NODE_OPTIONS='--require @prisma/client' npx vitest run tests/curriculum-generato
 # Half the workers and longer timeouts: a fresh worktree starts with a cold transform cache, and the
 # default pool on this Mac starves tests into timeouts. CI keeps the normal timeouts.
 NODE_OPTIONS='--require @prisma/client' npx vitest run --reporter=dot --maxWorkers=50% --testTimeout=30000 --hookTimeout=30000 > "$SCR/vitest-release.log" 2>&1 || {
-  sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release.log" | grep -E "^ FAIL|Test Files|Tests " | sort -u; echo "unit tests failed"; exit 1; }
+  # Under heavy machine load (many agents running) tests time out. Rerun only the failed files, one at a time; a real
+  # failure fails again and stops the release.
+  FAILED=$(sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release.log" | grep -E "^ FAIL " | awk '{print $2}' | sort -u)
+  echo "first pass failed in: $(echo $FAILED); rerunning those files serially"
+  { [ -n "$FAILED" ] && NODE_OPTIONS='--require @prisma/client' npx vitest run --reporter=dot --maxWorkers=1 --testTimeout=120000 --hookTimeout=120000 $FAILED > "$SCR/vitest-release-retry.log" 2>&1; } || {
+    sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release-retry.log" "$SCR/vitest-release.log" 2>/dev/null | grep -E "^ FAIL|timed out|Test Files|Tests " | sort -u | head -20; echo "unit tests failed"; exit 1; }
+}
 sed 's/\x1b\[[0-9;]*m//g' "$SCR/vitest-release.log" | grep -E "Test Files|Tests " | sort -u
 echo "== Verilator compile check"
 node scripts/compile-sv.mjs --prune-known | tail -2

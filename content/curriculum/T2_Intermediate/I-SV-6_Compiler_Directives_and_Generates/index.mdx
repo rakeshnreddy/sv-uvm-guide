@@ -106,13 +106,22 @@ The key rule: the compiler substitutes **text, not values**. Each formal argumen
 
 **Mistake 2: double evaluation.** A function evaluates each argument once and copies the value in (§13.5.1). A macro pastes the argument text wherever the formal appears, so an argument with a side effect can run more than once. §22.5.1 makes the same point with its own `max` example.
 
-Trace these by hand before you read the last column. Assume `a = 2`, and that `bump()` does `cnt++` and returns `cnt`, with `cnt` starting at 0.
+**Predict first.** Trace these by hand, then open the reveal. Assume `a = 2`, and that `bump()` does `cnt++` and returns `cnt`, with `cnt` starting at 0. For each line, write the exact text the compiler sees, then the values that result. `MAX` is the macro from Mistake 1, `` `define MAX(a,b) ((a) > (b) ? (a) : (b)) ``.
+
+1. `` `define SQ(x) x*x `` then `` y = `SQ(a+1); ``: what is `y`?
+2. `` `define SQ(x) ((x)*(x)) `` then `` y = `SQ(a+1); ``: what is `y`?
+3. `` x = `MAX(bump(), 0); ``: what are `x` and `cnt`?
+
+<details>
+<summary>Check your trace: what the compiler sees</summary>
 
 | You write | The compiler sees | What happens |
 |---|---|---|
 | `` `define SQ(x) x*x `` then `` y = `SQ(a+1); `` | `y = a+1*a+1;` | `y = 5`, not 9: `*` binds tighter than `+` |
 | `` `define SQ(x) ((x)*(x)) `` then `` y = `SQ(a+1); `` | `y = ((a+1)*(a+1));` | `y = 9` |
 | `` x = `MAX(bump(), 0); `` | `x = ((bump()) > (0) ? (bump()) : (0));` | `x = 2`, `cnt = 2`: `bump()` runs in the condition and again in the branch it selects |
+
+</details>
 
 The conditional operator evaluates only the branch it selects (§11.4.11). So whether `bump()` runs twice depends on the condition: with `cnt` starting at 10, `` `MAX(bump(), 20) `` calls it once and returns 20. A bug that depends on data like this is hard to find. When an argument may have a side effect, write a function instead: `function automatic int max2(int a, int b); return (a > b) ? a : b; endfunction`.
 
@@ -163,6 +172,16 @@ $display(`TB_QUOTE(idle));        // $display("value: \"idle\"");
 
 With `` `TB_ASSERT_HOLD(a_hold, clk, valid && !ready, data) ``, form 2 gives `a_hold: assert property (@(posedge clk) (valid && !ready) |=> $stable(data)) else $error("data changed while valid && !ready");`. The `cond` argument is wrapped in parentheses inside the body, for the same reason as `SQ`.
 
+Where each actual argument of that call lands:
+
+| Formal | Actual text | Where the text lands in the expansion |
+|---|---|---|
+| `lbl` | `a_hold` | the assertion label, `a_hold:` |
+| `clk` | `clk` | the clocking event, `@(posedge clk)` |
+| `cond` | `valid && !ready` | the antecedent, `(valid && !ready)`, and the message built with `` `" `` |
+| `sig` | `data` | `$stable(data)`, and the message built with `` `" `` |
+| (none) | `/* hold rule */` | nowhere: comments in macro text are not copied |
+
 More rules from §22.5.1 that you will trip over:
 
 - **Nested macros expand at the point of use.** A macro used inside another macro's text is expanded after the outer macro is substituted, not when it is defined. That is why `` `__LINE__ `` inside a logging macro gives the line of the call, not the line of the definition.
@@ -200,6 +219,30 @@ The UVM reporting macros are the macros you will use most, and they show good ma
   uvm_report_info(ID, MSG, VERBOSITY, `uvm_file, `uvm_line, "", 1); \
   `uvm_report_end
 ```
+
+<SequenceDiagram
+  title="How one `uvm_info use expands (uvm-core impl.)"
+  caption="None of these arrows is a run-time call. The first arrow is your line using the macro; each later solid arrow reads 'this text is replaced by', and the dashed arrows are the text that comes back. In step 2, ID, MSG and VERBOSITY are replaced by the caller's text. The outer macro is substituted first, and only then are the macros inside its text expanded, at the caller's line (§22.5.1); the top-to-bottom order is the order in which that text is read. The expansion text is from uvm-core 2020.3.1 uvm_message_defines.svh, abridged as in the code above."
+  columnWidth={150}
+  participants={[
+    { id: "caller", label: "your code", sublabel: "the line using it" },
+    { id: "info", label: "`uvm_info", sublabel: "outer macro" },
+    { id: "inner", label: "inner macros", sublabel: "begin/end, file, line" }
+  ]}
+  messages={[
+    { from: "caller", to: "info", label: '`uvm_info("ID", "msg", UVM_LOW)' },
+    { kind: "self", from: "info", label: "args pasted" },
+    { from: "info", to: "inner", label: '`uvm_report_begin( uvm_pkg::UVM_INFO, "ID", UVM_LOW)' },
+    { kind: "note", from: "info", to: "inner", label: "RO is not given, so its default text uvm_get_report_object() is pasted and resolved in the caller's scope" },
+    { kind: "return", from: "inner", to: "info", label: "begin, declare _local_report_object_ then if (...) begin" },
+    { from: "info", to: "inner", label: "`uvm_file and `uvm_line" },
+    { kind: "return", from: "inner", to: "info", label: "the caller's file and line: `__FILE__, `__LINE__" },
+    { kind: "note", from: "info", to: "inner", label: 'Inside the if goes the payload: uvm_report_info("ID", "msg", UVM_LOW, `uvm_file, `uvm_line, "", 1);' },
+    { from: "info", to: "inner", label: "`uvm_report_end" },
+    { kind: "return", from: "inner", to: "info", label: "end end" },
+    { kind: "return", from: "info", to: "caller", label: "one begin … end block: write no ; after it", tone: "active" }
+  ]}
+/>
 
 What each part teaches:
 
@@ -285,6 +328,25 @@ An **include guard** makes a header safe to include more than once:
 
 A guard protects you only **within one compilation unit**. Including a file with only macros twice is legal anyway, because a redefined macro simply replaces the old one. The real errors come from declarations: a `typedef`, class or module declared twice in one scope. A subtler trap compiles without complaint at first: if two packages each `` `include `` the same class declaration, you get two distinct classes that share a name, `pkg_a::my_item` and `pkg_b::my_item`. A handle of one cannot hold an object of the other, so type errors appear later, far from their cause. Compile each declaration once, in one package, and `import` that package.
 
+<ArchitectureDiagram
+  title="One header included into two packages makes two classes"
+  caption="my_item.svh here has no include guard. Each package gets its own copy of the class, so pkg_a::my_item and pkg_b::my_item are different types and a handle of one cannot hold an object of the other. A guard does not rescue this design: with a guard and both packages in one compilation unit, pkg_b's include is skipped and pkg_b has no my_item at all. Declare the class in one package and import it."
+  spreadAnchors={true}
+  nodes={[
+    { id: "cu", label: "one compilation unit", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "hdr", label: "my_item.svh", sublabel: "class my_item ... endclass, no guard", col: 0, row: 0, colSpan: 2 },
+    { id: "pa", label: "package pkg_a", sublabel: "pkg_a::my_item", col: 0, row: 1 },
+    { id: "pb", label: "package pkg_b", sublabel: "pkg_b::my_item", col: 1, row: 1 },
+    { id: "err", label: "h_a = h_b;", sublabel: "pkg_a::my_item handle, pkg_b::my_item object", col: 0, row: 2, colSpan: 2, state: "error", badge: "type error" }
+  ]}
+  edges={[
+    { from: "hdr", to: "pa", style: "structural", label: "`include" },
+    { from: "hdr", to: "pb", style: "structural", label: "`include" },
+    { from: "pa", to: "err", style: "causal" },
+    { from: "pb", to: "err", style: "causal" }
+  ]}
+/>
+
 ### Directives that set compiler state
 
 | Directive | What it does | Default, and `` `resetall `` | Where it may appear |
@@ -308,6 +370,22 @@ A **design element** is a module, program, interface, checker, package, primitiv
 
 **`` `default_nettype none ``.** An undeclared name in a port connection or on the left of a continuous `assign` normally becomes a new 1-bit wire (§6.10). With `none`, that misspelling becomes a compile error instead. Put it at the top of your own files, and end each such file with `` `default_nettype wire ``, so that third-party files compiled next in the same unit get the default they were written for. One more catch: an input port declared without a net kind, such as `input logic a`, takes the default net type (§23.2.2.3). Tools treat that port differently under `none`, and some report an error (tool-dependent). So in files compiled under `none`, write `input wire logic a` or `input var logic a`; both are legal whatever the default is.
 
+<ArchitectureDiagram
+  title="A file of yours that leaves nothing behind"
+  caption="Read top to bottom, in compile order. The first line forbids implicit nets in your own code (§22.8). timeunit and timeprecision first in each design element make its delays immune to any `timescale (§3.14.2.3). The last line restores the default net type, so the next file in the same compilation unit is read as its author expected (§22.2)."
+  cellWidth={300}
+  nodes={[
+    { id: "own", label: "my_block.sv (yours)", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "first", label: "`default_nettype none", sublabel: "first line: a misspelt net is an error", col: 0, row: 0 },
+    { id: "mod", label: "module my_block ... endmodule", sublabel: "timeunit 1ns; timeprecision 1ps; come first", col: 0, row: 1 },
+    { id: "last", label: "`default_nettype wire", sublabel: "last line: hand back the default", col: 0, row: 2 },
+    { id: "next", label: "third_party.sv", sublabel: "next in the same unit: implicit nets are wire", col: 0, row: 3, state: "ok", badge: "implicit nets OK" }
+  ]}
+  edges={[
+    { from: "last", to: "next", style: "causal", label: "wire carried forward" }
+  ]}
+/>
+
 **`` `resetall ``** resets the directives that have defaults: `` `timescale `` to the tool default, `` `default_nettype `` to `wire`, and the pull and cell directives (§22.3, §22.9, §22.10). It does **not** undefine macros (§22.5), and it does not affect `` `begin_keywords `` or `` `line `` (§22.12, §22.14).
 
 **`` `undef NAME ``** removes one macro (§22.5.2). Undefining a name that was never defined may give a warning. **`` `undefineall ``** removes **every** macro defined so far in the compilation unit (§22.5.3), including include guards and the UVM macros from `uvm_macros.svh`. Later files in the same unit then lose `` `uvm_info `` and re-read headers whose guards have vanished. Prefer a targeted `` `undef `` of your own file-local macros.
@@ -321,6 +399,17 @@ A **design element** is a module, program, interface, checker, package, primitiv
 A **generate block** is a group of module items, such as instances, `assign` statements, `always` and `initial` procedures, assertions and declarations, that elaboration can create once, many times or not at all (§27.2). A generate block cannot contain port declarations, `specify` blocks or `specparam`s, and a `parameter` declared inside one is treated as a `localparam`. Modules, interfaces and checkers can all contain generate constructs.
 
 The **generate scheme**, meaning the loop bounds or the `if`/`case` condition, must be a constant expression: parameters, `localparam`s, genvars, and calls to constant functions or constant system functions such as `$clog2` (§27.3, §11.2.1). Generate schemes look like procedural code, but they **never execute during simulation**: they are evaluated once at elaboration (§27.3). The keywords `generate` and `endgenerate` are optional and change nothing. Each generated block is a new level of hierarchy, and code inside it can use names from the enclosing scope directly.
+
+The two `for` loops look alike but live at different times:
+
+| | Loop generate: `for (genvar i …) begin : g` | Procedural loop: `for (int i …)` |
+|---|---|---|
+| Written where | among module items, outside any procedure | inside an `initial`, `always`, task or function |
+| Evaluated when | once, at elaboration (§27.3) | each time the procedure reaches it, during simulation |
+| Loop index | a `genvar`; inside each block, a `localparam` with that block's value (§27.4) | an ordinary variable |
+| Each iteration makes | a new generate block: `g[0]`, `g[1]`, … | nothing: it only executes statements |
+| Can instantiate modules or interfaces | yes | no |
+| Shows up in paths, `%m` and waveforms | yes, as `g[i]` | no indexed scope per iteration (a named `begin` inside it is one scope) |
 
 ### Loop generate and genvar rules
 
@@ -476,6 +565,33 @@ module tb_top;
 endmodule
 ```
 
+<ArchitectureDiagram
+  title="Handles copied out of generated blocks at time 0"
+  caption="Elaboration builds gen_if[0..2], each holding one port_if instance u_if. At time 0, the initial procedure inside each block copies its own u_if into vifs[i]. Testbench code then indexes vifs[k] with a run-time k. Writing tb_top.gen_if[k].u_if directly does not compile, because an instance select must be a constant expression (§23.6)."
+  cellWidth={120}
+  gapX={32}
+  nodes={[
+    { id: "top", label: "tb_top", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "if0", label: "gen_if[0].u_if", sublabel: "port_if", kind: "interface", col: 0, row: 0 },
+    { id: "if1", label: "gen_if[1].u_if", sublabel: "port_if", kind: "interface", col: 1, row: 0 },
+    { id: "if2", label: "gen_if[2].u_if", sublabel: "port_if", kind: "interface", col: 2, row: 0 },
+    { id: "v0", label: "vifs[0]", sublabel: "virtual port_if", col: 0, row: 1 },
+    { id: "v1", label: "vifs[1]", sublabel: "virtual port_if", col: 1, row: 1 },
+    { id: "v2", label: "vifs[2]", sublabel: "virtual port_if", col: 2, row: 1 },
+    { id: "tst", label: "testbench code", sublabel: "vifs[k], k chosen at run time", col: 0, row: 2, colSpan: 3, state: "ok" },
+    { id: "bad", label: "tb_top.gen_if[k].u_if", sublabel: "run-time k: compile error, select not constant", col: 0, row: 3, colSpan: 3, state: "error" }
+  ]}
+  spreadAnchors={true}
+  edges={[
+    { from: "if0", to: "v0", style: "data", label: "t = 0" },
+    { from: "if1", to: "v1", style: "data", label: "t = 0" },
+    { from: "if2", to: "v2", style: "data", label: "t = 0" },
+    { from: "v0", to: "tst", style: "data" },
+    { from: "v1", to: "tst", style: "data" },
+    { from: "v2", to: "tst", style: "data" }
+  ]}
+/>
+
 ### Compile time, elaboration time or run time?
 
 Command-line **plusargs** are the usual run-time switch. `$test$plusargs("NAME")` returns nonzero if any argument on the simulator's command line starts with `+NAME`. `$value$plusargs("NAME=%d", var)` also converts the rest of that argument into `var`; it returns 0 and leaves `var` unchanged if the plusarg is absent (§21.6). F2D covers them in depth.
@@ -531,8 +647,39 @@ Tools word their messages differently, so this table describes each symptom by c
 - Directives act as the compiler reads the text, and they stay in force for the rest of the compilation unit. Macros replace text: parenthesize, never reuse an argument with a side effect, and decide whether each statement macro takes a semicolon.
 - `` `ifdef `` tests definedness. A chain keeps one branch. Guards work within one compilation unit.
 - State directives (`` `timescale ``, `` `default_nettype ``) leak into later files; `timeunit` in every design element and a restored `` `default_nettype wire `` stop the leak. `` `resetall `` does not touch macros.
-- Generate builds labelled, indexed scopes before time 0. Paths use the label and the genvar value; unlabelled blocks become `genblk<n>`, counted over every construct in the scope.
+- Generate builds named scopes (indexed in a loop) before time 0. Paths use the label and the genvar value; unlabelled blocks become `genblk<n>`, counted over every construct in the scope.
 - Structure belongs at elaboration, per-run choices at run time, and compile-out code behind `` `ifdef ``.
+
+<VisualRecap
+  title="Text in, text out; then blocks stamped out before time 0"
+  rule="A macro replaces text while the compiler reads it, and nothing is evaluated until the result is compiled; a generate construct is evaluated once at elaboration and builds scopes, named by their label (or a genblk number when unlabelled) and indexed by the genvar in a loop, that exist before time 0. Run-time code can steer what exists, never create it."
+  code={`\`define TB_SQ(x) ((x) * (x))     // text in, text out
+y = \`TB_SQ(a + 1);                 // y = ((a + 1) * (a + 1));
+
+// in tb_top, with NUM_CH = 2: tb_top.gen_chk[0].chk_inst and tb_top.gen_chk[1].chk_inst
+for (genvar i = 0; i < NUM_CH; i++) begin : gen_chk
+  protocol_checker chk_inst (.clk(clk), .data(data_bus[i]));
+end`}
+  mistake="Treating a macro argument like a function argument: it is pasted as text, so it can regroup under precedence or run twice. And expecting a generate loop to run during simulation: it ran once, at elaboration."
+  inTestbench="A guarded tb_defines.svh with a TB_DEBUG logging macro (compile), one bind of a parameterized checker wrapper with a labelled gen_chk loop (elaboration), and plusargs such as +INJECT_BUG for per-run choices (run); see Make It Work below."
+>
+  <ArchitectureDiagram
+    title="A macro use and a loop generate, side by side"
+    caption="Top: the compiler replaces the macro use with its text, with the argument pasted where x appears. Bottom: elaboration unrolls the labelled loop into one block per genvar value, with paths that exist before time 0."
+    cellWidth={170}
+    gapX={100}
+    nodes={[
+      { id: "m_in", label: "`TB_SQ(a + 1)", sublabel: "what you write", col: 0, row: 0 },
+      { id: "m_out", label: "((a + 1) * (a + 1))", sublabel: "what is compiled", col: 1, row: 0 },
+      { id: "g_in", label: "for (genvar i ...)", sublabel: "begin : gen_chk, NUM_CH = 2", col: 0, row: 1 },
+      { id: "g_out", label: "gen_chk[0], gen_chk[1]", sublabel: "one chk_inst in each", col: 1, row: 1 }
+    ]}
+    edges={[
+      { from: "m_in", to: "m_out", style: "causal", label: "compile" },
+      { from: "g_in", to: "g_out", style: "causal", label: "elaborate" }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -746,6 +893,13 @@ How to read it:
 - The layout of the error line is tool-specific, but every simulator reports the severity, the simulation time, the file and line of the `$error`, and the scope (§20.10).
 - Compiled **without** `TB_DEBUG`, only the error remains. Run **without** `+INJECT_BUG`, nothing fails, and with `TB_DEBUG` you see only the three "alive" lines. The simulation ends at 75 ns.
 
+The two knobs you flip without editing code, at a glance (every run ends at 75 ns):
+
+| | Run with `+INJECT_BUG` | Run without it |
+|---|---|---|
+| **Compiled with `TB_DEBUG`** | three "alive" lines, the injection line, and the `a_hold` error on `gen_chk[1]` at 45 ns | three "alive" lines, no error |
+| **Compiled without `TB_DEBUG`** | only the `a_hold` error at 45 ns: `TB_LOG` expands to nothing | no output from the bench |
+
 **Run it** (tool-neutral):
 
 1. Save each of the five blocks, including its two comment lines, under the file name on its second line, all in one directory, and put that directory on the include path. (The line numbers in the expected output count those comment lines.)
@@ -764,10 +918,20 @@ How to read it:
 
 **Variations to try** (predict first):
 
+1. Set `NUM_PORTS = 4`. How many "alive" lines appear, under which block names, and which checker fails, when?
+2. Remove `: gen_chk` from the loop. What are the checker paths now?
+3. Set `NUM_PORTS = 0`. What happens, and when?
+4. Run with `+INJECT_BUG_LATER` instead of `+INJECT_BUG`. Is the bug injected?
+
+<details>
+<summary>Check your predictions</summary>
+
 - `NUM_PORTS = 4`: four "alive" lines, `gen_chk[0]` to `gen_chk[3]`, and the same single failure on `gen_chk[1]` at 45 ns.
 - Remove `: gen_chk` from the loop: the paths become `tb_top.u_router.u_chks.genblk2[i].u_chk`, because the `if (N < 1)` construct is number 1 even though it builds nothing (§27.6).
 - `NUM_PORTS = 0`: elaboration stops with the `port_checkers` message, and the simulation never starts (§20.10.1).
 - Run with `+INJECT_BUG_LATER`: the bug is still injected, because `$test$plusargs` matches a prefix (§21.6).
+
+</details>
 
 **Checklist before moving on:**
 
@@ -807,6 +971,34 @@ A `let` still substitutes its actual arguments into its body (§11.12), so it re
 
 ### Expert: Time-unit precedence and the mixed-unit error
 
+<ArchitectureDiagram
+  title="Where a design element gets its time unit"
+  caption="Ask the questions top to bottom and stop at the first yes (§3.14.2.3). Steps (a) to (d) apply only to an element without its own timeunit; precision follows the same rules. The compilation-unit time unit in (c) can be set only by a timeunit declaration, never by `timescale, and the default in (d) is implementation-specific."
+  cellWidth={180}
+  gapX={64}
+  nodes={[
+    { id: "q0", label: "own timeunit?", sublabel: "declared inside the element", col: 0, row: 0 },
+    { id: "r0", label: "its own timeunit", sublabel: "beats (a) to (d)", col: 1, row: 0, state: "ok" },
+    { id: "qa", label: "(a) nested?", sublabel: "in a module or interface", col: 0, row: 1 },
+    { id: "ra", label: "the enclosing module's", sublabel: "or interface's unit, inherited", col: 1, row: 1 },
+    { id: "qb", label: "(b) earlier `timescale?", sublabel: "in this compilation unit", col: 0, row: 2 },
+    { id: "rb", label: "the last `timescale", sublabel: "its units", col: 1, row: 2 },
+    { id: "qc", label: "(c) unit-scope timeunit?", sublabel: "outside all declarations", col: 0, row: 3 },
+    { id: "rc", label: "the compilation unit's", sublabel: "time unit", col: 1, row: 3 },
+    { id: "rd", label: "(d) the default", sublabel: "implementation-specific", col: 0, row: 4 }
+  ]}
+  edges={[
+    { from: "q0", to: "r0", style: "causal", label: "yes" },
+    { from: "q0", to: "qa", style: "causal", label: "no" },
+    { from: "qa", to: "ra", style: "causal", label: "yes" },
+    { from: "qa", to: "qb", style: "causal", label: "no" },
+    { from: "qb", to: "rb", style: "causal", label: "yes" },
+    { from: "qb", to: "qc", style: "causal", label: "no" },
+    { from: "qc", to: "rc", style: "causal", label: "yes" },
+    { from: "qc", to: "rd", style: "causal", label: "no" }
+  ]}
+/>
+
 - **Precedence (§3.14.2.3).** A design element without its own `timeunit` takes its unit from, in order: (a) the enclosing module or interface, if it is nested; (b) the last `` `timescale `` earlier in the compilation unit; (c) a `timeunit` declared in the compilation-unit scope; (d) the tool's default. Precision follows the same rules. A `timeunit` inside the element beats all four.
 - **The error.** It is an error if some design elements have a time unit and precision and others do not (§3.14.2.3). Many tools report it only as a warning, which is tool-dependent, so mixed benches often "work" with silently wrong delays.
 - **After `` `resetall ``** the `` `timescale `` reverts to the tool's default (§22.7).
@@ -830,6 +1022,22 @@ module or_tree #(parameter int W = 8) (input logic [W-1:0] in, output logic out)
   end
 endmodule
 ```
+
+<ArchitectureDiagram
+  title="or_tree with W = 4 after elaboration"
+  caption="Each W > 1 instance builds gen_split, which holds u_lo with W/2 inputs and u_hi with W - W/2 inputs; each W = 1 instance builds gen_leaf instead, which ends the recursion. W = 4 gives 7 or_tree instances, 2W - 1 in general, because each split adds exactly two. Each leaf drives its out from the one bit of the top instance's in shown on it. For an or_tree instance named top, the leaf that reads in[1] is top.gen_split.u_lo.gen_split.u_hi.gen_leaf."
+  cellWidth={150}
+  nodes={[
+    { id: "t", label: "or_tree W = 4: gen_split", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "or", label: "assign out = lo | hi", sublabel: "lo from u_lo, hi from u_hi", col: 0, row: 0, colSpan: 2 },
+    { id: "lo", label: "u_lo W = 2: gen_split", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "hi", label: "u_hi W = 2: gen_split", col: 1, row: 1, rowSpan: 2, container: true },
+    { id: "lolo", label: "u_lo W = 1", sublabel: "gen_leaf: in[0]", col: 0, row: 1 },
+    { id: "lohi", label: "u_hi W = 1", sublabel: "gen_leaf: in[1]", col: 0, row: 2 },
+    { id: "hilo", label: "u_lo W = 1", sublabel: "gen_leaf: in[2]", col: 1, row: 1 },
+    { id: "hihi", label: "u_hi W = 1", sublabel: "gen_leaf: in[3]", col: 1, row: 2 }
+  ]}
+/>
 
 - **Sparse and empty arrays.** A loop with `i += 2` declares `g[0]`, `g[2]`, … and no `g[1]`. A loop that runs zero times still declares the array name, so the name cannot be reused (§27.4).
 - **`defparam`.** A `defparam` inside a generate block, or under an instance array, cannot change a parameter outside that block's own hierarchy, not even in a sibling block from the same loop (§23.10.1). The standard also notes that `defparam` may be removed from a future revision. Pass parameters with `#( )` instead.
@@ -1184,6 +1392,33 @@ endmodule
 ```
 
 Every design element now has a time unit, the vendor's delays mean what the vendor intended, and no file can change another file's meaning. Some tools can also compile third-party code as its own compilation unit; that switch is tool-dependent.
+
+<ArchitectureDiagram
+  title="Compile order before and after the fix"
+  caption="Left, as given: the `timescale 1ns/1ns and `default_nettype none from my_defs.sv flow into vendor_bfm.sv (§22.2). Right, fixed: your files carry timeunit and end with `default_nettype wire, and vendor_wrap.sv resets the state on both sides of the vendor file, so it compiles with implicit nets and #250 means 250 ps. As given, vendor_bfm.sv fails on the undeclared req_q; only after the colleague's `default_nettype wire patch does it compile, with #250 = 250 ns."
+  cellWidth={220}
+  nodes={[
+    { id: "before", label: "as given", col: 0, row: 0, rowSpan: 5, container: true },
+    { id: "b1", label: "my_defs.sv", sublabel: "`timescale 1ns/1ns, nettype none", col: 0, row: 0 },
+    { id: "b2", label: "vendor_bfm.sv", sublabel: "req_q undeclared; patched: 250 ns", col: 0, row: 2, state: "error", badge: "breaks" },
+    { id: "b3", label: "tb_top.sv", col: 0, row: 4 },
+    { id: "after", label: "fixed", col: 1, row: 0, rowSpan: 5, container: true },
+    { id: "a1", label: "my_defs.sv", sublabel: "timeunit; ends `default_nettype wire", col: 1, row: 0 },
+    { id: "wrap", label: "vendor_wrap.sv", col: 1, row: 1, rowSpan: 3, container: true },
+    { id: "w1", label: "`resetall", sublabel: "then `timescale 1ps/1ps", col: 1, row: 1 },
+    { id: "w2", label: "`include vendor_bfm.sv", sublabel: "implicit net; #250 = 250 ps", col: 1, row: 2, state: "ok", badge: "compiles" },
+    { id: "w3", label: "`resetall", sublabel: "nothing left behind", col: 1, row: 3 },
+    { id: "a3", label: "tb_top.sv", sublabel: "timeunit inside", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "b1", to: "b2", style: "causal", label: "none, 1ns" },
+    { from: "b2", to: "b3", style: "causal" },
+    { from: "a1", to: "w1", style: "causal" },
+    { from: "w1", to: "w2", style: "causal" },
+    { from: "w2", to: "w3", style: "causal" },
+    { from: "w3", to: "a3", style: "causal" }
+  ]}
+/>
 
 </details>
 

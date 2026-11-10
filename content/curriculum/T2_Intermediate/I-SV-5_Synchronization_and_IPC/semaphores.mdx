@@ -138,6 +138,25 @@ Rules to carry into every bench, each with the mistake it prevents:
 - **Nothing reads the count.** There is no method that returns how many keys are free (Annex G.3). Make It Work shows how to check the count at the end of a test with `try_get()` and `put()`.
 - **`get()` is a task; `put()` and `try_get()` are functions.** A function cannot call `get()` directly (§13.4), but it can return keys or try for them.
 
+**Check yourself: keep the key ledger.** Start from `semaphore s = new(2);` and apply these calls in order, one after another. P, Q, R and T are separate processes, and P and Q each make two of the calls: P runs `s.get(1)`; Q runs `ok = s.try_get(2)`; R, which never took a key, runs `s.put(1)`; Q runs `ok = s.try_get(2)` again; P runs `s.put(1)`; T runs `s.get(2)`. **Predict:** what does each `try_get(2)` return, how many keys are free at the end, and is anyone waiting?
+
+<details>
+<summary>Check your ledger</summary>
+
+| Step | Call | Result | Free keys after | Waiting |
+|---|---|---|---|---|
+| 0 | `s = new(2)` | bucket created | 2 | — |
+| 1 | P: `s.get(1)` | P takes a key | 1 | — |
+| 2 | Q: `s.try_get(2)` | returns 0 and takes nothing: only 1 is free, and Q does not queue (§15.3.4) | 1 | — |
+| 3 | R: `s.put(1)` | accepted: nothing checks that R took a key (§15.3.2) | 2 | — |
+| 4 | Q: `s.try_get(2)` | returns a positive value and takes both keys | 0 | — |
+| 5 | P: `s.put(1)` | P returns its key | 1 | — |
+| 6 | T: `s.get(2)` | blocks: two keys must be free at the same time (§15.3.3) | 1 | T |
+
+At the end Q holds 2 keys and 1 is free, so three keys exist although the bucket was made with `new(2)`: R's `put(1)` added one (§15.3.1). T waits until one more key comes back.
+
+</details>
+
 ### Predict the queue, then drive it yourself
 
 The interactive lab below runs the course's process model, a tested model of the §15.3 rules; its assumptions are listed in its frame. Start with the **FIFO wake-up** program (FIFO: first-in first-out, so the oldest waiter is served first). A takes the only key at 0 ns and returns it at 10 ns; B asks at 2 ns and keeps the key for 5 ns once it has it; C asks at 4 ns. **Predict:** when does C print "C got the key"? Then switch to the **get(2)** program: B asks for two keys from `new(0)` at 0 ns, and A, which holds no key, calls `put(1)` at 5 ns and again at 10 ns. **Predict:** when does B continue?
@@ -173,6 +192,23 @@ bus_lock.get(1);
 if (!pkt.bad) drive(pkt);               // the error path skips the work, not the put
 bus_lock.put(1);
 ```
+
+<ArchitectureDiagram
+  title="A leaked key: the only key is held by a holder that will never run put(1)"
+  caption="Arrows read 'waits for' and 'held by'. The next caller waits for bus_lock, and bus_lock's only key is held by a holder that left the critical section without put(1), here by the broken snippet's return (a kill or a holder that finished does the same); it may even be the next caller itself. No arrow leads back from the holder, because it will never run put(1), so the next caller and everyone queued behind it wait for the rest of the run."
+  legend={false}
+  cellWidth={120}
+  gapX={100}
+  nodes={[
+    { id: "next", label: "next caller", sublabel: "blocked in get(1)", kind: "generic", col: 0, row: 0, state: "error" },
+    { id: "lock", label: "bus_lock", sublabel: "0 of 1 keys free", kind: "generic", col: 1, row: 0 },
+    { id: "holder", label: "holder", sublabel: "left without put(1)", kind: "generic", col: 1, row: 1, state: "dim" }
+  ]}
+  edges={[
+    { from: "next", to: "lock", style: "causal", label: "waits for" },
+    { from: "lock", to: "holder", style: "control", label: "held by" }
+  ]}
+/>
 
 **Debug it.** In the debug tab below, the test should send four packets, but only the first completes. **Predict** which line loses the key before you click, then choose a fix. The model reruns the whole test and checks three things: no process is left blocked, two senders never share the bus, and the bus ends with all its keys.
 
@@ -248,7 +284,7 @@ Picture it two ways. The sequence diagram shows how the processes got here.
   ]}
 />
 
-The **wait-for graph** shows why they can never leave. Draw an arrow from each waiting process to the semaphore it waits for, and from each semaphore to the process that holds its key. With one-key semaphores, a loop of arrows means the processes in it are deadlocked. (A semaphore with several keys can have holders outside the loop who may still return a key; Push Further covers that case.) An arrow from a semaphore to a holder that has already finished or been killed means a leaked key, not a deadlock: that holder will never call `put()`.
+The **wait-for graph** shows why they can never leave. Draw an arrow from each waiting process to the semaphore it waits for, and from each semaphore to the process that holds its key. With one-key semaphores, a loop of arrows means the processes in it are deadlocked. (A semaphore with several keys can have holders outside the loop who may still return a key; Push Further covers that case.) An arrow from a semaphore to a holder that has already finished, been killed or left the critical section without `put()` means a leaked key, not a deadlock: that holder will never call `put()`.
 
 <ArchitectureDiagram
   title="Wait-for graph of the deadlock at t = 1 ns"
@@ -313,6 +349,34 @@ The **wait-for graph** shows why they can never leave. Draw an arrow from each w
 
 **A deadlock can hide.** Delete both `#1` delays and the run usually passes, because each process takes both keys before the other one starts. But the standard lets a simulator suspend a process between any two statements (§4.7), so the opposite orders can still deadlock on a conforming simulator. A passing run proves nothing here: fix the order.
 
+<details>
+<summary>Step through one interleaving that still deadlocks without the #1 delays</summary>
+
+<SequenceDiagram
+  title="The deadlock with no delays: one legal interleaving"
+  caption="Both #1 delays are deleted, so each process runs get(1), $display, get(1) with no time passing. Here the simulator suspends proc_a right after its first get(1), which §4.7 allows, and runs proc_b. Each process again holds one key and blocks on the other: the same cycle as before, at 0 ns. In the order where proc_a runs both get(1) calls first, the run passes."
+  columnWidth={130}
+  participants={[
+    { id: "a", label: "proc_a", kind: "generic" },
+    { id: "s1", label: "s1", sublabel: "new(1)", kind: "generic" },
+    { id: "s2", label: "s2", sublabel: "new(1)", kind: "generic" },
+    { id: "b", label: "proc_b", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns, no #1 delays" },
+    { from: "a", to: "s1", label: "s1.get(1)" },
+    { kind: "return", from: "s1", to: "a", label: "key taken" },
+    { kind: "note", from: "a", to: "s1", label: "the simulator suspends proc_a here (§4.7)" },
+    { from: "b", to: "s2", label: "s2.get(1)" },
+    { kind: "return", from: "s2", to: "b", label: "key taken" },
+    { from: "b", to: "s1", label: "s1.get(1): blocks", tone: "error" },
+    { from: "a", to: "s2", label: "s2.get(1): blocks", tone: "error" },
+    { kind: "note", from: "a", to: "b", label: "Still t = 0 ns. Each holds one key and waits for the other's: deadlock." }
+  ]}
+/>
+
+</details>
+
 ### Multi-key semaphores: counting and credits
 
 The sections above are the core. The ones below add practitioner depth; read this one before Make It Work, which uses credits.
@@ -320,6 +384,26 @@ The sections above are the core. The ones below add practitioner depth; read thi
 A semaphore with n keys counts n interchangeable things: n channels, n buffer slots, n requests a target can accept. Each user takes as many keys as it needs and gives back the same number.
 
 **`get(n)` is all or nothing.** It waits until n keys are free at the same time and then takes them in one step (§15.3.3), as the get(2) program above showed. Two `get(1)` calls are not the same thing. With `new(2)`, two processes that each call `get(1)` twice can each end up holding one key and waiting forever for a second.
+
+<ArchitectureDiagram
+  title="Hold and wait on one counting semaphore"
+  caption="s = new(2). P and Q each took one key with their first get(1) and now wait in a second get(1). Both of s's keys are held by processes in the loop, and each holder waits, so nobody can return a key: a deadlock built from one semaphore. A single get(2) in each process cannot end this way, because it takes both keys or none."
+  legend={false}
+  cellWidth={100}
+  gapX={34}
+  spreadAnchors={true}
+  nodes={[
+    { id: "p", label: "P", sublabel: "holds 1, waits", kind: "generic", col: 0, row: 0, state: "error" },
+    { id: "s", label: "s", sublabel: "0 of 2 free", kind: "generic", col: 1, row: 1 },
+    { id: "q", label: "Q", sublabel: "holds 1, waits", kind: "generic", col: 2, row: 0, state: "error" }
+  ]}
+  edges={[
+    { from: "p", to: "s", style: "causal", label: "waits for" },
+    { from: "s", to: "p", style: "control", label: "held by", via: [[0, 1]] },
+    { from: "q", to: "s", style: "causal", label: "waits for" },
+    { from: "s", to: "q", style: "control", label: "held by", via: [[2, 1]] }
+  ]}
+/>
 
 **Credits.** A **credit** is a key that stands for permission to have one request outstanding. The requester takes one before each request, and whoever finishes the request returns it. That is often a different process, such as the one that receives the response, and it is legal because keys have no owner.
 
@@ -337,6 +421,26 @@ task automatic on_response(int unsigned id);   // runs in the response process
   credits.put(1);                       // a different process returns the credit
 endtask
 ```
+
+<SequenceDiagram
+  title="A credit's round trip"
+  caption="The requester takes a credit before it issues a request. Later, the response process, a different process, finishes the request and returns the credit. With credits = new(4), a fifth send_request() waits in credits.get(1) until one of these put(1) calls."
+  columnWidth={130}
+  participants={[
+    { id: "req", label: "requester", sublabel: "send_request()", kind: "generic" },
+    { id: "cr", label: "credits", sublabel: "new(4)", kind: "generic" },
+    { id: "rsp", label: "response process", sublabel: "on_response()", kind: "generic" }
+  ]}
+  messages={[
+    { from: "req", to: "cr", label: "credits.get(1)" },
+    { kind: "return", from: "cr", to: "req", label: "credit taken" },
+    { kind: "self", from: "req", label: "issue(id)" },
+    { kind: "divider", label: "the response arrives" },
+    { kind: "self", from: "rsp", label: "retire(id)" },
+    { from: "rsp", to: "cr", label: "credits.put(1)" },
+    { kind: "note", from: "req", to: "rsp", label: "If the target refuses the request, no response comes, so the requester must call credits.put(1) itself." }
+  ]}
+/>
 
 Two rules keep credits honest. Return a credit on every path, including a request that the target refuses, because no response will come to return it. And never wait for a credit while holding a lock that the returning process needs (Interview angles). Make It Work builds a bench that follows both rules.
 
@@ -482,7 +586,13 @@ Synchronization bugs rarely print an error. Read the log for what is missing, th
 | A producer is stuck in `put()` on a full mailbox | The consumer was killed, for example by `disable fork`, or stalled | Check which process should have called `get()` | See [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) |
 | Simulation time stops advancing while memory grows | A zero-delay loop writing an unbounded mailbox | Time is stuck at one value in every message | Bound the mailbox or add timing; see [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) |
 
-**Quiet end or hang?** Simulation ends by itself when no activity of any kind remains (§9.6.1). A bench with no clock and no watchdog therefore ends quietly at its last activity, often with no error, which can look like a pass. A free-running clock or a watchdog keeps the run alive, so the same bug becomes a hang that ends only when the watchdog fires. In a UVM test, a blocked process that keeps an objection raised holds the run phase open until the global timeout ends it ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+**Quiet end or hang?** Simulation ends by itself when no activity of any kind remains (§9.6.1), so the same bug looks different depending on what else the bench keeps running:
+
+| The bench has | A leaked key or a deadlock shows as | The run ends |
+|---|---|---|
+| No clock and no watchdog | A missing line, often with no error: it can look like a pass | Quietly, at the last activity (§9.6.1) |
+| A free-running clock or a watchdog, which keeps the run alive; best, a watchdog that calls `$fatal` | A hang | Only when the watchdog fires, loudly with `$fatal` |
+| A UVM test whose blocked process keeps an objection raised | A run phase held open ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) | When the global timeout ends it |
 
 **Make the log point at the culprit.** Give every test a watchdog that ends with `$fatal`, print a PASS/FAIL line only after the last expected step, and name every wait:
 
@@ -687,6 +797,32 @@ Three things to notice:
 - At 35 ns the returned credit goes to A, not B. A has been waiting since 10 ns and B only since 16 ns (§15.3.3).
 - At 45 ns request 11 is refused. B still releases the bus through the same exit and returns its own credit, which lets A start request 3 at once.
 
+The 45 ns row packs four key movements into one time slot. Each of B's steps, and A's grant, can happen only after the step that wakes it, which is why every simulator prints the 45 ns lines in the same order.
+
+<SequenceDiagram
+  title="Inside the 45 ns time slot"
+  caption="No time passes from the first step to the last. A's put(1) on bus_lock wakes B. B is refused, releases the bus and returns its own credit, which wakes A in credits.get(1); A then takes the free bus key. The diagram draws A asking for its credit before B runs; A may also ask after B has returned the credit, and either way the credit A gets is the one B returns."
+  columnWidth={130}
+  participants={[
+    { id: "a", label: "A", sublabel: "master", kind: "generic" },
+    { id: "bus", label: "bus_lock", sublabel: "new(1)", kind: "generic" },
+    { id: "b", label: "B", sublabel: "master", kind: "generic" },
+    { id: "cr", label: "credits", sublabel: "new(2)", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 45 ns: B waits in bus_lock.get(1); both credits are out" },
+    { from: "a", to: "bus", label: "put(1): req 2 done" },
+    { kind: "return", from: "bus", to: "b", label: "key: bus granted, req 11" },
+    { from: "a", to: "cr", label: "get(1): waits, 0 free" },
+    { kind: "self", from: "b", label: "target refuses: NACK" },
+    { from: "b", to: "bus", label: "put(1): bus released" },
+    { from: "b", to: "cr", label: "put(1): own credit back" },
+    { kind: "return", from: "cr", to: "a", label: "credit taken" },
+    { from: "a", to: "bus", label: "get(1)" },
+    { kind: "return", from: "bus", to: "a", label: "key: bus granted, req 3" }
+  ]}
+/>
+
 ### Break it on purpose
 
 Replace the single exit with an early return on the refusal path:
@@ -757,6 +893,14 @@ Write code whose correctness and progress depend on none of these. If other proc
 - **Functions and final procedures.** `put()` and `try_get()` are functions and `get()` is a task (Annex G.3), so only `put()` and `try_get()` can appear in a function or in a `final` procedure, which allows only the statements a function allows (§13.4, §9.2.3). That makes a `final` procedure a natural home for the exact-count check. Final procedures run when simulation ends, before any callback that reports the end (§9.2.3), and the standard names two ways to end: a `$finish`, including the one that `$fatal` makes implicitly (§20.10), and an event queue with nothing left in it (§9.6.1; `cbEndOfSimulation` in §38.36.3). Read together, these clauses imply, and simulators do in practice, that a `final` check also reports on a run that stopped quietly.
 - **The exact-count check** has two halves: `try_get(N)` must succeed (no leak) and `try_get(1)` must then fail (no surplus). Checking only the first half misses the extra key a double `put()` creates.
 
+The three outcomes of `holds_exactly(sem, N)` from Make It Work:
+
+| `try_get(N)` | Then `try_get(1)` | The semaphore held | `holds_exactly` returns |
+|---|---|---|---|
+| Returns 0 | Not called | Fewer than N free keys: a leak | 0 |
+| Succeeds | Returns 0 | Exactly N | 1, after `put(N)` restores the count |
+| Succeeds | Succeeds | More than N: a surplus | 0, after `put(N + 1)` restores the count |
+
 ### Expert: Keys survive a kill, so reset must restore them
 
 `p.kill()`, `disable fork` and `disable` stop a process without running the rest of its code (§9.6.2, §9.6.3, §9.7), and there is no `try`/`finally` to run cleanup. A mid-test reset that kills driver threads therefore also deletes the keys they held. Two patterns work:
@@ -824,6 +968,17 @@ The same reasoning scales up. AXI interconnects deadlock when the dependencies b
 
 Inside one agent, the sequencer already serializes items to its driver, and a sequence that needs exclusive use of that driver calls `lock()` or `grab()` on the sequencer (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6; see [Sequence arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)). A semaphore inside such a driver adds nothing the sequencer does not already do. Use a semaphore when several drivers or threads, possibly in different agents, share something that no sequencer owns: a bus model, a memory model's port, a shared interface. The leak, deadlock and starvation rules on this page apply there unchanged. In a UVM test the same bugs usually surface as a run that ends only at its global timeout ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
 
+Pick the tool from what you need, using the rules of this page and of "Semaphores in real testbenches":
+
+| You need | Use | Why |
+|---|---|---|
+| Exclusive use of one agent's driver | The sequence's `lock()` or `grab()` on the sequencer (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6) | The sequencer already decides which sequence's item goes to its driver next |
+| One thread at a time on a resource that no sequencer owns: a bus model, a memory port, a shared interface | A semaphore with one key | Mutual exclusion, waiters served in arrival order (§15.3.3) |
+| A limit on outstanding requests, or a pool of N identical resources | A semaphore with N keys (credits) | Each user takes and returns as many keys as it needs |
+| To pass data between threads | A mailbox | A semaphore carries no data |
+| To say "it happened now" | An event | A semaphore counts keys; it does not announce a moment |
+| A chosen order of service, such as round-robin | An arbiter process | A semaphore serves only its waiters, in arrival order, and promises nothing else |
+
 ### Interview angles
 
 Attempt each question before you open the feedback.
@@ -862,6 +1017,80 @@ Attempt each question before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+**One-glance recall: four bug shapes.** Each semaphore bug on this page has a shape you can draw from the log, a symptom and a fix.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 360 436" role="img" aria-label="Four semaphore bug shapes. Leaked key: the next caller waits for the semaphore, whose key is held by a holder that will never run put(1); the log shows a grant with no release and later requesters stop in get(); fix with one exit after get() and restore keys where processes are killed. Lock-order deadlock: P waits for s2, held by Q, which waits for s1, held by P, a closed loop; the log shows two holds X, wants Y lines, then nothing; fix with one global order, or all or nothing. Starvation: workers W0 and W1 keep taking turns while F waits the whole time; one process never gets the resource while the others keep running; fix by waiting in get(), gating new requests, and using an arbiter when order matters. Surplus key: two holders, A and B, inside a one-key section; two holders at once and no hang, and try_get(N + 1) succeeds at the end; fix with one put() per get()." style={{ width: "100%", maxWidth: 520 }}>
+    <rect x="4" y="4" width="352" height="102" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <rect x="14" y="18" width="44" height="24" rx="5" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
+    <text x="36" y="34" textAnchor="middle" fontSize="10.5" fill="currentColor">next</text>
+    <line x1="58" y1="30" x2="70" y2="30" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="3 2" />
+    <path d="M70,26 L76,30 L70,34 Z" fill="currentColor" fillOpacity="0.8" />
+    <rect x="76" y="18" width="44" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="98" y="34" textAnchor="middle" fontSize="10.5" fill="currentColor">sem</text>
+    <line x1="98" y1="42" x2="98" y2="62" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" />
+    <path d="M94,62 L98,68 L102,62 Z" fill="currentColor" fillOpacity="0.8" />
+    <rect x="72" y="68" width="52" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="98" y="84" textAnchor="middle" fontSize="10.5" fill="currentColor" fillOpacity="0.7">no put</text>
+    <text x="136" y="24" fontSize="12" fontWeight="600" fill="currentColor">Leaked key</text>
+    <text x="136" y="42" fontSize="10.5" fill="currentColor">Shows: a grant with no release;</text>
+    <text x="136" y="56" fontSize="10.5" fill="currentColor">later requesters stop in get().</text>
+    <text x="136" y="74" fontSize="10.5" fill="currentColor">Fix: one exit after get(); restore</text>
+    <text x="136" y="88" fontSize="10.5" fill="currentColor">keys where processes are killed.</text>
+    <rect x="4" y="112" width="352" height="102" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <rect x="14" y="124" width="40" height="24" rx="5" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
+    <text x="34" y="140" textAnchor="middle" fontSize="10.5" fill="currentColor">P</text>
+    <rect x="84" y="124" width="40" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="104" y="140" textAnchor="middle" fontSize="10.5" fill="currentColor">s2</text>
+    <rect x="84" y="176" width="40" height="24" rx="5" className="fill-amber-500/10 stroke-amber-500" strokeDasharray="4 3" />
+    <text x="104" y="192" textAnchor="middle" fontSize="10.5" fill="currentColor">Q</text>
+    <rect x="14" y="176" width="40" height="24" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="34" y="192" textAnchor="middle" fontSize="10.5" fill="currentColor">s1</text>
+    <line x1="54" y1="136" x2="78" y2="136" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="3 2" />
+    <path d="M78,132 L84,136 L78,140 Z" fill="currentColor" fillOpacity="0.8" />
+    <line x1="104" y1="148" x2="104" y2="170" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" />
+    <path d="M100,170 L104,176 L108,170 Z" fill="currentColor" fillOpacity="0.8" />
+    <line x1="84" y1="188" x2="60" y2="188" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="3 2" />
+    <path d="M60,184 L54,188 L60,192 Z" fill="currentColor" fillOpacity="0.8" />
+    <line x1="34" y1="176" x2="34" y2="154" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" />
+    <path d="M30,154 L34,148 L38,154 Z" fill="currentColor" fillOpacity="0.8" />
+    <text x="136" y="132" fontSize="12" fontWeight="600" fill="currentColor">Lock-order deadlock</text>
+    <text x="136" y="150" fontSize="10.5" fill="currentColor">Shows: two "holds X, wants Y"</text>
+    <text x="136" y="164" fontSize="10.5" fill="currentColor">lines, then nothing.</text>
+    <text x="136" y="182" fontSize="10.5" fill="currentColor">Fix: one global order, or all</text>
+    <text x="136" y="196" fontSize="10.5" fill="currentColor">or nothing.</text>
+    <rect x="4" y="220" width="352" height="102" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <text x="14" y="241" fontSize="10" fill="currentColor">W0</text>
+    <rect x="34" y="233" width="28" height="9" rx="2" className="fill-cyan-500/30 stroke-cyan-500" />
+    <rect x="72" y="233" width="28" height="9" rx="2" className="fill-cyan-500/30 stroke-cyan-500" />
+    <rect x="110" y="233" width="14" height="9" rx="2" className="fill-cyan-500/30 stroke-cyan-500" />
+    <text x="14" y="263" fontSize="10" fill="currentColor">W1</text>
+    <rect x="50" y="255" width="28" height="9" rx="2" className="fill-cyan-500/30 stroke-cyan-500" />
+    <rect x="88" y="255" width="28" height="9" rx="2" className="fill-cyan-500/30 stroke-cyan-500" />
+    <text x="14" y="285" fontSize="10" fill="currentColor">F</text>
+    <line x1="34" y1="281" x2="124" y2="281" className="stroke-amber-500" strokeWidth="2" strokeDasharray="4 3" />
+    <text x="79" y="302" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.75">F: waiting</text>
+    <text x="136" y="240" fontSize="12" fontWeight="600" fill="currentColor">Starvation</text>
+    <text x="136" y="258" fontSize="10.5" fill="currentColor">Shows: one process never gets</text>
+    <text x="136" y="271" fontSize="10.5" fill="currentColor">the resource; the others run.</text>
+    <text x="136" y="289" fontSize="10.5" fill="currentColor">Fix: wait in get(); gate new</text>
+    <text x="136" y="302" fontSize="10.5" fill="currentColor">requests; use an arbiter when</text>
+    <text x="136" y="315" fontSize="10.5" fill="currentColor">order matters.</text>
+    <rect x="4" y="328" width="352" height="102" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+    <rect x="14" y="342" width="110" height="62" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="69" y="357" textAnchor="middle" fontSize="10" fill="currentColor">one-key section</text>
+    <rect x="28" y="368" width="32" height="24" rx="5" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="44" y="384" textAnchor="middle" fontSize="10.5" fill="currentColor">A</text>
+    <rect x="78" y="368" width="32" height="24" rx="5" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="94" y="384" textAnchor="middle" fontSize="10.5" fill="currentColor">B</text>
+    <text x="136" y="348" fontSize="12" fontWeight="600" fill="currentColor">Surplus key</text>
+    <text x="136" y="366" fontSize="10.5" fill="currentColor">Shows: two holders at once, and</text>
+    <text x="136" y="380" fontSize="10.5" fill="currentColor">no hang; try_get(N + 1) succeeds.</text>
+    <text x="136" y="398" fontSize="10.5" fill="currentColor">Fix: one put() per get().</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The four shapes, with the symptoms and fixes from "Diagnosing a hang from its symptoms". Dashed arrow: waits for; solid arrow: held by; dashed box: blocked in <code>get()</code>. A leaked key is an arrow to a holder that will never run <code>put()</code> (faint solid box: no put); a lock-order deadlock is a closed loop; starvation is one lane that waits while the others take turns (W0 and W1 share a <code>new(2)</code> semaphore, F needs both keys); a surplus key puts two holders inside a one-key section.</figcaption>
+</figure>
 
 ### Retrieval quiz
 

@@ -17,6 +17,17 @@ sources:
 - **Why it matters:** Standard roles let you reuse an agent unchanged. The same agent class drives an interface in a block-level bench and only watches it, as a **passive** agent, when that interface is driven by real hardware at chip level. Only the env's wiring and the test's settings change. Put a job in the wrong role and reuse breaks: a scoreboard inside an agent cannot see the other interface it must compare against, and a driver left in a "passive" agent fights the DUT for the bus.
 - **The Analogy:** A film shoot. The test is the director, who picks the cast and calls "action". The env is the soundstage. Each agent is a camera crew assigned to one set: an operator who moves the scenery on cue (the driver, fed by the sequencer) and a camera that records it (the monitor). The editor (the scoreboard) compares footage from several cameras against the script. *Where it breaks:* a real camera crew can be told to "stand still"; a passive agent instead never hires the operator at all, because an idle driver would still be standing on the set. And a camera never edits film: a monitor only records, it never drives.
 
+The analogy at a glance, with the two places where it breaks:
+
+| On the film shoot | In the bench | Where the analogy breaks |
+|---|---|---|
+| The director picks the cast and calls "action" | the test | |
+| The soundstage | the env | |
+| A camera crew assigned to one set | an agent, one per DUT interface | A passive agent never hires the operator at all; a real crew would only be told to stand still |
+| The operator who moves the scenery on cue | the driver, fed by the sequencer | |
+| The camera that records the set | the monitor | A camera never edits film: a monitor only records, it never drives |
+| The editor who compares footage from several cameras against the script | the scoreboard | |
+
 > **Retention Hook:** An active agent is sequencer + driver + monitor. A passive agent is the monitor alone. Checking lives beside the agents, never inside them.
 
 **You will be able to:**
@@ -42,6 +53,15 @@ You met most of these in the prerequisites. This lesson leans on all of them, so
 - A **virtual interface** (`vif` in code) is a handle that lets class code reach an interface instance. A **clocking block** (`drv_cb`, `mon_cb`) samples and drives that interface's signals at a clock edge without races ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
 
 Two connection mechanisms appear here as **labelled previews**. A **port** is a typed connection point on a component; one component calls methods through it, and the component at the other end implements them. Ports are joined with `connect()` in `connect_phase`. The end that implements the methods is an **imp** (short for implementation); an **export** carries a connection through a component's boundary toward an imp inside it. Despite its name, a sequencer's `seq_item_export` is an imp. An **analysis port** is a component's outlet: `ap.write(t)` hands the handle `t` to every component connected to it ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) owns the details). The **configuration database**, `uvm_config_db`, is a lookup table where a test or `tb_top` leaves a value under a path and a name, and a component retrieves it ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) owns the details).
+
+The four connection ends, with the symbol each one has in this page's diagrams and where it appears in this lesson's bench:
+
+| End | Symbol | What it does | In this bench |
+|---|---|---|---|
+| port | ■ | Calls methods that the component at the other end implements | `drv.seq_item_port`, which calls `get_next_item` |
+| export | ○ | Carries a connection through a component's boundary toward an imp inside it | none that this bench connects; the sequencer's built-in `sqr.rsp_export` in the topology listing is one ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) uses them) |
+| imp | ● | Implements the methods: the end point of a connection | `sqr.seq_item_export` (an imp despite its name), `scb.exp_imp`, `scb.act_imp`, `cov.analysis_export` |
+| analysis port | ◆ | A component's outlet: `ap.write(t)` hands the handle `t` to every component connected to it | `mon.ap` in each agent, and each agent's own `ap`; also the driver's built-in `drv.rsp_port`, which this bench leaves unconnected |
 
 ### The bench is a tree of roles
 
@@ -123,6 +143,28 @@ Three things in the picture are worth saying out loud:
 
 **Pitfall: the scoreboard inside the agent.** It looks tidy to give each agent its own scoreboard. But an agent sees one interface, and a data check such as "every byte that went in comes out, plus 1, in order" needs two. Worse, at chip level the same agent class is reused passive on many interfaces, and every instance would carry a scoreboard that can compare nothing. Keep protocol checks of one interface (the monitor's job) separate from data checks across interfaces (the scoreboard's job).
 
+<ArchitectureDiagram
+  title="The pitfall drawn: a scoreboard inside in_agt"
+  caption="Compare it with the full bench above. Inside in_agt, scb receives only in_agt's own stream, the bytes that went in. out_agt's monitor publishes on its ap, but in_agt connects only what it contains, so the bytes that came out never reach scb, unless the env reaches inside in_agt to wire them, which ties the agent to this one bench. In the env, scb sits where both streams are visible. in_agt's sqr and drv are left out of this picture."
+  cellWidth={140}
+  nodes={[
+    { id: "env", label: "env", sublabel: "bus_env", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "in_agt", label: "in_agt", sublabel: "bus_agent", kind: "agent", col: 0, row: 0, rowSpan: 2, container: true, badge: "active" },
+    { id: "scb", label: "scb", sublabel: "sees in_if only", kind: "scoreboard", col: 0, row: 0, state: "error" },
+    { id: "in_mon", label: "mon", sublabel: "watches in_if", kind: "monitor", col: 0, row: 1 },
+    { id: "out_agt", label: "out_agt", sublabel: "bus_agent", kind: "agent", col: 1, row: 0, rowSpan: 2, container: true, badge: "passive" },
+    { id: "out_mon", label: "mon", sublabel: "watches out_if", kind: "monitor", col: 1, row: 1 }
+  ]}
+  ports={[
+    { id: "in_mon.ap", node: "in_mon", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "bottom", kind: "analysis_imp" },
+    { id: "out_mon.ap", node: "out_mon", side: "top", kind: "analysis_port", label: "ap" }
+  ]}
+  edges={[
+    { from: "in_mon.ap", to: "scb.imp", style: "data", label: "write(t)" }
+  ]}
+/>
+
 **Pitfall: thinking sequences are components.** Sequences and items are objects. They are not in the tree, they have no `build_phase`, and the factory creates them with `create("name")`, without a parent. A sequence borrows a sequencer while it runs.
 
 ### Active and passive agents
@@ -133,6 +175,29 @@ An agent is **active** when it drives its interface and **passive** when it only
 - `get_is_active()` returns the result (§13.4.2.2).
 - **Your** agent's `build_phase` calls `super.build_phase(phase)` first, then creates the monitor always, and the sequencer and driver only when `get_is_active()` returns `UVM_ACTIVE`.
 - **Your** agent's `connect_phase` connects the driver to the sequencer under the same test, because in passive mode both handles are `null`.
+
+<SequenceDiagram
+  title="How one setting decides what out_agt builds"
+  caption="Top to bottom is the order of the calls, not simulation time: everything here happens at time 0, before any traffic. The test's set comes before the env exists, so it is in place when out_agt's build_phase looks for it. The agent then builds and connects under one test, get_is_active() == UVM_ACTIVE, which is false here."
+  participants={[
+    { id: "test", label: "uvm_test_top", sublabel: "bus_test", kind: "test" },
+    { id: "agt", label: "out_agt", sublabel: "bus_agent", kind: "agent" },
+    { id: "db", label: "config store", sublabel: "resource pool (uvm_config_db writes it)", kind: "generic" }
+  ]}
+  messages={[
+    { from: "test", to: "db", label: "uvm_config_db set(this, \"env.out_agt\", \"is_active\", UVM_PASSIVE)" },
+    { kind: "self", from: "test", label: "create env" },
+    { kind: "divider", label: "env.build_phase creates out_agt" },
+    { kind: "divider", label: "out_agt.build_phase runs" },
+    { kind: "self", from: "agt", label: "super.build_phase(phase) = uvm_agent::build_phase:" },
+    { from: "agt", to: "db", label: "inside it, uvm_agent looks up \"is_active\" for uvm_test_top.env.out_agt in the resource pool" },
+    { kind: "return", from: "db", to: "agt", label: "UVM_PASSIVE, copied into is_active" },
+    { kind: "self", from: "agt", label: "create ap and mon (always)" },
+    { kind: "self", from: "agt", label: "get_is_active() is UVM_PASSIVE: skip sqr and drv" },
+    { kind: "divider", label: "out_agt.connect_phase runs" },
+    { kind: "self", from: "agt", label: "mon.ap.connect(ap); the same guard skips the drv connect" }
+  ]}
+/>
 
 ```systemverilog
 // snippet: the agent (it is part of bus_pkg in Make It Work)
@@ -219,10 +284,34 @@ end`}
   </svg>
 </VisualRecap>
 
-**Pitfalls, with the reason each is wrong:**
-- **"A passive agent keeps its sequencer so tests can still start sequences on it."** A sequencer with no driver accepts items that nobody ever takes. A passive agent builds neither, so `env.out_agt.sqr` is `null`. A sequence started on it runs its body and stops at its first `start_item` with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item` (uvm-core `uvm_sequence_base.svh`).
-- **"I can decide active or passive in the agent's constructor."** In the constructor, `build_phase` has not run, so `get_is_active()` still returns the default, `UVM_ACTIVE`. Ask only from `build_phase` on, after `super.build_phase`.
-- **"Any path that contains the agent works."** A setting on `"env.out_agent"` (a typo), or one made after the env was already built, matches nothing or arrives too late. The agent then stays active, silently. The debugging section below shows how to catch it.
+**Pitfalls, with the reason each is wrong:** each claim below sounds reasonable. Say why it fails before you open its reason.
+
+**"A passive agent keeps its sequencer so tests can still start sequences on it."**
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show why it is wrong</summary>
+
+A sequencer with no driver accepts items that nobody ever takes. A passive agent builds neither, so `env.out_agt.sqr` is `null`. A sequence started on it runs its body and stops at its first `start_item` with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item` (uvm-core `uvm_sequence_base.svh`).
+
+</details>
+
+**"I can decide active or passive in the agent's constructor."**
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show why it is wrong</summary>
+
+In the constructor, `build_phase` has not run, so `get_is_active()` still returns the default, `UVM_ACTIVE`. Ask only from `build_phase` on, after `super.build_phase`.
+
+</details>
+
+**"Any path that contains the agent works."**
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show why it is wrong</summary>
+
+A setting on `"env.out_agent"` (a typo), or one made after the env was already built, matches nothing or arrives too late. The agent then stays active, silently. The debugging section below shows how to catch it.
+
+</details>
 
 ### The driver's loop (a preview of I-UVM-3A)
 
@@ -273,6 +362,37 @@ Three rules for drivers, each with its reason:
 ### The monitor: sample, build a new item, publish
 
 A **monitor** watches one interface and turns signal activity into transactions. It extends `uvm_monitor`, which adds nothing to `uvm_component` except its role (§13.5): everything a monitor does, you write. Its loop has three steps:
+
+<figure className="my-6">
+<svg viewBox="0 0 360 164" role="img" aria-labelledby="ur-mon-title" aria-describedby="ur-mon-desc" style={{ width: "100%", maxWidth: 360 }}>
+  <title id="ur-mon-title">{"The monitor's loop at every rising edge: sample, build a new item, publish"}</title>
+  <desc id="ur-mon-desc">{"Three steps in a row. Step 1, sample: wait for @(vif.mon_cb), once per edge, reading each signal as it was just before the edge (#1step). Step 2, build: only if valid and ready are both 1, t = create(\"t\") and t.data = data. Step 3, publish: ap.write(t), which returns in zero time and gives every receiver the handle t. Notes: with no transfer at the edge, steps 2 and 3 are skipped; a new t for every transfer, because write passes a handle, not a copy; mon_cb has inputs only, so the monitor never drives."}</desc>
+  <text x="4" y="14" fontSize="11" fontWeight="bold" fill="currentColor">{"1 sample"}</text>
+  <text x="132" y="14" fontSize="11" fontWeight="bold" fill="currentColor">{"2 build"}</text>
+  <text x="260" y="14" fontSize="11" fontWeight="bold" fill="currentColor">{"3 publish"}</text>
+  <rect x="0.5" y="22" width="103" height="78" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(8,145,178)" />
+  <rect x="128.5" y="22" width="103" height="78" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(8,145,178)" />
+  <rect x="256.5" y="22" width="103" height="78" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(8,145,178)" />
+  <text x="8" y="40" fontSize="10" fontFamily="monospace" fill="currentColor">{"@(vif.mon_cb)"}</text>
+  <text x="8" y="55" fontSize="10" fill="currentColor">{"once per edge;"}</text>
+  <text x="8" y="70" fontSize="10" fill="currentColor">{"#1step: values"}</text>
+  <text x="8" y="85" fontSize="10" fill="currentColor">{"just before it"}</text>
+  <text x="136" y="40" fontSize="10" fill="currentColor">{"valid and ready"}</text>
+  <text x="136" y="55" fontSize="10" fill="currentColor">{"both 1? then:"}</text>
+  <text x="136" y="70" fontSize="10" fontFamily="monospace" fill="currentColor">{"t = create(\"t\")"}</text>
+  <text x="136" y="85" fontSize="10" fontFamily="monospace" fill="currentColor">{"t.data = data"}</text>
+  <text x="264" y="40" fontSize="10" fontFamily="monospace" fill="currentColor">{"ap.write(t)"}</text>
+  <text x="264" y="55" fontSize="10" fill="currentColor">{"returns in zero"}</text>
+  <text x="264" y="70" fontSize="10" fill="currentColor">{"time; every"}</text>
+  <text x="264" y="85" fontSize="10" fill="currentColor">{"receiver gets t"}</text>
+  <text x="116" y="66" fontSize="14" textAnchor="middle" fill="currentColor">{"→"}</text>
+  <text x="244" y="66" fontSize="14" textAnchor="middle" fill="currentColor">{"→"}</text>
+  <text x="4" y="122" fontSize="10" fill="currentColor">{"No transfer at this edge: steps 2 and 3 are skipped."}</text>
+  <text x="4" y="138" fontSize="10" fill="currentColor">{"A new t every transfer: write passes a handle, not a copy."}</text>
+  <text x="4" y="154" fontSize="10" fill="currentColor">{"mon_cb has inputs only: the monitor never drives."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">{"Read left to right; the loop repeats at every rising edge. The code below is the same three steps; the reset check, which skips samples taken while rst_n is not 1, is left out of the picture."}</figcaption>
+</figure>
 
 1. **Sample** the bus once per clock edge through `mon_cb`, a clocking block with only inputs. With the default input skew, `#1step`, every signal is read as it was just before the edge, the same values the DUT's flops capture at that edge (IEEE 1800-2023 §14.4, §14.13).
 2. **Build a new item** whenever the samples show a complete transfer: here, `valid` and `ready` both 1.
@@ -390,6 +510,26 @@ The scoreboard has two inputs, `exp_imp` and `act_imp`, so it can tell the two s
 
 **A wiring pitfall that hides itself.** Each agent must get *its own* interface. If `tb_top` hands one handle to every path, for example `set(null, "*", "vif", in_if)`, `out_agt`'s monitor watches the input bus. The scoreboard then compares the input stream with predictions made from the same stream. In this bench every comparison fails, because the DUT adds 1. With a DUT whose output should equal its input, every comparison would *pass*, and a broken DUT would ship. Set each agent's interface on its own path.
 
+<ArchitectureDiagram
+  title="The wiring pitfall: one vif set on every path"
+  caption={`After set(null, "*", "vif", in_if), both monitors hold a handle to in_if, and out_if, the bus the DUT drives, is watched by nobody. Compare the full bench at the top of the page, where out_agt's monitor gets out_if on its own path. The listing from print_topology is the same in both cases: it shows components, not which interface each one watches. in_agt's sqr and drv (drv also gets in_if) and the scb that turns the wrong vif into passing or failing compares are left out of this picture.`}
+  cellWidth={140}
+  nodes={[
+    { id: "in_agt", label: "in_agt", sublabel: "bus_agent", kind: "agent", col: 0, row: 0, container: true, badge: "active" },
+    { id: "in_mon", label: "mon", sublabel: "watches in_if", kind: "monitor", col: 0, row: 0 },
+    { id: "out_agt", label: "out_agt", sublabel: "bus_agent", kind: "agent", col: 1, row: 0, container: true, badge: "passive" },
+    { id: "out_mon", label: "mon", sublabel: "also watches in_if", kind: "monitor", col: 1, row: 0, state: "error" },
+    { id: "in_if", label: "in_if", sublabel: "bus_if", kind: "interface", col: 0, row: 1 },
+    { id: "out_if", label: "out_if", sublabel: "nobody watches it", kind: "interface", col: 1, row: 1, state: "dim" }
+  ]}
+  edges={[
+    { from: "in_if", to: "in_mon", style: "structural", label: "vif" },
+    { from: "in_if", to: "out_mon", style: "structural", label: "vif" }
+  ]}
+/>
+
+Whether the identity DUT (output equals input) really passes depends on ordering. Both monitors now wait on the same `in_if.mon_cb` edge, and IEEE 1800-2023 §4.7 lets processes woken by one event run in any order. When `in_agt`'s monitor writes first, `scb` stores the prediction and the compare matches; when `out_agt`'s monitor writes first, `scb` finds no prediction yet and reports an unexpected output. So the check *can* pass, which is enough to ship a broken DUT.
+
 ### The configuration object (preview)
 
 Real agents have more than one setting: the interface handle, active or passive, whether the monitor runs protocol checks, whether coverage is collected. Setting each one separately through the configuration database means several names and paths that can each be mistyped. The usual practice is one **configuration object** per agent instance: a `uvm_object` that holds every setting, created and filled by the test, and read once by the agent. [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) owns the database mechanics and [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) owns configuration objects for reusable verification IP (VIP); this is the shape only.
@@ -436,7 +576,8 @@ The agent copies `cfg.is_active` into the `is_active` field right after `super.b
   messages={[
     { kind: "self", from: "test", label: "cfg = create; cfg.is_active = UVM_PASSIVE" },
     { from: "test", to: "db", label: "set(this, \"env.out_agt\", \"cfg\", cfg)" },
-    { kind: "self", from: "test", label: "create env (env creates out_agt)" },
+    { kind: "self", from: "test", label: "create env" },
+    { kind: "divider", label: "env.build_phase creates out_agt" },
     { kind: "divider", label: "out_agt.build_phase runs" },
     { from: "agt", to: "db", label: "get(this, \"\", \"cfg\", cfg)" },
     { kind: "return", from: "db", to: "agt", label: "the same cfg handle" },
@@ -911,12 +1052,61 @@ How to read it:
 - **The timing matches the waveform.** Inputs are accepted at 35, 55, 75 and 95 ns; each output appears one clock later, at 45, 65, 85 and 105 ns, so the run ends at 105 ns. The bytes 10, 20, 7F and FF come out as 11, 21, 80 and 00 (8-bit wrap-around), which hits all three coverage bins.
 - **Pass or fail is in the last lines.** `UVM_ERROR :    0`, `UVM_FATAL :    0` and `pending=0` together say the test passed. The `UVM_INFO` count includes banner messages and varies by version ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) covers reading the summary).
 
+<TimingDiagram
+  title="The whole passing run on in_if and out_if"
+  caption="Edges 0 to 8 are the rising edges at 25, 35, 45, 55, 65, 75, 85, 95 and 105 ns (clock period 10 ns); each value is what mon_cb samples at that edge, and in_if.ready is 1 throughout. The top row marks each publish: I1 to I4 are in_agt's monitor at 35, 55, 75 and 95 ns (10, 20, 7F, FF); O1 to O4 are out_agt's monitor at 45, 65, 85 and 105 ns (11, 21, 80, 00), each one clock after its input and each a match line in the log. FF + 1 wraps to 00 in 8 bits. Edges 0 to 4 are the waveform from the monitor section."
+  edges={9}
+  cycleWidth={28}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_if.valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0, 1, 0] },
+    { name: "in_if.data", kind: "bus", values: [undefined, "10", "10", "20", "20", "7F", "7F", "FF", "FF"] },
+    { name: "out_if.valid", kind: "bit", values: [0, 0, 1, 0, 1, 0, 1, 0, 1] },
+    { name: "out_if.data", kind: "bus", values: [undefined, undefined, "11", "11", "21", "21", "80", "80", "00"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", short: "I1", label: "35 ns: in_agt.mon publishes 10" },
+    { edge: 2, tone: "pass", short: "O1", label: "45 ns: out_agt.mon publishes 11; scb: match 11" },
+    { edge: 3, tone: "sample", short: "I2", label: "55 ns: in_agt.mon publishes 20" },
+    { edge: 4, tone: "pass", short: "O2", label: "65 ns: out_agt.mon publishes 21; scb: match 21" },
+    { edge: 5, tone: "sample", short: "I3", label: "75 ns: in_agt.mon publishes 7F" },
+    { edge: 6, tone: "pass", short: "O3", label: "85 ns: out_agt.mon publishes 80; scb: match 80" },
+    { edge: 7, tone: "sample", short: "I4", label: "95 ns: in_agt.mon publishes FF" },
+    { edge: 8, tone: "pass", short: "O4", label: "105 ns: out_agt.mon publishes 00 (FF + 1 wraps); scb: match 00" }
+  ]}
+/>
+
 **Run it.** Compile the block above as one file with your simulator's UVM library enabled (the switch is tool-specific), make `tb_top` the top level and run. Every design element in the block declares `timeunit 1ns` and `timeprecision 1ps`, but `uvm_pkg` declares none, and IEEE 1800-2023 §3.14.2.3 makes it an error for some design elements to specify a time unit and precision while others do not: give the compile a default of 1 ns / 1 ps with your tool's switch, so uvm-core gets the same unit. The test's `build_phase` bounds the run with `uvm_root::get().set_timeout(1us, 1)`, as [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) and [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teach. The passing run ends at 105 ns, well inside it. If the DUT ever lost a byte, the test's `wait` would never end, and the timeout would stop the run at 1 µs with `UVM_FATAL [PH_TIMEOUT]` instead of letting it run toward uvm-core's 9200 s default. The literal `1us` is scaled to `bus_pkg`'s time unit (IEEE 1800-2023 §5.8) and the watchdog waits in `uvm_pkg`'s, one more reason to compile everything, uvm-core included, with one time unit ([I-UVM-1C's "time units" note](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index#expert-time-units-of-set_timeout-and-set_drain_time) explains the trap).
 
-**Prove the checks can fail.** Change `bus_agent::build_phase` so it no longer calls `super.build_phase(phase)` and run again. Predict first, then compare:
+**Prove the checks can fail.** Change `bus_agent::build_phase` so it no longer calls `super.build_phase(phase)` and run again. Predict first, then compare: what the listing shows under `out_agt`, what `out_if.valid` looks like on the waveform, and how the run ends.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what the broken run does</summary>
+
 - the listing now shows `drv` and `sqr` under `out_agt`, and `DRVCONNECT` stays silent, because the guarded connect does run;
 - `out_agt.drv` drives `out_if.valid` to 0 while the DUT drives it to 1, so the waveform shows X there;
 - `out_agt`'s monitor never sees a transfer, `compared` stays 0, and at 1 µs the timeout ends the run with `UVM_FATAL … [PH_TIMEOUT] Explicit timeout of … hit, indicating a probable testbench issue` (uvm-core wording). `report_phase` never runs, so there is no `SCB_SUMMARY` line, and the summary shows `UVM_FATAL :    1`.
+
+<TimingDiagram
+  title="out_if.valid with an unwanted driver in out_agt"
+  caption="Edges 0 to 8 are the rising edges at 25 to 105 ns, as in the passing run. Row 2 is the DUT's driver on the net out_if.valid, unchanged from the passing run; row 3 is out_agt.drv's clocking-block driver, which drives 0 from its idle drive at the start of run_phase on; row 4 is the resolved net that mon_cb samples. Wherever the DUT drives 1 against the 0, the net resolves to X (hatched), so at edges 2, 4, 6 and 8 out_agt's monitor reads X, not 1, and publishes nothing (marked ✕). The PH_TIMEOUT at 1 µs lies far to the right of this window."
+  edges={9}
+  cycleWidth={28}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "DUT drives", kind: "bit", values: [0, 0, 1, 0, 1, 0, 1, 0, 1] },
+    { name: "drv drives", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "out_if.valid", kind: "bit", values: [0, 0, undefined, 0, undefined, 0, undefined, 0, undefined] }
+  ]}
+  markers={[
+    { edge: 2, tone: "fail", label: "45 ns: out_agt.mon samples X on valid: no item published" },
+    { edge: 4, tone: "fail", label: "65 ns: out_agt.mon samples X on valid: no item published" },
+    { edge: 6, tone: "fail", label: "85 ns: out_agt.mon samples X on valid: no item published" },
+    { edge: 8, tone: "fail", label: "105 ns: out_agt.mon samples X on valid: no item published" }
+  ]}
+/>
+
+</details>
 
 ### How to build an agent-based bench
 
@@ -969,6 +1159,15 @@ IEEE 1800.2-2020 §13.4.2.2 requires only the first two: the enum, plus a string
 
 So `uvm_config_db#(int)::set(this, "env.out_agt", "is_active", 0)` also makes `out_agt` passive, even though [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) teaches that a `get` matches only the exact type that was set: this field is the exception. A set with any other type, for example `uvm_config_db#(logic)` or `#(byte)`, is silently ignored and the agent stays active. The command line works too, because `+uvm_set_config_string` and `+uvm_set_config_int` (Annex G.2.8) create string and integer settings: `+uvm_set_config_string=uvm_test_top.env.out_agt,is_active,UVM_PASSIVE` is the portable form, and `+uvm_set_config_int=uvm_test_top.env.out_agt,is_active,0` also works in uvm-core.
 
+The same rules as one table. Each row is a set on `"env.out_agt"` that the agent's `build_phase` finds in time. For each matching setting, in precedence order, the reads are tried top to bottom, and the first one that converts wins:
+
+| Type of the `"is_active"` setting | Example value | Does `out_agt` become passive? | Source |
+|---|---|---|---|
+| `uvm_active_passive_enum` | `UVM_PASSIVE` | yes | §13.4.2.2 |
+| `string` naming a value | `"UVM_PASSIVE"`, also from `+uvm_set_config_string` | yes | §13.4.2.2, Annex G.2.8 |
+| a bit vector as wide as the enum, `uvm_integral_t`, `uvm_bitstream_t`, `int`, `int unsigned` | `0`, also from `+uvm_set_config_int` | yes | uvm-core 2020.3.1 only |
+| any other type, for example `logic` or `byte` | `0` | no: silently ignored, the agent stays `UVM_ACTIVE` | uvm-core 2020.3.1 |
+
 Timing rules follow from where the read happens. A setting made after the agent's `build_phase` has run changes nothing. Calling `get_is_active()` from the constructor returns the default. And `get_is_active()` is virtual: an agent may override it, for example to return `cfg.is_active`. If you do, make sure `cfg` is fetched before the first call, or the override dereferences a `null` handle. The copy pattern shown in the configuration-object preview avoids that trap and keeps one answer for everyone.
 
 ### Expert: monitor sampling skew
@@ -976,6 +1175,21 @@ Timing rules follow from where the read happens. A setting made after the agent'
 A monitor's clocking block decides *which* value of each signal it sees at an edge. (A **time slot** is all the activity at one simulation time; the standard divides it into ordered regions, among them Preponed, Active, NBA and Observed, as [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) teaches.)
 - `#1step` (the default input skew) samples the value the signal had at the end of the previous time slot, just before the edge (IEEE 1800-2023 §14.4).
 - An explicit `#0` input skew samples in the Observed region of the edge's time slot, after the design's nonblocking assignments for that edge have updated (§14.4, §14.13).
+
+<TimingDiagram
+  title="The write that fills a 4-entry FIFO, seen through #1step"
+  caption="Edges 0 to 3 are consecutive rising clock edges; each value is what a #1step input samples there, the value just before the edge. count and full are flops that the FIFO updates with nonblocking assignments at the edge. At edge 1 the write is accepted: #1step reads full = 0, the value the FIFO itself used (marked ▼). An explicit #0 input reads the same edge in the Observed region, after those updates, so it sees count = 4 and full = 1, the values drawn at edge 2, and the monitor wrongly classes the edge-1 write as refused."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "wr_en", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "count", kind: "bus", values: ["3", "3", "4", "4"] },
+    { name: "full", kind: "bit", values: [0, 0, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "edge 1: #1step reads wr_en = 1 and full = 0, so the write was accepted; #0 would read full = 1" }
+  ]}
+/>
 
 Mixing the two views in one transaction misclassifies transfers. A monitor that reads a FIFO's `full` flag with `#0` sees the flag *after* the write that filled the FIFO, and decides that write was refused. Use `#1step` for everything that qualifies a transfer (`valid`, `ready`, flags, the data being written), the same values the DUT's flops captured. Take a registered result one edge later, or through a separate input with `#0` when the protocol defines it as available in the same cycle. Experiment with both skews in F4C's skew visualizer ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
 
@@ -987,12 +1201,26 @@ A reusable agent comes with one interface type, and a passive agent watches an i
 
 That is why `bus_if` declares `valid`, `ready` and `data` as `wire`. It also explains the X in "Prove the checks can fail": once the unwanted driver in `out_agt` drives `valid` to 0, its driver and the DUT's resolve to X whenever the DUT drives 1.
 
+| `valid` on the passive agent's interface, where the DUT drives it | declared as a variable, `logic valid;` | declared as a net, `wire valid;` |
+|---|---|---|
+| What connecting the DUT's output port to it implies | a continuous assignment to the variable (§23.3.3.2) | one more driver on the net |
+| What a clocking-block `output valid` adds | an illegal combination with that continuous assignment (§14.16.2); how it is reported is tool-dependent | its own driver on the net, starting at `'z` (§14.16) |
+| Before the agent's driver ever drives | already illegal, even if `drv_cb` is never used | the DUT's value alone, because `'z` has no effect |
+| An unwanted driver drives 0 while the DUT drives 1 | does not arise: the bench is already illegal | the net resolves to X (§14.16.2: all drivers resolve by net type) |
+
 ### Expert: where protocol checks and coverage live
 
 This is methodology, not a rule of the standard (`uvm_monitor` imposes nothing):
 - **Protocol checks of one interface** ("`data` must not change while `valid` is high and `ready` is low") need cycle-level visibility. Put them in the monitor, behind a `checks_enable` knob, or as SystemVerilog Assertions (SVA) bound to the interface ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)). A scoreboard sees transactions, not cycles, so it cannot make these checks.
 - **Data checks across interfaces** belong in the env-level scoreboard.
 - **Coverage** belongs in subscribers, or in the monitor behind a `coverage_enable` knob. Agent-level coverage travels with the agent into every bench that reuses it, which is often what a VIP wants; data coverage that relates several interfaces belongs in the env.
+
+| Kind of check | What it must see | Usual home | Per-instance knob |
+|---|---|---|---|
+| Protocol check of one interface | every cycle of that interface | the monitor, or SVA bound to the interface | `checks_enable` |
+| Data check across interfaces | the transactions of several interfaces | the env-level scoreboard | — |
+| Coverage of one interface's traffic | that interface's transactions | a subscriber, or the monitor | `coverage_enable` when it is in the monitor |
+| Coverage that relates several interfaces | the transactions of several interfaces | the env | — |
 
 The knobs matter at chip level. The same passive agent may appear on dozens of interfaces, and its checks and coverage must be switchable per instance.
 
@@ -1001,6 +1229,10 @@ The knobs matter at chip level. The same passive agent may appear on dozens of i
 - **Chip-level reuse.** Agents on interfaces that become internal at chip level are reused passive: their monitors keep checking and covering traffic that real blocks now drive. Agents on the chip's own pins stay active, because the bench still drives those pins ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) builds such topologies).
 - **Reactive agents.** A responder, the agent that plays a slave or memory, is active, but what it drives depends on what its monitor observes: it answers requests instead of starting them. It is still one agent class with the same build rules ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)).
 - **Scale.** Each component costs memory and each running `run_phase` costs simulation time per edge, but none of it advances simulated time. How much a large passive topology slows a run is tool-dependent; measure it rather than guess.
+
+The visual below takes one agent from block level to chip level. Its example is an SPI (Serial Peripheral Interface) agent that carries its own coverage, the agent-level coverage of the previous section: at block level it drives an SPI block, and at chip (SoC) level the CPU running firmware drives the same bus. Predict what the agent contains at SoC level, then switch levels and break the agent the same two ways as in "Active and passive agents".
+
+<VIPReuseVisualizer />
 
 ### Expert: checking topology in regression
 
@@ -1141,7 +1373,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     answers: [
       { text: "Nothing changes: every agent finds a vif, so the test passes", correct: false, feedback: "Every agent finds one, but it is the same one. out_agt's monitor now watches in_if." },
       { text: "UVM_FATAL [NOVIF] for out_agt, because its path is no longer set", correct: false, feedback: "\"*\" matches every path, so out_agt's monitor gets a handle. It is just the wrong one." },
-      { text: "Both monitors watch in_if, so the scoreboard compares each input byte with a prediction made from that same byte: every compare fails (a mismatch or an unexpected output)", correct: true, feedback: "Right. Here the +1 makes every check fail. With a DUT whose output should equal its input, every check would pass and a broken DUT would ship." },
+      { text: "Both monitors watch in_if, so the scoreboard compares each input byte with a prediction made from that same byte: every compare fails (a mismatch or an unexpected output)", correct: true, feedback: "Right. Here the +1 makes every check fail. With a DUT whose output should equal its input, every check could pass and a broken DUT would ship." },
       { text: "A compile error, because one interface cannot be set twice", correct: false, feedback: "A single set is legal; it is the topology it creates that is wrong." }
     ],
     explanation: "Each agent must watch its own interface instance. Setting one handle for every path wires out_agt's monitor to the input bus, which can hide a broken DUT when input and output look alike.",
@@ -1286,6 +1518,44 @@ The log ends with `SCB_SUMMARY matches=4 mismatches=0 pending=0` and `UVM_ERROR 
 
 - [UVM Agent Builder](/exercises/uvm-agent-builder): place sequencer, driver, monitor, coverage, scoreboard and configuration parts in or out of an agent, and see which belong where.
 - The visual in "Active and passive agents" above: run every combination of the two modes and the two injected bugs, and predict each topology before you look.
+
+**One-glance summary.** The whole lesson in one picture, for review after the quiz and the katas:
+
+<figure className="my-6">
+<svg viewBox="0 0 360 256" role="img" aria-labelledby="ur-sum-title" aria-describedby="ur-sum-desc" style={{ width: "100%", maxWidth: 360 }}>
+  <title id="ur-sum-title">{"Component roles in one picture"}</title>
+  <desc id="ur-sum-desc">{"uvm_test_top sets is_active and starts seq. Inside it, env holds in_agt, set to UVM_ACTIVE, with sqr, drv and mon; out_agt, set to UVM_PASSIVE, with mon only and no sqr or drv; and, beside the agents, scb, which compares what went in with what came out, and cov, which records the output values. Three rules: checking sits beside the agents, never inside them; a monitor creates a new item per transfer, calls write(t) and never drives; an agent calls super.build_phase first and builds sqr and drv only if active."}</desc>
+  <rect x="1" y="1" width="358" height="196" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.3" />
+  <text x="10" y="16" fontSize="10" fontWeight="bold" fill="currentColor">{"uvm_test_top: sets is_active, starts seq"}</text>
+  <rect x="8" y="24" width="344" height="166" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="16" y="39" fontSize="10" fontWeight="bold" fill="currentColor">{"env"}</text>
+  <rect x="16" y="46" width="160" height="78" rx="8" fill="none" stroke="rgb(6,182,212)" />
+  <text x="24" y="61" fontSize="10" fontWeight="bold" fill="currentColor">{"in_agt: UVM_ACTIVE"}</text>
+  <rect x="24" y="72" width="44" height="40" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="46" y="96" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"sqr"}</text>
+  <rect x="74" y="72" width="44" height="40" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="96" y="96" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"drv"}</text>
+  <rect x="124" y="72" width="44" height="40" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="146" y="96" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"mon"}</text>
+  <rect x="184" y="46" width="160" height="78" rx="8" fill="none" stroke="rgb(6,182,212)" />
+  <text x="192" y="61" fontSize="10" fontWeight="bold" fill="currentColor">{"out_agt: UVM_PASSIVE"}</text>
+  <rect x="192" y="72" width="94" height="40" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 3" />
+  <text x="239" y="89" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">{"no sqr,"}</text>
+  <text x="239" y="103" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">{"no drv"}</text>
+  <rect x="292" y="72" width="44" height="40" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="314" y="96" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"mon"}</text>
+  <rect x="16" y="134" width="160" height="46" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="96" y="152" fontSize="10" textAnchor="middle" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"scb"}</text>
+  <text x="96" y="169" fontSize="10" textAnchor="middle" fill="currentColor">{"compares in with out"}</text>
+  <rect x="184" y="134" width="160" height="46" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="264" y="152" fontSize="10" textAnchor="middle" fontFamily="monospace" fontWeight="bold" fill="currentColor">{"cov"}</text>
+  <text x="264" y="169" fontSize="10" textAnchor="middle" fill="currentColor">{"records output values"}</text>
+  <text x="4" y="216" fontSize="10" fill="currentColor">{"Checking sits beside the agents, never inside them."}</text>
+  <text x="4" y="232" fontSize="10" fill="currentColor">{"Monitor: a new item per transfer, write(t), never drives."}</text>
+  <text x="4" y="248" fontSize="10" fill="currentColor">{"Agent: super.build_phase first; sqr, drv only if active."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">{"The Make It Work bench reduced to its roles. Dashed outline: not built. The connections are left out; the full bench at the top of the page draws them."}</figcaption>
+</figure>
 
 ## References & Next Topics
 

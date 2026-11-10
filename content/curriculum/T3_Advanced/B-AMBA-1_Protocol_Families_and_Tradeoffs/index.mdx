@@ -65,6 +65,52 @@ You already know, from [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component
 
 Without a standard, every pair of blocks that must talk needs custom glue logic. For *n* blocks that is up to about *n*² pairings, and each block becomes tied to its neighbours, so nothing can be reused in the next chip.
 
+<ArchitectureDiagram
+  title="Four blocks wired pairwise: six custom links"
+  caption="Each line is a custom link, designed for one pair of blocks. Four blocks already need six links (n(n-1)/2 for n blocks), and every block carries the logic for each neighbour it talks to, so moving one block to a new chip means redesigning its links."
+  cellWidth={110}
+  gapX={70}
+  gapY={50}
+  legend={false}
+  nodes={[
+    { id: "ga", label: "Block A", kind: "generic", col: 0, row: 0 },
+    { id: "gb", label: "Block B", kind: "generic", col: 1, row: 0 },
+    { id: "gc", label: "Block C", kind: "generic", col: 0, row: 1 },
+    { id: "gd", label: "Block D", kind: "generic", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "ga", to: "gb", style: "structural" },
+    { from: "ga", to: "gc", style: "structural" },
+    { from: "ga", to: "gd", style: "structural" },
+    { from: "gb", to: "gc", style: "structural" },
+    { from: "gb", to: "gd", style: "structural" },
+    { from: "gc", to: "gd", style: "structural" }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="The same four blocks on one interconnect: four standard ports"
+  caption="Each block has one standard port, so four blocks need four ports and one interconnect, and a fifth block adds one port rather than four new links. Any block with the same standard port can be reused in a chip whose interconnect offers that port."
+  cellWidth={110}
+  gapX={70}
+  gapY={50}
+  legend={false}
+  spreadAnchors={true}
+  nodes={[
+    { id: "sa", label: "Block A", kind: "generic", col: 0, row: 0 },
+    { id: "sb", label: "Block B", kind: "generic", col: 1, row: 0 },
+    { id: "sic", label: "Interconnect", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "sc", label: "Block C", kind: "generic", col: 0, row: 2 },
+    { id: "sd", label: "Block D", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "sa", to: "sic", style: "structural", label: "port" },
+    { from: "sb", to: "sic", style: "structural", label: "port" },
+    { from: "sic", to: "sc", style: "structural", label: "port" },
+    { from: "sic", to: "sd", style: "structural", label: "port" }
+  ]}
+/>
+
 A standard fixes the interface once. The Arm AXI specification puts it precisely: AXI provides "a single interface definition" for the interfaces between a master and the interconnect, between a slave and the interconnect, and between a master and a slave (Arm IHI0022E §A1.3.2). Three terms from that sentence:
 
 - A **master** starts transactions (a CPU, a DMA engine); a transaction is one complete request with its data and response, defined exactly in the vocabulary below. A **slave** responds to them (a memory controller, a register block). Later Arm issues rename these **manager** and **subordinate** (IHI0022H.b and IHI0033C, change history), and APB's latest issue says **requester** and **completer** (IHI0024E §1.1). This track uses master and slave, as in the issues it cites.
@@ -75,6 +121,33 @@ A standard fixes the interface once. The Arm AXI specification puts it precisely
   - **return DECERR** (decode error) when no slave owns the address; IHI0022E recommends a **default slave** that returns it (§A3.4.4);
   - **bridge** to other protocols, for example AXI to APB.
 - How the interconnect is built inside is a design choice: IHI0022E lists shared address and data buses, a shared address bus with several data buses, and multilayer designs with many address and data buses (§A1.3.2). So "AXI is point to point" describes the *interface*, not the inside of the fabric.
+
+The sequence below follows two AXI reads through the interconnect: one to an address a slave owns, and one to an address nobody owns. It uses AR (the read address channel), R (the read data channel) and beat (one data transfer), which the vocabulary and the AXI section below define.
+
+<SequenceDiagram
+  title="What the interconnect does to two reads"
+  caption="Read 1: the interconnect decodes the address, arbitrates, widens the ID on the way to the slave and strips the extra bits on the way back, so the master sees its own ID 0x3 (IHI0022E §A5.3.5). Read 2: no slave owns the address, so the access goes to the default slave, which still completes all four beats, each with DECERR (§A3.4.4). The default slave is drawn separately for clarity; it is often built into the interconnect."
+  columnWidth={130}
+  participants={[
+    { id: "m0", label: "Master 0", sublabel: "4-bit ID", kind: "generic" },
+    { id: "ic", label: "Interconnect", kind: "generic" },
+    { id: "ddr", label: "DDR controller", sublabel: "slave, wider ID", kind: "generic" },
+    { id: "dflt", label: "Default slave", sublabel: "returns DECERR", kind: "generic" }
+  ]}
+  messages={[
+    { from: "m0", to: "ic", label: "AR: 4-bit ID 0x3, an address in DDR" },
+    { kind: "self", from: "ic", label: "decode, arbitrate, append the port number to the ID" },
+    { from: "ic", to: "ddr", label: "AR with a wider ID (port bits appended)" },
+    { kind: "return", from: "ddr", to: "ic", label: "R beats with the wider ID" },
+    { kind: "return", from: "ic", to: "m0", label: "R beats, port bits removed: ID 0x3 again" },
+    { kind: "divider", label: "read 2: 4 beats from an address no slave owns" },
+    { from: "m0", to: "ic", label: "AR: 4-beat read of an unmapped address" },
+    { kind: "self", from: "ic", label: "decode fails: route to the default slave" },
+    { from: "ic", to: "dflt", label: "AR" },
+    { kind: "return", from: "dflt", to: "ic", label: "4 R beats, each DECERR; the 4th is marked last", tone: "error" },
+    { kind: "return", from: "ic", to: "m0", label: "4 R beats, each DECERR", tone: "error" }
+  ]}
+/>
 
 **Why this matters for verification.** Because every AXI4 slave obeys the same interface rules, one AXI4 agent can verify every one of them. A **VIP** (verification IP) is such a reusable agent, plus its protocol checkers and coverage, packaged so other teams can drop it in ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) builds one). At block level the agent is **active** and drives the block's port; at SoC level the same agent is **passive** and only watches an interconnect port. Block-level verification proves protocol compliance and function, so SoC tests can focus on connectivity, the address map and system scenarios ([E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)).
 
@@ -115,6 +188,26 @@ A standard fixes the interface once. The Arm AXI specification puts it precisely
 ### Vocabulary for the whole AMBA track
 
 IHI0022E §A1.4.2 defines three nested terms. Learn them exactly; every later module uses them.
+
+<ArchitectureDiagram
+  title="Transaction, burst and beat: one read of 16 bytes from 0x100"
+  caption="The outer box is the transaction: the request with its address, all the data and the response. The inner box is the burst, the transaction's payload data. Each small box is one beat, which moves 4 bytes on a 32-bit data bus, so 16 bytes take four beats. On an AXI read the response travels with every beat; on an AXI write it comes once, after the last beat."
+  cellWidth={76}
+  cellHeight={52}
+  gapX={12}
+  gapY={44}
+  legend={false}
+  nodes={[
+    { id: "vtx", label: "transaction", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "vaddr", label: "address", sublabel: "read 16 bytes from 0x100", kind: "generic", col: 0, row: 0, colSpan: 4 },
+    { id: "vburst", label: "burst", kind: "generic", col: 0, row: 1, colSpan: 4, container: true },
+    { id: "vb0", label: "beat 0", sublabel: "0x100-0x103", kind: "generic", col: 0, row: 1 },
+    { id: "vb1", label: "beat 1", sublabel: "0x104-0x107", kind: "generic", col: 1, row: 1 },
+    { id: "vb2", label: "beat 2", sublabel: "0x108-0x10B", kind: "generic", col: 2, row: 1 },
+    { id: "vb3", label: "beat 3", sublabel: "0x10C-0x10F", kind: "generic", col: 3, row: 1 },
+    { id: "vresp", label: "response", sublabel: "success or error, from the slave", kind: "generic", col: 0, row: 2, colSpan: 4 }
+  ]}
+/>
 
 - **Transaction:** the complete set of operations on the bus for one master request, for example "read 16 bytes from 0x100": the address, all the data and the response.
 - **Burst:** the payload data of a transaction.
@@ -177,6 +270,26 @@ Two habits help. First, say the version: "AXI" alone is ambiguous, because AXI3 
 - **Data:** separate read and write data buses (PWDATA and PRDATA), up to 32 bits wide, which can never be active in the same transfer (§2.1.1).
 - **Errors:** PSLVERR, optional, valid only in the last cycle of the transfer (§3.4).
 - **Where it sits:** behind a bridge from AHB or AXI. Even the AHB specification says low-bandwidth peripherals "typically reside on the" APB (IHI0033B.b §1.1).
+
+<ArchitectureDiagram
+  title="The APB operating states"
+  caption="After IHI0024C §4.1. Each dashed arrow is a move at a rising clock edge. IDLE is the default state, and the bus stays in IDLE while no transfer is needed; when a transfer is needed the bus moves to SETUP (PSEL high), stays there exactly one cycle and always moves to ACCESS (PENABLE high). In ACCESS the slave's PREADY decides: while PREADY is 0 the bus stays in ACCESS (each such cycle is a wait state); when PREADY is 1 it returns to IDLE if no transfer follows, or goes straight to SETUP if another one does."
+  cellWidth={96}
+  gapX={36}
+  legend={false}
+  spreadAnchors={true}
+  nodes={[
+    { id: "apb_idle", label: "IDLE", sublabel: "default state", kind: "generic", col: 0, row: 1 },
+    { id: "apb_setup", label: "SETUP", sublabel: "exactly 1 cycle", kind: "generic", col: 1, row: 0 },
+    { id: "apb_access", label: "ACCESS", sublabel: "PREADY 0: stays", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "apb_idle", to: "apb_setup", style: "causal", label: "transfer needed" },
+    { from: "apb_setup", to: "apb_access", style: "causal", label: "next edge" },
+    { from: "apb_access", to: "apb_setup", style: "causal", label: "PREADY 1: next", via: [[2, 0]] },
+    { from: "apb_access", to: "apb_idle", style: "causal", label: "PREADY 1: none" }
+  ]}
+/>
 
 The waveform shows one APB read with one wait state. Count its cycles.
 
@@ -269,6 +382,34 @@ The master's address, control and write data go to every slave; only the selecte
 
 Answer: four. Each beat has its own address phase: NONSEQ at edge 1, then SEQ at edges 2, 3 and 4, with the address rising by 4 bytes (one word) each time. Each beat's data arrives one edge after its address (edges 2 to 5), because each data phase overlaps the next address phase. HREADY stays 1, so there are no wait states. Compare the AXI waveform above: one address handshake for four beats.
 
+**Predict: one wait state.** Take the same INCR4 read, but now the slave inserts one wait state in beat 1's data phase, so HREADY is 0 at edge 3 and 1 at every other edge. Recall from "Phases and pipelining" that the next transfer's address phase overlaps the current data phase. At which edge is beat 2's address (0x28) accepted, and at which edge does the last data, D(0x2C), arrive? Commit to both edges, then open the check.
+
+<details>
+<summary>Check your prediction</summary>
+
+<TimingDiagram
+  title="The same AHB-Lite INCR4 read with one wait state in beat 1's data phase"
+  caption="The x-axis counts rising HCLK edges. Edge 2: beat 0's data and beat 1's address complete. Edge 3: HREADY is 0, so beat 1's data phase is extended (HRDATA is not valid yet) and beat 2's address phase, 0x28 with SEQ, is held, because the master must not change the transfer type while the slave waits (IHI0033B.b §3.6.1); the address is held too, because the address phase is extended (§3.1; address changes during wait states, §3.6.2). Edge 4: HREADY is 1, so D(0x24) is sampled and 0x28 is accepted. Edges 5 and 6 carry D(0x28) and D(0x2C): the burst ends one edge later than with no wait state."
+  edges={8}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "SEQ", "SEQ", "SEQ", "SEQ", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "0x20", "0x24", "0x28", "0x28", "0x2C", undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 0, 1, 1, 1, 1] },
+    { name: "HRDATA", kind: "bus", values: [undefined, undefined, "D(0x20)", undefined, "D(0x24)", "D(0x28)", "D(0x2C)", undefined] }
+  ]}
+  markers={[
+    { edge: 3, tone: "pending", label: "wait state: beat 1 data not ready, beat 2 address held" },
+    { edge: 4, tone: "sample", label: "D(0x24) sampled and address 0x28 accepted" },
+    { edge: 6, tone: "pass", label: "D(0x2C): the burst completes" }
+  ]}
+  highlights={[{ from: 3, to: 4, tone: "info", label: "0x28 held" }]}
+/>
+
+Answer: beat 2's address is accepted at **edge 4**, not edge 3, and the last data arrives at **edge 6**. Extending a transfer's data phase "has the side-effect of extending the address phase of the next transfer" (IHI0033B.b §3.1): a wait state stalls the whole pipeline, not just one data phase.
+
+</details>
+
 **Responses.** HRESP is OKAY, or ERROR, which takes two cycles (§5.1, Table 5-1). AHB5 slaves with the Exclusive_Transfers property add HEXOKAY (§5.1, Chapter 8).
 
 **Many masters.** AHB-Lite is single-master per bus. A multi-master system adds "an interconnect component that provides arbitration" (§1.1), and the specification leaves its design, single layer or multi-layer, out of scope (§1.1.3). The original AMBA 2 AHB put request/grant arbitration inside the protocol; that is the version older textbooks describe.
@@ -288,6 +429,30 @@ The AHB modules ([B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mec
 | R, read data | slave → master | read data, a response per beat, RLAST |
 
 Each channel has its own VALID/READY handshake (§A1.3.1). Because the channels are independent, the protocol "permits address information to be issued ahead of the actual data transfer", "supports multiple outstanding transactions" and "supports out-of-order completion of transactions" (§A1.3). Only a few relationships are required: a write response follows the last write data beat, read data follows its address, and the handshake dependencies hold. Otherwise "write data can appear at an interface before the write address" (§A3.3).
+
+<TimingDiagram
+  title="Independent channels: a one-beat AXI4 write whose data arrives before its address"
+  caption="The x-axis counts rising ACLK edges. Edge 1: the W handshake moves the only data beat (WLAST 1) before any address. Edge 3: the AW handshake moves address 0x200. Edge 4: the slave returns the single write response, after both the last W beat and, as AXI4 also requires, the AW handshake (IHI0022E §A3.3; the AXI4 write response dependency, §A3.3.1; legacy note, §A3.3.2)."
+  edges={6}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0] },
+    { name: "AWADDR", kind: "bus", values: [undefined, undefined, "0x200", "0x200", undefined, undefined] },
+    { name: "WVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "WREADY", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "WDATA", kind: "bus", values: [undefined, "D0", undefined, undefined, undefined, undefined] },
+    { name: "WLAST", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 1, 0] },
+    { name: "BREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1] },
+    { name: "BRESP", kind: "bus", values: [undefined, undefined, undefined, undefined, "OKAY", undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pass", label: "W handshake: the data moves first" },
+    { edge: 3, tone: "pass", label: "AW handshake: the address moves later" },
+    { edge: 4, tone: "pass", label: "B handshake: one response, after W and AW" }
+  ]}
+/>
 
 - **Bursts:** AXI has three burst types (§A3.4.1). **INCR** steps through sequential addresses, for normal memory; **WRAP** wraps back to an aligned boundary, for cache-line accesses; **FIXED** repeats one address, for example to fill or empty a FIFO. AXI4 allows INCR bursts of 1 to 256 beats (1 to 16 in AXI3), FIXED bursts of 1 to 16 beats and WRAP bursts of exactly 2, 4, 8 or 16 beats, and no burst may cross a 4KB boundary (§A3.4.1). [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index) owns the burst arithmetic.
 - **IDs and ordering:** each transaction carries an ID (AWID, ARID; BID and RID return it). Reads with the same ARID complete in order; reads with different ARIDs may complete in any order, and their data may interleave, meaning beats of one read can arrive between beats of another (§A5.3.1). Writes with the same AWID likewise complete in order (§A5.3). Reads and writes are not ordered against each other, "even if the ARID value of a read transaction is the same as the AWID value of a write transaction" (§A5.3.4). [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) owns ordering.
@@ -352,6 +517,46 @@ A **cache** keeps local copies of memory. When several masters have caches, the 
 - **ACE-Lite** is for masters with *no* coherent cache that still need coherent access, such as an accelerator that reads buffers a CPU may hold **dirty** (the cache holds a newer value than memory). It is AXI4 plus the extra AR and AW signals only: no snoop channels, no RACK or WACK, no extra read response bits (§C11.1).
 - **CHI** (Coherent Hub Interface, AMBA 5) is a different architecture for large systems. It is layered: a **protocol** layer of transactions, a **network** layer of packets with source and target node IDs, and a **link** layer of **flits** (flow-control units) with **link-layer credits** (IHI0050E.b §1.1.2, Table 1-1; §1.3). With credit-based flow control, a sender may send a flit only while it holds a credit from the receiver, and the receiver returns credits as its buffers free up, so it always has room for every flit it receives. Messages travel on separate request, response, snoop and data channels (REQ, RSP, SNP and DAT; §2.1, Table 2-1) between node types such as RN-F (a request node with a coherent cache), RN-I (I/O coherent, no cache) and HN-F (a home node that manages coherence) (§1.6).
 
+The sequence shows why the accelerator needs ACE-Lite, and why only the CPU cluster needs ACE's snoop channels.
+
+<SequenceDiagram
+  title="A coherent read from an ACE-Lite accelerator while a CPU cache holds the line dirty"
+  caption="ReadOnce is a coherent read that ACE-Lite may issue (IHI0022E Table C11-1, §C4.5.2). The interconnect snoops the cached ACE master on AC, the snoop address channel into it; the master answers on CR, and because CRRESP[0], the DataTransfer bit, is 1, it sends the full cache line on CD, the snoop data channel (§C3.6.2, §C3.7, §C3.8, §C5.2.2). The accelerator itself has no AC, CR or CD channels (§C11.1). Memory is drawn to show where a non-snooping read would go."
+  columnWidth={130}
+  participants={[
+    { id: "acc", label: "Accelerator", sublabel: "ACE-Lite master", kind: "generic" },
+    { id: "cic", label: "Interconnect", sublabel: "coherent", kind: "generic" },
+    { id: "cpu", label: "CPU cluster", sublabel: "ACE, line dirty", kind: "generic" },
+    { id: "mem", label: "Memory", sublabel: "stale copy", kind: "generic" }
+  ]}
+  messages={[
+    { from: "acc", to: "cic", label: "AR: ReadOnce of the line" },
+    { from: "cic", to: "cpu", label: "AC: snoop ReadOnce, same line" },
+    { kind: "return", from: "cpu", to: "cic", label: "CR: snoop response, DataTransfer 1" },
+    { kind: "return", from: "cpu", to: "cic", label: "CD: the dirty cache line" },
+    { kind: "return", from: "cic", to: "acc", label: "R: the up-to-date data", tone: "active" },
+    { kind: "note", from: "cic", to: "mem", label: "A non-snooping read (a plain AXI4 read, or ReadNoSnoop) is not snooped: it gets the stale copy from memory." }
+  ]}
+/>
+
+<ArchitectureDiagram
+  title="The three CHI layers"
+  caption="After IHI0050E.b §1.1.2, Table 1-1. Read it top down: the protocol layer works in transactions at the protocol nodes, the network layer packetizes each message and adds source and target node IDs for routing, and the link layer moves flits between network devices under flow control (link-layer credits, §1.3)."
+  cellWidth={300}
+  cellHeight={52}
+  gapY={44}
+  legend={false}
+  nodes={[
+    { id: "chi_p", label: "Protocol layer", sublabel: "transactions, at RN-F, RN-I, HN-F nodes", kind: "generic", col: 0, row: 0 },
+    { id: "chi_n", label: "Network layer", sublabel: "packets with source and target node IDs", kind: "generic", col: 0, row: 1 },
+    { id: "chi_l", label: "Link layer", sublabel: "flits, flow-controlled by link-layer credits", kind: "generic", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "chi_p", to: "chi_n", style: "data", label: "message" },
+    { from: "chi_n", to: "chi_l", style: "data", label: "packet" }
+  ]}
+/>
+
 What each adds to a verification plan:
 
 | Protocol | The testbench gains |
@@ -363,6 +568,44 @@ What each adds to a verification plan:
 Full depth is in [B-AMBA-F2](/curriculum/T3_Advanced/B-AMBA-F2_Future_Protocols_ACE_CHI/index).
 
 ### Comparing the family
+
+**Predict before the table.** A master reads four consecutive words (16 bytes) starting at 0x100 over a 32-bit data bus, using a burst wherever the protocol has one. For APB, AHB-Lite, AXI4 and AXI4-Lite, write down how many addresses go onto the bus and how many transactions (or transfers) the read takes. Then decide whether AXI4-Stream could perform this read, and why.
+
+<details>
+<summary>Check your prediction: the same read on five protocols</summary>
+
+| Protocol | Addresses on the bus | Transactions | What you would see |
+|---|---|---|---|
+| APB | 4, one per SETUP phase | 4 transfers | at least 2 cycles each, so at least 8 cycles (IHI0024C §1.1) |
+| AHB-Lite | 4 address phases: NONSEQ, SEQ, SEQ, SEQ | 1 INCR4 burst | each address phase overlaps the previous beat's data phase (IHI0033B.b §3.1) |
+| AXI4 | 1 AR handshake, ARLEN 3 | 1 | four R beats, RLAST on the fourth (IHI0022E §A3.4.1) |
+| AXI4-Lite | 4 AR handshakes | 4 | they may be outstanding at once, and return in order (§B1.1, §B1.1.4) |
+| AXI4-Stream | none | cannot express a read | no address, no read or write (IHI0051A §1.1) |
+
+The AXI4-Lite row is the one learners miss: no bursts does not mean one access at a time.
+
+<TimingDiagram
+  title="Four AXI4-Lite reads of 0x100 to 0x10C, outstanding but in order"
+  caption="The x-axis counts rising ACLK edges. Edges 1 to 4: four AR handshakes, one per word, because every AXI4-Lite transaction has burst length 1. D0 to D3 are the words at 0x100 to 0x10C. The first data returns at edge 3, while two more reads are still being issued, so several reads are outstanding at once. The data returns in issue order, because AXI4-Lite has no IDs, and there is no RLAST, because there are no bursts (IHI0022E §B1.1, Table B1-1, §B1.1.4)."
+  edges={8}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "ARREADY", kind: "bit", values: [0, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "ARADDR", kind: "bus", values: [undefined, "0x100", "0x104", "0x108", "0x10C", undefined, undefined, undefined] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 0] },
+    { name: "RREADY", kind: "bit", values: [0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "RDATA", kind: "bus", values: [undefined, undefined, undefined, "D0", "D1", "D2", "D3", undefined] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", label: "two reads issued, none answered: both outstanding" },
+    { edge: 3, tone: "pass", label: "first data returns while reads are still being issued" },
+    { edge: 6, tone: "pass", label: "fourth data, in issue order: all four complete" }
+  ]}
+  highlights={[{ from: 1, to: 4, tone: "info", label: "4 address handshakes" }]}
+/>
+
+</details>
 
 | | APB | AHB-Lite | AXI4 | AXI4-Lite | AXI4-Stream |
 |---|---|---|---|---|---|
@@ -385,6 +628,32 @@ ACE and ACE-Lite behave like AXI4 in every row, plus the coherency additions abo
 <AmbaFamilyExplorer />
 
 **Debrief.** The fit check works in two steps, and so should you. First it rules out every protocol that lacks something the block needs (an address, bursts, many transactions in flight, coherency). Then, from what is left, it prefers the protocol with the fewest features the block would never use. That gives APB for the UART, AXI4 for the DMA engine, AXI4-Stream for video, ACE for a cached CPU cluster, ACE-Lite for an accelerator without a cache, and CHI for a large mesh. If you picked AXI4-Lite for the UART, you chose a protocol that works but brings five channels the registers never exploit; it becomes the right answer only when there is no APB bridge (see the exercise).
+
+<ArchitectureDiagram
+  title="The fit check as a picture: what each step up adds"
+  caption="A teaching simplification of the needs the fit check tests, not a hierarchy defined by the specifications. Read it upward: each line names what the upper protocol adds. Step 1 strikes every box that lacks one of the block's needs; step 2 picks the lowest box left. AHB-Lite and AXI4-Lite sit side by side because neither has everything the other has: AHB-Lite has bursts but at most one transfer in each phase, AXI4-Lite has outstanding transactions but no bursts. ACE also adds RACK, WACK and extra read response bits. AXI4-Stream stands apart because it has no address, and CHI because it is a different, layered architecture."
+  cellWidth={100}
+  gapX={30}
+  legend={false}
+  nodes={[
+    { id: "fit_stream", label: "AXI4-Stream", sublabel: "no address", kind: "generic", col: 0, row: 0 },
+    { id: "fit_ace", label: "ACE", sublabel: "cached CPUs", kind: "generic", col: 1, row: 0 },
+    { id: "fit_chi", label: "CHI", sublabel: "large meshes", kind: "generic", col: 2, row: 0 },
+    { id: "fit_acelite", label: "ACE-Lite", sublabel: "I/O coherent", kind: "generic", col: 1, row: 1 },
+    { id: "fit_axi4", label: "AXI4", sublabel: "DMA, DDR", kind: "generic", col: 1, row: 2 },
+    { id: "fit_ahb", label: "AHB-Lite", sublabel: "one-master memory", kind: "generic", col: 0, row: 3 },
+    { id: "fit_lite", label: "AXI4-Lite", sublabel: "registers on AXI", kind: "generic", col: 2, row: 3 },
+    { id: "fit_apb", label: "APB", sublabel: "registers", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "fit_apb", to: "fit_ahb", style: "structural", label: "+ bursts, pipelining" },
+    { from: "fit_apb", to: "fit_lite", style: "structural", label: "+ outstanding" },
+    { from: "fit_ahb", to: "fit_axi4", style: "structural", label: "+ outstanding, IDs" },
+    { from: "fit_lite", to: "fit_axi4", style: "structural", label: "+ bursts, IDs" },
+    { from: "fit_axi4", to: "fit_acelite", style: "structural", label: "+ coherent requests" },
+    { from: "fit_acelite", to: "fit_ace", style: "structural", label: "+ snoop channels" }
+  ]}
+/>
 
 ### Design trade-offs and what each choice costs your testbench
 
@@ -422,6 +691,34 @@ Wires are only the visible cost. The real costs are:
 - AXI4-Lite: AXI4's channels for registers, length-1 transactions, no IDs. AXI4-Stream: data with no address.
 - ACE adds snooping for cached masters; ACE-Lite gives coherent requests to uncached masters; CHI is a layered, credit-based network.
 - Your protocol choice decides your agent, checkers, scoreboard model and coverage.
+
+<VisualRecap
+  title="The AMBA family at a glance"
+  rule="Strike every protocol that lacks something the block needs (an address, bursts, many transactions in flight, coherency), then choose the remaining one with the fewest features the block will never use."
+  code={"// what one 4-word read looks like on the bus\nAPB         : 4 transfers, each SETUP then ACCESS\nAHB-Lite    : 1 INCR4 burst, 4 address phases\nAXI4        : 1 AR (ARLEN 3), 4 R beats\nAXI4-Lite   : 4 AR, 4 R, in order\nAXI4-Stream : no address, so no read"}
+  mistake="Believing that Lite means fewer wires (AXI4-Lite keeps five channels: 152 wires against AHB-Lite's 112 in Make It Work), or that an AHB burst has one address phase (every beat has its own)."
+  inTestbench="One agent type per protocol: a one-thread APB driver with an in-order scoreboard; per-channel AXI4 driver threads with one scoreboard queue per ID; a snoop responder and cache-line model for ACE."
+>
+  <ArchitectureDiagram
+    title="Eight AMBA protocols, one line each"
+    caption="One card per protocol, with the shape that tells it apart on the bus."
+    cellWidth={150}
+    cellHeight={50}
+    gapX={20}
+    gapY={14}
+    legend={false}
+    nodes={[
+      { id: "rc_apb", label: "APB", sublabel: "SETUP, ACCESS; 2+ cycles", kind: "generic", col: 0, row: 0 },
+      { id: "rc_ahb", label: "AHB-Lite", sublabel: "address phase per beat", kind: "generic", col: 1, row: 0 },
+      { id: "rc_axi4", label: "AXI4", sublabel: "5 channels, IDs, bursts", kind: "generic", col: 0, row: 1 },
+      { id: "rc_lite", label: "AXI4-Lite", sublabel: "5 channels, length 1", kind: "generic", col: 1, row: 1 },
+      { id: "rc_stream", label: "AXI4-Stream", sublabel: "1 channel, no address", kind: "generic", col: 0, row: 2 },
+      { id: "rc_acelite", label: "ACE-Lite", sublabel: "AXI4 + coherent AR, AW", kind: "generic", col: 1, row: 2 },
+      { id: "rc_ace", label: "ACE", sublabel: "+ AC in, CR and CD out", kind: "generic", col: 0, row: 3 },
+      { id: "rc_chi", label: "CHI", sublabel: "flits, credits, node IDs", kind: "generic", col: 1, row: 3 }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -591,6 +888,29 @@ A VIP configured for the wrong AXI version flags legal traffic or misses illegal
 - **The all-strobes-low write:** after conversion from full AXI, a Lite slave can receive a write with every WSTRB bit low, and suppressing it is "permitted but not required" (§B1.1.3). A Lite slave model and its scoreboard must therefore accept a write that changes nothing.
 - **64-bit Lite:** Arm expects most Lite components to be 32-bit, and "only components requiring 64-bit atomic accesses" to use 64 bits (§B1.1.2).
 
+<SequenceDiagram
+  title="A conversion bridge turns one INCR4 write into four AXI4-Lite writes"
+  caption="The bridge breaks the burst into transactions of burst length 1, generating each next address from the burst type, and combines the four write responses into one. Any error is sticky: one SLVERR among the four makes the combined response SLVERR (IHI0022E §B1.3.1). A scoreboard on the AXI4 side therefore sees one error for the whole burst and cannot tell which word failed."
+  columnWidth={120}
+  participants={[
+    { id: "cv_m", label: "AXI4 master", kind: "generic" },
+    { id: "cv_br", label: "Conversion bridge", kind: "generic" },
+    { id: "cv_s", label: "AXI4-Lite slave", kind: "generic" }
+  ]}
+  messages={[
+    { from: "cv_m", to: "cv_br", label: "AW: INCR4 write (AWLEN 3), then 4 W beats" },
+    { kind: "self", from: "cv_br", label: "split into 4 writes of burst length 1" },
+    { from: "cv_br", to: "cv_s", label: "write 1: AW, W" },
+    { kind: "return", from: "cv_s", to: "cv_br", label: "B: OKAY" },
+    { from: "cv_br", to: "cv_s", label: "write 2: AW, W" },
+    { kind: "return", from: "cv_s", to: "cv_br", label: "B: SLVERR", tone: "error" },
+    { from: "cv_br", to: "cv_s", label: "writes 3 and 4: AW, W each" },
+    { kind: "return", from: "cv_s", to: "cv_br", label: "B: OKAY, B: OKAY" },
+    { kind: "self", from: "cv_br", label: "combine: the error is sticky" },
+    { kind: "return", from: "cv_br", to: "cv_m", label: "one B for the burst: SLVERR", tone: "error" }
+  ]}
+/>
+
 ### Expert: interconnect topologies, IDs and errors
 
 - **Topology:** shared address and data buses; shared address bus with multiple data buses; or multilayer. Address bandwidth is usually far below data bandwidth, so a shared address bus with several data buses is a common balance (§A1.3.2).
@@ -598,6 +918,25 @@ A VIP configured for the wrong AXI version flags legal traffic or misses illegal
 - **ID widening:** the interconnect appends master-port bits to ARID and AWID, so slave-side IDs are wider (§A5.3.5). Arm recommends up to 4 ID bits at masters, up to 4 more for the port number, and 8 at slaves (§A5.3.6). A slave-side monitor must be configured with the wider width.
 - **Ordering across slaves:** the interconnect must deliver same-ARID read data to the master in issue order even when the reads went to different slaves (§A5.3.1).
 - **DECERR:** must come from the interconnect when it cannot decode the address, ideally through a default slave, and every beat of the burst must still be completed (§A3.4.4). A test of an unmapped address should expect the full number of R beats, each with DECERR.
+
+The register-slice bullet, drawn as a waveform:
+
+<TimingDiagram
+  title="A register slice on the R channel adds one cycle of latency"
+  caption="The x-axis counts rising ACLK edges, and RREADY is held 1 on both sides. The _S rows show R as the slave drives it; the _M rows show R at the master, after one register slice. Each beat reaches the master one edge later than it left the slave (IHI0022E §A1.3.3). The protocol is unchanged, but a scoreboard or checker that expects data a fixed number of cycles after the address now fails."
+  edges={6}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "RVALID_S", kind: "bit", values: [0, 1, 1, 0, 0, 0] },
+    { name: "RDATA_S", kind: "bus", values: [undefined, "D0", "D1", undefined, undefined, undefined] },
+    { name: "RVALID_M", kind: "bit", values: [0, 0, 1, 1, 0, 0] },
+    { name: "RDATA_M", kind: "bus", values: [undefined, undefined, "D0", "D1", undefined, undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "D0 leaves the slave" },
+    { edge: 2, tone: "sample", label: "D0 reaches the master, one edge later" }
+  ]}
+/>
 
 ### Expert: AHB-Lite, multi-master AHB and AHB5
 
@@ -816,6 +1155,28 @@ For each block, write the needs, your choice, why not the runner-up, and the ver
 
 1. **AXI4-Lite, 64-bit.** Needs: addresses and 64-bit atomic access on an AXI fabric. APB data buses are at most 32 bits (IHI0024C §2.1.1), and there is no bridge; AXI4-Lite's 64-bit option exists for exactly this (IHI0022E §B1.1.2). AXI4 would waste bursts and IDs. Consequence: an AXI4-Lite agent configured for 64-bit data; check that every access is full width.
 2. **Three interfaces on one IP.** APB (or AXI4-Lite) for the registers, AXI4-Stream between the MAC core and its DMA (packets marked by TLAST), and AXI4 for the DMA master writing to DDR. Consequence: three agents, a packet scoreboard on the stream side and a per-ID scoreboard on the AXI4 side.
+
+<ArchitectureDiagram
+  title="Answer 2 drawn: one Ethernet MAC IP, three interfaces, three agents"
+  caption="Each line is one interface, labelled with its protocol, and each needs its own agent: an APB (or AXI4-Lite) agent on the registers, an AXI4-Stream agent with a packet scoreboard between the MAC core and its DMA, and an AXI4 agent with a per-ID scoreboard on the DMA's path to DDR."
+  cellWidth={130}
+  gapX={50}
+  legend={false}
+  nodes={[
+    { id: "eth_br", label: "APB bridge", sublabel: "from the CPU's fabric", kind: "generic", col: 0, row: 0 },
+    { id: "eth_ic", label: "AXI interconnect", sublabel: "to DDR", kind: "generic", col: 1, row: 0 },
+    { id: "eth_ip", label: "Ethernet MAC IP", kind: "generic", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "eth_regs", label: "Registers", sublabel: "control, status", kind: "generic", col: 0, row: 1 },
+    { id: "eth_dma", label: "DMA", sublabel: "AXI4 master", kind: "generic", col: 1, row: 1 },
+    { id: "eth_core", label: "MAC core", sublabel: "packets", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "eth_br", to: "eth_regs", style: "structural", label: "APB" },
+    { from: "eth_dma", to: "eth_ic", style: "structural", label: "AXI4" },
+    { from: "eth_core", to: "eth_dma", style: "structural", label: "AXI4-Stream" }
+  ]}
+/>
+
 3. **AHB-Lite plus APB.** One master suits AHB-Lite's decoder-and-multiplexor structure, and memories are the most common AHB slaves; timers and the UART go on APB behind an AHB-to-APB bridge (IHI0033B.b §1.1). Consequence: an AHB-Lite agent with a pipelined driver, and an APB agent.
 4. **ACE-Lite** (IHI0022E §C11.1). The accelerator has no cache to snoop, so ACE is wrong. On a non-coherent system the answer becomes AXI4 plus software cache maintenance. Consequence: constrain stimulus to ACE-Lite's permitted Shareable transactions (§C11.2) and check data coherency.
 5. **AXI4-Stream**, with TLAST at the end of each line (IHI0051A §2.5). Marking start of frame on TUSER is a common convention, not part of the specification. Consequence: a stream agent; scoreboard per line; coverage of line lengths and backpressure.

@@ -14,6 +14,32 @@ sources:
 - **Why it matters:** Every register check compares the DUT with the mirror. If nothing predicts an access, or the wrong thing predicts it, the mirror silently drifts away from the DUT. You then get false failures (a correct DUT reported as wrong) or false passes (a check that compares stale values). By default neither form of prediction is switched on, so this is a choice every environment has to make.
 - **The Analogy:** The mirror is your chequebook ledger and the DUT is your bank account. Implicit prediction records only the cheques *you* write. Explicit prediction reconciles every line of the bank statement, including direct debits made by someone else (firmware, a DMA engine). Passive prediction is reconciling the statement of an account you never write cheques on. *Where it breaks:* the bank also changes balances by itself, as hardware does when it sets a status bit, and no statement line shows it. No prediction mode can see that change; you have to read the register, call `predict()`, or mark the field as volatile.
 
+<ArchitectureDiagram
+  title="Three ways a register changes, and the paths into the mirror"
+  caption="Follow each change into the mirror (top left). The register model's own write() and read() reach it through auto-predict. Every transfer on the bus, the firmware's included, reaches it through the bus monitor and the predictor. The hardware event changes the DUT register with no bus transfer and no path to the mirror: that is where the chequebook analogy breaks. Both prediction paths are drawn for comparison; an environment uses one of the two paths, never both (see How to choose below)."
+  cellWidth={130}
+  gapX={100}
+  spreadAnchors={true}
+  nodes={[
+    { id: "qt-mirror", label: "mirror", sublabel: "get_mirrored_value()", kind: "model", col: 0, row: 0 },
+    { id: "qt-pred", label: "predictor", sublabel: "uvm_reg_predictor", kind: "predictor", col: 1, row: 0 },
+    { id: "qt-rm", label: "register model", sublabel: "write() / read()", kind: "reg", col: 0, row: 1 },
+    { id: "qt-mon", label: "bus monitor", kind: "monitor", col: 1, row: 1 },
+    { id: "qt-dut", label: "DUT register", kind: "dut", col: 0, row: 2 },
+    { id: "qt-fw", label: "firmware / DMA", sublabel: "another initiator", kind: "generic", col: 1, row: 2 },
+    { id: "qt-hw", label: "hardware event", sublabel: "sets a status bit", kind: "generic", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "qt-rm", to: "qt-mirror", style: "causal", label: "auto-predict" },
+    { from: "qt-rm", to: "qt-dut", style: "data", label: "frontdoor" },
+    { from: "qt-fw", to: "qt-dut", style: "data", label: "bus write" },
+    { from: "qt-dut", to: "qt-mon", style: "data", label: "observe" },
+    { from: "qt-mon", to: "qt-pred", style: "data", label: "ap.write" },
+    { from: "qt-pred", to: "qt-mirror", style: "causal", label: "do_predict" },
+    { from: "qt-hw", to: "qt-dut", style: "data", label: "sets bit" }
+  ]}
+/>
+
 **You will be able to:**
 1. **Choose** implicit (auto) prediction, explicit prediction or passive prediction for a bus, from who can access the registers on that bus.
 2. **Wire** an explicit predictor (`map`, `adapter`, `bus_in`) on the root map, with auto-predict off so that no access is predicted twice.
@@ -50,6 +76,15 @@ sources:
 The default is **neither**. `uvm_reg_map::new()` sets auto-predict to 0 (uvm-core 2020.3.1 `uvm_reg_map.svh`), §18.2.5.2 says auto-predict is off by default, and no predictor exists until you build one. In uvm-core 2020.3.1 even `mirror()` does not update the mirror through the frontdoor unless one of the two modes is active; the expert section below notes that the standard's text is not consistent on this point.
 
 Two more things move the mirror without any prediction mode: `predict()`, which you call yourself, and `reset()`, which loads the reset values (§18.4.4.15, §18.4.4.5). In uvm-core 2020.3.1, backdoor `poke()` and `peek()` also update the mirror themselves; the next lesson covers them.
+
+**What each call changes.** The three values side by side, for one register (§18.4.4.2, §18.4.4.5, §18.4.4.9, §18.4.4.15). "Through the policy" means each field applies its access policy, so an RO field keeps its old value:
+
+| Call | Desired value (`get()`) | Mirrored value (`get_mirrored_value()`) | DUT register |
+| --- | --- | --- | --- |
+| `set(v)` | `v`, through the policy | unchanged | unchanged, until `update()` writes it |
+| frontdoor `write(v)` | `v`, through the policy; if the access is predicted, then the same as the mirror | `v` through the policy, **only if** auto-predict or a predictor predicts the access | written |
+| `predict(v)` (default `UVM_PREDICT_DIRECT`) | `v` | `v`, stored as is with no policy | unchanged |
+| `reset()` | the reset value | the reset value | unchanged |
 
 ### Implicit (auto) prediction: the register predicts its own accesses
 
@@ -209,6 +244,31 @@ The visual below models an environment with a bus agent, an optional predictor, 
 
 **Passive prediction** is an explicit predictor on a bus that the register model never drives. A typical case is an SoC test in which firmware on a CPU model programs a block: the UVM environment has a passive agent (monitor only) on that bus, the register model, and a predictor. The mirror then follows what firmware does, and the test reads it with `get_mirrored_value()` instead of touching the bus.
 
+<ArchitectureDiagram
+  title="Passive prediction: the register model never drives this bus"
+  caption="Only the CPU model starts transfers. The passive agent has a monitor and no sequencer or driver, so nothing calls set_sequencer() for this bus. Every transfer reaches the mirror through mon.ap and the predictor's bus_in; with check_on_read = 1 on the root map, each observed read is compared with the mirror before it is predicted."
+  cellWidth={130}
+  nodes={[
+    { id: "pv-cpu", label: "CPU model", sublabel: "runs firmware", kind: "generic", col: 0, row: 0 },
+    { id: "pv-ral", label: "ral", sublabel: "set_check_on_read(1)", kind: "reg", col: 1, row: 0 },
+    { id: "pv-dut", label: "DUT", sublabel: "block registers", kind: "dut", col: 0, row: 1 },
+    { id: "pv-pred", label: "predictor", sublabel: "map = root map", kind: "predictor", col: 1, row: 1 },
+    { id: "pv-agt", label: "agent (passive)", kind: "agent", col: 0, row: 2, colSpan: 2, container: true },
+    { id: "pv-mon", label: "mon", sublabel: "bus monitor", kind: "monitor", col: 0, row: 2 },
+    { id: "pv-none", label: "no sqr, no drv", sublabel: "is_active = UVM_PASSIVE", kind: "generic", state: "dim", col: 1, row: 2 }
+  ]}
+  ports={[
+    { id: "pv-mon.ap", node: "pv-mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "pv-pred.bus_in", node: "pv-pred", side: "bottom", kind: "analysis_imp", label: "bus_in" }
+  ]}
+  edges={[
+    { from: "pv-cpu", to: "pv-dut", style: "data", label: "reads, writes" },
+    { from: "pv-dut", to: "pv-mon", style: "data", label: "observe" },
+    { from: "pv-mon.ap", to: "pv-pred.bus_in", style: "data", label: "write(tr)" },
+    { from: "pv-pred", to: "pv-ral", style: "causal", label: "check, predict" }
+  ]}
+/>
+
 A passive predictor becomes a **register checker** with one more line:
 
 ```systemverilog
@@ -218,6 +278,27 @@ ral.default_map.set_check_on_read(1);   // compare each observed read with the m
 
 With check-on-read on, the predictor compares every observed **read** with the current mirror before it predicts, and reports a mismatch with the same `RegModel` error that `mirror(UVM_CHECK)` uses (§18.2.5.3, which calls the mode "useful when the register model is used passively"). The mirror is then updated from the read data whatever the result.
 
+<SequenceDiagram
+  title="Check-on-read of one observed firmware read"
+  caption="The compare (step 3) uses the mirror as it was before this read; the prediction (step 5) comes after it. So a stale mirror is reported first and then corrected by the same read. The compare covers the valid bit mask only, which leaves out UVM_NO_CHECK fields and write-only fields, and it is skipped if the status is UVM_NOT_OK. The prediction sets the mirror from the read data through each field's policy, whatever the compare said. The order is uvm-core 2020.3.1 uvm_reg_predictor::write()."
+  columnWidth={150}
+  participants={[
+    { id: "mon", label: "passive mon", kind: "monitor" },
+    { id: "pred", label: "predictor", kind: "predictor" },
+    { id: "reg", label: "observed register", sublabel: "found by address", kind: "reg" }
+  ]}
+  messages={[
+    { kind: "divider", label: "firmware reads a register over the bus" },
+    { from: "mon", to: "pred", label: "bus_in.write(tr) (read)" },
+    { kind: "self", from: "pred", label: "bus2reg, then get_reg_by_offset(addr)" },
+    { from: "pred", to: "reg", label: "do_check(mirror, read data)", tone: "active" },
+    { kind: "note", from: "pred", to: "reg", label: "mismatch: UVM_ERROR [RegModel] (valid bit mask only)" },
+    { kind: "self", from: "pred", label: "pre_predict(item)" },
+    { from: "pred", to: "reg", label: "do_predict(item, UVM_PREDICT_READ)" },
+    { kind: "note", from: "pred", to: "reg", label: "mirror = read data via each field's policy, compare or not" }
+  ]}
+/>
+
 Two conditions make passive checking trustworthy:
 
 - **Hardware-driven fields must be volatile here.** Elsewhere, a field that the hardware changes only on an event your test causes can stay checked, as long as the test reads it before it checks it ([Fields the hardware changes](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index#fields-the-hardware-changes-w1c-w1t-rc-and-volatile)). Passive checking removes that option: firmware decides when to read, and every observed read is checked, so no unchecked read can bring the mirror up to date first. A field configured with `volatile = 1` gets the compare policy `UVM_NO_CHECK` in `configure()` (uvm-core `uvm_reg_field.svh`), so it is skipped by the compare but still predicted. A status bit set by hardware and configured `volatile = 0` produces a mismatch on every firmware read that follows a hardware change: a false failure.
@@ -225,7 +306,14 @@ Two conditions make passive checking trustworthy:
 
 ### Double prediction, and how to choose
 
-**Double prediction** happens when auto-predict is on *and* a connected predictor watches the same bus. Each register-model access is then predicted once by the register and once by the predictor. The order is not fixed: the predictor runs when the monitor publishes, auto-predict runs when the item finishes. Either order gives the same result:
+**Double prediction** happens when auto-predict is on *and* a connected predictor watches the same bus. Each register-model access is then predicted once by the register and once by the predictor. The order is not fixed: the predictor runs when the monitor publishes, auto-predict runs when the item finishes. Either order gives the same result.
+
+**Predict first.** GPIO.LED is a 4-bit W1T field, and the DUT and the mirror both hold `'h3`. A W1T write of `v` toggles the bits that are 1 in `v`, so one prediction computes `mirror ^ v`. Auto-predict is 1 and a predictor is connected. The test calls `ral.gpio.write(st, 'h6)`. What do the DUT's LED and the mirror's LED hold afterwards? Would your answer change if LED were RW?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+The DUT toggles once: `'h3 ^ 'h6 = 'h5`. The mirror is predicted twice: `'h3 ^ 'h6 ^ 'h6 = 'h3`, so it reports the old value and the next `mirror(UVM_CHECK)` fails. If LED were RW, both predictions would store `'h6`, and the DUT and the mirror would agree. The table shows why, policy by policy:
 
 | Field policy | Prediction after one write of `v` | After two predictions | Visible? |
 | --- | --- | --- | --- |
@@ -234,9 +322,39 @@ Two conditions make passive checking trustworthy:
 | W1S | `mirror \| v` | `mirror \| v` | No |
 | W1T | `mirror ^ v` | `mirror ^ v ^ v = mirror` | **Yes:** the toggle is undone |
 
-So double prediction hides on most registers and breaks toggle fields, which makes it a classic late-found bug. The policy formulas are uvm-core 2020.3.1 `uvm_reg_field::XpredictX`, an internal method that applies a field's policy; never call it yourself.
+The policy formulas are uvm-core 2020.3.1 `uvm_reg_field::XpredictX`, an internal method that applies a field's policy; never call it yourself.
+
+</details>
+
+So double prediction hides on most registers and breaks toggle fields, which makes it a classic late-found bug.
 
 **How to choose**, per bus:
+
+<ArchitectureDiagram
+  title="Choosing a prediction set-up for one bus"
+  caption="Ask the three questions top to bottom for each bus that reaches the register block; every answer leads to exactly one set-up. Whatever you choose, auto-predict and a connected predictor never share one map. The numbered rules below give the reasons."
+  legend={false}
+  cellWidth={150}
+  gapX={56}
+  spreadAnchors={true}
+  nodes={[
+    { id: "ch-q1", label: "RAL drives this bus?", sublabel: "read(), write() via the map", col: 0, row: 0 },
+    { id: "ch-pas", label: "passive predictor", sublabel: "+ set_check_on_read(1)", kind: "predictor", col: 1, row: 0 },
+    { id: "ch-q2", label: "Other initiators?", sublabel: "firmware, DMA, raw sequence", col: 0, row: 1 },
+    { id: "ch-exp", label: "explicit prediction", sublabel: "predictor on the monitor", kind: "predictor", state: "ok", col: 1, row: 1 },
+    { id: "ch-q3", label: "Bus monitor built?", sublabel: "RAL is the only initiator", col: 0, row: 2 },
+    { id: "ch-imp", label: "implicit, for now", sublabel: "set_auto_predict(1)", kind: "reg", col: 1, row: 2 },
+    { id: "ch-never", label: "Never both on one map", sublabel: "auto-predict 0 with a predictor", state: "error", col: 0, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "ch-q1", to: "ch-pas", style: "causal", label: "no" },
+    { from: "ch-q1", to: "ch-q2", style: "causal", label: "yes" },
+    { from: "ch-q2", to: "ch-exp", style: "causal", label: "yes" },
+    { from: "ch-q2", to: "ch-q3", style: "causal", label: "no" },
+    { from: "ch-q3", to: "ch-exp", style: "causal", label: "yes" },
+    { from: "ch-q3", to: "ch-imp", style: "causal", label: "no" }
+  ]}
+/>
 
 1. **Can anything other than the register model access registers on this bus** (firmware, a DMA, another agent, a raw bus sequence)? Then use **explicit** prediction on that bus's monitor. This is the normal production set-up.
 2. **Does the register model never drive this bus?** Then the predictor is **passive**; add `set_check_on_read(1)` if you want firmware reads checked.
@@ -263,8 +381,18 @@ Each set-up has blind spots. A stale mirror is not a bug in itself; checking aga
 | --- | --- | --- | --- |
 | 0. After reset | 0 | 0 | `ral.reset()` and the DUT reset agree |
 | 1. `ral.ctrl.write(st, 'hD)` sets MODE = 3 | **1** | 0 | No access to INT_STATUS, so nothing predicts it: the mirror is stale |
-| 2. `ral.int_status.mirror(st, UVM_CHECK)` | 1 | 1 | ERR is volatile (`UVM_NO_CHECK`), so no error; the predictor then learns 1 from the read. With `volatile = 0` this step reports a false mismatch; a `read()` before the check, as the Make It Work test does, avoids it |
+
+**Predict first.** Step 2 is `ral.int_status.mirror(st, UVM_CHECK)`. It reads the DUT and compares the read data with the mirror value held before the read. A field configured `volatile = 1` gets the compare policy `UVM_NO_CHECK` (see the passive-checking section above). The predictor also predicts the read; the compare uses the value captured before the read. Does step 2 report an error when ERR is configured `volatile = 1`? And with `volatile = 0`? What does the mirror hold afterwards? Then step 3 writes `'h1` to the W1C field: what do the DUT and the mirror hold?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show steps 2 and 3</summary>
+
+| Step | DUT ERR | Mirrored ERR | What happened |
+| --- | --- | --- | --- |
+| 2. `ral.int_status.mirror(st, UVM_CHECK)` | 1 | 1 | ERR is volatile (`UVM_NO_CHECK`), and the compare skips every field whose compare policy is `UVM_NO_CHECK`, so no error; the predictor learns 1 from the read. With `volatile = 0` this step reports a false mismatch, and the mirror still becomes 1, because the prediction happens whatever the compare says; a `read()` before the check, as the Make It Work test does, avoids it |
 | 3. `ral.int_status.write(st, 'h1)` | 0 | 0 | W1C: the predictor computes `1 & ~1 = 0`, matching the DUT |
+
+</details>
 
 **`predict()` versus volatile.** When the TB *knows* the hardware changed a field, for example because an interrupt line rose, it can tell the model with `predict()`. That is a **direct** prediction (`UVM_PREDICT_DIRECT`): the value is stored as is, with no policy applied (§17.2.2.8, §18.5.5.17). It is not "explicit prediction", which is the predictor component. Check the return value, because a prediction made while the register is in the middle of an access is refused:
 
@@ -308,7 +436,17 @@ UVM_ERROR ... [RegModel] Register "ral.ctrl" value read from DUT (0x000000000000
 UVM_INFO ... [RegModel] Field mode (ral.ctrl[3:2]) mismatch read=2'h2 mirrored=2'h1
 ```
 
-The "valid bit mask" leaves out the fields that are not compared: fields whose compare policy is `UVM_NO_CHECK` (volatile fields get it from `configure()`, others from `set_compare(UVM_NO_CHECK)`, §18.5.5.15) and write-only fields.
+The "valid bit mask" leaves out the fields that are not compared: fields whose compare policy is `UVM_NO_CHECK` (volatile fields get it from `configure()`, others from `set_compare(UVM_NO_CHECK)`, §18.5.5.15) and write-only fields: every policy whose name starts with WO (WO, WOC, WOS, WO1; uvm-core 2020.3.1 `uvm_reg::do_check` tests the first two letters of the access).
+
+**Reading the message, part by part** (the example above is step 2 of the Make It Work bench under `+PRED=AUTO`):
+
+| Part of the message | In the example | What it tells you |
+| --- | --- | --- |
+| `Register "ral.ctrl"` | `ral.ctrl` | The full name of the register that was checked |
+| `value read from DUT` | `0x0000000000000009` | What the read returned: EN = 1, MODE = 2 (the raw write) |
+| `mirrored value` | `0x0000000000000005` | What the model expected before the read: EN = 1, MODE = 1 (the earlier RAL write) |
+| `valid bit mask` | `0x00000000ffffffff` | The bits that were compared. All 32 bits of CTRL here, because none of its fields is `UVM_NO_CHECK` or write-only |
+| the `UVM_INFO` field line | `Field mode (ral.ctrl[3:2]) mismatch read=2'h2 mirrored=2'h1` | Which field differs. Only MODE is listed, because every other field (EN, IE, rsvd) has the same value in both; only fields that differ get a line |
 
 ### Recap
 
@@ -863,7 +1001,42 @@ The last row is why the `predict()` snippet above waits for `is_busy()` to clear
 
 ### Expert: Explicit prediction runs on the monitor's timing, not the RAL call's
 
-A register-model `write()` returns when its bus item ends, which in uvm-core is the sequencer's `end_tr()` after the driver's `item_done()` (`uvm_reg_map.svh` waits on the item's `end` event). The predictor updates the mirror when the monitor publishes. Nothing ties the two together:
+A register-model `write()` returns when its bus item ends, which in uvm-core is the sequencer's `end_tr()` after the driver's `item_done()` (`uvm_reg_map.svh` waits on the item's `end` event). The predictor updates the mirror when the monitor publishes. Nothing ties the two together.
+
+The two waveforms trace step 1 of the Make It Work bench, `ral.ctrl.write(st, 'h5)` with `+PRED=EXPLICIT`, first with the bench's driver and then with its idle cycle removed:
+
+<TimingDiagram
+  title="Make It Work driver: the mirror is updated before write() returns"
+  caption="x-axis: rising edges of clk, numbered from 0; each value is the one sampled at that edge. The mirror row is ral.ctrl's mirrored value. Markers: drive at edge 0, sample at edge 1, returns at edge 2. The driver drives the transfer 1 ns after edge 0 (output skew #1). At edge 1 the DUT and the monitor sample it, and the monitor's ap.write runs the predictor, so the mirror changes after edge 1. The idle cycle makes item_done() wait for edge 2, so write() returns after the prediction."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "sel", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "mirror", kind: "bus", values: ["'h0", "'h0", "'h5", "'h5"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "drive", label: "driver drives sel, addr, wdata 1 ns after this edge" },
+    { edge: 1, tone: "sample", short: "sample", label: "DUT and monitor sample; ap.write updates the mirror" },
+    { edge: 2, tone: "info", short: "returns", label: "item_done(): write() returns with the mirror at 'h5" }
+  ]}
+/>
+
+<TimingDiagram
+  title="Without the idle cycle: item_done() and the publish share a time slot"
+  caption="x-axis: rising edges of clk, numbered from 0; each value is the one sampled at that edge. The mirror row is ral.ctrl's mirrored value. Markers: drive at edge 0, and the race at edge 1. Same transfer, but the driver calls item_done() at edge 1, right after it samples. The monitor publishes at edge 1 too, so write() can return before or after the predictor runs. A mirror(UVM_CHECK) started at once may capture 'h0 as the expected value."
+  edges={3}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "sel", kind: "bit", values: [0, 1, 0] },
+    { name: "mirror", kind: "bus", values: ["'h0", "'h0", "'h5"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "drive", label: "driver drives sel, addr, wdata 1 ns after this edge" },
+    { edge: 1, tone: "pending", short: "race", label: "item_done() and ap.write in one time slot: the scheduler picks the order" }
+  ]}
+/>
+
+The two cases in words:
 
 - If the driver calls `item_done()` **before** the monitor publishes (a pipelined bus where the driver finishes at the address phase, or a monitor that publishes at the end of a response phase), `write()` returns with the old mirror. A `mirror(UVM_CHECK)` or `update()` issued at once then works from the old value: a false mismatch, or an extra write.
 - If both happen at the same clock edge, they run in the same **time slot** (one simulation time) in an order the scheduler chooses ([F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)), so the result can change between simulators.
@@ -881,11 +1054,42 @@ Details of uvm-core 2020.3.1 `uvm_reg_predictor.svh` that matter at scale:
 - **Indirect registers.** For a `uvm_reg_indirect_data` register, the `REG_PREDICT` message and check-on-read use `get_indirect_reg()`, the register selected by the index register, and the data register's `do_predict()` forwards the prediction to the selected register.
 - **`flush()`** clears pending items, for example after a mid-test reset. It is marked `@uvm-contrib`: a uvm-core addition, not part of IEEE 1800.2-2020.
 
+**What the predictor prints, case by case** (uvm-core 2020.3.1 `uvm_reg_predictor.svh`), so you can tell from the log how far each observed item got:
+
+| Case | Message ID | Severity, and when you see it |
+| --- | --- | --- |
+| `predictor.adapter` is null | `REG/WRITE/NULL` | `UVM_FATAL` at the first observed item |
+| The address decodes to no register in `predictor.map` | `REG_PREDICT_NOT_FOR_ME` | `UVM_INFO`, only at `UVM_FULL` |
+| A beat to an address already collected for a wide register | `REG_PREDICT_COLLISION` | `UVM_ERROR`; the partial item is dropped |
+| A read that differs from the mirror, with check-on-read on | `RegModel` | `UVM_ERROR`, from the register's `do_check()` |
+| A register found by address, but the address is not among that register's own addresses in its map (`Unexpected failed address lookup`) | `REG_PREDICT_INTERNAL` | `UVM_ERROR`; an internal consistency check that a normal model never hits |
+| A complete item, predicted | `REG_PREDICT` | `UVM_INFO` at `UVM_HIGH` |
+| An item still incomplete at the end of the test | `PENDING REG ITEMS` | `UVM_ERROR` from `check_phase` |
+
 `reg_ap` makes the predictor a clean source for a **register scoreboard**: every observed access arrives as a `uvm_reg_item` already decoded to a register, with its kind and value. That is usually better than scattering `mirror(UVM_CHECK)` calls through tests ([A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 
 ### Expert: The root map owns prediction
 
 In uvm-core 2020.3.1 every prediction decision is taken at the root map, whichever map the access names:
+
+<ArchitectureDiagram
+  title="A hierarchical model: where predictor.map must point"
+  spreadAnchors={true}
+  caption="ral.default_map is the root map: it holds the address table built by lock_model() and the auto-predict setting that every access reads. periph.default_map is a sub-map added to it: it has no address table, and a set_auto_predict() on it is stored and ignored. A predictor bound to the sub-map finds no register for any address."
+  nodes={[
+    { id: "rm-ral", label: "ral (top block)", kind: "reg", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "rm-root", label: "ral.default_map", sublabel: "root · address table", kind: "generic", state: "ok", col: 0, row: 0 },
+    { id: "rm-periph", label: "periph (sub-block)", kind: "reg", col: 1, row: 0, rowSpan: 2, container: true },
+    { id: "rm-regs", label: "periph registers", sublabel: "ctrl, status, ...", kind: "reg", col: 1, row: 0 },
+    { id: "rm-sub", label: "periph.default_map", sublabel: "sub-map · no table", kind: "generic", col: 1, row: 1 },
+    { id: "rm-pred", label: "predictor", sublabel: "uvm_reg_predictor", kind: "predictor", col: 0, row: 2 }
+  ]}
+  edges={[
+    { from: "rm-root", to: "rm-sub", style: "structural", label: "submap" },
+    { from: "rm-pred", to: "rm-root", style: "structural", label: "map: ✓ root" },
+    { from: "rm-pred", to: "rm-sub", style: "structural", label: "map: ✕ sub" }
+  ]}
+/>
 
 - **Auto-predict** is read from the root map (`system_map.get_auto_predict()` in `uvm_reg::do_write` and `do_read`). `set_auto_predict()` on a sub-map is stored and ignored; unlike `set_check_on_read()`, which "specifies the check-on-read mode for this map and all of its submaps" (§18.2.5.3), it does not propagate.
 - **The address table** that `get_reg_by_offset()` searches is built only in the root map when the model is locked, so `predictor.map` must be a root map.
@@ -895,7 +1099,32 @@ So the rule for hierarchical models is: `set_sequencer()`, `set_auto_predict()` 
 
 ### Expert: Reset and the mirror
 
-A DUT reset in the middle of a test changes every register, and no access reports it. Call `ral.reset()` when the reset is applied: it "sets the mirror value of all registers in the block and sub-blocks to the reset value" without touching the DUT (§18.1.5.3). Also call `predictor.flush()` (uvm-core only, see above) so that a half-collected wide-register item does not survive the reset. Forgetting either gives false mismatches on the first check after reset. [A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) owns this topic.
+A DUT reset in the middle of a test changes every register, and no access reports it. Call `ral.reset()` when the reset is applied: it "sets the mirror value of all registers in the block and sub-blocks to the reset value" without touching the DUT (§18.1.5.3). Also call `predictor.flush()` (uvm-core only, see above) so that a half-collected wide-register item does not survive the reset. Forgetting either gives false mismatches on the first check after reset.
+
+<SequenceDiagram
+  title="Handling a DUT reset in the middle of a test"
+  caption="Both calls run while the reset is applied, before the next register access. ral.reset() sets the mirror to the reset values (§18.1.5.3) and the desired value too (§18.4.4.5), and leaves the DUT untouched. After them the mirror holds the reset values the DUT now holds, so the first check passes. The error-toned note at the end is what you get when either call is missing."
+  columnWidth={150}
+  participants={[
+    { id: "env", label: "env", kind: "env" },
+    { id: "ral", label: "ral", sublabel: "uvm_reg_block", kind: "reg" },
+    { id: "pred", label: "predictor", kind: "predictor" },
+    { id: "test", label: "test", kind: "test" }
+  ]}
+  messages={[
+    { kind: "divider", label: "DUT reset asserted in the middle of the test" },
+    { from: "env", to: "ral", label: "ral.reset()" },
+    { kind: "note", from: "ral", label: "mirror, desired = reset values; DUT untouched" },
+    { from: "env", to: "pred", label: "predictor.flush()" },
+    { kind: "note", from: "pred", to: "test", label: "pending wide-register items cleared (uvm-core, @uvm-contrib)" },
+    { kind: "divider", label: "reset released" },
+    { from: "test", to: "ral", label: "ral.ctrl.mirror(st, UVM_CHECK)" },
+    { kind: "return", from: "ral", to: "test", label: "no error: DUT and mirror both hold reset values" },
+    { kind: "note", from: "env", to: "test", label: "Either call forgotten: false mismatches on the first check after reset", tone: "error" }
+  ]}
+/>
+
+[A-UVM-9: Reset Handling and Error Injection](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) owns this topic.
 
 ### Interview angles
 
@@ -1086,6 +1315,20 @@ predictor.adapter = adapter;
 The module's lab drops you into an environment whose mirror never updates, with only the log to go on:
 
 <LabLink labId="ral-mirror-bug" />
+
+### One-glance summary: does the mirror follow the change?
+
+Use this card to review after the quiz and the katas. ✓ means the mirror follows the change without help; ✕ means it is stale or wrong until you act.
+
+| Change | Neither | Implicit (auto-predict) | Explicit (predictor) | Passive (predictor, RAL never drives) | Both on one map |
+| --- | --- | --- | --- | --- | --- |
+| Register-model `write()` or `read()` | ✕ stale, even after a frontdoor `mirror()` (uvm-core) | ✓ before the call returns | ✓ when the monitor publishes | (no such accesses) | ✓ on RW, W1C, W1S; predicted twice |
+| Register-model write to a W1T field | ✕ | ✓ | ✓ | (no such accesses) | ✕ toggles back |
+| Firmware, DMA or raw sequence on the same bus | ✕ | ✕ | ✓ | ✓, and reads are checked with `set_check_on_read(1)` | ✓, predicted once, by the predictor |
+| Hardware change: status bit, counter, interrupt flag | ✕ | ✕ | ✕ | ✕ | ✕ |
+| DUT reset in the middle of a test | ✕ | ✕ | ✕ | ✕ | ✕ |
+
+The fixes for the ✕ cells: turn one mode on (never both); for a hardware change, read the register before you check it, call `predict()` when the TB knows the value, or make the field volatile; for a mid-test reset, call `ral.reset()` and `predictor.flush()`.
 
 ## References & Next Topics
 

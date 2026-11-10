@@ -14,6 +14,31 @@ sources:
 - **Why it matters:** Data-integrity checks say "the byte that went in is the byte that comes out". The value is known at one clock tick and checked at a later one, often after a delay that varies, and often while other transfers are still in flight. `$past` needs a fixed delay, and a module-level variable is overwritten by the next transfer. A local variable gives each transfer its own private copy.
 - **The Analogy:** A parcel tag. Each parcel that enters the warehouse gets its own tag that records what is inside; at the exit, you compare the parcel with its own tag. A second parcel gets a second tag, so tags never overwrite each other. *Where it breaks:* the tag exists only inside the attempt, so nobody outside can read it, not even the assertion's own failure message. And a tag does not tell you which parcel leaving the warehouse is yours: when several are in flight, you must also number them, which this page calls a **ticket**.
 
+<figure>
+  <svg viewBox="0 0 360 160" role="img" aria-label="The parcel-tag analogy. Three transfers are in flight inside a FIFO. Each carries a ticket number and a tag holding the byte that went in: ticket 3 with tag D4, ticket 2 with tag C3, and ticket 1 with tag B2, nearest the exit. At the exit, ticket 1 leaves with byte B2, which is compared with its own tag B2 and matches. A note says a tag is private: nothing outside its attempt can read it." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="175" y="18" textAnchor="middle" fontSize="11" fill="currentColor">in flight inside the FIFO</text>
+    <rect x="70" y="28" width="210" height="72" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="80" y="41" width="58" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="109" y="59" textAnchor="middle" fontSize="10" fill="currentColor">ticket #3</text>
+    <text x="109" y="77" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">tag D4</text>
+    <rect x="146" y="41" width="58" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="175" y="59" textAnchor="middle" fontSize="10" fill="currentColor">ticket #2</text>
+    <text x="175" y="77" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">tag C3</text>
+    <rect x="212" y="41" width="58" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="241" y="59" textAnchor="middle" fontSize="10" fill="currentColor">ticket #1</text>
+    <text x="241" y="77" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">tag B2</text>
+    <text x="30" y="57" textAnchor="middle" fontSize="11" fill="currentColor">in</text>
+    <line x1="8" y1="64" x2="62" y2="64" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M70,64 L61,59 L61,69 Z" fill="currentColor" />
+    <text x="318" y="57" textAnchor="middle" fontSize="11" fill="currentColor">out</text>
+    <line x1="282" y1="64" x2="340" y2="64" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M350,64 L341,59 L341,69 Z" fill="currentColor" />
+    <text x="180" y="124" textAnchor="middle" fontSize="11" fill="currentColor">exit: ticket #1 leaves with B2; its own tag says B2 ✓</text>
+    <text x="180" y="148" textAnchor="middle" fontSize="10.5" fill="currentColor" fillOpacity="0.75">a tag is private: nothing outside its attempt can read it</text>
+  </svg>
+  <figcaption>The analogy as a picture. The tag is the local variable that holds the byte an attempt captured; the ticket is the number that tells the attempt which output is its own when several transfers are in flight. The values match the Make It Work bench at the moment ticket 1 leaves: its bytes A1, B2, C3 and D4 enter in that order with tickets 0 to 3, ticket 0 (A1) has already left, and tickets 1, 2 and 3 (B2, C3 and D4) are inside together.</figcaption>
+</figure>
+
 **You will be able to:**
 1. Predict, for overlapping attempts, which value each attempt captures in its local variable and on which edge each comparison happens and with what result.
 2. Write data-integrity properties with local variables, for fixed and for variable latency, using `[->1] ##0` to check on the handshake tick and a ticket when several transfers are in flight.
@@ -33,6 +58,29 @@ sources:
 - **Antecedent and consequent.** In `a |-> b`, the left side `a` is the antecedent and the right side `b` the consequent. The consequent is checked only when the antecedent matches; when it does not, the attempt is a **vacuous success**, a pass that checked nothing (§16.12.7, §16.14.8).
 - **Match, end point.** A sequence matches over a run of ticks; the tick where the match ends is its end point.
 - **Handshake, transfer, in flight.** A transfer happens on a **handshake**, the tick where valid (and ready, if the interface has one) are both high. A transfer is **in flight** between its input handshake and its output handshake.
+
+<TimingDiagram
+  title="Every term on one trace"
+  caption="Picture the rule 'when in_vld is high, the same byte must leave on a later output handshake'. x-axis: rising edges 0 to 5 of clk; each value is the one sampled just before that edge (Preponed). An attempt starts at every edge. At edge 1 the antecedent (in_vld high) matches and in_data is sampled as 5A: the input handshake. The consequent then waits: out_vld is high at edge 3 but out_rdy is low, so that is not a handshake. Edge 4 is the output handshake and the end point of the match. The shaded band is the time the transfer is in flight. X (hatched) on in_data and out_data means don't care while the matching valid is low. The attempts at edges 0, 2, 3, 4 and 5 see in_vld low, so each is a vacuous success."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "5A", undefined, undefined, undefined, undefined] },
+    { name: "out_vld", kind: "bit", values: [0, 0, 0, 1, 1, 0] },
+    { name: "out_rdy", kind: "bit", values: [0, 0, 0, 0, 1, 0] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "5A", "5A", undefined] }
+  ]}
+  highlights={[
+    { from: 1, to: 4, tone: "attempt", label: "In flight: from the input handshake at edge 1 to the output handshake at edge 4" }
+  ]}
+  markers={[
+    { edge: 0, tone: "vacuous", short: "vac", label: "Attempt at edge 0: in_vld is low, the antecedent does not match: vacuous success" },
+    { edge: 1, tone: "sample", short: "ante", label: "Attempt at edge 1: in_vld is sampled high, so the antecedent matches; in_data is sampled as 5A. This is the input handshake" },
+    { edge: 3, tone: "info", short: "wait", label: "out_vld is high but out_rdy is low: no handshake, the consequent keeps waiting" },
+    { edge: 4, tone: "pass", short: "end", label: "Output handshake (out_vld and out_rdy both high): the end point of the match; out_data 5A is the byte that went in" }
+  ]}
+/>
 
 ### The problem: a value you need later
 
@@ -71,17 +119,20 @@ The standard's own example is the same shape with a pipeline that takes five cyc
 
 ### One copy per attempt
 
-The picture below runs `p_fixed_latency` on a trace where two bytes enter back to back. **Predict first:** the attempt that starts at edge 1 stores `11`; the attempt that starts at edge 2 stores `22`. Does the second store overwrite the first?
+The picture below runs `p_fixed_latency` on a trace where two bytes enter back to back. **Check the picture:** the attempt that starts at edge 1 stores `11`; the attempt that starts at edge 2 stores `22` while the first is still waiting. Follow the three v rows: does the second store overwrite the first?
 
 <TimingDiagram
   title="Two overlapping attempts, two private copies of v"
-  caption="Property: (in_vld, v = in_data) |-> ##2 (out_data == v). Each value is the one sampled at that rising edge; X means don't care while the valid is low. A1 stores 11 at edge 1 and A2 stores 22 at edge 2, in separate copies, so A1 compares 11 at edge 3 and A2 compares 22 at edge 4. A4 stores 33 and passes at edge 6."
+  caption="Property: (in_vld, v = in_data) |-> ##2 (out_data == v). Each value is the one sampled at that rising edge; X means don't care while the valid is low. A1 stores 11 at edge 1 and A2 stores 22 at edge 2, in separate copies, so A1 compares 11 at edge 3 and A2 compares 22 at edge 4. A4 stores 33 and passes at edge 6. The three v rows are not signals: each draws one attempt's private copy at the edges where that attempt is alive, and – means that copy does not exist. At edges 2 and 3, A1 and A2 hold 11 and 22 at the same time."
   edges={8}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "in_vld", kind: "bit", values: [0, 1, 1, 0, 1, 0, 0, 0] },
     { name: "in_data", kind: "bus", values: [undefined, "11", "22", undefined, "33", undefined, undefined, undefined] },
-    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "11", "22", undefined, "33", undefined] }
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "11", "22", undefined, "33", undefined] },
+    { name: "v (A1)", kind: "bus", values: ["–", "11", "11", "11", "–", "–", "–", "–"] },
+    { name: "v (A2)", kind: "bus", values: ["–", "–", "22", "22", "22", "–", "–", "–"] },
+    { name: "v (A4)", kind: "bus", values: ["–", "–", "–", "–", "33", "33", "33", "–"] }
   ]}
   markers={[
     { edge: 3, tone: "pass", short: "A1", label: "Attempt A1 started at edge 1 with v = 11; out_data is 11 at edge 3: pass" },
@@ -173,6 +224,24 @@ Read it as: "when a byte enters, from the next tick wait for the first `out_vld`
 **Mistake 2: `##1` where `##0` was meant.** `##0` does not wait a cycle in a singly clocked sequence: it starts the second sequence on the same clock tick where the first one ends (§16.7). Writing `##1` after `[->1]` checks the data one tick after the handshake, which fails on a correct design whose output moves on at once. Crossing clocks changes this rule, see [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking).
 
 **A related slip: `[=1]` instead of `[->1]`.** Nonconsecutive repetition `out_vld[=1]` is `out_vld[->1] ##1 !out_vld[*0:$]` (Annex F.3.4.2.3): it can end on the handshake tick *or on any later tick before the next `out_vld`*. With `[=1] ##0`, a wrong value on the handshake tick passes if the right value shows up on one of those later ticks. The two operators are not interchangeable here; use `[->1]`.
+
+<TimingDiagram
+  title="[=1] ##0 can skip past a wrong value on the handshake tick"
+  caption="Two versions of the check: (in_vld, v = in_data) |=> out_vld[->1] ##0 (out_data == v), and the same with out_vld[=1]. x-axis: rising edges 0 to 5 of clk; values sampled at each edge. 5A enters at edge 1. The only out_vld is at edge 3, where out_data is the wrong byte 77; at edge 4 out_data shows 5A with out_vld low. The [->1] version ends at edge 3 and fails. out_vld[=1] can end at edge 3 or at any later edge while out_vld stays low, so the [=1] version finds a match at edge 4 and passes, hiding the bug."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "5A", undefined, undefined, undefined, undefined] },
+    { name: "out_vld", kind: "bit", values: [0, 0, 0, 1, 0, 0] },
+    { name: "out_data", kind: "bus", values: [undefined, undefined, undefined, "77", "5A", undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", short: "v=5A", label: "The attempt starts at edge 1 and stores v = 5A" },
+    { edge: 3, tone: "fail", short: "[->1]", label: "out_vld[->1] ends at edge 3; ##0 compares out_data 77 with 5A: the [->1] version fails and catches the bug" },
+    { edge: 4, tone: "pass", short: "[=1]", label: "out_vld[=1] may also end at edge 4, a quiet tick after the handshake; ##0 compares 5A with 5A: the [=1] version passes" }
+  ]}
+/>
 
 ### Mistake 3: asserting a bare sequence
 
@@ -270,6 +339,63 @@ The sampled `in_cnt` at a transfer's input edge is the number of transfers accep
   ]}
 />
 
+<details>
+<summary>Compare both properties at a glance</summary>
+
+<figure>
+  <svg viewBox="0 0 360 200" role="img" aria-label="In-flight windows of the four transfers, edges 2 to 9. Output handshakes at edges 4, 7, 8 and 9. T0 A1 is in flight from edge 2 to its own handshake at edge 4 and passes; the no-ticket property also ends at edge 4. T1 B2 is in flight from edge 3 to edge 7 and passes with the ticket; without the ticket it ends at edge 4, T0's handshake. T2 C3 is in flight from edge 5 to edge 8 and fails there with the ticket, the planted bug; without the ticket it ends at edge 7, T1's handshake. T3 D4 is in flight from edge 6 to edge 9 and passes; without the ticket it ends at edge 7." style={{ width: "100%", maxWidth: 440 }}>
+    <text x="8" y="22" fontSize="10" fill="currentColor" fillOpacity="0.75">edge</text>
+    <text x="74" y="22" textAnchor="middle" fontSize="10" fill="currentColor">2</text>
+    <text x="111" y="22" textAnchor="middle" fontSize="10" fill="currentColor">3</text>
+    <text x="148" y="22" textAnchor="middle" fontSize="10" fill="currentColor">4</text>
+    <text x="185" y="22" textAnchor="middle" fontSize="10" fill="currentColor">5</text>
+    <text x="222" y="22" textAnchor="middle" fontSize="10" fill="currentColor">6</text>
+    <text x="259" y="22" textAnchor="middle" fontSize="10" fill="currentColor">7</text>
+    <text x="296" y="22" textAnchor="middle" fontSize="10" fill="currentColor">8</text>
+    <text x="333" y="22" textAnchor="middle" fontSize="10" fill="currentColor">9</text>
+    <line x1="74" y1="50" x2="74" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="111" y1="50" x2="111" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="148" y1="50" x2="148" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="185" y1="50" x2="185" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="222" y1="50" x2="222" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="259" y1="50" x2="259" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="296" y1="50" x2="296" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <line x1="333" y1="50" x2="333" y2="152" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 3" />
+    <text x="8" y="44" fontSize="10" fill="currentColor">out hs</text>
+    <text x="148" y="44" textAnchor="middle" fontSize="10" fill="currentColor">▼</text>
+    <text x="259" y="44" textAnchor="middle" fontSize="10" fill="currentColor">▼</text>
+    <text x="296" y="44" textAnchor="middle" fontSize="10" fill="currentColor">▼</text>
+    <text x="333" y="44" textAnchor="middle" fontSize="10" fill="currentColor">▼</text>
+    <text x="8" y="66" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">T0 A1</text>
+    <rect x="74" y="57" width="74" height="10" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <path d="M148,53 L157,62 L148,71 L139,62 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="148" cy="62" r="3.5" fill="currentColor" />
+    <text x="161" y="66" fontSize="11" fill="currentColor">✓</text>
+    <text x="8" y="92" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">T1 B2</text>
+    <rect x="111" y="83" width="148" height="10" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <path d="M148,79 L157,88 L148,97 L139,88 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="259" cy="88" r="3.5" fill="currentColor" />
+    <text x="266" y="92" fontSize="11" fill="currentColor">✓</text>
+    <text x="8" y="118" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">T2 C3</text>
+    <rect x="185" y="109" width="111" height="10" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <path d="M259,105 L268,114 L259,123 L250,114 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="296" cy="114" r="3.5" fill="currentColor" />
+    <text x="303" y="118" fontSize="11" fill="currentColor">✕</text>
+    <text x="8" y="144" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">T3 D4</text>
+    <rect x="222" y="135" width="111" height="10" rx="3" className="fill-cyan-500/15 stroke-cyan-500" />
+    <path d="M259,131 L268,140 L259,149 L250,140 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="333" cy="140" r="3.5" fill="currentColor" />
+    <text x="340" y="144" fontSize="11" fill="currentColor">✓</text>
+    <circle cx="14" cy="170" r="3.5" fill="currentColor" />
+    <text x="26" y="174" fontSize="10" fill="currentColor">own handshake, found by the ticket (✓ pass, ✕ fail)</text>
+    <path d="M14,183 L21,190 L14,197 L7,190 Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="26" y="194" fontSize="10" fill="currentColor">{"where (out_vld && out_rdy)[->1] ends, no ticket"}</text>
+  </svg>
+  <figcaption>The two pictures above, side by side. Each bar is one transfer in flight, from its input edge to its own output handshake (▼ marks the four output handshakes). With tickets, every transfer ends at its own handshake, and only T2 fails, on the planted bug. Without them, T1 lands on T0's handshake and T2 and T3 both land on T1's, so three transfers are compared with an older transfer's data. x-axis: rising edges 2 to 9 of the Make It Work bench.</figcaption>
+</figure>
+
+</details>
+
 Keep the counters next to the assertion (in the interface or the checker that holds it), and reset them with the same signal as the `disable iff`. A reset then clears the counters and disables every attempt in flight together. If the design completes transfers **out of order**, one global ticket is not enough: Push Further shows a per-ID ticket, and the point where a scoreboard becomes the better tool.
 
 ### Seeing the captured value: subroutine calls on match
@@ -292,6 +418,27 @@ The rules, each from §16.11:
 - **Where it runs:** scheduled in the **Reactive** region, like an action block. The Reactive region comes after the Observed region, where assertions are evaluated (§4.4.2.5, §4.4.2.6, §16.14.1; regions in [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)). The assertion never waits for the call and receives nothing back.
 - **Which values it sees:** arguments are passed by value (or by `ref`/`const ref`). By-value arguments use sampled values, the same ones the match used, so `out_data` prints as the assertion saw it. A local variable that has been assigned by that point may be an argument, and must then be passed by value.
 - **Where it is illegal:** on a subsequence that can match empty, the same rule as for assignments.
+
+<SequenceDiagram
+  title="One time slot: the check runs in Observed, the call and the action block in Reactive"
+  caption="Time runs downward inside a single time slot, t = 85 ns (edge 8 of the Make It Work bench), where T2's ticket finds its handshake. The values sampled at 85 ns are out_vld 1, out_rdy 1, out_cnt 2 and out_data C2; out_cnt equals T2's tkt 2, so T2's goto ends there, and ##0 compares out_data C2 with exp_data C3 and fails. The call is show_pair(2, C3, C2); the log prints the bytes in lower case (c3, c2) because show_pair formats them with %h. The Observed region only schedules the call and the action block; it never waits for them. Both then run in the Reactive region, in either order (§4.4.2.5, §4.4.2.6, §16.11, §16.14.1)."
+  columnWidth={130}
+  numbered={false}
+  participants={[
+    { id: "pre", label: "Preponed", sublabel: "values sampled", kind: "generic" },
+    { id: "obs", label: "Observed", sublabel: "a_in_order_data", kind: "generic" },
+    { id: "rea", label: "Reactive", sublabel: "show_pair, $error", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 85 ns: rising edge 8" },
+    { kind: "async", from: "pre", to: "obs", label: "sampled values at 85 ns" },
+    { kind: "self", from: "obs", label: "tkt 2 found" },
+    { kind: "async", from: "obs", to: "rea", label: "schedule show_pair(2, C3, C2)" },
+    { kind: "self", from: "obs", label: "C2≠C3: fail", tone: "error" },
+    { kind: "async", from: "obs", to: "rea", label: "schedule the else action block" },
+    { kind: "note", from: "rea", label: "show_pair prints its pair line and $error prints, in either order" }
+  ]}
+/>
 
 Make It Work shows the log this produces.
 
@@ -352,6 +499,23 @@ Error messages differ between simulators. Read them for the assertion name and t
 
 ### Local variables in real testbenches
 
+<ArchitectureDiagram
+  title="Where a data-integrity check lives in a testbench"
+  caption="The assertion and its ticket counters sit beside the pins, in the interface or in a checker bound to the DUT, and name the cycle where the data went wrong. The picture shows the interface case; a bound checker would sit beside the interface, and the monitor would still sample the interface pins, never the checker. The monitor turns the same pins into transactions for the scoreboard, which checks the end-to-end result."
+  nodes={[
+    { id: "dut", label: "pipe_fifo", sublabel: "DUT", kind: "dut", col: 0, row: 0 },
+    { id: "chk", label: "interface", sublabel: "assertion + tickets", kind: "interface", col: 1, row: 0 },
+    { id: "env", label: "env", kind: "env", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "scb", label: "scoreboard", kind: "scoreboard", col: 0, row: 1 },
+    { id: "mon", label: "monitor", kind: "monitor", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "dut", to: "chk", style: "structural", label: "pins" },
+    { from: "chk", to: "mon", style: "data", label: "sample" },
+    { from: "mon", to: "scb", style: "data", label: "txn" }
+  ]}
+/>
+
 - **Where the check lives.** Data-integrity assertions sit in the interface of the agent that watches the bus, or in a checker attached with `bind` without editing the RTL ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)). The ticket counters go next to them, never in the design.
 - **When to use one.** In-order data paths where a short rule describes the expected output: FIFOs, pipelines, bridges that pass data through, request/response pairs. One property covers every overlap pattern the stimulus produces.
 - **When not to.** Out-of-order completion with many IDs, transformations that need a real reference model, or checks that must compare whole transactions: use a scoreboard ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)). Many benches use both: the assertion catches the cycle where data went wrong, and the scoreboard checks the end-to-end result.
@@ -370,7 +534,7 @@ endproperty`}
   mistake="Storing the value in a module-level variable, or waiting for the next output handshake with no ticket: both pair a transfer with someone else's data as soon as two transfers overlap."
   inTestbench="Interface or bound-checker assertions on FIFOs, pipelines and request/response paths; tickets for in-order streams, a scoreboard for out-of-order ones."
 >
-  <svg viewBox="0 0 300 120" role="img" aria-label="Two attempts, A1 and A2, each with its own box holding its own v: A1 holds 11 and A2 holds 22. A crossed-out arrow between the boxes shows they never share a value." style={{ width: "100%", maxWidth: 340 }}>
+  <svg viewBox="0 0 300 214" role="img" aria-label="Two attempts, A1 and A2, each with its own box holding its own v: A1 holds 11 and A2 holds 22. A crossed-out arrow between the boxes shows they never share a value. Below, a three-step strip: capture, with tkt = in_cnt and d = in_data; pair, with out_cnt == tkt; check with ##0, out_data == d on that same tick. Each attempt waits for its own ticket." style={{ width: "100%", maxWidth: 340 }}>
     <rect x="10" y="20" width="110" height="70" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.6" />
     <text x="65" y="42" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">attempt A1</text>
     <rect x="35" y="52" width="60" height="26" rx="6" className="fill-cyan-500/10 stroke-cyan-500" />
@@ -383,6 +547,21 @@ endproperty`}
     <line x1="140" y1="45" x2="160" y2="65" stroke="currentColor" strokeWidth="2" />
     <line x1="160" y1="45" x2="140" y2="65" stroke="currentColor" strokeWidth="2" />
     <text x="150" y="110" textAnchor="middle" fontSize="11" fill="currentColor">no sharing between attempts</text>
+    <rect x="4" y="130" width="88" height="48" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="48" y="146" textAnchor="middle" fontSize="11" fontWeight="600" fill="currentColor">capture</text>
+    <text x="48" y="161" textAnchor="middle" fontSize="9.5" fontFamily="ui-monospace, monospace" fill="currentColor">tkt = in_cnt</text>
+    <text x="48" y="173" textAnchor="middle" fontSize="9.5" fontFamily="ui-monospace, monospace" fill="currentColor">d = in_data</text>
+    <line x1="93" y1="154" x2="100" y2="154" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M106,154 L99,150 L99,158 Z" fill="currentColor" />
+    <rect x="106" y="130" width="88" height="48" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="150" y="149" textAnchor="middle" fontSize="11" fontWeight="600" fill="currentColor">pair</text>
+    <text x="150" y="167" textAnchor="middle" fontSize="9.5" fontFamily="ui-monospace, monospace" fill="currentColor">out_cnt == tkt</text>
+    <line x1="195" y1="154" x2="202" y2="154" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M208,154 L201,150 L201,158 Z" fill="currentColor" />
+    <rect x="208" y="130" width="88" height="48" rx="8" className="fill-cyan-500/10 stroke-cyan-500" />
+    <text x="252" y="149" textAnchor="middle" fontSize="11" fontWeight="600" fill="currentColor">check (##0)</text>
+    <text x="252" y="167" textAnchor="middle" fontSize="9.5" fontFamily="ui-monospace, monospace" fill="currentColor">out_data == d</text>
+    <text x="150" y="202" textAnchor="middle" fontSize="11" fill="currentColor">each attempt waits for its own ticket</text>
   </svg>
 </VisualRecap>
 
@@ -600,6 +779,27 @@ An antecedent with a range can match more than once from one start. For each mat
 
 a `gnt` on two of the three ticks gives two threads with two `id` values, and *both* consequents must pass. If only the first grant counts, keep one thread with `first_match`, which accepts match items inside its parentheses: `first_match(req ##[1:3] (gnt, id = gnt_id))` (§16.9.8). Interview angle: "Why did one request produce two failure messages?"
 
+<TimingDiagram
+  title="One attempt, two grants, two threads"
+  caption="Property: (req ##[1:3] (gnt, id = gnt_id)) |=> (rsp && rsp_id == id). x-axis: rising edges 0 to 6 of clk; values sampled at each edge. req at edge 1 opens a window of edges 2 to 4. gnt at edge 2 forks thread A with id = 3; gnt at edge 4 forks thread B with id = 5. Thread A passes at edge 3, thread B fails at edge 5, so the attempt fails. With first_match, only thread A would exist and the attempt would pass at edge 3."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0] },
+    { name: "gnt", kind: "bit", values: [0, 0, 1, 0, 1, 0, 0] },
+    { name: "gnt_id", kind: "bus", values: [undefined, undefined, "3", undefined, "5", undefined, undefined] },
+    { name: "rsp", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0] },
+    { name: "rsp_id", kind: "bus", values: [undefined, undefined, undefined, "3", undefined, "3", undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", short: "req", label: "The attempt starts: req is high at edge 1" },
+    { edge: 2, tone: "sample", short: "A id=3", label: "Thread A: gnt at edge 2, the antecedent matches with id = 3" },
+    { edge: 3, tone: "pass", short: "A", label: "Thread A: rsp with rsp_id 3 equals its id 3: pass" },
+    { edge: 4, tone: "sample", short: "B id=5", label: "Thread B: gnt at edge 4, still inside ##[1:3], the antecedent matches again with id = 5" },
+    { edge: 5, tone: "fail", short: "B", label: "Thread B: rsp_id 3 is not its id 5: fail, so the whole attempt fails" }
+  ]}
+/>
+
 ### Expert: Flow rules for `or`, `and` and `intersect`
 
 A local variable keeps its value through a plain chain of `##` and repetitions. Through `or`, `and` and `intersect` it may not, because the two operands are evaluated like parallel threads (§16.10; the precise conditions are in Annex F.5.4):
@@ -607,6 +807,15 @@ A local variable keeps its value through a plain chain of `##` and repetitions. 
 - **Sibling threads cannot see each other's assignments.** `(a ##1 (b, x = data) ##1 c) or (d ##1 (e == x))` is illegal: the right operand reads an `x` that only the left one assigns.
 - **After `or`**, a variable is usable only if every operand leaves it assigned. Each matching operand continues as its own thread with its own value.
 - **After `and` and `intersect`**, a variable assigned in only one operand flows out; one assigned in both is blocked, and becomes unassigned, because the two threads merge into one and cannot agree on a value.
+
+The same rules side by side, for a local variable `x` and the two operands of the composite sequence (§16.10, with its examples s4 to s8; Annex F.5.4):
+
+| Where `x` is assigned | After `or` | After `and` or `intersect` |
+|---|---|---|
+| Before the composite, not again inside it | flows out | flows out |
+| In one operand only (not before) | does not flow out: unassigned | flows out with that operand's value |
+| In both operands | flows out; each matching operand's thread keeps its own value | blocked: unassigned |
+| In one operand, read in the other | illegal: a sibling thread cannot read it | illegal: a sibling thread cannot read it |
 
 A variable that does not flow out becomes unassigned, and referencing it before it is assigned again is illegal (§16.10).
 
@@ -756,6 +965,20 @@ Answer from the rules, not from the pictures. Every question maps to one objecti
 
 **Trace for task 3:** request handshakes at edges 1 (`req_data` 10), 2 (20) and 3 (30); `rsp_vld` high at edges 4 (`rsp_data` 11), 6 (21) and 9 (30), low elsewhere.
 
+<TimingDiagram
+  title="Kata trace for task 3"
+  caption="x-axis: rising edges 0 to 11 of clk; values sampled at each edge. req_hs stands for req_vld && req_rdy, the request handshake. Work out the tickets and the result of each request before you open the solution."
+  edges={12}
+  cycleWidth={34}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req_hs", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "req_data", kind: "bus", values: [undefined, "10", "20", "30", undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined] },
+    { name: "rsp_vld", kind: "bit", values: [0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0] },
+    { name: "rsp_data", kind: "bus", values: [undefined, undefined, undefined, undefined, "11", undefined, "21", undefined, undefined, "30", undefined, undefined] }
+  ]}
+/>
+
 **Tasks:**
 1. Write the ticket counters `req_cnt` and `rsp_cnt`, and a property that captures a ticket and the expected byte at each request handshake.
 2. Make the wait bounded: the response must arrive within 8 ticks, and a wrong byte must fail on the tick it arrives.
@@ -794,6 +1017,31 @@ a_rsp_data: assert property (p_rsp_data)
 `|=>` starts the consequent one tick after the request, and `[*0:7] ##1` places the response 1 to 8 ticks after it. The repetition cannot step over a tick where this ticket's response is present, so the attempt ends on its own response: a wrong byte fails there, and a missing response fails 8 ticks after the request. `exp_data + 8'd1` is computed in 8 bits in this comparison, so FF + 1 wraps to 00 like the design. The failure message names both causes, because the property fails for either.
 
 **3.** Tickets: edge 1 gets 0, edge 2 gets 1, edge 3 gets 2. `rsp_cnt` is 0 at edge 4, 1 at edge 6 and 2 at edge 9. Requests 0 and 1 pass at edges 4 (11 = 10 + 1) and 6 (21 = 20 + 1). Request 2's response arrives at edge 9, six ticks after its request, carrying 30 instead of 31: **it fails at edge 9**.
+
+<TimingDiagram
+  title="Kata trace, solved: tickets and results"
+  caption="The task-3 trace with the two counters added. x-axis: rising edges 0 to 11 of clk; values sampled at each edge. Requests at edges 1, 2 and 3 take tickets 0, 1 and 2. The [*0:7] ##1 property passes requests 0 and 1 at edges 4 and 6 and fails request 2 at edge 9, the tick of the bad byte. The teammate's ##[1:8] version (task 5) fails the same request only at edge 11, when its window closes."
+  edges={12}
+  cycleWidth={34}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req_hs", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "req_data", kind: "bus", values: [undefined, "10", "20", "30", undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined] },
+    { name: "req_cnt", kind: "bus", values: ["0", "0", "1", "2", "3", "3", "3", "3", "3", "3", "3", "3"] },
+    { name: "rsp_vld", kind: "bit", values: [0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0] },
+    { name: "rsp_data", kind: "bus", values: [undefined, undefined, undefined, undefined, "11", undefined, "21", undefined, undefined, "30", undefined, undefined] },
+    { name: "rsp_cnt", kind: "bus", values: ["0", "0", "0", "0", "0", "1", "1", "2", "2", "2", "3", "3"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", short: "t0", label: "Request 0 handshake: tkt = 0, exp_data = 10" },
+    { edge: 2, tone: "sample", short: "t1", label: "Request 1 handshake: tkt = 1, exp_data = 20" },
+    { edge: 3, tone: "sample", short: "t2", label: "Request 2 handshake: tkt = 2, exp_data = 30" },
+    { edge: 4, tone: "pass", short: "R0", label: "rsp_vld with rsp_cnt 0: request 0's response, 11 = 10 + 1: pass" },
+    { edge: 6, tone: "pass", short: "R1", label: "rsp_vld with rsp_cnt 1: request 1's response, 21 = 20 + 1: pass" },
+    { edge: 9, tone: "fail", short: "R2", label: "rsp_vld with rsp_cnt 2: request 2's response carries 30, not 31: the [*0:7] ##1 property fails here" },
+    { edge: 11, tone: "fail", short: "##[1:8]", label: "The teammate's ##[1:8] version fails request 2 only here, when its window of edges 4 to 11 closes" }
+  ]}
+/>
 
 **4.**
 
