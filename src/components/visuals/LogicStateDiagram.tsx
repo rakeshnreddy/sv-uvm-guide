@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 
+import { BitStrip } from "@/components/visual-system/BitStrip";
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
 import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
@@ -23,6 +24,7 @@ import {
   explainBitwise,
   explainCaseItem,
   formatLiteral,
+  fromNumber,
   hasUnknown,
   ifBranch,
   isUnknownBit,
@@ -32,10 +34,12 @@ import {
   resize,
   selectCaseItem,
   toUnsigned,
+  truthOf,
   type BinaryBitwiseOp,
   type Bit4,
   type BitOutcome,
   type CaseKind,
+  type Truth,
 } from "@/lib/sv-four-state-model";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +50,45 @@ export const FOUR_STATE_ASSUMPTIONS = [
 ];
 
 type Tab = "operators" | "equality" | "control" | "twostate";
+
+/** Public tab ids. "tables" is the operator-tables tab (alias of "operators"). */
+export type LogicStateTab = "tables" | Tab;
+
+export type Construct = "if" | "ifnot" | "ternary" | CaseKind;
+
+export type LogicStatePreset = "vector-condition";
+
+export interface LogicStateDiagramProps {
+  /** Tab the component opens on. Default "tables" (the operator truth tables). */
+  initialTab?: LogicStateTab;
+  /** Construct the "if / case with x" tab opens on. Default "if". */
+  initialConstruct?: Construct;
+  /** Tabs to show, in the default order. With one tab the tab switcher is hidden. Default: all four. */
+  tabs?: readonly LogicStateTab[];
+  /**
+   * 0/1/x/z bits (MSB first, `?` reads as z) preloaded into the panel the
+   * component opens on: `a` (1 bit) for if, if (!a) and ?:, `sel` (2 bits) for
+   * the case statements, `e` (1 to 8 bits) with the vector-condition preset.
+   * A value of the wrong width or with other characters is ignored.
+   */
+  initialValue?: string;
+  /** "vector-condition": the if, if (!e) and ?: panels use a multi-bit condition e (default 4'b1x00). */
+  preset?: LogicStatePreset;
+}
+
+const TAB_ORDER: Tab[] = ["operators", "equality", "control", "twostate"];
+const normaliseTab = (t: LogicStateTab): Tab => (t === "tables" ? "operators" : t);
+
+/** Parses `text` as 0/1/x/z bits when its width is accepted, else null (author error: fall back to the default). */
+function parseInitialBits(text: string | undefined, widthOk: (width: number) => boolean): Bit4[] | null {
+  if (text === undefined) return null;
+  try {
+    const bits = parseBits(text);
+    return widthOk(bits.length) ? bits : null;
+  } catch {
+    return null;
+  }
+}
 
 /** ValueChip expects upper-case X/Z for the four-state cues. */
 const chipValue = (bit: Bit4) => (bit === "x" ? "X" : bit === "z" ? "Z" : bit);
@@ -395,19 +438,30 @@ function EqualityTab() {
 /* Tab 3: if / ?: / case with x                                        */
 /* ------------------------------------------------------------------ */
 
-type Construct = "if" | "ifnot" | "ternary" | CaseKind;
-
 const CASE_ITEMS: { label: string; literal: string }[] = [
   { label: "A", literal: "00" },
   { label: "B", literal: "1?" },
   { label: "C", literal: "x1" },
 ];
 
-function ControlTab() {
-  const [construct, setConstruct] = useState<Construct>("if");
-  const [a, setA] = useState<Bit4>("x");
-  const [sel, setSel] = useState<Bit4[]>(() => parseBits("x0"));
-  const isCase = construct === "case" || construct === "casez" || construct === "casex";
+const isCaseKind = (c: Construct): c is CaseKind => c === "case" || c === "casez" || c === "casex";
+
+interface ControlTabProps {
+  initialConstruct?: Construct;
+  initialValue?: string;
+  preset?: LogicStatePreset;
+}
+
+function ControlTab({ initialConstruct = "if", initialValue, preset }: ControlTabProps) {
+  const vector = preset === "vector-condition";
+  const startsOnCase = isCaseKind(initialConstruct);
+  const [construct, setConstruct] = useState<Construct>(initialConstruct);
+  const [a, setA] = useState<Bit4>(() => (!vector && !startsOnCase ? parseInitialBits(initialValue, (w) => w === 1)?.[0] : undefined) ?? "x");
+  const [sel, setSel] = useState<Bit4[]>(() => (startsOnCase ? parseInitialBits(initialValue, (w) => w === 2) : null) ?? parseBits("x0"));
+  const [vec, setVec] = useState<Bit4[]>(
+    () => (vector && !startsOnCase ? parseInitialBits(initialValue, (w) => w >= 1 && w <= 8) : null) ?? parseBits(VECTOR_DEFAULT),
+  );
+  const name = vector ? "e" : "a";
 
   return (
     <div className="space-y-4">
@@ -417,18 +471,20 @@ function ControlTab() {
         value={construct}
         onChange={setConstruct}
         options={[
-          { value: "if", label: "if (a)" },
-          { value: "ifnot", label: "if (!a)" },
-          { value: "ternary", label: "a ? 1 : 0" },
+          { value: "if", label: `if (${name})` },
+          { value: "ifnot", label: `if (!${name})` },
+          { value: "ternary", label: `${name} ? 1 : 0` },
           { value: "case", label: "case" },
           { value: "casez", label: "casez" },
           { value: "casex", label: "casex" },
         ]}
       />
-      {isCase ? (
-        <CasePanel kind={construct as CaseKind} sel={sel} setSel={setSel} />
+      {isCaseKind(construct) ? (
+        <CasePanel kind={construct} sel={sel} setSel={setSel} />
+      ) : vector ? (
+        <VectorConditionPanel construct={construct} bits={vec} setBits={setVec} />
       ) : (
-        <IfPanel construct={construct as "if" | "ifnot" | "ternary"} a={a} setA={setA} />
+        <IfPanel construct={construct} a={a} setA={setA} />
       )}
     </div>
   );
@@ -500,6 +556,211 @@ function IfPanel({ construct, a, setA }: { construct: "if" | "ifnot" | "ternary"
           {construct !== "ternary" && unknown ? (
             <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-100">
               X-optimism: y is a clean 0 although a is unknown. Compare with <code className="font-mono">a ? 1 : 0</code>, which keeps the x visible.
+            </p>
+          ) : null}
+        </div>
+      </PredictionPrompt>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Vector condition: if (e) means e != 0                               */
+/* ------------------------------------------------------------------ */
+
+const VECTOR_DEFAULT = "1x00";
+
+/** Quick-load conditions for the vector-condition preset (one per teaching point). */
+const VECTOR_CASES: readonly string[] = ["1x00", "0x00", "0000", "0z01"];
+
+type ScalarConstruct = "if" | "ifnot" | "ternary";
+
+export interface VectorConditionAnalysis {
+  construct: ScalarConstruct;
+  bits: Bit4[];
+  /** Bit numbers (MSB = width - 1) holding a known 1. */
+  oneBits: number[];
+  /** Bit numbers holding x or z. */
+  unknownBits: number[];
+  /** Truth of e itself (§12.4: true = nonzero known value). */
+  truth: Truth;
+  /** e != 0, the comparison §12.4 says if (e) performs (§11.4.5). */
+  notEqualZero: Bit4;
+  /** !e (§11.4.7); only for the if (!e) construct. */
+  negated?: Bit4;
+  /** Branch taken by if (e) or if (!e); undefined for ?:. */
+  branch?: "then" | "else";
+  /** y after `if (...) y = 1; else y = 0;` or `y = e ? 1'b1 : 1'b0;`. */
+  y: Bit4;
+  why: string;
+}
+
+const bitList = (indices: number[]) => `${indices.length > 1 ? "Bits" : "Bit"} ${indices.join(", ")} ${indices.length > 1 ? "are" : "is"}`;
+
+/**
+ * Runs `if (e)`, `if (!e)` or `e ? 1'b1 : 1'b0` on a multi-bit e, using only
+ * the shared four-state model, and explains the result:
+ * - §12.4: the condition is true when it has a nonzero known value; a zero, x
+ *   or z value is false. `if (e)` is the same test as `if (e != 0)`.
+ * - §11.4.7: `!e` is 1'bx when the truth of e is ambiguous.
+ * - §11.4.11 and Table 11-20: an ambiguous ?: condition merges both results.
+ */
+export function analyseVectorCondition(construct: ScalarConstruct, bits: readonly Bit4[]): VectorConditionAnalysis {
+  const width = bits.length;
+  const indexed = bits.map((b, i) => ({ b, index: width - 1 - i }));
+  const oneBits = indexed.filter(({ b }) => b === "1").map(({ index }) => index);
+  const unknownBits = indexed.filter(({ b }) => isUnknownBit(b)).map(({ index }) => index);
+  const truth = truthOf(bits);
+  const notEqualZero = compare("!=", bits, fromNumber(0, width)).result;
+  const lit = formatLiteral(bits);
+  const nonzeroWhy =
+    truth === "true"
+      ? `${bitList(oneBits)} 1, so e = ${lit} is nonzero${unknownBits.length ? " whatever its x and z bits hold" : ""}: e != 0 is 1'b${notEqualZero}.`
+      : truth === "false"
+        ? `Every bit of e = ${lit} is 0, so e != 0 is 1'b${notEqualZero}.`
+        : `No bit of e = ${lit} is a known 1, and ${bitList(unknownBits).toLowerCase()} x or z, so e might be zero: e != 0 is 1'b${notEqualZero}.`;
+
+  if (construct === "ternary") {
+    const y = conditionalOp(bits, ["1"], ["0"])[0];
+    const why =
+      truth === "true"
+        ? `${nonzeroWhy} The condition is true, so ?: returns the first value, 1'b${y} (§11.4.11).`
+        : truth === "false"
+          ? `${nonzeroWhy} The condition is false, so ?: returns the second value, 1'b${y} (§11.4.11).`
+          : `${nonzeroWhy} With an ambiguous condition ?: evaluates both 1'b1 and 1'b0 and merges them bit by bit; 1 against 0 gives 1'b${y} (§11.4.11, Table 11-20).`;
+    return { construct, bits: [...bits], oneBits, unknownBits, truth, notEqualZero, y, why };
+  }
+
+  if (construct === "ifnot") {
+    const negated = logicalNot(bits);
+    const branch = ifBranch([negated]);
+    const y: Bit4 = branch === "then" ? "1" : "0";
+    const notWhy =
+      negated === "x"
+        ? `!e is 1'bx because the truth of e is unknown (§11.4.7). x counts as false, so the ${branch} branch runs: if (e) and if (!e) both take else (§12.4).`
+        : `!e is 1'b${negated} (§11.4.7), so the ${branch} branch runs (§12.4).`;
+    return { construct, bits: [...bits], oneBits, unknownBits, truth, notEqualZero, negated, branch, y, why: `${nonzeroWhy} ${notWhy}` };
+  }
+
+  const branch = ifBranch(bits);
+  const y: Bit4 = branch === "then" ? "1" : "0";
+  const ifWhy =
+    truth === "unknown"
+      ? `if (e) tests e != 0, and an x or z result counts as false, so the ${branch} branch runs (§12.4).`
+      : `if (e) tests e != 0, so the ${branch} branch runs (§12.4).`;
+  return { construct, bits: [...bits], oneBits, unknownBits, truth, notEqualZero, branch, y, why: `${nonzeroWhy} ${ifWhy}` };
+}
+
+/** Diagnoses a guess for the vector-condition prediction. Correct guesses get the model's explanation. */
+export function diagnoseVectorGuess(r: VectorConditionAnalysis, guess: "then" | "else" | Bit4): string {
+  const correct = r.construct === "ternary" ? guess === r.y : guess === r.branch;
+  if (correct) return r.why;
+  if (r.construct !== "ternary") {
+    if (guess === "x") return `An if statement cannot produce x by itself: it runs one branch. ${r.why}`;
+    if (guess === "then" && r.truth === "unknown") {
+      return r.construct === "if"
+        ? `An x or z bit might be 0, so e is not known to be nonzero. ${r.why}`
+        : `e is not known to be zero either, so !e is 1'bx, not 1 (§11.4.7), and x counts as false (§12.4). ${r.why}`;
+    }
+    if (guess === "else" && r.construct === "if" && r.truth === "true" && r.unknownBits.length > 0) {
+      return `One known 1 is enough: the x or z bits cannot make e zero. ${r.why}`;
+    }
+    return r.why;
+  }
+  if (r.truth === "unknown") return `?: does not pick a side when its condition is ambiguous. ${r.why}`;
+  return r.why;
+}
+
+function VectorConditionPanel({ construct, bits, setBits }: { construct: ScalarConstruct; bits: Bit4[]; setBits: (b: Bit4[]) => void }) {
+  const r = analyseVectorCondition(construct, bits);
+  const width = bits.length;
+  const decl = `logic [${width - 1}:0] e = ${formatLiteral(bits)};`;
+  const lines =
+    construct === "ternary"
+      ? [decl, "logic y;", "assign y = e ? 1'b1 : 1'b0;"]
+      : [decl, "logic y;", "always_comb", `  if (${construct === "ifnot" ? "!e" : "e"}) y = 1'b1;  // then`, "  else    y = 1'b0;  // else"];
+  const options: PredictionOption[] =
+    construct === "ternary"
+      ? (["1", "0", "x"] as Bit4[]).map((v) => ({
+          id: v,
+          label: <span className="font-mono [font-variant-ligatures:none]">y = 1&apos;b{v}</span>,
+          correct: v === r.y,
+          feedback: diagnoseVectorGuess(r, v),
+        }))
+      : (
+          [
+            { id: "then", text: "then branch (y = 1'b1)" },
+            { id: "else", text: "else branch (y = 1'b0)" },
+            { id: "x", text: "neither: y becomes 1'bx" },
+          ] as const
+        ).map((o) => ({
+          id: o.id,
+          label: <span className="font-mono [font-variant-ligatures:none]">{o.text}</span>,
+          correct: o.id === r.branch,
+          feedback: diagnoseVectorGuess(r, o.id),
+        }));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Load a condition:</span>
+        {VECTOR_CASES.map((c) => {
+          const caseBits = parseBits(c);
+          return (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setBits(caseBits)}
+              className="min-h-9 rounded-full border border-border/70 px-3 py-1 font-mono text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [font-variant-ligatures:none]"
+            >
+              {formatLiteral(caseBits)}
+            </button>
+          );
+        })}
+      </div>
+      <div className="space-y-1">
+        <BitEditor name="e" bits={bits} onChange={setBits} />
+        <p className="text-xs text-muted-foreground">Activate a bit to cycle it through 0, 1, x and z.</p>
+      </div>
+      <CodeTrace label="The code" lines={codeLines(lines)} />
+      <PredictionPrompt
+        resetKey={`vec:${construct}:${bitsToString(bits)}`}
+        question={construct === "ternary" ? <>What is <code className="font-mono">y</code>?</> : "Which branch runs?"}
+        options={options}
+      >
+        <div className="space-y-3 text-sm" aria-live="polite">
+          <BitStrip
+            bits={bits}
+            label="e"
+            bitNumbers
+            highlight={r.oneBits}
+            highlightLabel="known 1"
+          />
+          <ul className="space-y-2">
+            <li className="flex flex-wrap items-center gap-2">
+              <code className="font-mono [font-variant-ligatures:none]">e != 0</code>
+              <ValueChip value={chipValue(r.notEqualZero)} />
+              <span className="text-muted-foreground">if (e) is the same test as if (e != 0) (§12.4).</span>
+            </li>
+            {r.negated !== undefined ? (
+              <li className="flex flex-wrap items-center gap-2">
+                <code className="font-mono [font-variant-ligatures:none]">!e</code>
+                <ValueChip value={chipValue(r.negated)} />
+              </li>
+            ) : null}
+            <li className="flex flex-wrap items-center gap-2">
+              <ValueChip name="y" value={chipValue(r.y)} />
+              {r.branch ? (
+                <span className="text-muted-foreground">
+                  <strong className="text-foreground">{r.branch}</strong> branch
+                </span>
+              ) : null}
+            </li>
+          </ul>
+          <Why>{r.why}</Why>
+          {r.construct !== "ternary" && r.truth === "unknown" ? (
+            <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-100">
+              X-optimism: y is a clean 1&apos;b{r.y} although e has unknown bits. Compare with <code className="font-mono">e ? 1 : 0</code>, which keeps the x visible.
             </p>
           ) : null}
         </div>
@@ -730,8 +991,17 @@ function DefaultsTable() {
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
-export default function LogicStateDiagram() {
-  const [tab, setTab] = useState<Tab>("operators");
+export default function LogicStateDiagram({ initialTab, initialConstruct, tabs, initialValue, preset }: LogicStateDiagramProps = {}) {
+  const shown = tabs && tabs.length > 0 ? TAB_ORDER.filter((t) => tabs.map(normaliseTab).includes(t)) : TAB_ORDER;
+  const visible = shown.length > 0 ? shown : TAB_ORDER;
+  const requested = initialTab ? normaliseTab(initialTab) : "operators";
+  const [tab, setTab] = useState<Tab>(visible.includes(requested) ? requested : visible[0]);
+  const TAB_LABELS: Record<Tab, string> = {
+    operators: "Operator tables",
+    equality: "== vs ===",
+    control: "if / case with x",
+    twostate: "Into 2-state",
+  };
   return (
     <VisualFrame
       label="Four-state value explorer"
@@ -742,21 +1012,13 @@ export default function LogicStateDiagram() {
       assumptions={FOUR_STATE_ASSUMPTIONS}
     >
       <FourValuePicture />
-      <SegmentedControl
-        label="Explorer tab"
-        value={tab}
-        onChange={setTab}
-        options={[
-          { value: "operators", label: "Operator tables" },
-          { value: "equality", label: "== vs ===" },
-          { value: "control", label: "if / case with x" },
-          { value: "twostate", label: "Into 2-state" },
-        ]}
-      />
+      {visible.length > 1 ? (
+        <SegmentedControl label="Explorer tab" value={tab} onChange={setTab} options={visible.map((t) => ({ value: t, label: TAB_LABELS[t] }))} />
+      ) : null}
       <div className="min-w-0">
         {tab === "operators" ? <OperatorsTab /> : null}
         {tab === "equality" ? <EqualityTab /> : null}
-        {tab === "control" ? <ControlTab /> : null}
+        {tab === "control" ? <ControlTab initialConstruct={initialConstruct} initialValue={initialValue} preset={preset} /> : null}
         {tab === "twostate" ? <TwoStateTab /> : null}
       </div>
     </VisualFrame>

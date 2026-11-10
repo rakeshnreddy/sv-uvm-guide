@@ -121,6 +121,10 @@ const loaders = {
   FileReadCursorVisualizer: () => import("@/components/visuals/FileReadCursorVisualizer").then(module => asMdxModule(module.default)),
   XCheckLab: () => import("@/components/visuals/XCheckLab").then(module => asMdxModule(module.default)),
   TimingControlExplorer: () => import("@/components/visuals/TimingControlExplorer").then(module => asMdxModule(module.default)),
+  FixPathDecisionLab: () => import("@/components/curriculum/f1/FixPathDecisionLab").then(module => asMdxModule(module.default)),
+  IpcSmellClinic: () => import("@/components/visuals/IpcSmellClinic").then(module => asMdxModule(module.default)),
+  ArraySelectExplorer: () => import("@/components/visuals/ArraySelectExplorer").then(module => asMdxModule(module.default)),
+  ExpressionTreeExplorer: () => import("@/components/visuals/ExpressionTreeExplorer").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

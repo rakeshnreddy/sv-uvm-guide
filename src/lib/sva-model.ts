@@ -59,10 +59,28 @@ export interface SvaStep {
   detail: string;
 }
 
+/**
+ * Why an evaluation attempt is vacuous, by the recursive rules of §16.14.8:
+ * - `antecedent`: the antecedent of `|->` / `|=>` had no match (§16.14.8 i, j);
+ * - `consequent`: the antecedent matched, but every consequent attempt was
+ *   itself vacuous (§16.14.8 i, j);
+ * - `and` / `or`: both operands were vacuous (§16.14.8 f, e);
+ * - `not`: the operand of `not` was vacuous (§16.14.8 d).
+ */
+export type SvaVacuity = "antecedent" | "consequent" | "and" | "or" | "not";
+
 export interface SvaAttempt {
   /** Edge where this evaluation attempt starts (§16.14.5: one attempt per clock tick). */
   start: number;
   status: AttemptStatus;
+  /**
+   * Set if, and only if, the evaluation is vacuous (§16.14.8). With status
+   * VACUOUS the property is true (a vacuous success). With status FAIL the
+   * property is false although the attempt is vacuous, which `not` can give
+   * (§16.14.8 d); the standard names only vacuous success, so how a tool
+   * reports this case is not specified.
+   */
+  vacuity?: SvaVacuity;
   /** Edge where the result is decided (for PENDING: the last edge of the trace). */
   end: number;
   /** One-sentence explanation. */
@@ -171,6 +189,36 @@ const UNSUPPORTED_KEYWORDS: Record<string, string> = {
   assume: "Type only the property expression; the model evaluates it like `assert property (...)`.",
   cover: "Type only the property expression; the model evaluates it like `assert property (...)`.",
 };
+
+/**
+ * The reserved keywords of IEEE 1800-2023 Annex B (Table B.1, 248 words). A
+ * keyword cannot be used as an identifier (§5.6.2), so a signal can never be
+ * renamed to one of them.
+ */
+export const SV_RESERVED_KEYWORDS: ReadonlySet<string> = new Set(
+  [
+    "accept_on alias always always_comb always_ff always_latch and assert assign assume automatic before begin bind",
+    "bins binsof bit break buf bufif0 bufif1 byte case casex casez cell chandle checker class clocking cmos config",
+    "const constraint context continue cover covergroup coverpoint cross deassign default defparam design disable",
+    "dist do edge else end endcase endchecker endclass endclocking endconfig endfunction endgenerate endgroup",
+    "endinterface endmodule endpackage endprimitive endprogram endproperty endspecify endsequence endtable endtask",
+    "enum event eventually expect export extends extern final first_match for force foreach forever fork forkjoin",
+    "function generate genvar global highz0 highz1 if iff ifnone ignore_bins illegal_bins implements implies import",
+    "incdir include initial inout input inside instance int integer interconnect interface intersect join join_any",
+    "join_none large let liblist library local localparam logic longint macromodule matches medium modport module",
+    "nand negedge nettype new nexttime nmos nor noshowcancelled not notif0 notif1 null or output package packed",
+    "parameter pmos posedge primitive priority program property protected pull0 pull1 pulldown pullup",
+    "pulsestyle_ondetect pulsestyle_onevent pure rand randc randcase randsequence rcmos real realtime ref reg",
+    "reject_on release repeat restrict return rnmos rpmos rtran rtranif0 rtranif1 s_always s_eventually s_nexttime",
+    "s_until s_until_with scalared sequence shortint shortreal showcancelled signed small soft solve specify",
+    "specparam static string strong strong0 strong1 struct super supply0 supply1 sync_accept_on sync_reject_on",
+    "table tagged task this throughout time timeprecision timeunit tran tranif0 tranif1 tri tri0 tri1 triand trior",
+    "trireg type typedef union unique unique0 unsigned until until_with untyped use uwire var vectored virtual void",
+    "wait wait_order wand weak weak0 weak1 while wildcard wire with within wor xnor xor",
+  ]
+    .join(" ")
+    .split(" "),
+);
 
 const SAMPLED_FUNCTIONS = new Set<SampledFn>(["$rose", "$fell", "$stable", "$changed", "$past", "$sampled"]);
 
@@ -835,6 +883,30 @@ interface PropOutcome {
   end: number;
   reason: string;
   steps: SvaStep[];
+  /** Set iff the attempt is vacuous (§16.14.8); always set when status is VACUOUS. */
+  vacuity?: SvaVacuity;
+}
+
+/** A decided outcome (true or false) whose evaluation is vacuous (§16.14.8). */
+const isVacuous = (o: PropOutcome) => o.status !== "PENDING" && o.vacuity !== undefined;
+/**
+ * Said once, at attempt level, when the whole attempt is false and vacuous.
+ * Operand reasons never claim anything about the attempt, because `and`/`or`
+ * can make the attempt nonvacuous (§16.14.8 e, f).
+ */
+function vacuousFalseNote(item: string) {
+  return `The attempt as a whole is vacuous by ${item}, yet the property is false, so the fail action runs (§16.14.1). The standard names only vacuous success; how a tool reports a vacuous failure is up to the tool`;
+}
+
+/** The §16.14.8 list item that decides the vacuity of a property's top operator. */
+function vacuityItemOf(node: SvaNode): string {
+  if (node.type === "prop") {
+    if (node.kind === "not") return "§16.14.8 d)";
+    if (node.kind === "or") return "§16.14.8 e)";
+    if (node.kind === "and") return "§16.14.8 f)";
+    if (node.kind === "implication") return node.overlapping ? "§16.14.8 i)" : "§16.14.8 j)";
+  }
+  return "§16.14.8";
 }
 
 const furthest = (a: Dead | null, b: Dead | null): Dead | null => (!a ? b : !b ? a : b.edge > a.edge ? b : a);
@@ -1295,25 +1367,49 @@ class Evaluator {
       case "implication":
         return this.implication(node, t);
       case "not": {
+        // §16.12.3 gives the value; §16.14.8 d): `not p` is vacuous iff p is.
         const o = this.prop(node.arg, t);
         if (o.status === "PENDING") return o;
-        if (o.status === "FAIL") return { ...o, status: "PASS", reason: `\`not\` holds because \`${node.arg.src}\` failed: ${o.reason}` };
-        if (o.status === "VACUOUS") {
-          return { ...o, status: "FAIL", reason: `\`${node.arg.src}\` is vacuously true, so \`not\` of it is false (§16.12.3)` };
+        if (o.status === "FAIL") {
+          if (isVacuous(o)) {
+            return {
+              ...o,
+              status: "VACUOUS",
+              vacuity: "not",
+              reason: `\`${node.arg.src}\` is false but its evaluation was vacuous, so \`not\` of it is true and still vacuous: a vacuous success (§16.12.3, §16.14.8 d)`,
+            };
+          }
+          return { ...o, vacuity: undefined, status: "PASS", reason: `\`not\` holds because \`${node.arg.src}\` failed: ${o.reason}` };
         }
-        return { ...o, status: "FAIL", reason: `\`${node.arg.src}\` held, so \`not\` of it fails: ${o.reason}` };
+        if (o.status === "VACUOUS") {
+          return {
+            ...o,
+            status: "FAIL",
+            vacuity: "not",
+            reason: `\`${node.arg.src}\` is vacuously true, so \`${node.src}\` is false (§16.12.3) and is itself evaluated vacuously (§16.14.8 d)`,
+          };
+        }
+        return { ...o, vacuity: undefined, status: "FAIL", reason: `\`${node.arg.src}\` held, so \`not\` of it fails: ${o.reason}` };
       }
       case "and": {
         const a = this.prop(node.left, t);
         const b = this.prop(node.right, t);
         const fails = [a, b].filter((o) => o.status === "FAIL").sort((x, y) => x.end - y.end);
-        if (fails.length) return fails[0];
+        // §16.14.8 f): `and` is vacuous iff both operands are.
+        if (fails.length) {
+          const f = fails[0];
+          const vacuity = isVacuous(a) && isVacuous(b) ? "and" : undefined;
+          const other = f === a ? node.right : node.left;
+          // The failing operand was vacuous but the other was not: the \`and\` is nonvacuous (f).
+          const reason = isVacuous(f) && !vacuity ? `${f.reason}; \`${other.src}\` was evaluated nonvacuously, so \`${node.src}\` is nonvacuous (§16.14.8 f)` : f.reason;
+          return { ...f, vacuity, reason };
+        }
         if (a.status === "PENDING") return a;
         if (b.status === "PENDING") return b;
         const end = Math.max(a.end, b.end);
         const steps = byEdge([...a.steps, ...b.steps]);
         if (a.status === "PASS" || b.status === "PASS") return { status: "PASS", end, reason: "both operands of `and` hold", steps };
-        return { status: "VACUOUS", end, reason: "both operands of `and` are vacuously true (§16.14.8 f)", steps };
+        return { status: "VACUOUS", vacuity: "and", end, reason: "both operands of `and` are vacuously true (§16.14.8 f)", steps };
       }
       case "or": {
         const a = this.prop(node.left, t);
@@ -1322,13 +1418,26 @@ class Evaluator {
         if (passes.length) return passes[0];
         if (a.status === "PENDING") return a;
         if (b.status === "PENDING") return b;
+        // §16.14.8 e): `or` is vacuous iff both operands are.
+        const bothVacuous = isVacuous(a) && isVacuous(b);
+        const end = Math.max(a.end, b.end);
+        const steps = byEdge([...a.steps, ...b.steps]);
         if (a.status === "VACUOUS" || b.status === "VACUOUS") {
-          const other = a.status === "VACUOUS" ? b : a;
-          return other.status === "FAIL"
-            ? { status: "PASS", end: Math.max(a.end, b.end), reason: "one operand of `or` is (vacuously) true and the other was evaluated nonvacuously (§16.14.8 e)", steps: byEdge([...a.steps, ...b.steps]) }
-            : { status: "VACUOUS", end: Math.max(a.end, b.end), reason: "both operands of `or` are vacuously true", steps: byEdge([...a.steps, ...b.steps]) };
+          return bothVacuous
+            ? { status: "VACUOUS", vacuity: "or", end, reason: "one operand of `or` is vacuously true and the other was evaluated vacuously too, so the attempt is vacuous (§16.14.8 e)", steps }
+            : { status: "PASS", end, reason: "one operand of `or` is (vacuously) true and the other was evaluated nonvacuously (§16.14.8 e)", steps };
         }
-        return { status: "FAIL", end: Math.max(a.end, b.end), reason: `neither operand of \`or\` holds: ${a.reason}; ${b.reason}`, steps: byEdge([...a.steps, ...b.steps]) };
+        return {
+          status: "FAIL",
+          vacuity: bothVacuous ? "or" : undefined,
+          end,
+          reason: `neither operand of \`or\` holds: ${a.reason}; ${b.reason}${
+            !bothVacuous && (isVacuous(a) || isVacuous(b))
+              ? `; \`${(isVacuous(a) ? node.right : node.left).src}\` was evaluated nonvacuously, so \`${node.src}\` is nonvacuous (§16.14.8 e)`
+              : ""
+          }`,
+          steps,
+        };
       }
       default:
         return this.sequenceProperty(node, t);
@@ -1358,7 +1467,7 @@ class Evaluator {
     return { status: "FAIL", end: dead.edge, reason: dead.reason, steps: dead.steps };
   }
 
-  /** `s |-> p` and `s |=> p` (§16.12.7); vacuity per §16.14.8 h. */
+  /** `s |-> p` and `s |=> p` (§16.12.7); vacuity per §16.14.8 i (`|->`) and j (`|=>`). */
   private implication(node: NodeOf<"implication">, t: number): PropOutcome {
     const op = node.overlapping ? "|->" : "|=>";
     const r = this.seq(node.antecedent, t);
@@ -1377,12 +1486,18 @@ class Evaluator {
           : this.prop(node.consequent, c);
       return { e, p, c, note, out };
     });
+    const vacuityItem = node.overlapping ? "§16.14.8 i" : "§16.14.8 j";
+    // §16.14.8 i/j: nonvacuous iff some consequent attempt (from an antecedent match) is nonvacuous.
+    const allConsequentsVacuous = outs.length > 0 && outs.every((o) => isVacuous(o.out));
     const failed = outs.filter((o) => o.out.status === "FAIL").sort((a, b) => a.out.end - b.out.end)[0];
     if (failed) {
       return {
         status: "FAIL",
+        vacuity: allConsequentsVacuous ? "consequent" : undefined,
         end: failed.out.end,
-        reason: `antecedent \`${node.antecedent.src}\` matched at edge ${failed.e}, then the consequent failed: ${failed.out.reason}`,
+        reason: `antecedent \`${node.antecedent.src}\` matched at edge ${failed.e}, then the consequent failed: ${failed.out.reason}${
+          isVacuous(failed.out) && !allConsequentsVacuous ? `; another consequent attempt was evaluated nonvacuously, so \`${node.src}\` is nonvacuous (${vacuityItem})` : ""
+        }`,
         steps: [...failed.p, failed.note, ...failed.out.steps],
       };
     }
@@ -1402,8 +1517,9 @@ class Evaluator {
       const dead = r.dead;
       return {
         status: "VACUOUS",
+        vacuity: "antecedent",
         end: dead?.edge ?? t,
-        reason: `antecedent \`${node.antecedent.src}\` did not match${dead ? ` (${dead.reason})` : ""}, so nothing is checked: a vacuous success (§16.14.8)`,
+        reason: `antecedent \`${node.antecedent.src}\` did not match${dead ? ` (${dead.reason})` : ""}, so nothing is checked: a vacuous success (${vacuityItem})`,
         steps: dead?.steps ?? [],
       };
     }
@@ -1420,8 +1536,9 @@ class Evaluator {
     const first = outs[0];
     return {
       status: "VACUOUS",
+      vacuity: "consequent",
       end,
-      reason: "the antecedent matched, but every consequent was itself vacuously true (§16.14.8 h)",
+      reason: `the antecedent matched, but every consequent was itself vacuously true (${vacuityItem})`,
       steps: [...first.p, first.note, ...first.out.steps],
     };
   }
@@ -1443,6 +1560,7 @@ class Evaluator {
         }
       }
     }
+    if (o.status === "FAIL" && o.vacuity) return { start: t, ...o, reason: `${o.reason}. ${vacuousFalseNote(vacuityItemOf(spec.body))}` };
     return { start: t, ...o };
   }
 }
@@ -1469,13 +1587,29 @@ export function evaluateProperty(source: string, trace: SvaTrace): { ok: true; e
 
 export const statusGlyph: Record<AttemptStatus, string> = { PASS: "✓", FAIL: "✕", VACUOUS: "○", PENDING: "…", DISABLED: "⊘" };
 
+/**
+ * Learner-facing status names. A vacuous evaluation is a "vacuous success":
+ * §16.14.8 says an assertion of such a property "is not considered a pass or
+ * a failure", so it is never called a pass.
+ */
 export const statusText: Record<AttemptStatus, string> = {
   PASS: "pass",
   FAIL: "fail",
-  VACUOUS: "vacuous pass",
+  VACUOUS: "vacuous success",
   PENDING: "pending",
   DISABLED: "disabled",
 };
+
+/**
+ * Short learner-facing status of an attempt, built from `statusText`, e.g.
+ * "fail at edge 8" or "vacuous success". A false result whose evaluation is
+ * vacuous (§16.14.8 d) says so.
+ */
+export function attemptStatusPhrase(a: Pick<SvaAttempt, "status" | "end" | "vacuity">): string {
+  const base = statusText[a.status];
+  if (a.status === "VACUOUS") return base;
+  return `${base} at edge ${a.end}${a.status === "FAIL" && a.vacuity ? " (vacuous evaluation)" : ""}`;
+}
 
 /** SystemVerilog source for the property under test, generated from the parsed spec. */
 export function assertionCode(spec: SvaSpec, name = "check"): string[] {
@@ -1538,24 +1672,64 @@ export function diagnoseAttempt(spec: SvaSpec, attempt: SvaAttempt, predicted: A
   }
   if (predicted === "PENDING") return say(`The trace has enough edges: the result is decided at edge ${attempt.end}.`);
   if (predicted === "VACUOUS" && actual === "FAIL") {
+    if (attempt.vacuity) {
+      return say(
+        `${vacuityCause(attempt.vacuity)}, so the attempt is vacuous, but the property is false, not true. A vacuous success needs a true result; this one fails, and the fail action runs (§16.14.1). The standard does not say how a tool reports a vacuous failure.`,
+      );
+    }
     return say(
       spec.shape === "sequence"
         ? "A property that is just a sequence has no antecedent, so it can never pass vacuously (§16.12.2, §16.14.8 a): a first element that does not match is a real failure. If the check should only start when a trigger is true, make the trigger an antecedent with `|->`."
-        : `The antecedent did match, so the consequent was checked, and it failed.${tail}`,
+        : spec.shape === "implication"
+          ? `The antecedent did match, so the consequent was checked, and it failed.${tail}`
+          : `Part of the property was evaluated nonvacuously, and it is false, so this is a real failure (§16.14.8).${tail}`,
     );
   }
   if (predicted === "VACUOUS" && actual === "PASS") {
-    return say(spec.shape === "sequence" ? "A sequence used as a property is never vacuous; here it matched." : "The antecedent matched, so this is a real (nonvacuous) pass.");
-  }
-  if (actual === "VACUOUS") {
     return say(
-      predicted === "PASS"
-        ? "This is only a vacuous success: the antecedent did not match, so the consequent was never checked. Tools count it apart from real passes, and a property that is always vacuous checks nothing (§16.14.8)."
-        : "Nothing was checked, because the antecedent did not match, so this attempt cannot fail.",
+      spec.shape === "sequence"
+        ? "A sequence used as a property is never vacuous; here it matched."
+        : spec.shape === "implication"
+          ? "The antecedent matched, so this is a real (nonvacuous) pass."
+          : "Part of the property was evaluated nonvacuously, and it holds, so this is a real (nonvacuous) pass (§16.14.8).",
     );
   }
-  if (predicted === "PASS" && actual === "FAIL") return say(`It fails at edge ${attempt.end}.${tail}`);
+  if (actual === "VACUOUS") {
+    const cause = vacuityCause(attempt.vacuity ?? "antecedent");
+    return say(
+      predicted === "PASS"
+        ? `This is only a vacuous success. ${cause}. Tools count it apart from real passes, and a property that is always vacuous checks nothing (§16.14.8).`
+        : `${cause}, so this attempt is a vacuous success: the property is true, so it cannot fail here.`,
+    );
+  }
+  if (predicted === "PASS" && actual === "FAIL") {
+    if (attempt.vacuity) {
+      return say(
+        `It fails at edge ${attempt.end}. ${vacuityCause(attempt.vacuity)}, so the attempt is vacuous, but the property is false, so it is not a pass or a vacuous success, and the fail action runs (§16.14.1). The standard does not say how a tool reports a vacuous failure.${tail}`,
+      );
+    }
+    return say(`It fails at edge ${attempt.end}.${tail}`);
+  }
   return say(`It passes; the result is decided at edge ${attempt.end}.${tail}`);
+}
+
+/**
+ * Why an attempt is vacuous, as a sentence start (no final period), by the
+ * recursive rules of §16.14.8.
+ */
+export function vacuityCause(vacuity: SvaVacuity): string {
+  switch (vacuity) {
+    case "antecedent":
+      return "The antecedent did not match, so the consequent was never checked (§16.14.8 i, j)";
+    case "consequent":
+      return "The antecedent matched, but every consequent attempt it started was itself vacuous (§16.14.8 i, j)";
+    case "and":
+      return "Both operands of `and` were evaluated vacuously (§16.14.8 f)";
+    case "or":
+      return "Both operands of `or` were evaluated vacuously (§16.14.8 e)";
+    case "not":
+      return "The operand of `not` was evaluated vacuously, and `not` keeps that (§16.14.8 d)";
+  }
 }
 
 function capitalize(text: string) {
@@ -1937,4 +2111,436 @@ export function splitInlineCode(text: string): { code: boolean; text: string }[]
 /** Plain-text version of a model sentence (backticks removed), for string-only props. */
 export function plainText(text: string): string {
   return text.replace(/`([^`]+)`/g, "$1");
+}
+
+/* ------------------------------------------------------------------------ */
+/* Lesson presets, modes and signal renaming                                 */
+/* ------------------------------------------------------------------------ */
+
+/** Tabs a lesson can show. `write` is the "Write your own" tab. */
+export type SvaLabMode = "learn" | "debug" | "write";
+
+export const SVA_LAB_MODES: SvaLabMode[] = ["learn", "debug", "write"];
+
+/** Keep only known modes, in the canonical order; an empty or missing list means all three. */
+export function normalizeModes(modes?: readonly string[]): SvaLabMode[] {
+  if (!modes || modes.length === 0) return [...SVA_LAB_MODES];
+  const picked = SVA_LAB_MODES.filter((m) => modes.includes(m));
+  return picked.length ? picked : [...SVA_LAB_MODES];
+}
+
+/** A preset made for one lesson use: a trace-lab scenario plus an optional challenge. */
+export interface SvaLessonScenario extends SvaScenario {
+  /** Challenge shown after the reveal; graded by `gradeEarlyGrantChallenge`. */
+  challenge?: { antecedent: string; consequent: string; delay: number; prompt: string };
+}
+
+/**
+ * F1C preview: `req |-> ##2 gnt` on the eight edges of the lesson's
+ * TimingDiagram (attempt 1 passes at edge 3, attempt 4 fails at edge 6, the
+ * other six are vacuous successes, §16.12.7, §16.14.8).
+ */
+export const reqGnt2Scenario: SvaLessonScenario = {
+  id: "req-gnt-2",
+  label: "req |-> ##2 gnt",
+  property: "req |-> ##2 gnt",
+  signals: ["req", "gnt"],
+  rows: {
+    req: [0, 1, 0, 0, 1, 0, 0, 0],
+    gnt: [0, 0, 0, 1, 0, 0, 0, 0],
+  },
+  focus:
+    "`##2` checks gnt at exactly one edge, two edges after req. Where req is 0 the attempt is a vacuous success: nothing is checked, and it is not counted as a pass or a failure (§16.14.8).",
+  challenge: {
+    antecedent: "req",
+    consequent: "gnt",
+    delay: 2,
+    prompt: "Make the assertion fail while gnt is 1 at some edge: set gnt to 1 one edge early.",
+  },
+};
+
+/** Id of the sampling-and-regions lab (F3B). It has its own data model below. */
+export const SAMPLING_PRESET_ID = "flop-output-low";
+
+/** Every preset id a lesson may pass as `initialPreset`. */
+export const svaPresetIds: string[] = [...svaLearnScenarios.map((s) => s.id), reqGnt2Scenario.id, SAMPLING_PRESET_ID];
+
+/** Trace-lab preset by id: an existing learn scenario or a lesson preset. */
+export function findTracePreset(id: string | undefined): SvaLessonScenario | undefined {
+  if (!id) return undefined;
+  if (id === reqGnt2Scenario.id) return reqGnt2Scenario;
+  return svaLearnScenarios.find((s) => s.id === id);
+}
+
+export interface EarlyGrantResult {
+  met: boolean;
+  /** The failing attempt the message talks about, if any. */
+  attempt?: number;
+  message: string;
+}
+
+/**
+ * Grades "make it fail while the consequent is 1 at some edge". With
+ * `a |-> ##N c` (§16.12.7, §16.7) the consequent is checked at exactly edge
+ * s+N; a 1 at edge s+N-1 is one edge early and does not count.
+ */
+export function gradeEarlyGrantChallenge(evaluation: SvaEvaluation, trace: SvaTrace, challenge: NonNullable<SvaLessonScenario["challenge"]>): EarlyGrantResult {
+  const { antecedent: a, consequent: c, delay } = challenge;
+  const row = trace.signals[c] ?? [];
+  const fails = evaluation.attempts.filter((t) => t.status === "FAIL");
+  const early = fails.find((t) => truthy(row[t.start + delay - 1] ?? 0));
+  if (early) {
+    const k = early.start + delay - 1;
+    return {
+      met: true,
+      attempt: early.start,
+      message: `Attempt A${early.start} fails at edge ${early.end} although ${c} is 1 at edge ${k}: one edge early. \`##${delay}\` checks ${c} only at edge ${early.start + delay}, so a 1 at any other edge does not count.`,
+    };
+  }
+  if (fails.length) {
+    const f = fails[0];
+    return {
+      met: false,
+      attempt: f.start,
+      message: `Attempt A${f.start} fails at edge ${f.end}, but ${c} is 0 at edge ${f.start + delay - 1}. Set ${c} to 1 at edge ${f.start + delay - 1} and leave it 0 at edge ${f.start + delay}.`,
+    };
+  }
+  return {
+    met: false,
+    message: `No attempt fails yet. Pick an edge s with ${a} = 1, then make ${c} 1 at edge s+${delay - 1} and 0 at edge s+${delay}.`,
+  };
+}
+
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Check a rename map against a whole set of scenarios at once, so that every
+ * preset of one lab shows the same names. An entry is ignored (and listed) if
+ * its target is not an identifier, is a reserved keyword (§5.6.2, Annex B) or
+ * `clk`, clashes with a signal already used by any scenario that contains the
+ * source, is the target of another entry, or its source is in no scenario.
+ */
+function validateRenameMap(signalLists: readonly (readonly string[])[], map: Record<string, string>): { pairs: [string, string][]; ignored: string[] } {
+  const ignored: string[] = [];
+  const pairs: [string, string][] = [];
+  const targets = new Set<string>();
+  for (const [from, to] of Object.entries(map)) {
+    if (from === to) continue;
+    const owners = signalLists.filter((list) => list.includes(from));
+    const clash = owners.some((list) => list.includes(to));
+    if (!owners.length || !IDENT.test(to) || SV_RESERVED_KEYWORDS.has(to) || to === "clk" || clash || targets.has(to)) {
+      ignored.push(`${from} -> ${to}`);
+      continue;
+    }
+    pairs.push([from, to]);
+    targets.add(to);
+  }
+  return { pairs, ignored };
+}
+
+const startsWithVowel = (name: string) => /^[aeiouAEIOU]/.test(name);
+
+function applyRename<T extends SvaScenario>(scenario: T, pairs: [string, string][]): T {
+  const own = pairs.filter(([from]) => scenario.signals.includes(from));
+  if (!own.length) return scenario;
+  const lookup = new Map(own);
+  // An optional article before the name is rewritten to fit the new name ("an ack" -> "a gnt").
+  const pattern = new RegExp(`(?:\\b(an?|An?) )?(?<![\\w$])(${own.map(([f]) => f).join("|")})(?!\\w)`, "g");
+  const sub = (text: string) =>
+    text.replace(pattern, (_m, article: string | undefined, name: string) => {
+      const to = lookup.get(name) ?? name;
+      if (!article) return to;
+      const fixed = startsWithVowel(to) ? "an" : "a";
+      return `${article[0] === "A" ? capitalize(fixed) : fixed} ${to}`;
+    });
+  const deep = (value: unknown): unknown => {
+    if (typeof value === "string") return sub(value);
+    if (Array.isArray(value)) return value.map(deep);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k === "id" ? k : sub(k), k === "id" ? v : deep(v)]));
+    }
+    return value;
+  };
+  return deep(scenario) as T;
+}
+
+/**
+ * Rename signals in a set of scenarios (for example `{ ack: "gnt" }`), in the
+ * property, the rows and every sentence. The map is checked once against all
+ * of them (see `validateRenameMap`), so an entry that is invalid for any one
+ * scenario is ignored for every scenario, and the presets agree on names.
+ */
+export function renameScenarios<T extends SvaScenario>(scenarios: readonly T[], map: Record<string, string> | undefined): { scenarios: T[]; ignored: string[] } {
+  if (!map) return { scenarios: [...scenarios], ignored: [] };
+  const { pairs, ignored } = validateRenameMap(
+    scenarios.map((s) => s.signals),
+    map,
+  );
+  return { scenarios: scenarios.map((s) => applyRename(s, pairs)), ignored };
+}
+
+/**
+ * Rename every trace-lab preset (learn scenarios, req-gnt-2 and the debug
+ * cases) with one map, checked against all of them together.
+ */
+export function renameTracePresets(map: Record<string, string> | undefined): {
+  learn: SvaLessonScenario[];
+  reqGnt2: SvaLessonScenario;
+  debug: SvaDebugCase[];
+  ignored: string[];
+} {
+  const all: SvaScenario[] = [...svaLearnScenarios, reqGnt2Scenario, ...svaDebugCases];
+  const { scenarios, ignored } = renameScenarios(all, map);
+  const n = svaLearnScenarios.length;
+  return {
+    learn: scenarios.slice(0, n) as SvaLessonScenario[],
+    reqGnt2: scenarios[n] as SvaLessonScenario,
+    debug: scenarios.slice(n + 1) as SvaDebugCase[],
+    ignored,
+  };
+}
+
+/** `renameScenarios` for a single scenario. */
+export function renameScenario<T extends SvaScenario>(scenario: T, map: Record<string, string> | undefined): { scenario: T; ignored: string[] } {
+  const { scenarios, ignored } = renameScenarios([scenario], map);
+  return { scenario: scenarios[0], ignored };
+}
+
+/* ------------------------------------------------------------------------ */
+/* Sampling lab: sample in Preponed, evaluate in Observed, act in Reactive    */
+/* ------------------------------------------------------------------------ */
+
+/** A 4-state bit as `%b` prints it. z never occurs in this lab (both drivers are flops). */
+export type LogicBit = 0 | 1 | "x";
+
+export interface SamplingLabInput {
+  /** `d[k]`: the value of d at edge k. The testbench changes d between edges. */
+  d: BitRow;
+  /**
+   * `rst[k]`: the value of rst sampled at edge k. rst comes from a flop (a reset
+   * synchronizer), so a change drawn before edge k happened in the NBA region
+   * of edge k-1.
+   */
+  rst: BitRow;
+  /** q before edge 0: x when nothing has written it yet. */
+  qInit: LogicBit;
+  /** Adds `disable iff (rst)` to the assertion. */
+  disableOnRst: boolean;
+}
+
+export type SamplingVerdict = "PASS" | "FAIL" | "DISABLED";
+
+export interface SamplingEdge {
+  edge: number;
+  /** Preponed value of q: what the property and `$sampled(q)` use (§16.5.1, §16.9.3). */
+  sampledQ: LogicBit;
+  /** q after this edge's NBA region: what plain `q` reads in the action block (§4.4.2.6). */
+  currentQ: LogicBit;
+  sampledRst: 0 | 1;
+  /** rst in the Observed region of this edge: what `disable iff` reads (§16.12, §16.6). */
+  currentRst: 0 | 1;
+  /** Value of `q == 1'b0` on the sampled q: x when q is x. */
+  expression: LogicBit;
+  verdict: SamplingVerdict;
+  /** Line printed by the pass statement, or null when it does not run. */
+  printed: string | null;
+  /** What runs in Reactive, as one short sentence. */
+  reactive: string;
+  /** True when the pass message shows different values for `$sampled(q)` and `q`. */
+  disagree: boolean;
+  /** Why, from the clauses. */
+  reason: string;
+}
+
+export interface SamplingLabResult {
+  edges: SamplingEdge[];
+  /** q as sampled at each edge, for the waveform (flop output, changes after each edge). */
+  qRow: LogicBit[];
+  code: string[];
+}
+
+export const SAMPLING_EDGES = 6;
+
+/** The F3B preset: d rises before edge 2, the flop copies it at edge 2, rst rises at edge 3. */
+export const flopOutputLowPreset: SamplingLabInput & { id: string; label: string } = {
+  id: SAMPLING_PRESET_ID,
+  label: "q == 1'b0 with a pass message",
+  d: [0, 0, 1, 1, 1, 0],
+  rst: [0, 0, 0, 0, 1, 1],
+  qInit: 0,
+  disableOnRst: false,
+};
+
+export const SAMPLING_ASSUMPTIONS = [
+  "One posedge clk per column. A value drawn changing just after edge k-1 is the value sampled at edge k: its Preponed value (§16.5.1, §4.4.2.1).",
+  "q is a flop: always_ff @(posedge clk) if (rst) q <= 1'b0; else q <= d;. It reads d and rst in the Active region and writes q in the NBA region of the same edge (§4.4.2.4).",
+  "rst also comes from a flop, so it changes in the NBA region of an edge: the property's sample of rst is the old value, but the current value in Observed is the new one.",
+  "Edge 0 is after time 0, and q before edge 0 is the value you choose. Had edge 0 been at time 0, the sample would be the default sampled value instead (§16.5.1): the declaration initializer, or x for logic.",
+  "After the last edge rst keeps its value, so at the last edge its current value equals its sample.",
+  "x in q == 1'b0 gives x, which counts as false (§16.6). The fail statement is omitted, so the tool calls $error (§16.14.1); the pass statement is the $display shown.",
+];
+
+const bitText = (v: LogicBit) => String(v);
+
+/** Assertion source for the lab, generated so the code view and the model cannot drift. */
+export function samplingLabCode(disableOnRst: boolean): string[] {
+  return [
+    "always_ff @(posedge clk)",
+    "  if (rst) q <= 1'b0; else q <= d;",
+    "",
+    "a_q_was_low: assert property (",
+    `  @(posedge clk)${disableOnRst ? " disable iff (rst)" : ""} q == 1'b0)`,
+    '  $display("pass: $sampled(q)=%b q=%b",',
+    "           $sampled(q), q);",
+  ];
+}
+
+/**
+ * Evaluate `a_q_was_low` once per edge (§16.14.5 starts an attempt at every
+ * clock tick; this property is one cycle long, so each attempt ends where it
+ * starts).
+ *
+ * - §16.5.1: the property reads q's Preponed value.
+ * - §4.4.2.5: the property is evaluated in Observed, after the flop's NBA
+ *   write, and its pass/fail code is scheduled into Reactive.
+ * - §4.4.2.6: the action block runs in Reactive, so plain `q` is the value the
+ *   flop just wrote; `$sampled(q)` returns the sampled value (§16.9.3).
+ * - §16.12 (and §16.6): the disable condition uses current values, not
+ *   sampled ones, so a rst that rises in this edge's NBA region disables the
+ *   attempt of this edge. A disabled attempt runs no action block (§16.14.1).
+ */
+export function evaluateSamplingLab(input: SamplingLabInput): SamplingLabResult {
+  const n = Math.min(input.d.length, input.rst.length);
+  const qRow: LogicBit[] = [input.qInit];
+  const next: LogicBit[] = [];
+  for (let k = 0; k < n; k += 1) {
+    next[k] = input.rst[k] ? 0 : input.d[k];
+    if (k + 1 < n) qRow.push(next[k]);
+  }
+  const edges: SamplingEdge[] = [];
+  for (let k = 0; k < n; k += 1) {
+    const sampledQ = qRow[k];
+    const currentQ = next[k];
+    const sampledRst = input.rst[k];
+    const currentRst = k + 1 < n ? input.rst[k + 1] : input.rst[k];
+    const expression: LogicBit = sampledQ === "x" ? "x" : sampledQ === 0 ? 1 : 0;
+    let verdict: SamplingVerdict;
+    let reason: string;
+    if (input.disableOnRst && currentRst === 1) {
+      verdict = "DISABLED";
+      reason =
+        sampledRst === 0
+          ? `rst rises in this edge's NBA region. Its sample is 0, but \`disable iff\` reads the current value, 1, in Observed (§16.12), so the attempt is disabled: no pass, no fail, no action block (§16.14.1).`
+          : `\`disable iff\` reads rst's current value, 1, in Observed (§16.12), so the attempt is disabled: no pass, no fail, no action block (§16.14.1).`;
+    } else if (expression === 1) {
+      verdict = "PASS";
+      reason =
+        currentQ !== sampledQ
+          ? `The property reads the Preponed sample q = ${bitText(sampledQ)} (§16.5.1), so q == 1'b0 is true and it passes, although the flop writes q = ${bitText(currentQ)} in this edge's NBA region.`
+          : `The Preponed sample is q = ${bitText(sampledQ)} (§16.5.1), so q == 1'b0 is true.`;
+    } else {
+      verdict = "FAIL";
+      reason =
+        expression === "x"
+          ? `The sample is q = x, so q == 1'b0 is x, which counts as false (§16.6): the attempt fails.`
+          : `The Preponed sample is q = 1 (§16.5.1), so q == 1'b0 is false and the attempt fails.`;
+    }
+    if (input.disableOnRst && verdict !== "DISABLED" && sampledRst === 1) {
+      reason += ` rst's sample is 1, but its current value in Observed is 0, and \`disable iff\` uses the current value (§16.12).`;
+    }
+    const printed = verdict === "PASS" ? `pass: $sampled(q)=${bitText(sampledQ)} q=${bitText(currentQ)}` : null;
+    const reactive =
+      verdict === "PASS"
+        ? `the pass statement prints "${printed}" (§4.4.2.6)`
+        : verdict === "FAIL"
+          ? "no else clause, so the tool calls $error (§16.14.1)"
+          : "no action block runs (§16.14.1)";
+    edges.push({
+      edge: k,
+      sampledQ,
+      currentQ,
+      sampledRst: sampledRst as 0 | 1,
+      currentRst: currentRst as 0 | 1,
+      expression,
+      verdict,
+      printed,
+      reactive,
+      disagree: verdict === "PASS" && sampledQ !== currentQ,
+      reason,
+    });
+  }
+  return { edges, qRow, code: samplingLabCode(input.disableOnRst) };
+}
+
+export interface SamplingPrediction {
+  verdict: SamplingVerdict;
+  /** Predicted `$sampled(q)` and `q` in the pass message (asked only for PASS). */
+  sampled?: LogicBit;
+  current?: LogicBit;
+}
+
+export interface SamplingGrade {
+  correct: boolean;
+  verdictCorrect: boolean;
+  /** null when the pass message was not part of the question. */
+  printCorrect: boolean | null;
+  message: string;
+}
+
+/** Grade one edge's prediction and explain the misconception behind a wrong part. */
+export function gradeSamplingPrediction(edge: SamplingEdge, p: SamplingPrediction): SamplingGrade {
+  const verdictCorrect = p.verdict === edge.verdict;
+  const parts: string[] = [];
+  if (!verdictCorrect) {
+    if (edge.verdict === "DISABLED") parts.push(edge.reason);
+    else if (p.verdict === "DISABLED")
+      parts.push(
+        edge.sampledRst === 1
+          ? `rst's current value in Observed is 0 (it falls in this edge's NBA region), and \`disable iff\` uses the current value, not the sample (§16.12), so the attempt is not disabled.`
+          : `rst is 0 in Observed, so the attempt is not disabled.`,
+      );
+    else if (edge.verdict === "PASS" && edge.currentQ !== edge.sampledQ)
+      parts.push(`The flop's new q = ${bitText(edge.currentQ)} lands in NBA, before Observed, but the property reads the Preponed sample q = ${bitText(edge.sampledQ)} (§16.5.1), so it passes. The failure shows up one edge later.`);
+    else parts.push(edge.reason);
+  }
+  let printCorrect: boolean | null = null;
+  if (p.verdict === "PASS" && edge.verdict === "PASS") {
+    printCorrect = p.sampled === edge.sampledQ && p.current === edge.currentQ;
+    if (!printCorrect) {
+      parts.push(
+        `The pass statement runs in Reactive with current values (§4.4.2.6), so q prints ${bitText(edge.currentQ)}, the value the flop wrote in NBA. $sampled(q) returns the value the property used, ${bitText(edge.sampledQ)} (§16.9.3).`,
+      );
+    }
+  }
+  const correct = verdictCorrect && printCorrect !== false;
+  if (correct) {
+    parts.unshift(
+      edge.verdict === "PASS"
+        ? `Correct: it prints "${edge.printed}".${edge.disagree ? " The two values disagree because the action block runs after the flop's write." : ""}`
+        : edge.verdict === "FAIL"
+          ? "Correct: it fails, and the pass message does not print."
+          : "Correct: the attempt is disabled.",
+    );
+  }
+  return { correct, verdictCorrect, printCorrect, message: parts.join(" ") };
+}
+
+/** Short text for the three region markers of one edge (▼ Preponed, ✓/✕ Observed, print Reactive). */
+export function regionMarkers(edge: SamplingEdge, disableOnRst: boolean): { preponed: string; observed: string; reactive: string } {
+  return {
+    preponed: `▼ Preponed: q sampled = ${bitText(edge.sampledQ)}${disableOnRst ? `, rst sampled = ${edge.sampledRst}` : ""}`,
+    observed:
+      edge.verdict === "DISABLED"
+        ? `⊘ Observed: disable iff reads rst = ${edge.currentRst} (current): disabled`
+        : `${edge.verdict === "PASS" ? "✓" : "✕"} Observed: q == 1'b0 is ${bitText(edge.expression)} (${edge.expression === 1 ? "true" : edge.expression === "x" ? "x counts as false, §16.6" : "false"}) on the sample: ${edge.verdict === "PASS" ? "pass" : "fail"}${disableOnRst ? ` (rst = ${edge.currentRst} now, not disabled)` : ""}`,
+    reactive: `Reactive: ${edge.reactive}`,
+  };
+}
+
+/** One-line summary of the whole run, for the live region. */
+export function summarizeSampling(result: SamplingLabResult): string {
+  const c = { PASS: 0, FAIL: 0, DISABLED: 0 };
+  for (const e of result.edges) c[e.verdict] += 1;
+  const lag = result.edges.filter((e) => e.disagree).map((e) => e.edge);
+  return `${c.PASS} pass${c.PASS === 1 ? "" : "es"} · ${c.FAIL} fail${c.FAIL === 1 ? "" : "s"} · ${c.DISABLED} disabled${lag.length ? `; the pass message prints q different from $sampled(q) at edge${lag.length === 1 ? "" : "s"} ${lag.join(", ")}` : ""}`;
 }
