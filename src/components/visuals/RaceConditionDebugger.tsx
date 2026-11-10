@@ -4,7 +4,9 @@ import React, { useMemo, useState } from "react";
 
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
 import { FidelityBadge } from "@/components/visual-system/FidelityBadge";
-import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { OutcomeGroups } from "@/components/visual-system/OutcomeGroups";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { StepWaveform } from "@/components/visual-system/StepWaveform";
 import { ValueChip } from "@/components/visual-system/ValueChip";
 import { comparisonStyles } from "@/components/visual-system/visual-language";
@@ -15,26 +17,29 @@ import {
   simulateTimeSlot,
   withAssignmentOp,
   withZeroDelay,
+  type ExplorationResult,
   type SvScenario,
   type SvValue,
   type TraceStep,
 } from "@/lib/sv-scheduler-model";
-import { shiftRegisterScenario, testbenchDriveScenario } from "@/lib/sv-scheduler-scenarios";
+import { nbaWritersScenario, shiftRegisterScenario, testbenchDriveScenario, traceOutcomeGroups, type NbaWritersForm } from "@/lib/sv-scheduler-scenarios";
 import { cn } from "@/lib/utils";
 
 import { codeLinesFor } from "./scheduler/scheduler-view-helpers";
 import { SCHEDULER_MODEL_ASSUMPTIONS } from "./TimeSlotTraceVisualizer";
 
-type BenchId = "shift" | "handoff";
+type BenchId = "shift" | "handoff" | "nba-writers";
 
 interface Bench {
   id: BenchId;
   label: string;
   base: () => SvScenario;
-  /** What a real flip-flop circuit would produce (the hardware-faithful answer). */
-  expected: Record<string, SvValue>;
-  expectedWhy: string;
+  /** What a real flip-flop circuit would produce (the hardware-faithful answer). Left out where hardware is not the question. */
+  expected?: Record<string, SvValue>;
+  expectedWhy?: string;
   question: string;
+  /** Whether each assignment can be switched between = and <=, and #0 added. */
+  editable: boolean;
 }
 
 const benches: Bench[] = [
@@ -45,6 +50,7 @@ const benches: Bench[] = [
     expected: { q1: 1, q2: 0 },
     expectedWhy: "Real flops all sample on the same edge, so q2 captures q1's old value (0).",
     question: "With the operators below, will every legal process order give the same q1 and q2?",
+    editable: true,
   },
   {
     id: "handoff",
@@ -53,8 +59,42 @@ const benches: Bench[] = [
     expected: { q: 3 },
     expectedWhy: "A real flop captures din as it was just before the edge (3); the testbench's new value belongs to the next cycle.",
     question: "With the operators below, will every legal process order give the same q?",
+    editable: true,
+  },
+  {
+    id: "nba-writers",
+    label: "Two NBAs to one variable",
+    base: () => nbaWritersScenario("one-process"),
+    question: "Does the standard define the final value of a?",
+    editable: false,
   },
 ];
+
+const NBA_FORMS: { value: NbaWritersForm; label: string }[] = [
+  { value: "one-process", label: "one process: a <= 0; a <= 1; in one begin-end" },
+  { value: "two-processes", label: "two processes woken by one edge: a <= 0 and a <= 1" },
+];
+
+/**
+ * Prediction options for the NBA-writer bench (F3B's guarantee rows 2 and 3).
+ * The correct flag comes from the exploration; every value in the feedback is
+ * read from the model's runs.
+ */
+export function nbaWritersOptions(form: NbaWritersForm, scenario: SvScenario, exploration: ExplorationResult): PredictionOption[] {
+  const finals = exploration.outcomes.map((o) => formatValue(o.finalValues.a));
+  const applied = simulateTimeSlot(scenario)
+    .trace.filter((s) => s.kind === "update" && s.stmtId)
+    .map((s) => `a ← ${formatValue(s.values.a)}`);
+  const orders = exploration.runCount === 1 ? "the single order the model can run" : `all ${exploration.runCount} orders`;
+  const oneWhy = `§4.6: the statements of one begin-end run in source order, and NBAs are performed in the order they executed, so ${applied.join(", then ")} is applied. a = ${finals[0]} at the end of the slot, in ${orders}.`;
+  const twoWhy = `Both processes wake on the same edge, and §4.7 lets the simulator run either first. Each order fixes the order of the two NBA updates (§4.6), so the last one differs: a = ${[...finals].sort().join(" or ")}. Writing with <= does not help: one variable needs one writer.`;
+  const why = form === "one-process" ? oneWhy : twoWhy;
+  const defined = exploration.deterministic;
+  return [
+    { id: "defined", label: "Defined: every legal order ends with the same a", correct: defined, feedback: defined ? why : `Not with this code. ${why}` },
+    { id: "open", label: "Not defined: a depends on the order the scheduler picks", correct: !defined, feedback: defined ? `Not with this code. ${why}` : why },
+  ];
+}
 
 const configKey = (scenario: SvScenario) =>
   scenario.processes.map((p) => p.body.map((s) => (s.kind === "assign" ? `${s.id}${s.op === "nba" ? "<=" : "="}` : s.kind)).join(",")).join("|");
@@ -73,10 +113,12 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
   const bench = benches.find((b) => b.id === benchId) ?? benches[0];
   const [scenario, setScenario] = useState<SvScenario>(() => bench.base());
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [form, setForm] = useState<NbaWritersForm>("one-process");
 
   const switchBench = (id: BenchId) => {
     const next = benches.find((b) => b.id === id) ?? benches[0];
     setBenchId(id);
+    setForm("one-process");
     setScenario(next.base());
   };
 
@@ -120,7 +162,10 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
 
   const hazardKeys = hazards.flatMap((h) => [h.writer.stmtId, h.reader.stmtId]);
   const correctIsDeterministic = exploration.deterministic;
-  const outcomeMatchesExpected = (values: Record<string, SvValue>) => Object.entries(bench.expected).every(([k, v]) => values[k] === v);
+  const expected = bench.expected ?? {};
+  const outcomeMatchesExpected = (values: Record<string, SvValue>) => Object.entries(expected).every(([k, v]) => values[k] === v);
+  const nbaBench = bench.id === "nba-writers";
+  const groups = useMemo(() => (nbaBench ? traceOutcomeGroups(scenario, exploration) : []), [nbaBench, scenario, exploration]);
 
   return (
     <section aria-label="Race condition debugger" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
@@ -153,14 +198,27 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
         ))}
       </div>
 
+      {nbaBench ? (
+        <SegmentedControl
+          label="Code"
+          options={NBA_FORMS}
+          value={form}
+          mono
+          onChange={(next) => {
+            setForm(next);
+            setScenario(nbaWritersScenario(next));
+          }}
+        />
+      ) : null}
+
       <CodeTrace
-        label="Edit the code — every assignment can be switched"
+        label={bench.editable ? "Edit the code — every assignment can be switched" : "The code"}
         lines={lines}
         contextKeys={[]}
-        renderLineControl={renderLineControl}
+        renderLineControl={bench.editable ? renderLineControl : undefined}
       />
 
-      <div>
+      <div hidden={!bench.editable}>
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
@@ -189,113 +247,130 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
       <PredictionPrompt
         resetKey={`${benchId}:${key}`}
         question={bench.question}
-        options={[
-          {
-            id: "same",
-            label: "Yes — the result is the same in every order",
-            correct: correctIsDeterministic,
-            feedback: correctIsDeterministic
-              ? "No process reads a value another process writes with = on the same event, so order cannot leak into the result."
-              : `Not here: ${hazards[0]?.explanation ?? "one process can observe another's update depending on order."}`,
-          },
-          {
-            id: "differs",
-            label: "No — some orders give a different result",
-            correct: !correctIsDeterministic,
-            feedback: !correctIsDeterministic
-              ? hazards[0]?.explanation ?? "The result depends on which ready process runs first."
-              : "Reads happen in Active before any <= update lands in NBA (or Re-NBA for clocking drives), so every order reads the same values.",
-          },
-        ]}
+        options={
+          nbaBench
+            ? nbaWritersOptions(form, scenario, exploration)
+            : [
+              {
+                id: "same",
+                label: "Yes — the result is the same in every order",
+                correct: correctIsDeterministic,
+                feedback: correctIsDeterministic
+                  ? "No process reads a value another process writes with = on the same event, so order cannot leak into the result."
+                  : `Not here: ${hazards[0]?.explanation ?? "one process can observe another's update depending on order."}`,
+              },
+              {
+                id: "differs",
+                label: "No — some orders give a different result",
+                correct: !correctIsDeterministic,
+                feedback: !correctIsDeterministic
+                  ? hazards[0]?.explanation ?? "The result depends on which ready process runs first."
+                  : "Reads happen in Active before any <= update lands in NBA (or Re-NBA for clocking drives), so every order reads the same values.",
+              },
+              ]
+        }
       >
-        <div className="space-y-4">
-          <div
-            className={cn(
-              "rounded-lg border px-3 py-2 text-sm font-medium",
-              exploration.deterministic
-                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                : "border-rose-500/50 bg-rose-500/10 text-rose-800 dark:text-rose-200",
-            )}
-          >
-            {exploration.deterministic
-              ? `✓ Deterministic: all ${exploration.runCount} legal orderings agree.`
-              : `⚠ Race: ${exploration.outcomes.length} different results from ${exploration.runCount} legal orderings.`}
-          </div>
-
-          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
-            {exploration.outcomes.map((o, i) => {
-              const faithful = outcomeMatchesExpected(o.finalValues);
-              return (
-                <div key={o.signature} className="rounded-xl border border-border/70 bg-background/50 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Outcome {i + 1}</p>
-                  <p className="mt-1 text-sm text-foreground">
-                    {o.runs.map((r) => r.executionOrder.map(labelOf).join(" → ")).join(" · ")}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {scenario.watch.filter((s) => s !== "clk").map((s) => (
-                      <ValueChip key={s} name={s} value={o.finalValues[s]} />
-                    ))}
-                  </div>
-                  <p className={cn("mt-2 text-xs font-medium", faithful ? comparisonStyles.match.className : comparisonStyles.mismatch.className)}>
-                    {faithful ? comparisonStyles.match.glyph : comparisonStyles.mismatch.glyph}{" "}
-                    {faithful ? "Matches real flip-flop hardware" : "Differs from real flip-flop hardware"} ({comparisonStyles.expected.tag}{" "}
-                    {Object.entries(bench.expected).map(([k, v]) => `${k}=${formatValue(v)}`).join(", ")})
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Hardware reference: </strong>
-            {bench.expectedWhy}
-          </p>
-
-          {hazards.length > 0 ? (
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-foreground">Where the race lives</p>
-              <CodeTrace label="Racing write → read" lines={lines} contextKeys={hazardKeys} activeKey={hazards[0].reader.stmtId} />
-              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                {hazards.map((h) => (
-                  <li key={`${h.writer.stmtId}-${h.reader.stmtId}`}>{h.explanation}</li>
-                ))}
-              </ul>
+        {nbaBench ? (
+          <OutcomeGroups
+            groups={groups.map(({ id, title, runCount, lines: groupLines, endState }) => ({ id, title, runCount, lines: groupLines, endState }))}
+            runCount={exploration.runCount}
+            label="Outcomes across the orders of the ready processes"
+            note={
+              form === "one-process"
+                ? "Interleaving cannot change this: §4.6 keeps the statements of a begin-end in source order and performs the NBAs in the order they executed."
+                : "Interleaving adds nothing here: each process holds one statement, so the only freedom is which runs first."
+            }
+          />
+        ) : (
+          <div className="space-y-4">
+            <div
+              className={cn(
+                "rounded-lg border px-3 py-2 text-sm font-medium",
+                exploration.deterministic
+                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                  : "border-rose-500/50 bg-rose-500/10 text-rose-800 dark:text-rose-200",
+              )}
+            >
+              {exploration.deterministic
+                ? `✓ Deterministic: all ${exploration.runCount} legal orderings agree.`
+                : `⚠ Race: ${exploration.outcomes.length} different results from ${exploration.runCount} legal orderings.`}
             </div>
-          ) : exploration.deterministic && !exploration.outcomes.every((o) => outcomeMatchesExpected(o.finalValues)) ? (
-            <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
-              Deterministic is not the same as correct: every order agrees, but the result does not match what real flops would do. #0 changed <em>when</em> a process
-              reads, not whether the code models hardware.
-            </p>
-          ) : null}
 
-          {runs ? (
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-foreground">Compare two executions — they split at step {runs.diverge + 1}</p>
-              <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
-                {[runs.r1, runs.r2].map((r, idx) => (
-                  <div key={idx} className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Run {idx + 1}: {r.executionOrder.map(labelOf).join(" → ")}
+            <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
+              {exploration.outcomes.map((o, i) => {
+                const faithful = outcomeMatchesExpected(o.finalValues);
+                return (
+                  <div key={o.signature} className="rounded-xl border border-border/70 bg-background/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Outcome {i + 1}</p>
+                    <p className="mt-1 text-sm text-foreground">
+                      {o.runs.map((r) => r.executionOrder.map(labelOf).join(" → ")).join(" · ")}
                     </p>
-                    <ol className="space-y-1 text-xs">
-                      {r.trace.slice(runs.diverge, runs.diverge + 3).map((s) => (
-                        <li key={s.index} className={cn("rounded px-2 py-1 [font-variant-ligatures:none]", s.index === runs.diverge ? "bg-amber-500/15 text-foreground" : "text-muted-foreground")}>
-                          <span className="font-mono">#{s.index + 1}</span> {s.what}
-                        </li>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {scenario.watch.filter((s) => s !== "clk").map((s) => (
+                        <ValueChip key={s} name={s} value={o.finalValues[s]} />
                       ))}
-                    </ol>
-                    <StepWaveform
-                      signals={scenario.watch.filter((s) => s !== "clk")}
-                      bitSignals={["d", "q1", "q2"]}
-                      snapshots={r.trace.map((s) => s.values)}
-                      currentIndex={runs.diverge}
-                      axisLabel="Cursor marks the first step where the runs differ. All steps are at t = 10 ns."
-                    />
+                    </div>
+                    <p className={cn("mt-2 text-xs font-medium", faithful ? comparisonStyles.match.className : comparisonStyles.mismatch.className)}>
+                      {faithful ? comparisonStyles.match.glyph : comparisonStyles.mismatch.glyph}{" "}
+                      {faithful ? "Matches real flip-flop hardware" : "Differs from real flip-flop hardware"} ({comparisonStyles.expected.tag}{" "}
+                      {Object.entries(expected).map(([k, v]) => `${k}=${formatValue(v)}`).join(", ")})
+                    </p>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
-          ) : null}
-        </div>
+            <p className="text-xs text-muted-foreground">
+              <strong className="text-foreground">Hardware reference: </strong>
+              {bench.expectedWhy}
+            </p>
+
+            {hazards.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-foreground">Where the race lives</p>
+                <CodeTrace label="Racing write → read" lines={lines} contextKeys={hazardKeys} activeKey={hazards[0].reader.stmtId} />
+                <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                  {hazards.map((h) => (
+                    <li key={`${h.writer.stmtId}-${h.reader.stmtId}`}>{h.explanation}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : exploration.deterministic && !exploration.outcomes.every((o) => outcomeMatchesExpected(o.finalValues)) ? (
+              <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+                Deterministic is not the same as correct: every order agrees, but the result does not match what real flops would do. #0 changed <em>when</em> a process
+                reads, not whether the code models hardware.
+              </p>
+            ) : null}
+
+            {runs ? (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-foreground">Compare two executions — they split at step {runs.diverge + 1}</p>
+                <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+                  {[runs.r1, runs.r2].map((r, idx) => (
+                    <div key={idx} className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Run {idx + 1}: {r.executionOrder.map(labelOf).join(" → ")}
+                      </p>
+                      <ol className="space-y-1 text-xs">
+                        {r.trace.slice(runs.diverge, runs.diverge + 3).map((s) => (
+                          <li key={s.index} className={cn("rounded px-2 py-1 [font-variant-ligatures:none]", s.index === runs.diverge ? "bg-amber-500/15 text-foreground" : "text-muted-foreground")}>
+                            <span className="font-mono">#{s.index + 1}</span> {s.what}
+                          </li>
+                        ))}
+                      </ol>
+                      <StepWaveform
+                        signals={scenario.watch.filter((s) => s !== "clk")}
+                        bitSignals={["d", "q1", "q2"]}
+                        snapshots={r.trace.map((s) => s.values)}
+                        currentIndex={runs.diverge}
+                        axisLabel="Cursor marks the first step where the runs differ. All steps are at t = 10 ns."
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </PredictionPrompt>
     </section>
   );

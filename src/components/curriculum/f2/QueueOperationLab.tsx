@@ -1,19 +1,25 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
 import { HintLadder } from "@/components/visual-system/HintLadder";
+import { PlaybackControls } from "@/components/visual-system/PlaybackControls";
 import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { usePlayback, type PlaybackApi } from "@/components/visual-system/usePlayback";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
   applyQueueOp,
   createQueue,
+  formatElem,
   formatElemList,
   queueOverflowChoices,
+  queueProgramChoices,
   runQueueComparison,
+  runQueueProgram,
   type QueueOp,
+  type QueueProgramRun,
   type SvElem,
 } from "@/lib/systemverilog-array-model";
 import { cn } from "@/lib/utils";
@@ -97,8 +103,121 @@ const ASSUMPTIONS = [
 const fieldClass =
   "h-10 w-16 rounded-md border border-border bg-background px-2 font-mono text-sm [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-export const QueueOperationLab: React.FC = () => {
-  const [presetId, setPresetId] = useState(PRESETS[0].id);
+/* -------------------------------------------------------------------------- */
+/* Mixed scenario: predict a whole op sequence on an unbounded queue (§7.10.2). */
+/* -------------------------------------------------------------------------- */
+
+const MIXED_ID = "mixed";
+const MIXED_INITIAL: SvElem[] = [1, 2, 3];
+const MIXED_PROGRAM: QueueOp[] = [
+  { op: "push_front", value: 0 },
+  { op: "insert", index: 2, value: 9 },
+  { op: "pop_back" },
+  { op: "push_back", value: 7 },
+];
+
+const MIXED_ASSUMPTIONS = [
+  "Implements IEEE 1800-2023 §7.10.2: insert (§7.10.2.2), pop_back (§7.10.2.5), push_front (§7.10.2.6) and push_back (§7.10.2.7) on an unbounded int q[$].",
+  "Each wrong option is computed by running the program under one misreading: insert as 'after i', pop_back as the front, or a pop as a peek.",
+];
+
+/** Calls `onReveal` once when mounted inside a PredictionPrompt's revealed content. */
+function RevealSignal({ onReveal }: { onReveal: () => void }) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+    onReveal();
+  }, [onReveal]);
+  return null;
+}
+
+function MixedStepView({ run, playback }: { run: QueueProgramRun; playback: PlaybackApi }) {
+  const i = playback.index;
+  const step = i > 0 ? run.steps[i - 1] : null;
+  const values = step ? step.result.after.values : run.start.values;
+  const live = step
+    ? `Step ${i}: ${step.result.code} q is now ${formatElemList(values)}.${step.result.returned ? ` ${step.result.returned.label} = ${formatElem(step.result.returned.value as SvElem)}.` : ""}${step.shifts.length ? ` ${step.shifts.length} item(s) changed index.` : ""}`
+    : `Start: q = ${formatElemList(values)}.`;
+  return (
+    <div className="space-y-3" data-testid="mixed-steps">
+      <PlaybackControls
+        playback={playback}
+        stepCount={run.steps.length + 1}
+        stepNoun="Queue step"
+        describeStep={(k) => (k === 0 ? "start" : run.steps[k - 1].result.code)}
+      />
+      <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+        <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{step ? step.result.code : "int q[$] = '{1, 2, 3};"}</p>
+        <ElementStrip name="q" values={values} changed={step?.result.changedIndices} />
+        {step?.result.returned ? (
+          <p className="font-mono text-sm text-foreground [font-variant-ligatures:none]">
+            {step.result.returned.label} = {formatElem(step.result.returned.value as SvElem)}
+          </p>
+        ) : null}
+        {step ? (
+          step.shifts.length ? (
+            <ul aria-label="Index shifts" className="flex flex-wrap gap-1.5">
+              {step.shifts.map((sh) => (
+                <li key={`${sh.from}-${sh.to}`} className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] text-amber-900 [font-variant-ligatures:none] dark:text-amber-100">
+                  {formatElem(sh.value)}: [{sh.from}] → [{sh.to}]
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">No surviving item changed index.</p>
+          )
+        ) : null}
+        {step ? (
+          <p className="text-sm text-foreground">
+            <strong>Why: </strong>
+            {step.result.why} <span className="text-xs text-muted-foreground">({step.result.clause})</span>
+          </p>
+        ) : null}
+      </div>
+      <p className="sr-only" aria-live="polite">
+        {live}
+      </p>
+    </div>
+  );
+}
+
+function MixedSequence() {
+  const run = useMemo(() => runQueueProgram(MIXED_INITIAL, MIXED_PROGRAM), []);
+  const choices = useMemo(() => queueProgramChoices(MIXED_INITIAL, MIXED_PROGRAM), []);
+  const playback = usePlayback(run.steps.length + 1, MIXED_ID);
+  const [revealed, setRevealed] = useState(false);
+  const onReveal = React.useCallback(() => setRevealed(true), []);
+  const codeLines: CodeTraceLine[] = [
+    { text: `int q[$] = ${formatElemList(MIXED_INITIAL)};`, key: "s0", owner: "testbench" },
+    { text: "int v;", key: "v" },
+    ...run.steps.map((st, i) => ({ text: st.result.code, key: `s${i + 1}`, owner: "testbench" as const })),
+  ];
+  return (
+    <div className="space-y-4" data-testid="mixed-sequence">
+      <CodeTrace label="Program" lines={codeLines} activeKey={revealed ? `s${playback.index}` : undefined} />
+      <PredictionPrompt
+        resetKey={MIXED_ID}
+        question={<>After the four calls, what does <code className="font-mono [font-variant-ligatures:none]">q</code> hold, and what did <code className="font-mono [font-variant-ligatures:none]">pop_back()</code> return?</>}
+        options={choices}
+      >
+        <RevealSignal onReveal={onReveal} />
+        <MixedStepView run={run} playback={playback} />
+      </PredictionPrompt>
+    </div>
+  );
+}
+
+const SCENARIO_OPTIONS = [...PRESETS.map((p) => ({ value: p.id, label: p.label })), { value: MIXED_ID, label: "Mixed op sequence" }];
+
+export interface QueueOperationLabProps {
+  /** "urgent", "burst", "insert", "drain" (bounded-queue comparisons) or "mixed" (an op sequence on q[$]). */
+  initialScenario?: string;
+}
+
+export function QueueOperationLab({ initialScenario }: QueueOperationLabProps = {}) {
+  const startId = SCENARIO_OPTIONS.some((o) => o.value === initialScenario) ? (initialScenario as string) : PRESETS[0].id;
+  const [presetId, setPresetId] = useState(startId);
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0];
   const [bound, setBound] = useState<"2" | "3" | "4">("3");
   const [program, setProgram] = useState<QueueOp[]>(preset.program);
@@ -114,8 +233,9 @@ export const QueueOperationLab: React.FC = () => {
   const resetKey = `${presetId}|${bound}|${formatElemList(initial)}|${program.map(opSuffix).join(";")}`;
 
   const choosePreset = (id: string) => {
-    const next = PRESETS.find((p) => p.id === id) ?? PRESETS[0];
     setPresetId(id);
+    if (id === MIXED_ID) return;
+    const next = PRESETS.find((p) => p.id === id) ?? PRESETS[0];
     setProgram(next.program);
     setInitial(next.initial);
     if (Number(bound) + 1 < next.initial.length) setBound("3");
@@ -188,6 +308,24 @@ export const QueueOperationLab: React.FC = () => {
     </div>
   );
 
+  if (presetId === MIXED_ID) {
+    return (
+      <VisualFrame
+        label="Queue operation sequence"
+        eyebrow="Predict, then scrub"
+        title={<span className="font-mono [font-variant-ligatures:none]">int q[$]: four calls in a row</span>}
+        summary="Predict the final queue and the popped value before anything runs. Then step through the calls and watch which items change index."
+        fidelity="model"
+        assumptions={MIXED_ASSUMPTIONS}
+      >
+        <div className="space-y-4" data-testid="queue-operation-lab">
+          <SegmentedControl label="Scenario" options={SCENARIO_OPTIONS} value={presetId} onChange={choosePreset} />
+          <MixedSequence />
+        </div>
+      </VisualFrame>
+    );
+  }
+
   return (
     <VisualFrame
       label="Bounded queue comparison"
@@ -202,7 +340,7 @@ export const QueueOperationLab: React.FC = () => {
       assumptions={ASSUMPTIONS}
     >
       <div className="space-y-4" data-testid="queue-operation-lab">
-        <SegmentedControl label="Scenario" options={PRESETS.map((p) => ({ value: p.id, label: p.label }))} value={presetId} onChange={choosePreset} />
+        <SegmentedControl label="Scenario" options={SCENARIO_OPTIONS} value={presetId} onChange={choosePreset} />
         <div className="flex flex-wrap items-center gap-3">
           <SegmentedControl
             label="Bound"
@@ -276,6 +414,6 @@ export const QueueOperationLab: React.FC = () => {
       </div>
     </VisualFrame>
   );
-};
+}
 
 export default QueueOperationLab;

@@ -19,6 +19,17 @@ import {
   runQueueComparison,
   validateDimensions,
   wrapToWidth,
+  accessOp,
+  accessSemanticsQuestions,
+  declarationWithContents,
+  deleteWalkSteps,
+  queueIndexShifts,
+  queueProgramChoices,
+  queueSlice,
+  queueSliceChoices,
+  queueWriteChoices,
+  runQueueProgram,
+  type QueueOp,
 } from "@/lib/systemverilog-array-model";
 
 describe("SystemVerilog array visualization model", () => {
@@ -296,5 +307,327 @@ describe("container predictions", () => {
 
   it("does not gate routine operations", () => {
     expect(predictContainerOp(createQueue("q", "int", null, [1]), { op: "push_back", value: 2 })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Access semantics, slices, indexed writes, delete walks and op sequences.
+// ---------------------------------------------------------------------------
+
+const correctLabel = (opts: { label: string; correct: boolean }[]) => opts.filter((o) => o.correct).map((o) => o.label);
+
+describe("associative-array access semantics (§7.8.6, §7.8.7, §7.9.11)", () => {
+  const plain = () => createAssocArray("a", "int", "int", [[3, 7]]);
+  const withDefault = () => createAssocArray("a", "int", "int", [[3, 7]], 1);
+
+  it("§7.9.11: a declared default appears in the literal", () => {
+    expect(declarationWithContents(withDefault())).toBe("int a[int] = '{3:7, default:1};");
+    expect(declarationWithContents(createAssocArray("a", "int", "int", [], 1))).toBe("int a[int] = '{default:1};");
+    expect(declarationWithContents(plain())).toBe("int a[int] = '{3:7};");
+  });
+
+  it("§7.8.6/§7.9.11: with a declared default a missing read returns it, without a warning, and allocates nothing", () => {
+    const r = applyAssocOp(withDefault(), { op: "read", key: 1 });
+    expect(r.returned?.value).toBe(1);
+    expect(r.diagnostics).toHaveLength(0);
+    expect(r.after.entries).toHaveLength(1);
+  });
+
+  it("§7.8.7: the standard's example: int a[int] = '{default:1}; a[1]++ allocates a[1] at 1, which then becomes 2", () => {
+    const a = createAssocArray("a", "int", "int", [], 1);
+    const r = applyAssocOp(a, { op: "rmw", key: 1, form: "increment" });
+    expect(r.code).toBe("a[1]++;");
+    expect(r.after.entries).toEqual([{ key: 1, value: 2 }]);
+    expect(r.diagnostics).toHaveLength(0);
+    expect(r.why).toMatch(/allocates it first with its user-specified default 1.*writes 2/);
+    expect(r.clause).toBe("§7.8.7");
+  });
+
+  it("§7.8.7: aa[k] += 2 without a default allocates at the Table 7-1 value 0 and writes 2", () => {
+    const r = applyAssocOp(plain(), { op: "rmw", key: 1, form: "add-assign", amount: 2 });
+    expect(r.code).toBe("a[1] += 2;");
+    expect(r.after.entries.map((e) => [e.key, e.value])).toEqual([[1, 2], [3, 7]]);
+  });
+
+  it("§7.8.7, §11.4.3: on logic [7:0] a read-modify-write of a missing key allocates 'x, and x + 1 stays x", () => {
+    const r = applyAssocOp(createAssocArray("a", "logic8", "int"), { op: "rmw", key: 1, form: "increment" });
+    expect(r.after.entries).toEqual([{ key: 1, value: "X" }]);
+    expect(r.clause).toBe("§7.8.7, §11.4.3");
+  });
+
+  it("wraps an existing logic [7:0] entry at 255 + 1 to 0 (the element width)", () => {
+    const r = applyAssocOp(createAssocArray("a", "logic8", "int", [[1, 255]]), { op: "rmw", key: 1, form: "increment" });
+    expect(r.after.entries).toEqual([{ key: 1, value: 0 }]);
+  });
+
+  it("§7.8.7: a ref actual allocates the entry, with a caveat about the initial value", () => {
+    const r = applyAssocOp(withDefault(), { op: "ref-arg", key: 1 });
+    expect(r.code).toBe("v = peek(a[1]);");
+    expect(r.returned?.value).toBe(1);
+    expect(r.after.entries).toHaveLength(2);
+    expect(r.caveat).toMatch(/says only that the entry is allocated/);
+  });
+
+  it("§7.8.6/§7.8.4: an x index read warns and returns Table 7-1; an x index write is ignored with a warning", () => {
+    const read = applyAssocOp(createAssocArray("a", "logic8", "int"), { op: "read", key: 0, xIndex: true });
+    expect(read.code).toBe("v = a[kx];");
+    expect(read.returned?.value).toBe("X");
+    expect(read.diagnostics[0]).toMatchObject({ level: "warning", clause: "§7.8.6" });
+    const write = applyAssocOp(plain(), { op: "write", key: 0, value: 5, xIndex: true });
+    expect(write.after.entries).toHaveLength(1);
+    expect(write.diagnostics[0]).toMatchObject({ level: "warning", clause: "§7.8.6" });
+  });
+
+  it("§7.8.6: an x index read with a declared default carries a caveat instead of a stronger claim", () => {
+    expect(applyAssocOp(withDefault(), { op: "read", key: 0, xIndex: true }).caveat).toMatch(/does not say whether/);
+  });
+
+  it("§7.9.11: a default changes no method: exists() is still 0 and num() counts written keys", () => {
+    const s = withDefault();
+    expect(applyAssocOp(s, { op: "exists", key: 1 }).returned?.value).toBe(0);
+    expect(applyAssocOp(s, { op: "num" }).returned?.value).toBe(1);
+  });
+
+  it("§7.8.6/§7.8.7: the three predictions for a plain missing read: v = 0, a required warning, num() unchanged", () => {
+    const q = accessSemanticsQuestions(plain(), accessOp("read", 1));
+    expect(correctLabel(q.find((x) => x.aspect === "value")!.options)).toEqual(["v = 0"]);
+    expect(correctLabel(q.find((x) => x.aspect === "warning")!.options)).toEqual(["A warning is required"]);
+    expect(correctLabel(q.find((x) => x.aspect === "num")!.options)).toEqual(["num() = 1"]);
+  });
+
+  it("§7.8.7: predictions for a[1]++ with '{default:1}: 2 afterwards, no warning, num() + 1; 'default ignored' is a distractor", () => {
+    const q = accessSemanticsQuestions(withDefault(), accessOp("increment", 1));
+    const value = q.find((x) => x.aspect === "value")!;
+    expect(correctLabel(value.options)).toEqual(["a[1] = 2 afterwards"]);
+    expect(value.options.find((o) => o.id === "default-ignored")?.label).toBe("a[1] = 1 afterwards");
+    expect(correctLabel(q.find((x) => x.aspect === "warning")!.options)).toEqual(["No warning"]);
+    expect(correctLabel(q.find((x) => x.aspect === "num")!.options)).toEqual(["num() = 2"]);
+  });
+
+  it("§7.9.2: delete of a missing key has no value question and no warning", () => {
+    const q = accessSemanticsQuestions(plain(), accessOp("delete-key", 1));
+    expect(q.map((x) => x.aspect)).toEqual(["warning", "num"]);
+    expect(correctLabel(q[0].options)).toEqual(["No warning"]);
+  });
+
+  it("every access question has exactly one correct option", () => {
+    for (const s of [plain(), withDefault(), createAssocArray("a", "logic8", "int", [[3, 7]])]) {
+      for (const st of ["read", "write", "increment", "add-assign", "ref-arg", "exists", "delete-key"] as const) {
+        for (const key of [1, 3]) {
+          for (const q of accessSemanticsQuestions(s, accessOp(st, key))) {
+            expect(q.options.filter((o) => o.correct)).toHaveLength(1);
+            expect(new Set(q.options.map((o) => o.label)).size).toBe(q.options.length);
+          }
+        }
+      }
+    }
+  });
+
+  it("every value question offers at least two computed wrong options besides the error option", () => {
+    const states = [plain(), withDefault(), createAssocArray("a", "logic8", "int", [[3, 7]]), createAssocArray("a", "logic8", "int", [[3, 7]], 1)];
+    for (const s of states) {
+      for (const st of ["read", "write", "increment", "add-assign", "ref-arg", "exists"] as const) {
+        for (const key of [1, 3]) {
+          const v = accessSemanticsQuestions(s, accessOp(st, key)).find((q) => q.aspect === "value")!;
+          expect(v.options.filter((o) => o.id !== "fatal" && !o.correct).length, `${st} k=${key}`).toBeGreaterThanOrEqual(1);
+          expect(v.options.length, `${st} k=${key}`).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+  });
+
+  it("§7.8.7: a[1] = 5 on a missing key offers 'No entry is written' as a computed wrong option", () => {
+    const v = accessSemanticsQuestions(plain(), accessOp("write", 1)).find((q) => q.aspect === "value")!;
+    expect(correctLabel(v.options)).toEqual(["a[1] = 5 afterwards"]);
+    const wrong = v.options.find((o) => o.label === "No entry is written")!;
+    expect(wrong.correct).toBe(false);
+    expect(wrong.feedback).toMatch(/target of an assignment is allocated \(§7\.8\.7\)/);
+  });
+
+  it("§7.8.6/§7.9.11: reading an existing key offers the Table 7-1 value and the declared default as wrong options", () => {
+    const v = accessSemanticsQuestions(withDefault(), accessOp("read", 3)).find((q) => q.aspect === "value")!;
+    expect(correctLabel(v.options)).toEqual(["v = 7"]);
+    expect(v.options.find((o) => o.label === "v = 0")?.feedback).toMatch(/Table 7-1 value is only what a nonexistent entry reads as/);
+    expect(v.options.find((o) => o.label === "v = 1")?.feedback).toMatch(/§7\.9\.11/);
+  });
+
+  it("the 'no warning' answer for ++, += and a ref actual on a missing key says it is inferred from §7.8.7", () => {
+    for (const st of ["increment", "add-assign", "ref-arg"] as const) {
+      const w = accessSemanticsQuestions(plain(), accessOp(st, 1)).find((q) => q.aspect === "warning")!;
+      expect(correctLabel(w.options)).toEqual(["No warning"]);
+      expect(w.options[0].feedback).toMatch(/does not state "no warning" for this case directly; the lab infers it from §7\.8\.7/);
+    }
+  });
+
+  it("predictContainerOp gates rmw and ref-arg on the allocation question", () => {
+    const p = predictContainerOp(plain(), { op: "rmw", key: 1, form: "increment" });
+    expect(correctLabel(p!.options)).toEqual(["num() = 2"]);
+    expect(predictContainerOp(plain(), { op: "ref-arg", key: 1 })).not.toBeNull();
+  });
+});
+
+describe("queue slices and indexed writes (§7.10.1)", () => {
+  const q = createQueue("q", "int", null, [10, 20, 30, 40]);
+  const slice = (a: number | "X", b: number | "X") => queueSlice(q.values, a, b).values;
+
+  it("§7.10.1: Q[a:b] yields b-a+1 items", () => {
+    expect(slice(1, 2)).toEqual([20, 30]);
+    expect(slice(0, 0)).toEqual([10]);
+  });
+  it("§7.10.1: a > b yields the empty queue", () => {
+    expect(slice(2, 1)).toEqual([]);
+  });
+  it("§7.10.1: a < 0 is treated as 0 and b > $ as $", () => {
+    expect(slice(-1, 1)).toEqual([10, 20]);
+    expect(slice(2, 9)).toEqual([30, 40]);
+    expect(queueSlice(q.values, -1, 1).why).toMatch(/a = -1 < 0 is treated as 0/);
+  });
+  it("§7.10.1: Q[n:n] with n outside 0..$ yields {}, and clamping past both ends can leave a > b", () => {
+    expect(slice(7, 7)).toEqual([]);
+    expect(slice(-3, -1)).toEqual([]);
+    expect(slice(5, 9)).toEqual([]);
+    expect(queueSlice([], 0, 0).values).toEqual([]);
+  });
+  it("§7.10.1: an x bound yields the empty queue", () => {
+    expect(slice("X", 2)).toEqual([]);
+    expect(applyQueueOp(q, { op: "slice", from: "X", to: 2 }).code).toBe("s = q[kx:2];");
+  });
+  it("§7.10.1: slice choices have one correct answer and diagnose exclusive ends and reversal", () => {
+    const c = queueSliceChoices(q.values, 1, 2);
+    expect(correctLabel(c)).toEqual(["'{20, 30}"]);
+    expect(c.find((o) => o.id === "exclusive")?.label).toBe("'{20}");
+    expect(queueSliceChoices(q.values, 2, 1).find((o) => o.id === "reverse")?.label).toBe("'{30, 20}");
+    expect(predictContainerOp(q, { op: "slice", from: 2, to: 9 })?.options.filter((o) => o.correct)).toHaveLength(1);
+  });
+  it("§7.10.1: q[i] inside 0..$ updates in place", () => {
+    const r = applyQueueOp(q, { op: "write", index: 1, value: 5 });
+    expect(r.after.values).toEqual([10, 5, 30, 40]);
+    expect(r.diagnostics).toHaveLength(0);
+  });
+  it("§7.10.1: writing q[$+1] is legal and appends", () => {
+    const r = applyQueueOp(q, { op: "write", index: 4, value: 50 });
+    expect(r.after.values).toEqual([10, 20, 30, 40, 50]);
+    expect(r.clause).toBe("§7.10.1");
+  });
+  it("§7.10.1: a write outside 0..$+1 or with an x index is ignored with a required warning", () => {
+    for (const index of [7, -1, "X"] as const) {
+      const r = applyQueueOp(q, { op: "write", index, value: 1 });
+      expect(r.after.values).toEqual([10, 20, 30, 40]);
+      expect(r.diagnostics[0]).toMatchObject({ level: "warning", clause: "§7.10.1" });
+    }
+  });
+  it("§7.10.1/§7.10.5: q[$+1] on a full bounded queue discards the new item with a warning", () => {
+    const r = applyQueueOp(createQueue("q", "int", 3, [1, 2, 3, 4]), { op: "write", index: 4, value: 9 });
+    expect(r.after.values).toEqual([1, 2, 3, 4]);
+    expect(r.clause).toBe("§7.10.5");
+  });
+  it("§7.10.1/§7.10.5: on a full q[$:3], q[$+1] = 9 is predicted as discarded with a warning, and size() stays 4", () => {
+    const full = createQueue("q", "int", 3, [1, 2, 3, 4]);
+    const op = { op: "write", index: 4, value: 9 } as const;
+    const c = queueWriteChoices(full, op);
+    expect(correctLabel(c)).toEqual(["Discarded with a warning; size() stays 4"]);
+    expect(c.find((o) => o.id === "append")?.feedback).toMatch(/beyond the bound \$:3, so it is discarded with a warning and size\(\) stays 4 \(§7\.10\.5\)/);
+    const p = predictContainerOp(full, op)!;
+    expect(p.question).toMatch(/int q\[\$:3\]/);
+    expect(correctLabel(p.options)).toEqual(["Discarded with a warning; size() stays 4"]);
+    // The answer agrees with what applyQueueOp does.
+    expect(applyQueueOp(full, op).after.values).toHaveLength(4);
+  });
+  it("§7.10.5: on a bounded queue with room, q[$+1] still appends and the discard option is a computed wrong answer", () => {
+    const roomy = createQueue("q", "int", 3, [1, 2]);
+    const c = queueWriteChoices(roomy, { op: "write", index: 2, value: 9 });
+    expect(correctLabel(c)).toEqual(["Appends; size() becomes 3"]);
+    expect(c.find((o) => o.id === "discarded")?.feedback).toMatch(/fits under the bound \$:3/);
+    expect(queueWriteChoices(q, { op: "write", index: 4, value: 50 }).some((o) => o.id === "discarded")).toBe(false);
+  });
+  it("§7.10.5: the discard explanation reads as one sentence for q[$+1], push_back, push_front and insert", () => {
+    const full = createQueue("q", "int", 3, [1, 2, 3, 4]);
+    expect(applyQueueOp(full, { op: "write", index: 4, value: 9 }).why).toBe(
+      "Writing to q[$+1] (index 4) is legal, but as if the queue were unbounded the new element would sit at index 4, beyond the bound $:3, so it is discarded and a warning is issued; size() stays 4.",
+    );
+    expect(applyQueueOp(full, { op: "push_back", value: 9 }).why).toMatch(/^push_back\(9\) is legal, but as if the queue were unbounded/);
+    expect(applyQueueOp(full, { op: "push_front", value: 9 }).why).toMatch(/^push_front\(9\) is legal, but it shifts the existing elements up; the old last element '\{4\}/);
+    expect(applyQueueOp(full, { op: "insert", index: 1, value: 9 }).why).toMatch(/^insert\(1, 9\) is legal, but it shifts/);
+    expect(applyQueueOp(q, { op: "write", index: 4, value: 50 }).why).toMatch(/^Writing to q\[\$\+1\] \(index 4\) is legal and appends; size\(\) is now 5/);
+  });
+  it("§7.10.1: slicing an empty queue says no index is in range, never 0..-1", () => {
+    expect(queueSlice([], 0, 0).why).toMatch(/the queue is empty, so no n is in range/);
+    expect(queueSlice([], 0, 2).why).toMatch(/The queue is empty, so no index is in range/);
+    for (const [a, b] of [[0, 0], [0, 2], [-1, 3]] as const) expect(queueSlice([], a, b).why).not.toMatch(/-1\)|\(-1|0\.\.-1/);
+  });
+  it("§7.10.1: an x upper bound still gets a distinct wrong answer when reading x as 0 would also give {}", () => {
+    const c = queueSliceChoices(q.values, 1, "X");
+    expect(correctLabel(c)).toEqual(["'{} (empty)"]);
+    expect(c.find((o) => o.id === "x-as-last")?.label).toBe("'{20, 30, 40}");
+    expect(c.length).toBeGreaterThanOrEqual(3);
+  });
+  it("§7.10.1: write choices mark update / append / ignored from the model", () => {
+    expect(queueWriteChoices(q, { op: "write", index: 4, value: 50 }).find((o) => o.correct)?.id).toBe("append");
+    expect(queueWriteChoices(q, { op: "write", index: 7, value: 1 }).find((o) => o.correct)?.id).toBe("ignored");
+    expect(queueWriteChoices(q, { op: "write", index: 0, value: 1 }).find((o) => o.correct)?.id).toBe("update");
+  });
+});
+
+describe("deleting while walking an associative array (§7.9.6, §12.7.3, §7.12.1)", () => {
+  it("§7.9.6: the first()/next() walk deletes 4 and 9, and next() finds 9 after 4 was deleted", () => {
+    const steps = deleteWalkSteps("first-next");
+    const last = steps[steps.length - 1];
+    expect(last.after.entries.map((e) => e.key)).toEqual([1]);
+    const afterDelete4 = steps.find((s) => s.line === "next" && s.before.iter === 4)!;
+    expect(afterDelete4.before.entries.map((e) => e.key)).toEqual([1, 9]);
+    expect(afterDelete4.found).toBe(1);
+    expect(afterDelete4.after.iter).toBe(9);
+    expect(correctLabel(afterDelete4.prediction!.options)).toEqual(["returns 1; id = 9"]);
+  });
+  it("§7.9.6: the final next() returns 0 and leaves id at the deleted key 9", () => {
+    const steps = deleteWalkSteps("first-next");
+    const last = steps[steps.length - 1];
+    expect(last.found).toBe(0);
+    expect(last.after.iter).toBe(9);
+    expect(correctLabel(last.prediction!.options)).toEqual(["returns 0; id = 9"]);
+  });
+  it("§12.7.3: the foreach strategy stops at an undefined outcome and never invents a next step", () => {
+    const steps = deleteWalkSteps("foreach");
+    const last = steps[steps.length - 1];
+    expect(last.undefinedOutcome).toBe(true);
+    expect(last.after.entries.map((e) => e.key)).toEqual([1, 9]);
+    expect(steps.filter((s) => s.undefinedOutcome)).toHaveLength(1);
+    expect(correctLabel(last.prediction!.options)).toEqual(["Undefined: the standard promises no outcome"]);
+  });
+  it("§7.12.1: find_index then delete reads first, deletes second, and notes the unspecified locator order", () => {
+    const steps = deleteWalkSteps("find-index");
+    expect(steps[0].emptyIds).toEqual([4, 9]);
+    expect(steps[0].after.entries).toHaveLength(3);
+    expect(steps[0].why).toMatch(/unspecified order/);
+    expect(steps[steps.length - 1].after.entries.map((e) => e.key)).toEqual([1]);
+  });
+});
+
+describe("a mixed queue program (§7.10.2)", () => {
+  const program: QueueOp[] = [
+    { op: "push_front", value: 0 },
+    { op: "insert", index: 2, value: 9 },
+    { op: "pop_back" },
+    { op: "push_back", value: 7 },
+  ];
+
+  it("§7.10.2: '{1, 2, 3} with push_front(0), insert(2, 9), pop_back(), push_back(7) ends '{0, 1, 9, 2, 7} and pops 3", () => {
+    const run = runQueueProgram([1, 2, 3], program);
+    expect(run.final).toEqual([0, 1, 9, 2, 7]);
+    expect(run.popped).toEqual([3]);
+  });
+  it("§7.10.2.6/§7.10.2.2: push_front shifts every item up; insert(2, ..) shifts items from index 2", () => {
+    const run = runQueueProgram([1, 2, 3], program);
+    expect(run.steps[0].shifts).toEqual([{ value: 1, from: 0, to: 1 }, { value: 2, from: 1, to: 2 }, { value: 3, from: 2, to: 3 }]);
+    expect(run.steps[1].shifts).toEqual([{ value: 2, from: 2, to: 3 }, { value: 3, from: 3, to: 4 }]);
+    expect(run.steps[2].shifts).toEqual([]);
+    expect(queueIndexShifts(createQueue("q", "int", null, [1, 2]), { op: "pop_front" })).toEqual([{ value: 2, from: 1, to: 0 }]);
+  });
+  it("§7.10.2.2/§7.10.2.5: choices diagnose insert-after, pop_back-as-front and pop-as-peek with computed labels", () => {
+    const c = queueProgramChoices([1, 2, 3], program);
+    expect(correctLabel(c)).toEqual(["q = '{0, 1, 9, 2, 7}; popped v = 3"]);
+    expect(c.find((o) => o.id === "insert-after")?.label).toBe("q = '{0, 1, 2, 9, 7}; popped v = 3");
+    expect(c.find((o) => o.id === "pop-back-front")?.label).toBe("q = '{1, 9, 2, 3, 7}; popped v = 0");
+    expect(c.find((o) => o.id === "pop-peek")?.label).toBe("q = '{0, 1, 9, 2, 3, 7}; popped v = 3");
   });
 });

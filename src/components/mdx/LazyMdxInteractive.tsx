@@ -115,6 +115,12 @@ const loaders = {
   DecisionLab: () => import("@/components/visuals/DecisionLab").then(module => asMdxModule(module.default)),
   SelfCheckBenchLab: () => import("@/components/visuals/SelfCheckBenchLab").then(module => asMdxModule(module.default)),
   TimescaleLab: () => import("@/components/visuals/TimescaleLab").then(module => asMdxModule(module.default)),
+  KeywordSetExplorer: () => import("@/components/visuals/KeywordSetExplorer").then(module => asMdxModule(module.default)),
+  CounterBenchLab: () => import("@/components/curriculum/f1/CounterBenchLab").then(module => asMdxModule(module.default)),
+  RunEndingExplorer: () => import("@/components/visuals/RunEndingExplorer").then(module => asMdxModule(module.default)),
+  FileReadCursorVisualizer: () => import("@/components/visuals/FileReadCursorVisualizer").then(module => asMdxModule(module.default)),
+  XCheckLab: () => import("@/components/visuals/XCheckLab").then(module => asMdxModule(module.default)),
+  TimingControlExplorer: () => import("@/components/visuals/TimingControlExplorer").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

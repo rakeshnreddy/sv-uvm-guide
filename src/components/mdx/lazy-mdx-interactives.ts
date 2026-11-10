@@ -94,6 +94,12 @@ export const lazyMdxInteractiveNames = [
   "TimescaleLab",
   "PackedLayoutExplorer",
   "SubroutineLab",
+  "KeywordSetExplorer",
+  "CounterBenchLab",
+  "RunEndingExplorer",
+  "FileReadCursorVisualizer",
+  "XCheckLab",
+  "TimingControlExplorer",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];
