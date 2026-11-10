@@ -10,10 +10,14 @@
  *   unequal width are zero-extended, i.e. operands are treated as unsigned.
  * - Net resolution works on one scalar net. Each driver has one value
  *   (0/1/x/z) and one drive strength applied to both its 0 and its 1
- *   (`assign (strong0, strong1) …`). L/H partial values from gates, charge
+ *   (`assign (strong0, strong1) …`), unless it gives per-value strengths
+ *   such as (strong0, highz1) (§10.3.4). An x driven with two different
+ *   per-value strengths (an L/H-style ambiguous strength, §28.12), charge
  *   decay delays, switches and user-defined nettypes are not modelled.
- * - Driver legality treats a variable as a single element. The standard
- *   checks each element of the longest static prefix separately (§6.5).
+ * - Driver legality checks every bit of a packed variable as its own
+ *   element (§6.5). Writers name constant bit ranges; a select with a
+ *   non-constant index has the whole variable as its longest static prefix
+ *   (§11.5.3), which a writer without a range represents.
  */
 
 /* ------------------------------------------------------------------ */
@@ -534,10 +538,68 @@ export const STRENGTH_ABBREV: Record<StrengthName, string> = {
 export const DRIVE_STRENGTHS: readonly DriveStrength[] = ["supply", "strong", "pull", "weak"];
 export const CHARGE_STRENGTHS: readonly ChargeStrength[] = ["large", "medium", "small"];
 
+/** A strength keyword for one value of a drive strength pair (§10.3.4): supply/strong/pull/weak/highz. */
+export type ValueStrength = DriveStrength | "highz";
+
 export interface NetDriver {
   id: string;
   value: Bit4;
+  /** Strength used for both values unless strength0/strength1 override it. */
   strength: DriveStrength;
+  /** Strength when the driven value is 0 (`strong0`, `highz0` …, §10.3.4). */
+  strength0?: ValueStrength;
+  /** Strength when the driven value is 1 (`strong1`, `highz1` …, §10.3.4). */
+  strength1?: ValueStrength;
+}
+
+export interface StrengthPairCheck {
+  legal: boolean;
+  why: string;
+  clause: string;
+}
+
+/**
+ * §10.3.4: a drive strength pair has one strength for 1 and one for 0; the
+ * pairs (highz1, highz0) and (highz0, highz1) are illegal. With no strength
+ * given, the default is (strong1, strong0).
+ */
+export function checkStrengthPair(strength0: ValueStrength, strength1: ValueStrength): StrengthPairCheck {
+  if (strength0 === "highz" && strength1 === "highz") {
+    return {
+      legal: false,
+      why: "(highz0, highz1) is an illegal strength pair: a driver that is high impedance for both values would never drive anything (§10.3.4).",
+      clause: "§10.3.4",
+    };
+  }
+  return { legal: true, why: `(${strength0}0, ${strength1}1) is a legal strength pair (§10.3.4).`, clause: "§10.3.4" };
+}
+
+const hasPerValueStrength = (d: NetDriver) => d.strength0 !== undefined || d.strength1 !== undefined;
+
+/**
+ * The value and single strength a driver puts on the net once its per-value
+ * strengths are applied. A 0 or 1 driven at highz strength is high impedance:
+ * it sits at level 0 of Table 28-7, so it is returned as value z (§10.3.4,
+ * Table 28-7; compare the open-collector gate example in §28.3.2).
+ * Throws for an illegal pair and for an x driven with two different
+ * per-value strengths, which needs the ambiguous-strength rules of §28.12
+ * that this model does not implement.
+ */
+export function effectiveDriver(driver: NetDriver): NetDriver {
+  if (!hasPerValueStrength(driver)) return driver;
+  const s0 = driver.strength0 ?? driver.strength;
+  const s1 = driver.strength1 ?? driver.strength;
+  const pair = checkStrengthPair(s0, s1);
+  if (!pair.legal) throw new Error(pair.why);
+  const plain = { id: driver.id, strength: driver.strength };
+  if (driver.value === "z") return { ...plain, value: "z" };
+  if (driver.value === "x") {
+    if (s0 !== s1) throw new Error("Not modelled: an x driven with different strengths for 0 and 1 has an ambiguous strength (§28.12).");
+    return { ...plain, value: "x", strength: s0 as DriveStrength };
+  }
+  const s = driver.value === "0" ? s0 : s1;
+  if (s === "highz") return { ...plain, value: "z" };
+  return { ...plain, value: driver.value, strength: s };
 }
 
 export type ResolutionRule =
@@ -627,7 +689,7 @@ export function resolveNet(
     };
   }
 
-  const active: NetDriver[] = drivers.filter((d) => d.value !== "z");
+  const active: NetDriver[] = drivers.map(effectiveDriver).filter((d) => d.value !== "z");
   if (netType === "tri0" || netType === "tri1") {
     active.push({ id: IMPLICIT_PULL_ID, value: netType === "tri0" ? "0" : "1", strength: "pull" });
   }
@@ -672,8 +734,9 @@ export function resolveNet(
   const strength = winners[0].strength;
   const winnerIds = winners.map((d) => d.id);
   const dominatedIds = dominated.map((d) => d.id);
+  const lostList = dominated.map(describeDriver).join(" and ");
   const lostTo = dominated.length
-    ? ` ${dominated.map(describeDriver).join(" and ")} ${dominated.length > 1 ? "are" : "is"} weaker and cannot affect the result (§28.12.1).`
+    ? ` ${lostList.charAt(0).toUpperCase()}${lostList.slice(1)} ${dominated.length > 1 ? "are" : "is"} weaker and cannot affect the result (§28.12.1).`
     : "";
 
   const base = { ok: true as const, value, strength, label: strengthLabel(value, strength), winners: winnerIds, dominated: dominatedIds };
@@ -781,14 +844,78 @@ export function diagnoseNetGuess(netType: NetType, drivers: readonly NetDriver[]
 /* Who may write what (§6.5, §6.6.2, §9.2.2.2, §9.2.2.4, §10.3.2)       */
 /* ------------------------------------------------------------------ */
 
-export type WriterKind = "assign" | "port" | "procedural" | "always_comb" | "always_ff";
+/**
+ * - assign: a continuous assignment.
+ * - port: an implied continuous assignment from a port, e.g. a variable
+ *   connected to the output port of an instance (§6.5).
+ * - procedural / always_comb / always_ff: procedural writes.
+ * - initializer: a declaration initializer. On a variable it counts as a
+ *   procedural assignment for the driver rule (§6.5); on a net it is a net
+ *   declaration assignment, i.e. a continuous assignment (§10.3.1).
+ */
+export type WriterKind = "assign" | "port" | "procedural" | "always_comb" | "always_ff" | "initializer";
 
 export interface Writer {
   id: string;
   kind: WriterKind;
+  /**
+   * Constant bit range [hi, lo] that this writer covers. Omitted means the
+   * whole declaration: a writer of the plain identifier, or of a select with
+   * a non-constant index, whose longest static prefix is the identifier (§11.5.3).
+   */
+  bits?: readonly [number, number];
 }
 
-export type DeclKind = "variable" | NetType;
+/** supply0/supply1 nets (§6.6.6). They appear only in the driver rules, not in resolveNet. */
+export type SupplyNetType = "supply0" | "supply1";
+
+export type DeclKind = "variable" | NetType | SupplyNetType;
+
+export interface UndrivenValue {
+  /** The value an undriven declaration reads; "held" for a trireg that keeps its charge. */
+  value: Bit4 | "held";
+  why: string;
+  clause: string;
+}
+
+/**
+ * What a declaration reads when nothing writes or drives it.
+ * - variable: its default value, x for a 4-state type (Table 6-7).
+ * - wire, tri, wand, triand, wor, trior, uwire: high impedance z (§6.6).
+ * - trireg: holds the previously driven value (§6.6, §6.6.4); never driven,
+ *   that is its initial x (§6.7.1).
+ * - tri0/tri1: 0/1 at pull strength (§6.6.5).
+ * - supply0/supply1: model ground and power at supply strength (§6.6.6, §28.15.3).
+ */
+export function undrivenValue(decl: DeclKind): UndrivenValue {
+  if (decl === "variable") {
+    return { value: "x", why: "No writer covers it, so it keeps its default value (x for a 4-state variable, Table 6-7).", clause: "Table 6-7" };
+  }
+  if (decl === "trireg") {
+    return {
+      value: "held",
+      why: "No driver covers it. A trireg is the exception to z: an undriven trireg holds its previously driven value (§6.6, §6.6.4). Never driven at all, it keeps its initial x (§6.7.1).",
+      clause: "§6.6, §6.6.4, §6.7.1",
+    };
+  }
+  if (decl === "tri0" || decl === "tri1") {
+    const v = decl === "tri0" ? "0" : "1";
+    return {
+      value: v,
+      why: `No driver covers it, so the ${decl} net reads ${v} at pull strength: it models a resistive pull${v === "0" ? "down" : "up"} (§6.6.5).`,
+      clause: "§6.6.5",
+    };
+  }
+  if (decl === "supply0" || decl === "supply1") {
+    const v = decl === "supply0" ? "0" : "1";
+    return {
+      value: v,
+      why: `A ${decl} net models a ${v === "0" ? "ground connection" : "connection to a power supply"} and has supply strength, so with no other driver it reads ${v} (§6.6.6, §28.15.3).`,
+      clause: "§6.6.6, §28.15.3",
+    };
+  }
+  return { value: "z", why: `No driver covers it, so the ${decl} net is high impedance, z (§6.6).`, clause: "§6.6" };
+}
 
 export type DriverErrorClass =
   | "multiple-continuous-on-variable"
@@ -797,32 +924,73 @@ export type DriverErrorClass =
   | "always-block-shared"
   | "uwire-multiple-drivers";
 
+export interface BitDriverReport {
+  /** Bit index (MSB = width - 1). */
+  index: number;
+  /** Ids of the writers that cover this bit. */
+  writers: string[];
+  /** The check for this bit alone, or null when no writer covers it. */
+  check: DriverCheck | null;
+}
+
 export interface DriverCheck {
+  /** True when the standard guarantees the code is legal. */
   legal: boolean;
-  outcome: "net-resolves" | "single-driver" | "last-write-wins" | "compile-error";
+  outcome: "net-resolves" | "single-driver" | "last-write-wins" | "compile-error" | "tool-dependent" | "no-writer";
   errorClass?: DriverErrorClass;
   /** Generic error class wording, not a vendor message. */
   message: string;
   why: string;
   clause: string;
+  /** Per-bit report, MSB first (one entry when no writer has a bit range). */
+  bits?: BitDriverReport[];
+  /** Bits that break a rule (compile-error) or that the standard leaves open (tool-dependent), MSB first. */
+  flaggedBits?: number[];
+  /** The flagged bits that break a rule (compile-error), MSB first. */
+  errorBits?: number[];
+  /** The flagged bits the standard leaves to the tool (tool-dependent), MSB first. */
+  openBits?: number[];
 }
 
-const isContinuous = (k: WriterKind) => k === "assign" || k === "port";
+/** Short tag for the kind of conflict on one element, from its error class. */
+export const DRIVER_CONFLICT_TAG: Record<DriverErrorClass, string> = {
+  "multiple-continuous-on-variable": "two continuous",
+  "mixed-continuous-procedural": "continuous + procedural",
+  "procedural-on-net": "procedural on a net",
+  "always-block-shared": "two processes",
+  "uwire-multiple-drivers": "two drivers on a uwire",
+};
 
-/**
- * Checks whether a set of writers is legal for a declaration.
- * - Nets: one or more continuous drivers (assign, ports) are resolved by the
- *   net type; a net cannot be procedurally assigned (§6.5). A uwire allows
- *   only one driver (§6.6.2).
- * - Variables: any number of procedural writers, last write wins; OR exactly
- *   one continuous assignment or port. Multiple continuous assignments, or a
- *   mix of procedural and continuous, are errors (§6.5, §10.3.2).
- * - A variable written by always_comb/always_ff shall not be written by any
- *   other process (§9.2.2.2, §9.2.2.4).
- */
-export function checkDrivers(decl: DeclKind, writers: readonly Writer[]): DriverCheck {
-  const continuous = writers.filter((w) => isContinuous(w.kind));
-  const procedural = writers.filter((w) => !isContinuous(w.kind));
+/** Tag for one bit's card: the conflict kind with its clause, "open" with its clause, or null when allowed. */
+export function bitConflictTag(check: DriverCheck | null): string | null {
+  if (!check) return null;
+  if (check.outcome === "tool-dependent") return `open (${check.clause})`;
+  if (check.outcome === "compile-error" && check.errorClass) return `${DRIVER_CONFLICT_TAG[check.errorClass]} (${check.clause})`;
+  return null;
+}
+
+/** Whether this writer is a continuous driver of a declaration of this kind (§6.5, §10.3.1). */
+export const isContinuousWriter = (kind: WriterKind, decl: DeclKind) =>
+  kind === "assign" || kind === "port" || (kind === "initializer" && decl !== "variable");
+
+const isExclusiveProcess = (k: WriterKind): k is "always_comb" | "always_ff" => k === "always_comb" || k === "always_ff";
+const exclusiveClause = (k: "always_comb" | "always_ff") => (k === "always_comb" ? "§9.2.2.2" : "§9.2.2.4");
+
+/** Checks the writers of one element (one bit, or an undivided variable). */
+function checkElement(decl: DeclKind, writers: readonly Writer[]): DriverCheck {
+  const continuous = writers.filter((w) => isContinuousWriter(w.kind, decl));
+  const procedural = writers.filter((w) => !isContinuousWriter(w.kind, decl));
+  const hasInit = procedural.some((w) => w.kind === "initializer");
+
+  if (writers.length === 0) {
+    return {
+      legal: true,
+      outcome: "no-writer",
+      message: "Legal: nothing writes it",
+      why: undrivenValue(decl).why,
+      clause: undrivenValue(decl).clause,
+    };
+  }
 
   if (decl !== "variable") {
     if (procedural.length > 0) {
@@ -869,7 +1037,7 @@ export function checkDrivers(decl: DeclKind, writers: readonly Writer[]): Driver
       errorClass: "multiple-continuous-on-variable",
       message: "Compile error: multiple continuous drivers on a variable",
       why: "A variable can be written by one continuous assignment or port only. Variables have no resolution function, so two continuous drivers are an error rather than an x (§6.5, §10.3.2). Use a net (wire/tri) if several drivers really share the signal.",
-      clause: "§6.5",
+      clause: "§6.5, §10.3.2",
     };
   }
   if (continuous.length === 1 && procedural.length > 0) {
@@ -878,19 +1046,35 @@ export function checkDrivers(decl: DeclKind, writers: readonly Writer[]): Driver
       outcome: "compile-error",
       errorClass: "mixed-continuous-procedural",
       message: "Compile error: variable has both continuous and procedural assignments",
-      why: "Mixing a continuous assignment with procedural writes to the same variable is an error (§6.5, §10.3.2).",
-      clause: "§6.5",
+      why: hasInit
+        ? "A declaration initializer counts as a procedural assignment for this rule, so an initializer together with a continuous driver is a mix of procedural and continuous assignments, which is an error (§6.5). §10.3.2 states it directly: a variable driven by a continuous assignment or output shall not have an initializer in its declaration."
+        : "Mixing a continuous assignment with procedural writes to the same variable is an error (§6.5, §10.3.2).",
+      clause: "§6.5, §10.3.2",
     };
   }
-  const exclusive = procedural.find((w) => w.kind === "always_comb" || w.kind === "always_ff");
-  if (exclusive && procedural.length > 1) {
+  const exclusive = procedural.find((w) => isExclusiveProcess(w.kind));
+  if (exclusive && isExclusiveProcess(exclusive.kind) && procedural.length > 1) {
+    const clause = exclusiveClause(exclusive.kind);
+    const otherProcesses = procedural.filter((w) => w !== exclusive && w.kind !== "initializer");
+    if (otherProcesses.length > 0) {
+      // Every always_comb / always_ff among the writers is broken by the others, so cite each one's clause.
+      const kinds = (["always_comb", "always_ff"] as const).filter((k) => procedural.some((w) => w.kind === k));
+      const clauses = kinds.map(exclusiveClause).join(", ");
+      return {
+        legal: false,
+        outcome: "compile-error",
+        errorClass: "always-block-shared",
+        message: `Compile error: variable written by ${exclusive.kind} is also written by another process`,
+        why: `Variables assigned in ${kinds.join(" or ")} shall not be written by any other process (${clauses}).`,
+        clause: clauses,
+      };
+    }
     return {
       legal: false,
-      outcome: "compile-error",
-      errorClass: "always-block-shared",
-      message: `Compile error: variable written by ${exclusive.kind} is also written by another process`,
-      why: `Variables assigned in ${exclusive.kind} shall not be written by any other process (${exclusive.kind === "always_comb" ? "§9.2.2.2" : "§9.2.2.4"}).`,
-      clause: exclusive.kind === "always_comb" ? "§9.2.2.2" : "§9.2.2.4",
+      outcome: "tool-dependent",
+      message: "Not settled by the standard: a tool may accept or reject it",
+      why: `For the §6.5 rule the initializer is a procedural assignment, and §6.5 allows several procedural writers. ${clause} forbids writes by any other process. §4.3 counts procedural assignment statements among its examples of processes, and §10.5 calls the variable declaration assignment a special case of procedural assignment, but no clause says whether ${clause} applies to it. A static variable's initializer also runs before any procedure starts (§6.8, §10.5). A tool may accept or reject this, so avoid it: set the value inside the ${exclusive.kind} instead.`,
+      clause: `§6.5, ${clause}`,
     };
   }
   if (procedural.length > 1) {
@@ -898,7 +1082,9 @@ export function checkDrivers(decl: DeclKind, writers: readonly Writer[]): Driver
       legal: true,
       outcome: "last-write-wins",
       message: "Legal: the last procedural write wins",
-      why: "Variables can be written by several procedural statements and the last write determines the value (§6.5). Nothing resolves and no x appears. If the writes happen in the same time step, which one is last depends on process order: that is a race (§4.7).",
+      why: hasInit
+        ? "The initializer and the procedure are both procedural writes, which a variable allows; the last write determines the value (§6.5). A static variable's initializer runs before any procedure starts (§6.8, §10.5), so the procedure's writes come after it."
+        : "Variables can be written by several procedural statements and the last write determines the value (§6.5). Nothing resolves and no x appears. If the writes happen in the same time step, which one is last depends on process order: that is a race (§4.7).",
       clause: "§6.5",
     };
   }
@@ -906,9 +1092,305 @@ export function checkDrivers(decl: DeclKind, writers: readonly Writer[]): Driver
     legal: true,
     outcome: "single-driver",
     message: "Legal: one writer",
-    why: "One writer, so the variable simply holds what it last received.",
+    why:
+      procedural[0]?.kind === "initializer"
+        ? "Only the initializer writes it: a static variable takes that value once, before any procedure starts, and keeps it (§6.8, §10.5)."
+        : "One writer, so the variable simply holds what it last received.",
     clause: "§6.5",
   };
+}
+
+/** Text of a select of `name` for a bit range: `v`, `v[1]` or `v[3:2]`. */
+export function selectText(name: string, bits: readonly [number, number] | undefined, width: number): string {
+  if (!bits) return name;
+  const [hi, lo] = bits;
+  if (hi === width - 1 && lo === 0) return name;
+  return hi === lo ? `${name}[${hi}]` : `${name}[${hi}:${lo}]`;
+}
+
+const covers = (w: Writer, index: number) => !w.bits || (w.bits[1] <= index && index <= w.bits[0]);
+
+const bitPhrase = (report: BitDriverReport): string => {
+  const c = report.check;
+  if (!c) return "no writer";
+  const who = listIds(report.writers);
+  if (c.outcome === "net-resolves") return `${who}, resolved by the net`;
+  if (c.outcome === "last-write-wins") return `${who}, procedural writes only`;
+  return who;
+};
+
+/**
+ * Checks whether a set of writers is legal for a declaration.
+ * - Nets: one or more continuous drivers (assign, ports) are resolved by the
+ *   net type; a net cannot be procedurally assigned (§6.5). A uwire allows
+ *   only one driver (§6.6.2).
+ * - Variables: any number of procedural writers, last write wins; OR exactly
+ *   one continuous assignment or port. Multiple continuous assignments, or a
+ *   mix of procedural and continuous, are errors (§6.5, §10.3.2). A
+ *   declaration initializer is a procedural assignment for this rule (§6.5).
+ * - A variable written by always_comb/always_ff shall not be written by any
+ *   other process (§9.2.2.2, §9.2.2.4).
+ * - Per bit: the rule applies to every term in the expansion of the longest
+ *   static prefix, and each bit of a packed type is an independent element
+ *   (§6.5, §11.5.3). When any writer has a bit range (or `width` is given),
+ *   every bit is checked on its own.
+ */
+export function checkDrivers(decl: DeclKind, writers: readonly Writer[], options: { width?: number; name?: string } = {}): DriverCheck {
+  const ranged = options.width !== undefined || writers.some((w) => w.bits);
+  if (!ranged) {
+    const check = checkElement(decl, writers);
+    return { ...check, bits: [{ index: 0, writers: writers.map((w) => w.id), check }] };
+  }
+  const width = options.width ?? Math.max(1, ...writers.map((w) => (w.bits ? w.bits[0] + 1 : 1)));
+  const name = options.name ?? "v";
+  for (const w of writers) {
+    if (w.bits && (w.bits[1] < 0 || w.bits[0] < w.bits[1] || w.bits[0] >= width)) {
+      throw new Error(`Bit range [${w.bits[0]}:${w.bits[1]}] of ${w.id} is outside ${name}[${width - 1}:0]`);
+    }
+  }
+  const bits: BitDriverReport[] = [];
+  for (let index = width - 1; index >= 0; index -= 1) {
+    const on = writers.filter((w) => covers(w, index));
+    bits.push({ index, writers: on.map((w) => w.id), check: on.length ? checkElement(decl, on) : null });
+  }
+  const at = (r: BitDriverReport) => `${name}[${r.index}]`;
+  const errors = bits.filter((r) => r.check?.outcome === "compile-error");
+  const open = bits.filter((r) => r.check?.outcome === "tool-dependent");
+  const flagged = bits.filter((r) => r.check?.outcome === "compile-error" || r.check?.outcome === "tool-dependent");
+  if (flagged.length) {
+    // An error anywhere decides the overall outcome; bits the standard leaves open are still reported.
+    const lead = errors.length ? errors : open;
+    const first = lead[0];
+    const c = first.check as DriverCheck;
+    const others = lead.slice(1).map(at);
+    const openNote = errors.length && open.length
+      ? ` ${listIds(open.map(at))} ${open.length === 1 ? "is" : "are"} left to the tool: ${open
+          .map((r) => `${at(r)} is written by ${listIds(r.writers)}, which the standard does not settle (${(r.check as DriverCheck).clause})`)
+          .join("; ")}.`
+      : "";
+    return {
+      ...c,
+      bits,
+      flaggedBits: flagged.map((r) => r.index),
+      errorBits: errors.map((r) => r.index),
+      openBits: open.map((r) => r.index),
+      why: `${at(first)} is written by ${listIds(first.writers)}. ${c.why}${others.length ? ` The same applies to ${listIds(others)}.` : ""}${openNote}`,
+    };
+  }
+  const written = bits.filter((r) => r.check);
+  if (written.length === 0) {
+    const c = checkElement(decl, []);
+    return { ...c, bits, flaggedBits: [], errorBits: [], openBits: [] };
+  }
+  const outcome: DriverCheck["outcome"] = written.some((r) => r.check?.outcome === "last-write-wins")
+    ? "last-write-wins"
+    : written.some((r) => r.check?.outcome === "net-resolves")
+      ? "net-resolves"
+      : "single-driver";
+  const exclusiveKinds = Array.from(new Set(writers.map((w) => w.kind).filter(isExclusiveProcess)));
+  const exclusiveNote = exclusiveKinds.length
+    ? ` ${exclusiveKinds.join(" and ")} own${exclusiveKinds.length === 1 ? "s" : ""} only the bits written there: the longest static prefixes do not overlap, so other bits may have other writers (${exclusiveKinds.map(exclusiveClause).join(", ")}).`
+    : "";
+  const perBit = bits.map((r) => `${at(r)}: ${bitPhrase(r)}`).join("; ");
+  return {
+    legal: true,
+    outcome,
+    message: "Legal: every bit has an allowed set of writers",
+    why: `${decl === "variable" ? "Each bit of a packed variable is its own element for the driver rule" : "Each bit of the net is checked on its own"} (§6.5). ${perBit}. No bit has two continuous drivers or a continuous driver mixed with procedural writes.${exclusiveNote}`,
+    clause: "§6.5",
+    bits,
+    flaggedBits: [],
+    errorBits: [],
+    openBits: [],
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* ANSI port kinds (§23.2.2.3, §6.5)                                   */
+/* ------------------------------------------------------------------ */
+
+export type PortDirection = "input" | "output" | "inout" | "ref";
+/** omitted: no data type; implicit: only a range or sign (`[7:0]`); explicit: a data_type such as `logic`. */
+export type PortDataType = "omitted" | "implicit" | "explicit";
+/** none: no port kind keyword; net: a net type keyword (`wire`); var: the `var` keyword. */
+export type PortKindKeyword = "none" | "net" | "var";
+
+export interface PortKindResult {
+  kind: "net" | "variable" | "illegal";
+  /** The declaration as written, e.g. `input logic a`. */
+  declared: string;
+  /** The same port with kind and data type spelled out, e.g. `input wire logic a`; null when illegal. */
+  expanded: string | null;
+  why: string;
+  clause: string;
+}
+
+/** Why a variable cannot be on either side of an inout (§6.5), built on the driver rule. */
+export const INOUT_VARIABLE_WHY =
+  "An inout is driven from inside the module and through the connection outside it, so it needs a net, which resolves several drivers (§6.5, §6.6). A variable can take only one continuous assignment or one port and has no resolution function, and §6.5 states that variables cannot be connected to either side of an inout port.";
+
+const PORT_NAMES: Record<PortDirection, string> = { input: "a", output: "y", inout: "z", ref: "r" };
+
+/**
+ * Port kind of the first port of an ANSI port list (§23.2.2.3), assuming
+ * `default_nettype wire`:
+ * - A ref port is always a variable.
+ * - With a port kind keyword, the port is that kind; `var` on an inout is an
+ *   error (§23.2.2: an inout port shall not be of a variable type; related
+ *   example mh4; §6.5: variables cannot be connected to an inout).
+ * - With no port kind: input and inout default to a net of the default net
+ *   type; an output defaults to a net when its data type is omitted or
+ *   implicit, and to a variable when it has an explicit data type.
+ * - An omitted data type defaults to logic; an implicit one (range or sign
+ *   only) is logic with that range.
+ */
+export function portKind(direction: PortDirection, dataType: PortDataType, keyword: PortKindKeyword, name = PORT_NAMES[direction]): PortKindResult {
+  const typeText = dataType === "omitted" ? "" : dataType === "implicit" ? "[7:0]" : "logic";
+  const fullType = dataType === "implicit" ? "logic [7:0]" : "logic";
+  const kw = keyword === "net" ? "wire" : keyword === "var" ? "var" : "";
+  const declared = [direction, kw, typeText, name].filter(Boolean).join(" ");
+  const typeNote = dataType === "omitted" ? " The omitted data type defaults to logic." : dataType === "implicit" ? " A range on its own is an implicit data type: logic with that range." : "";
+
+  if (direction === "ref") {
+    if (keyword === "net") {
+      return {
+        kind: "illegal",
+        declared,
+        expanded: null,
+        why: "A ref port shall be of a variable type (§23.2.2), and a ref port is always a variable (§23.2.2.3), so it cannot be given a net type.",
+        clause: "§23.2.2, §23.2.2.3",
+      };
+    }
+    return {
+      kind: "variable",
+      declared,
+      expanded: `ref var ${fullType} ${name}`,
+      why: `A ref port is always a variable (§23.2.2.3).${typeNote}`,
+      clause: "§23.2.2.3",
+    };
+  }
+  if (keyword === "var") {
+    if (direction === "inout") {
+      return {
+        kind: "illegal",
+        declared,
+        expanded: null,
+        why: `An inout port shall not be of a variable type (§23.2.2), so it cannot be declared var. Example mh4 in §23.2.2.3 is the related error case: module mh4 (var x), whose direction defaults to inout. ${INOUT_VARIABLE_WHY}`,
+        clause: "§23.2.2, §23.2.2.3, §6.5",
+      };
+    }
+    return {
+      kind: "variable",
+      declared,
+      expanded: `${direction} var ${fullType} ${name}`,
+      why: `The var keyword names the port kind explicitly, so ${name} is a variable whatever its direction (§23.2.2.3).${typeNote}${
+        direction === "input" ? " A continuous assignment is implied from the port, so nothing inside the module may assign it (§6.5)." : ""
+      }`,
+      clause: "§23.2.2.3",
+    };
+  }
+  if (keyword === "net") {
+    return {
+      kind: "net",
+      declared,
+      expanded: `${direction} wire ${fullType} ${name}`,
+      why: `The wire keyword names the port kind explicitly, so ${name} is a net (§23.2.2.3).${typeNote}${direction === "inout" ? ` That is the only kind an inout may have. ${INOUT_VARIABLE_WHY}` : ""}`,
+      clause: "§23.2.2.3",
+    };
+  }
+  if (direction === "input" || direction === "inout") {
+    return {
+      kind: "net",
+      declared,
+      expanded: `${direction} wire ${fullType} ${name}`,
+      why: `With no port kind, an ${direction} port defaults to a net of the default net type, here wire (§23.2.2.3).${typeNote}${
+        dataType === "explicit" ? " The data type logic does not make it a variable: logic names a data type, not a kind." : ""
+      }${direction === "inout" ? ` ${INOUT_VARIABLE_WHY}` : ""}`,
+      clause: "§23.2.2.3",
+    };
+  }
+  if (dataType === "explicit") {
+    return {
+      kind: "variable",
+      declared,
+      expanded: `output var ${fullType} ${name}`,
+      why: "With no port kind, an output declared with an explicit data type defaults to a variable (§23.2.2.3). A variable takes either one continuous assignment (or one port) or any number of procedural writes, never a mix (§6.5); always_comb and always_ff further limit it to one process (§9.2.2.2, §9.2.2.4).",
+      clause: "§23.2.2.3",
+    };
+  }
+  return {
+    kind: "net",
+    declared,
+    expanded: `output wire ${fullType} ${name}`,
+    why: `With no port kind, an output whose data type is ${dataType === "omitted" ? "omitted" : "implicit (only a range or sign)"} defaults to a net of the default net type (§23.2.2.3).${typeNote}`,
+    clause: "§23.2.2.3",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Open-drain line on a tri1 net (§6.6.5, §10.3.4, Table 28-7)          */
+/* ------------------------------------------------------------------ */
+
+export interface OpenDrainDevice {
+  id: string;
+  /** true: the device pulls the line low; false: it lets go. */
+  pullLow: boolean;
+}
+
+/** `assign (strong0, highz1) sda = drive_low ? 1'b0 : 1'b1;`: drives 0 strongly, never drives a 1 (§10.3.4). */
+export function openDrainDriver(device: OpenDrainDevice): NetDriver {
+  return { id: device.id, value: device.pullLow ? "0" : "1", strength: "strong", strength0: "strong", strength1: "highz" };
+}
+
+export const openDrainControl = (device: OpenDrainDevice) => `${device.id}_drive_low`;
+
+export function openDrainAssignSource(device: OpenDrainDevice, netName = "sda"): string {
+  return driverAssignSource(openDrainDriver(device), netName, `${openDrainControl(device)} ? 1'b0 : 1'b1`);
+}
+
+/** One sentence on what one device puts on the line. */
+export function describeOpenDrainDevice(device: OpenDrainDevice): string {
+  const drv = openDrainDriver(device);
+  const eff = effectiveDriver(drv);
+  if (eff.value === "z") {
+    return `${device.id} drives 1 with highz1: a 1 at strength highz (level ${STRENGTH_LEVEL.highz}) is high impedance, so ${device.id} lets go of the line (§10.3.4, Table 28-7).`;
+  }
+  return `${device.id} drives 0 with strong0 (level ${STRENGTH_LEVEL[eff.strength]}): it pulls the line low (§10.3.4, Table 28-7).`;
+}
+
+/** Resolves the line. A tri1 net adds its pull-strength 1 (§6.6.5). */
+export const resolveOpenDrain = (devices: readonly OpenDrainDevice[], netType: NetType = "tri1"): NetResolution =>
+  resolveNet(netType, devices.map(openDrainDriver));
+
+export interface OpenDrainRow {
+  pullLow: boolean[];
+  result: NetResolution;
+}
+
+/** Every combination of pulling low / letting go, in binary order (all let go first). */
+export function openDrainTruthTable(ids: readonly string[], netType: NetType = "tri1"): OpenDrainRow[] {
+  const rows: OpenDrainRow[] = [];
+  for (let n = 0; n < 1 << ids.length; n += 1) {
+    const pullLow = ids.map((_, i) => ((n >> (ids.length - 1 - i)) & 1) === 1);
+    rows.push({ pullLow, result: resolveOpenDrain(ids.map((id, i) => ({ id, pullLow: pullLow[i] })), netType) });
+  }
+  return rows;
+}
+
+/** The lesson of the truth table, computed from it rather than asserted. */
+export function openDrainSummary(rows: readonly OpenDrainRow[], netName = "sda"): string {
+  const ones = rows.filter((r) => r.result.ok && r.result.value === "1");
+  const onlyWhenAllRelease = ones.length === 1 && ones[0].pullLow.every((p) => !p);
+  const lowRows = rows.filter((r) => r.pullLow.some(Boolean));
+  const lowAlways0 = lowRows.every((r) => r.result.ok && r.result.value === "0");
+  if (onlyWhenAllRelease && lowAlways0) {
+    const sample = lowRows[0]?.result;
+    const pull = ones[0].result;
+    return `${netName} reads 1 (${pull.ok ? pull.label : ""}) only when every device lets go. Whenever any device pulls low, ${netName} reads 0 (${
+      sample && sample.ok ? sample.label : ""
+    }): strong (level ${STRENGTH_LEVEL.strong}) beats the pull-up's pull (level ${STRENGTH_LEVEL.pull}), and the released devices drive nothing (Table 28-7, §6.6.5).`;
+  }
+  return `On this net the rows do not follow the wired-AND pattern: ${rows.map((r) => (r.result.ok ? r.result.label : "error")).join(", ")}.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -921,9 +1403,14 @@ export function netDeclarationSource(netType: NetType, name = "y", charge?: Char
   return `${netType} ${name};`;
 }
 
-/** `assign (pull0, pull1) y = a;` (§10.3.4). */
-export function driverAssignSource(driver: NetDriver, netName = "y"): string {
-  return `assign (${driver.strength}0, ${driver.strength}1) ${netName} = ${driver.id};`;
+/**
+ * `assign (pull0, pull1) y = a;`, or with per-value strengths
+ * `assign (strong0, highz1) sda = …;` (§10.3.4). `rhs` defaults to the driver id.
+ */
+export function driverAssignSource(driver: NetDriver, netName = "y", rhs: string = driver.id): string {
+  const s0 = driver.strength0 ?? driver.strength;
+  const s1 = driver.strength1 ?? driver.strength;
+  return `assign (${s0}0, ${s1}1) ${netName} = ${rhs};`;
 }
 
 /** `logic a = 1'bx;` declaration for a driver source. */

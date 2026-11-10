@@ -2,12 +2,25 @@ import { describe, expect, it } from "vitest";
 
 import {
   BIT4_VALUES,
+  INOUT_VARIABLE_WHY,
+  STRENGTH_LEVEL,
   add,
   assignToIntegral,
   bitwiseBit,
   bitwiseVec,
   caseItemMatches,
+  bitConflictTag,
   checkDrivers,
+  undrivenValue,
+  checkStrengthPair,
+  describeOpenDrainDevice,
+  effectiveDriver,
+  openDrainAssignSource,
+  openDrainSummary,
+  openDrainTruthTable,
+  portKind,
+  resolveOpenDrain,
+  selectText,
   compare,
   conditionalOp,
   defaultNetValue,
@@ -35,6 +48,7 @@ import {
   type Bit4,
   type NetDriver,
   type NetResolution,
+  type Writer,
 } from "@/lib/sv-four-state-model";
 
 const b = parseBits;
@@ -409,5 +423,368 @@ describe("code generation", () => {
     expect(netDeclarationSource("wire")).toBe("wire y;");
     expect(netDeclarationSource("trireg", "y", "small")).toBe("trireg (small) y;");
     expect(driverAssignSource(drv("a", "1", "pull"))).toBe("assign (pull0, pull1) y = a;");
+  });
+});
+
+describe("driver rule per bit of a packed variable (§6.5, §11.5.3)", () => {
+  const W = (id: string, kind: Writer["kind"], bits?: [number, number]): Writer => ({ id, kind, bits });
+  const v0 = W("assign v[0] = a", "assign", [0, 0]);
+  const v1 = W("assign v[1] = b", "assign", [1, 1]);
+  const whole = W("assign v = c", "assign", [1, 0]);
+  const comb1 = W("always_comb v[1] = b & c", "always_comb", [1, 1]);
+  const init = W("logic [1:0] v = 2'b00", "initializer", [1, 0]);
+  const port = W("sub u_sub (.q(v))", "port", [1, 0]);
+
+  it("§6.5 'Each bit in a packed type is also an independent element': assign v[0] and assign v[1] are legal", () => {
+    const r = checkDrivers("variable", [v0, v1], { width: 2 });
+    expect(r.legal).toBe(true);
+    expect(r.outcome).toBe("single-driver");
+    expect(r.flaggedBits).toEqual([]);
+    expect(r.bits?.map((b) => [b.index, b.writers])).toEqual([
+      [1, ["assign v[1] = b"]],
+      [0, ["assign v[0] = a"]],
+    ]);
+    expect(r.why).toMatch(/Each bit of a packed variable is its own element/);
+  });
+
+  it("§6.5 'multiple continuous assignments ... to any term in the expansion of the longest static prefix': assign v plus assign v[1] flags bit 1 only", () => {
+    const r = checkDrivers("variable", [whole, v1], { width: 2 });
+    expect(r.legal).toBe(false);
+    expect(r.errorClass).toBe("multiple-continuous-on-variable");
+    expect(r.flaggedBits).toEqual([1]);
+    expect(r.bits?.[1].check?.outcome).toBe("single-driver");
+    expect(r.why).toMatch(/^v\[1\] is written by assign v = c and assign v\[1\] = b\./);
+    expect(r.clause).toBe("§6.5, §10.3.2");
+    expect(r.errorBits).toEqual([1]);
+    expect(r.openBits).toEqual([]);
+  });
+
+  it("§9.2.2.2 'longest static prefixes do not overlap': always_comb v[1] with assign v[0] is legal", () => {
+    const r = checkDrivers("variable", [v0, comb1], { width: 2 });
+    expect(r.legal).toBe(true);
+    expect(r.why).toMatch(/always_comb owns only the bits written there/);
+    expect(r.why).toMatch(/§9\.2\.2\.2/);
+  });
+
+  it("§9.2.2.2: always_comb v[1] with assign v is an error on bit 1 (continuous mixed with procedural, §6.5)", () => {
+    const r = checkDrivers("variable", [whole, comb1], { width: 2 });
+    expect(r.errorClass).toBe("mixed-continuous-procedural");
+    expect(r.flaggedBits).toEqual([1]);
+  });
+
+  it("§6.5 'a declared variable initialization ... is considered a procedural assignment': initializer plus assign is an error on every bit", () => {
+    const r = checkDrivers("variable", [init, whole], { width: 2 });
+    expect(r.errorClass).toBe("mixed-continuous-procedural");
+    expect(r.flaggedBits).toEqual([1, 0]);
+    expect(r.why).toMatch(/initializer counts as a procedural assignment/);
+    expect(r.why).toMatch(/The same applies to v\[0\]/);
+  });
+
+  it("§6.5 'A continuous assignment shall be implied when a variable is connected to the output port of an instance': port plus assign v[0] is an error on bit 0", () => {
+    const r = checkDrivers("variable", [port, v0], { width: 2 });
+    expect(r.errorClass).toBe("multiple-continuous-on-variable");
+    expect(r.flaggedBits).toEqual([0]);
+  });
+
+  it("§6.5: the initializer alone, or with a plain always procedure, is legal (procedural writes only)", () => {
+    expect(checkDrivers("variable", [init], { width: 2 }).legal).toBe(true);
+    const r = checkDrivers("variable", [init, W("always @(b) v[1] = b", "procedural", [1, 1])], { width: 2 });
+    expect(r.outcome).toBe("last-write-wins");
+    expect(r.bits?.find((b) => b.index === 0)?.check?.why).toMatch(/Only the initializer writes it/);
+  });
+
+  it("§6.5 with §9.2.2.2: initializer plus always_comb on the same bit is reported as not settled by the standard", () => {
+    const r = checkDrivers("variable", [init, comb1], { width: 2 });
+    expect(r.outcome).toBe("tool-dependent");
+    expect(r.legal).toBe(false);
+    expect(r.errorClass).toBeUndefined();
+    expect(r.flaggedBits).toEqual([1]);
+    expect(r.why).toMatch(/no clause says whether §9\.2\.2\.2 applies to it/);
+    expect(r.why).toMatch(/§4\.3 counts procedural assignment statements among its examples of processes/);
+    expect(r.why).toMatch(/A static variable's initializer also runs before any procedure starts \(§6\.8, §10\.5\)/);
+    expect(r.openBits).toEqual([1]);
+    expect(r.errorBits).toEqual([]);
+  });
+
+  it("a compile error on one bit does not hide a bit the standard leaves open (initializer + always_comb v[1] + assign v[0])", () => {
+    const r = checkDrivers("variable", [comb1, init, v0], { width: 2 });
+    expect(r.outcome).toBe("compile-error");
+    expect(r.errorClass).toBe("mixed-continuous-procedural");
+    expect(r.bits?.map((b) => [b.index, b.check?.outcome])).toEqual([
+      [1, "tool-dependent"],
+      [0, "compile-error"],
+    ]);
+    expect(r.errorBits).toEqual([0]);
+    expect(r.openBits).toEqual([1]);
+    expect(r.flaggedBits).toEqual([1, 0]);
+    expect(r.why).toMatch(/^v\[0\] is written by/);
+    expect(r.why).toMatch(/v\[1\] is left to the tool: v\[1\] is written by always_comb v\[1\] = b & c and logic \[1:0\] v = 2'b00, which the standard does not settle \(§6\.5, §9\.2\.2\.2\)\./);
+    expect(bitConflictTag(r.bits?.[0].check ?? null)).toBe("open (§6.5, §9.2.2.2)");
+    expect(bitConflictTag(r.bits?.[1].check ?? null)).toBe("continuous + procedural (§6.5, §10.3.2)");
+  });
+
+  it("§10.3.2 'an error for a variable driven by a continuous assignment or output to have an initializer': the initializer branch cites §6.5 and §10.3.2", () => {
+    const r = checkDrivers("variable", [init, v0], { width: 2 });
+    expect(r.clause).toBe("§6.5, §10.3.2");
+    expect(r.why).toMatch(/§10\.3\.2 states it directly/);
+    expect(r.flaggedBits).toEqual([0]);
+  });
+
+  it("bitConflictTag names the conflict from the error class, not a generic 'overlap'", () => {
+    expect(bitConflictTag(checkDrivers("variable", [whole, v1], { width: 2 }).bits?.[0].check ?? null)).toBe("two continuous (§6.5, §10.3.2)");
+    expect(bitConflictTag(checkDrivers("variable", [init, whole], { width: 2 }).bits?.[0].check ?? null)).toBe("continuous + procedural (§6.5, §10.3.2)");
+    expect(bitConflictTag(checkDrivers("variable", [W("always_ff A", "always_ff", [0, 0]), W("always B", "procedural", [0, 0])], { width: 1 }).bits?.[0].check ?? null)).toBe(
+      "two processes (§9.2.2.4)",
+    );
+    expect(bitConflictTag(checkDrivers("variable", [v0, v1], { width: 2 }).bits?.[0].check ?? null)).toBeNull();
+    expect(bitConflictTag(null)).toBeNull();
+  });
+
+  it("§9.2.2.4: always_comb plus always_ff on the same bit is an error (always-block-shared)", () => {
+    const r = checkDrivers("variable", [comb1, W("always_ff v[1]", "always_ff", [1, 1])], { width: 2 });
+    expect(r.errorClass).toBe("always-block-shared");
+    expect(r.flaggedBits).toEqual([1]);
+    expect(r.clause).toBe("§9.2.2.2, §9.2.2.4");
+    expect(r.why).toMatch(/always_comb or always_ff shall not be written by any other process/);
+    // The order of the writers does not change the citation.
+    expect(checkDrivers("variable", [W("always_ff v[1]", "always_ff", [1, 1]), comb1], { width: 2 }).clause).toBe("§9.2.2.2, §9.2.2.4");
+  });
+
+  it("§6.5 with §9.2.2.4: initializer plus always_ff on the same bit is reported as not settled by the standard", () => {
+    const r = checkDrivers("variable", [init, W("always_ff v[1]", "always_ff", [1, 1])], { width: 2 });
+    expect(r.outcome).toBe("tool-dependent");
+    expect(r.clause).toBe("§6.5, §9.2.2.4");
+    expect(r.openBits).toEqual([1]);
+  });
+
+  it("§9.2.2.4: always_ff on v[1] with a plain always on v[0] is legal, and the note cites §9.2.2.4", () => {
+    const r = checkDrivers("variable", [W("always_ff v[1]", "always_ff", [1, 1]), W("always @(a) v[0] = a", "procedural", [0, 0])], { width: 2 });
+    expect(r.legal).toBe(true);
+    expect(r.why).toMatch(/always_ff owns only the bits written there/);
+    expect(r.why).toMatch(/§9\.2\.2\.4/);
+  });
+
+  describe("§6.5 example: struct { bit [7:0] A; bit [7:0] B; byte C; } abc", () => {
+    // Each member is checked on its own; a gate output (not) is a continuous driver of the variable (§10.3.2: "one primitive output").
+    const nots = [0, 1, 2, 3].map((i) => W(`not (abc.A[${i}], abc.B[${i}])`, "assign", [i, i]));
+    const assignC1 = W("assign abc.C = sel ? 8'hBE : 8'hEF", "assign", [7, 0]);
+    const assignC2 = W("assign abc.C = sel ? 8'hDE : 8'hED", "assign", [7, 0]);
+
+    it("the legal statements: assign abc.C, the not gates on abc.A[3:0], always abc.B <= abc.B + 1", () => {
+      expect(checkDrivers("variable", [assignC1], { width: 8, name: "abc.C" }).legal).toBe(true);
+      expect(checkDrivers("variable", nots, { width: 8, name: "abc.A" }).legal).toBe(true);
+      expect(checkDrivers("variable", [W("always @(posedge clk) abc.B <= abc.B + 1", "procedural", [7, 0])], { width: 8, name: "abc.B" }).legal).toBe(true);
+    });
+
+    it("illegal: 'Mixing continuous and procedural assignments to abc.A[3]' flags bit 3 only", () => {
+      const r = checkDrivers("variable", [...nots, W("always @(posedge clk) abc.A[7:3] <= !abc.B[7:3]", "procedural", [7, 3])], { width: 8, name: "abc.A" });
+      expect(r.legal).toBe(false);
+      expect(r.errorClass).toBe("mixed-continuous-procedural");
+      expect(r.flaggedBits).toEqual([3]);
+      expect(r.why).toMatch(/^abc\.A\[3\] is written by not \(abc\.A\[3\], abc\.B\[3\]\) and always @\(posedge clk\) abc\.A\[7:3\]/);
+    });
+
+    it("illegal: 'Multiple continuous assignments to abc.C' flags all eight bits", () => {
+      const r = checkDrivers("variable", [assignC1, assignC2], { width: 8, name: "abc.C" });
+      expect(r.errorClass).toBe("multiple-continuous-on-variable");
+      expect(r.flaggedBits).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    });
+  });
+
+  it("§9.2.2.4: two always_ff writing the same bit is an error", () => {
+    const r = checkDrivers("variable", [W("always_ff A", "always_ff", [0, 0]), W("always_ff B", "always_ff", [1, 0])], { width: 2 });
+    expect(r.errorClass).toBe("always-block-shared");
+    expect(r.clause).toBe("§9.2.2.4");
+    expect(r.flaggedBits).toEqual([0]);
+  });
+
+  it("§10.3.1: on a net the declaration assignment is continuous, so it resolves with another assign", () => {
+    expect(checkDrivers("wire", [W("wire v = c", "initializer"), W("assign v = d", "assign")]).outcome).toBe("net-resolves");
+  });
+
+  it("§6.6 'If no driver is connected to a net, its value shall be high-impedance (z) unless the net is a trireg': each undriven net type has its own text", () => {
+    for (const t of ["wire", "tri", "wand", "triand", "wor", "trior", "uwire"] as const) {
+      const r = checkDrivers(t, [], { width: 2 });
+      expect(r.outcome).toBe("no-writer");
+      expect(r.why).toBe(`No driver covers it, so the ${t} net is high impedance, z (§6.6).`);
+      expect(r.clause).toBe("§6.6");
+      expect(undrivenValue(t).value).toBe("z");
+    }
+    const trireg = checkDrivers("trireg", [], { width: 2 });
+    expect(trireg.why).toMatch(/holds its previously driven value \(§6\.6, §6\.6\.4\)/);
+    expect(trireg.why).not.toMatch(/is high impedance/);
+    expect(trireg.clause).toBe("§6.6, §6.6.4, §6.7.1");
+    expect(undrivenValue("trireg").value).toBe("held");
+  });
+
+  it("§6.6.5 'When no driver drives a tri0 net, its value is 0 with strength pull' (and 1 for tri1)", () => {
+    expect(checkDrivers("tri0", [], { width: 2 }).why).toMatch(/tri0 net reads 0 at pull strength/);
+    expect(checkDrivers("tri1", [], { width: 2 }).why).toMatch(/tri1 net reads 1 at pull strength/);
+    expect(checkDrivers("tri1", [], { width: 2 }).clause).toBe("§6.6.5");
+    expect(undrivenValue("tri0").value).toBe("0");
+    expect(undrivenValue("tri1").value).toBe("1");
+  });
+
+  it("§6.6.6, §28.15.3: supply0 models ground and supply1 power, at supply strength", () => {
+    const s0 = checkDrivers("supply0", [], { width: 2 });
+    expect(s0.why).toMatch(/ground connection and has supply strength, so with no other driver it reads 0/);
+    expect(s0.clause).toBe("§6.6.6, §28.15.3");
+    expect(checkDrivers("supply1", []).why).toMatch(/power supply and has supply strength, so with no other driver it reads 1/);
+    expect(undrivenValue("supply0").value).toBe("0");
+    expect(undrivenValue("supply1").value).toBe("1");
+  });
+
+  it("no writers: nothing to check, the variable keeps its default (Table 6-7)", () => {
+    const r = checkDrivers("variable", [], { width: 2 });
+    expect(r.outcome).toBe("no-writer");
+    expect(r.legal).toBe(true);
+    expect(checkDrivers("variable", [v1], { width: 2 }).bits?.[1].check).toBeNull();
+  });
+
+  it("writers without ranges keep the whole-variable behaviour", () => {
+    const r = checkDrivers("variable", [{ id: "a", kind: "assign" }, { id: "b", kind: "assign" }]);
+    expect(r.bits).toHaveLength(1);
+    expect(r.why).not.toMatch(/is written by/);
+  });
+
+  it("rejects a bit range outside the declaration", () => {
+    expect(() => checkDrivers("variable", [W("x", "assign", [2, 0])], { width: 2 })).toThrow(/outside v\[1:0\]/);
+  });
+
+  it("selectText names the longest static prefix of each writer", () => {
+    expect(selectText("v", [1, 0], 2)).toBe("v");
+    expect(selectText("v", [1, 1], 2)).toBe("v[1]");
+    expect(selectText("v", [3, 2], 4)).toBe("v[3:2]");
+    expect(selectText("v", undefined, 2)).toBe("v");
+  });
+});
+
+describe("ANSI port kinds (§23.2.2.3, §6.5)", () => {
+  it("§23.2.2.3 'For input and inout ports, the port shall default to a net': input logic a is input wire logic a", () => {
+    const r = portKind("input", "explicit", "none");
+    expect(r.kind).toBe("net");
+    expect(r.declared).toBe("input logic a");
+    expect(r.expanded).toBe("input wire logic a");
+  });
+
+  it("§23.2.2.3: an output with an explicit data type defaults to a variable", () => {
+    const r = portKind("output", "explicit", "none");
+    expect(r.kind).toBe("variable");
+    expect(r.expanded).toBe("output var logic y");
+  });
+
+  it("§23.2.2.3: an output with an omitted or implicit data type defaults to a net", () => {
+    expect(portKind("output", "omitted", "none").expanded).toBe("output wire logic y");
+    expect(portKind("output", "implicit", "none")).toMatchObject({ kind: "net", declared: "output [7:0] y", expanded: "output wire logic [7:0] y" });
+  });
+
+  it("§23.2.2.3: inout defaults to a net, and the reveal explains why it cannot be a variable (§6.5)", () => {
+    const r = portKind("inout", "explicit", "none");
+    expect(r.kind).toBe("net");
+    expect(r.why).toContain(INOUT_VARIABLE_WHY);
+    expect(INOUT_VARIABLE_WHY).toMatch(/cannot be connected to either side of an inout port/);
+  });
+
+  it("§23.2.2.3 example mh4: inout var is an error", () => {
+    const r = portKind("inout", "explicit", "var");
+    expect(r.kind).toBe("illegal");
+    expect(r.expanded).toBeNull();
+    expect(r.clause).toBe("§23.2.2, §23.2.2.3, §6.5");
+    expect(r.why).toMatch(/^An inout port shall not be of a variable type \(§23\.2\.2\)/);
+    expect(r.why).toMatch(/Example mh4 in §23\.2\.2\.3 is the related error case/);
+  });
+
+  it("§23.2.2.3 example mh6 'input var x' (type omitted) expands to input var logic", () => {
+    expect(portKind("input", "omitted", "var")).toMatchObject({ kind: "variable", declared: "input var a", expanded: "input var logic a" });
+  });
+
+  it("§23.2.2.3: a ref port with the type omitted is a variable; an input or inout with only a range is a net (mh3, mh5)", () => {
+    expect(portKind("ref", "omitted", "var").kind).toBe("variable");
+    expect(portKind("ref", "omitted", "var").expanded).toBe("ref var logic r");
+    expect(portKind("input", "implicit", "none").expanded).toBe("input wire logic [7:0] a");
+    expect(portKind("inout", "implicit", "none").expanded).toBe("inout wire logic [7:0] z");
+    expect(portKind("inout", "omitted", "none").expanded).toBe("inout wire logic z");
+  });
+
+  it("§6.5: the output-variable note does not claim a one-always-block limit", () => {
+    const r = portKind("output", "explicit", "none");
+    expect(r.why).not.toMatch(/one always block/);
+    expect(r.why).toMatch(/either one continuous assignment \(or one port\) or any number of procedural writes, never a mix \(§6\.5\)/);
+    expect(r.why).toMatch(/always_comb and always_ff further limit it to one process \(§9\.2\.2\.2, §9\.2\.2\.4\)/);
+  });
+
+  it("§23.2.2.3: var names the kind for input and output (examples mh6, mh9)", () => {
+    expect(portKind("input", "explicit", "var").expanded).toBe("input var logic a");
+    expect(portKind("output", "omitted", "var").expanded).toBe("output var logic y");
+  });
+
+  it("§23.2.2.3 'A ref port is always a variable'", () => {
+    expect(portKind("ref", "implicit", "none").expanded).toBe("ref var logic [7:0] r");
+    expect(portKind("ref", "explicit", "net").kind).toBe("illegal");
+    expect(portKind("ref", "explicit", "net").why).toMatch(/^A ref port shall be of a variable type \(§23\.2\.2\)/);
+    expect(portKind("ref", "explicit", "net").clause).toBe("§23.2.2, §23.2.2.3");
+  });
+
+  it("an explicit wire keyword always gives a net", () => {
+    expect(portKind("output", "explicit", "net").expanded).toBe("output wire logic y");
+  });
+});
+
+describe("per-value drive strengths and open-drain on tri1 (§10.3.4, §6.6.5, Table 28-7)", () => {
+  const dev = (id: string, pullLow: boolean) => ({ id, pullLow });
+
+  it("§10.3.4: (highz0, highz1) is an illegal strength pair; other pairs are legal", () => {
+    expect(checkStrengthPair("highz", "highz").legal).toBe(false);
+    expect(checkStrengthPair("strong", "highz").legal).toBe(true);
+    expect(() => effectiveDriver({ id: "a", value: "0", strength: "strong", strength0: "highz", strength1: "highz" })).toThrow(/illegal/);
+  });
+
+  it("§10.3.4 with Table 28-7: a 1 driven at highz1 is high impedance; a 0 at strong0 is St0", () => {
+    const base = { id: "a", strength: "strong" as const, strength0: "strong" as const, strength1: "highz" as const };
+    expect(effectiveDriver({ ...base, value: "1" }).value).toBe("z");
+    expect(effectiveDriver({ ...base, value: "0" })).toMatchObject({ value: "0", strength: "strong" });
+    expect(() => effectiveDriver({ ...base, value: "x" })).toThrow(/Not modelled/);
+  });
+
+  it("§10.3.4: driverAssignSource emits the per-value pair", () => {
+    expect(openDrainAssignSource(dev("dev_a", false))).toBe("assign (strong0, highz1) sda = dev_a_drive_low ? 1'b0 : 1'b1;");
+  });
+
+  it("§6.6.5: with every device letting go, the tri1 pull-up gives Pu1", () => {
+    const r = resolveOpenDrain([dev("dev_a", false), dev("dev_b", false)]);
+    expect(r.ok && r.label).toBe("Pu1");
+    expect(r.ok && r.rule).toBe("pull-default");
+  });
+
+  it("Table 28-7: one device pulling low wins St0 over the pull-up", () => {
+    const r = resolveOpenDrain([dev("dev_a", true), dev("dev_b", false)]);
+    expect(r.ok && r.label).toBe("St0");
+    expect(r.ok && r.dominated).toEqual(["pull"]);
+    expect(r.ok && r.why).toMatch(/The built-in pull-up \(1 at pull\) is weaker/);
+  });
+
+  it("the four combinations: the pull-up wins only when every device lets go (wired AND)", () => {
+    const rows = openDrainTruthTable(["dev_a", "dev_b"]);
+    expect(rows.map((r) => r.pullLow)).toEqual([
+      [false, false],
+      [false, true],
+      [true, false],
+      [true, true],
+    ]);
+    expect(rows.map((r) => (r.result.ok ? r.result.label : "err"))).toEqual(["Pu1", "St0", "St0", "St0"]);
+    expect(openDrainSummary(rows)).toBe(
+      `sda reads 1 (Pu1) only when every device lets go. Whenever any device pulls low, sda reads 0 (St0): strong (level ${STRENGTH_LEVEL.strong}) beats the pull-up's pull (level ${STRENGTH_LEVEL.pull}), and the released devices drive nothing (Table 28-7, §6.6.5).`,
+    );
+  });
+
+  it("on a plain wire with no pull-up, released devices leave the line floating at z", () => {
+    const rows = openDrainTruthTable(["dev_a", "dev_b"], "wire");
+    expect(rows[0].result.ok && rows[0].result.value).toBe("z");
+    expect(openDrainSummary(rows)).toMatch(/do not follow the wired-AND pattern/);
+  });
+
+  it("describes each device from its effective drive", () => {
+    expect(describeOpenDrainDevice(dev("dev_b", false))).toMatch(/dev_b lets go of the line/);
+    expect(describeOpenDrainDevice(dev("dev_a", true))).toMatch(/strong0 \(level 6\)/);
   });
 });
