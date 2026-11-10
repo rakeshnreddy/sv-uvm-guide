@@ -106,6 +106,10 @@ export const lazyMdxInteractiveNames = [
   "ExpressionTreeExplorer",
   "VerificationMethodsExplorer",
   "ClosureBudgetLab",
+  "ShiftLeftTimeline",
+  "StreamPackLab",
+  "FsmEdgeStepper",
+  "DeferredReportVisualizer",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];

@@ -5,13 +5,13 @@ then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASK
 
 ## Start here: state at the 2026-11-10 pause (current)
 
-The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The run paused near 47 % with everything
+The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The run paused near 48 % with everything
 reviewed released. Nothing is running. **This block supersedes the older blocks below** wherever they talk about held
 components, backup branches or the order of work.
 
-**Live through checkpoint 22:**
+**Live through checkpoint 23:**
 - **Lessons:** all 112 are enriched and reviewed (accuracy and pedagogy lenses, no content removed). None escalated.
-- **Components:** 28 of 48 are built, reviewed, registered and embedded in the lessons the backlog planned.
+- **Components:** 32 of 48 are built, reviewed, registered and embedded in the lessons the backlog planned.
 - **Extras:** done. /resources, /history, /knowledge-hub, /assessment and /projects are rebuilt and public, and seven labs
   are available (constructs-1, common-1, fifo-1, assertions-1, arbiter-1, dma-1, and the new M5 lab multi-agent-vseq).
 - **Held:** nothing. `backup/wip-2026-11-05`, `components/finish-held`, `components/finish-2026-11-10` and
@@ -20,18 +20,18 @@ components, backup branches or the order of work.
 **Checkpoints this session** (`progress.json` marks each file with its label; run journals are in `data/runs/`):
 17 (4 held components, 14 T2 lessons), 18 (TimescaleLab, first embed pass, 42 lessons), 19 (last 33 lessons), 20 (8 new
 components and embeds), 21 (6 components and embeds, the extras; reached main together with 22), 22 (3 components and embeds, the bundle
-baseline, these notes).
+baseline, these notes), 23 (4 components and embeds).
 
 **Work left, with costs measured on the v2 flow this week** (Opus workers; 1 % of the weekly limit is about 2.5M worker tokens; the session used about 107M):
 
 | Work | Left | Measured unit cost | Estimate |
 |---|---|---|---|
-| Components | 20 of 48 | about 1.5M tokens to build and review one, 0.3M to embed it | about 17 % |
+| Components | 16 of 48 | about 1.5M tokens to build and review one, 0.3M to embed it | about 14 % |
 | Final 6b sweep, run fresh | 112 lessons | a full two-lens review is about 0.35M tokens a lesson, plus fixes | about 22 to 28 % |
 | Closure checks | all | not measured | about 5 % |
-| **Total** | | | **about 45 to 50 % of a weekly limit** |
+| **Total** | | | **about 41 to 47 % of a weekly limit** |
 
-**The 20 components left, in backlog order:** shift-left-timeline, stream-pack-lab, fsm-edge-stepper, deferred-report-visualizer, region-trace-exercise, ipc-bench, literal-decoder, scoreboard-plain-sv, process-tree-view, event-memory-matrix, region-sorter-props, enum-declaration-and-casts, data-type-chart-sections, sv-3d-mem-block, printing-lab, cost-graph-delay, hall-of-shame-predict, boundary-probe, loop-tracer, readmem-loader.
+**The 16 components left, in backlog order:** region-trace-exercise, ipc-bench, literal-decoder, scoreboard-plain-sv, process-tree-view, event-memory-matrix, region-sorter-props, enum-declaration-and-casts, data-type-chart-sections, sv-3d-mem-block, printing-lab, cost-graph-delay, hall-of-shame-predict, boundary-probe, loop-tracer, readmem-loader.
 
 **How runs work now (the v2 flow):**
 - **Models:** the lead is Fable and only plans and manages. Every workflow agent names its model: Opus for authors,
@@ -66,7 +66,7 @@ baseline, these notes).
   `docs/bundle-baseline.json` to the CI-measured total and released it with checkpoint 22. After adding pages, expect
   this; lazy-loading the /knowledge-hub concept map would win most of it back.
 - **Bounded rounds converged.** With two full rounds, a verify-only closing round and a delta or regression check, all
-  112 lessons, 22 components and 12 extras ended clean; two needed one closing pass (timescale-lab, /projects).
+  112 lessons, 26 components and 12 extras ended clean; two needed one closing pass (timescale-lab, /projects).
 
 **Next order:** (1) the remaining components in batches of about six, each followed by its embed pass and a release;
 (2) a fresh final 6b sweep over all 112 lessons: write it on the v2 pattern (read-only review per lesson and lens, then
