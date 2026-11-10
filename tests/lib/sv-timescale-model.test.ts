@@ -1106,6 +1106,56 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
     expect(reasonOf("#(4000000000'b1)")).toMatch(/Its value is 1, so write #1 instead\.$/);
     // A value of 2^64 or more gets no plain number.
     expect(reasonOf("#(65'h1_0000_0000_0000_0000)")).toMatch(/Its value is 18446744073709551616, 2\^64 or more.*offers no plain number for it\.$/);
+    // When truncation drops only leading zeros, the value is unchanged and the lab says so; when it drops a 1 or an x, it does not.
+    expect(reasonOf("#(65'h1_0000_0000_0000_0000)")).toMatch(/truncates it from the left to 65; only leading zeros were dropped, so its value is unchanged\./);
+    expect(reasonOf("#(5'h0F)")).toMatch(/truncates it from the left to 5; only leading zeros were dropped, so its value is unchanged\. Its value is 15, so write #15 instead\.$/);
+    for (const text of ["#(1'bx1)", "#(2'd5)", "#(4'hx_1)", "#(3'sd12)", "#(1'b1x)"]) {
+      const parsed = parseDelay(text);
+      const said = parsed.kind === "invalid" ? parsed.reason : parsed.kind === "xz" ? (parsed.sizing ?? "") : "";
+      expect(said, text).toMatch(/truncates it from the left/);
+      expect(said, text).not.toMatch(/only leading zeros/);
+    }
+  });
+
+  it("an unsized signed b/o/h literal whose pattern fills 32 bits with a top 1: §5.7.1's sign-bit sentence points to the positive value, the rest is recorded as uncertain", () => {
+    for (const [text, unsigned, negative] of [
+      ["#('shFFFFFFFF)", "4294967295", "-1"],
+      ["#('sh8000_0000)", "2147483648", "-2147483648"],
+      ["#('so37777777777)", "4294967295", "-1"],
+      ["#('sb1000_0000_0000_0000_0000_0000_0000_0000)", "2147483648", "-2147483648"],
+    ] as const) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      const reason = reasonOf(text);
+      expect(reason, text).toMatch(/This lab computes such a literal only when every bit, after §5\.7\.1 sizing, is x or z/);
+      expect(reason, text).toContain(
+        `The s marks it signed, and its digits give the bit pattern ${unsigned}, 32 bits with the leftmost bit 1. §5.7.1 says "An unsized number that requires more than 32 bits shall have at least the minimum width needed to properly represent the value, including a sign bit if the number is signed", and its example gives 4294967296 (2^32), a positive signed integer, at least 34 bits: the sign bit counts toward the width. Read as the positive value ${unsigned}, this number needs 33 bits, so that sentence points to ${unsigned}. Uncertain: §5.7.1 also says the s designator "does not affect the bit pattern specified, only its interpretation", and it does not say outright whether a based literal's value is its pattern read unsigned or as 32-bit two's complement (${negative}). Check your simulator; the lab does not settle this, so it offers no plain number for it.`,
+      );
+      expect(reason, text).not.toMatch(/write #|Its value is/);
+      // The 32-bit reading is an open question, never offered as conforming.
+      expect(reason, text).not.toMatch(/conforms|at exactly 32 bits it is/);
+    }
+    // A decimal base names the value, and §5.7.1's sign bit counts toward the width, so a signed 2^31 .. 2^32 - 1 needs 33 bits and is positive.
+    for (const [text, value] of [
+      ["#('sd4294967295)", "4294967295"],
+      ["#('sd2147483648)", "2147483648"],
+      ["#('SD4_294_967_295)", "4294967295"],
+    ] as const) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      const reason = reasonOf(text);
+      expect(reason, text).toContain(`so the signed ${value} needs 33 bits and stays positive.`);
+      expect(reason, text).toMatch(new RegExp(`Its value is ${value}, so write #${value} instead\\.$`));
+      expect(reason, text).not.toMatch(/-1\b|-2147483648|two's complement|Uncertain/);
+    }
+    // Below 2^31 the leftmost of 32 bits is 0, so the value is positive at any width.
+    expect(reasonOf("#('sb1111)")).toMatch(/Its value is 15, so write #15 instead\.$/);
+    expect(reasonOf("#('sh7FFF_FFFF)")).toMatch(/Its value is 2147483647, so write #2147483647 instead\.$/);
+    // A value that needs more than 32 bits gets a width that includes a sign bit (§5.7.1), so it is positive.
+    expect(reasonOf("#('sh1_0000_0000)")).toMatch(/Its value is 4294967296, so write #4294967296 instead\.$/);
+    // Without the s the literal is unsigned, so the top bit is never a sign bit.
+    expect(reasonOf("#('hFFFFFFFF)")).toMatch(/Its value is 4294967295, so write #4294967295 instead\.$/);
+    // A sized literal has no such question: its size fixes the sign bit.
+    expect(reasonOf("#(32'shFFFFFFFF)")).toMatch(/as a 32-bit value it is -1\./);
+    expect(reasonOf("#(33'shFFFFFFFF)")).toMatch(/Its value is 4294967295, so write #4294967295 instead\.$/);
   });
 
   it("a signed literal whose sign bit is 1 is negative under §5.7.1, and the lab names the value without widening it", () => {
@@ -1234,7 +1284,8 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
   });
 
   it("the reason for a negative real or literal names what is outside the lab and does not narrow §9.4.1 to integers", () => {
-    for (const text of ["#(-1ns)", "#(-1.5)", "(-0.5ns)", "#( - 2.25 )"]) {
+    // A scientific real with a nonzero mantissa is negative too: #(-1e3) is -1000.0 (§5.7.2).
+    for (const text of ["#(-1ns)", "#(-1.5)", "(-0.5ns)", "#( - 2.25 )", "#(-1e3)", "#(-2.5E-1)", "#(-0.1e2)", "#(-1_0e3)"]) {
       expect(reasonOf(text), text).toMatch(/^A negative real or time-literal delay is outside this lab/);
       expect(reasonOf(text), text).toMatch(/evaluates to a negative value/);
       expect(reasonOf(text), text).not.toMatch(/with a fraction|negative integer/);
@@ -1245,8 +1296,8 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
 
   it("a parenthesised minus is called negative only for a real or a time literal with a nonzero value", () => {
     const neutral = "Write a delay as #d (for example #2.75), a time literal (#2.1ns), #(1'bx) or #(-1): the forms this lab computes.";
-    // -1'bx and -'x are x (§11.4.3), which §9.4.1 makes zero; -a and -(1) are neither a real nor a time literal; -0.0 and -0ns are not negative.
-    for (const text of ["#(-1'bx)", "#(-'x)", "#(-a)", "#(-(1))", "#(-0.0)", "#(-0ns)", "#(-1e3)"]) {
+    // -1'bx and -'x are x (§11.4.3), which §9.4.1 makes zero; -a and -(1) are neither a real nor a time literal; -0.0, -0ns, -0e5 and -0.0E-2 are not negative.
+    for (const text of ["#(-1'bx)", "#(-'x)", "#(-a)", "#(-(1))", "#(-0.0)", "#(-0ns)", "#(-0e5)", "#(-0.0E-2)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
       expect(reasonOf(text), text).toBe(neutral);
     }

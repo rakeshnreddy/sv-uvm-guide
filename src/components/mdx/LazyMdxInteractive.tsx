@@ -114,6 +114,7 @@ const loaders = {
   ScenarioSorter: () => import("@/components/visuals/ScenarioSorter").then(module => asMdxModule(module.default)),
   DecisionLab: () => import("@/components/visuals/DecisionLab").then(module => asMdxModule(module.default)),
   SelfCheckBenchLab: () => import("@/components/visuals/SelfCheckBenchLab").then(module => asMdxModule(module.default)),
+  TimescaleLab: () => import("@/components/visuals/TimescaleLab").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

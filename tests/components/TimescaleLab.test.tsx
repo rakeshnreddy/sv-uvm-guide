@@ -1518,6 +1518,10 @@ describe("TimescaleLab · the delay field takes only what compiles", () => {
     ["#'x", /cannot be an unbased unsized literal \(§5\.7\.1; not in A\.2\.2\.3\)/],
     ["#(1step)", /1step takes no parentheses/],
     ["#(z)", /Write #\(1'bz\)/],
+    ["#('shFFFFFFFF)", /that sentence points to 4294967295\. Uncertain: .*32-bit two's complement \(-1\)\. Check your simulator/],
+    ["#('sd4294967295)", /needs 33 bits and stays positive\. Its value is 4294967295, so write #4294967295 instead\./],
+    ["#(-1e3)", /A negative real or time-literal delay is outside this lab/],
+    ["#(5'h0F)", /only leading zeros were dropped, so its value is unchanged/],
   ] as const) {
     it(`rounding: ${text} is rejected with its reason and never rendered as code`, () => {
       render(<TimescaleLab mode="rounding" />);

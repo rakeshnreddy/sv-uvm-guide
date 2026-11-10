@@ -78,6 +78,8 @@ const pow2 = (n: number): bigint => {
 /** 2^64: time is a 64-bit unsigned integer (6.11, Table 6-8), and 9.4.1 sizes a negative delay like it. 2^32: $stime keeps 32 bits (20.3.2). */
 const TWO_POW_64 = pow2(64);
 const TWO_POW_32 = pow2(32);
+/** 2^31: an unsized signed literal of 32 bits reads a value this large or larger as negative (§5.7.1). */
+const TWO_POW_31 = pow2(31);
 
 // ---------------------------------------------------------------------------
 // Units and scales (3.14, Table 3-1; Table 20-2)
@@ -276,6 +278,8 @@ interface SizedLiteral {
   /** The size written before the apostrophe, or undefined for an unsized literal. */
   size?: number;
   signed: boolean;
+  /** The base letter, lower case: b, o, h or d. */
+  base?: "b" | "o" | "h" | "d";
   /** b, o and h: the bits that are left (most significant first, each 0, 1, x or z). Left padding is not written out; see sizeBasedLiteral. */
   bits?: string;
   /** The unsigned value when every bit is known, before the s designator is read. */
@@ -284,6 +288,8 @@ interface SizedLiteral {
   fillsSize: boolean;
   /** The digits gave more bits than the size, so §5.7.1 dropped bits on the left. */
   truncated: boolean;
+  /** Every bit truncation dropped was 0, so the value did not change. */
+  droppedOnlyZeros: boolean;
 }
 
 const DIGIT_BITS: Record<string, number> = { b: 1, o: 3, h: 4 };
@@ -298,11 +304,11 @@ const DIGIT_BITS: Record<string, number> = { b: 1, o: 3, h: 4 };
  */
 const sizeBasedLiteral = (t: string): SizedLiteral => {
   const m = /^(?:(\d+)\s*)?'([sS]?)([bBoOhHdD])\s*(.*)$/.exec(t);
-  const none: SizedLiteral = { signed: false, fillsSize: false, truncated: false };
+  const none: SizedLiteral = { signed: false, fillsSize: false, truncated: false, droppedOnlyZeros: false };
   if (!m) return none;
   const size = m[1] === undefined ? undefined : Number(m[1]);
   const signed = m[2] !== "";
-  const base = m[3].toLowerCase();
+  const base = m[3].toLowerCase() as "b" | "o" | "h" | "d";
   const digits = m[4].replace(/_/g, "").toLowerCase().replace(/\?/g, "z");
   let bits: string;
   if (base === "d") {
@@ -314,12 +320,14 @@ const sizeBasedLiteral = (t: string): SizedLiteral => {
     for (const d of digits) bits += d === "x" || d === "z" ? d.repeat(width) : parseInt(d, 16).toString(2).padStart(width, "0");
   }
   let truncated = false;
+  let droppedOnlyZeros = false;
   if (size !== undefined && bits.length > size) {
+    droppedOnlyZeros = /^0+$/.test(bits.slice(0, bits.length - size));
     bits = bits.slice(bits.length - size);
     truncated = true;
   }
   const value = /[xz]/.test(bits) ? undefined : BigInt(`0b${bits}`);
-  return { size, signed, bits: base === "d" ? undefined : bits, value, fillsSize: size !== undefined && bits.length === size, truncated };
+  return { size, signed, base, bits: base === "d" ? undefined : bits, value, fillsSize: size !== undefined && bits.length === size, truncated, droppedOnlyZeros };
 };
 
 /** unbased_unsized_literal 'x or 'z (Syntax 5-2). */
@@ -383,10 +391,11 @@ const scientificReason = (t: string, m: RegExpExecArray): string => {
  *   before a time unit;
  * - a legal form this lab does not compute says it is outside this lab: a based
  *   number with known digits, scientific notation, a name, #1step, and a
- *   parenthesised negative real or time literal with a nonzero value;
+ *   parenthesised negative real (plain or scientific, such as #(-1e3)) or time
+ *   literal with a nonzero value;
  * - any other text gets the list of forms the lab computes, without a verdict on
  *   its legality: an expression such as #(-a) or #(-1'bx), whose value the lab
- *   does not evaluate, or #(-0.0), which is not negative.
+ *   does not evaluate, or #(-0.0) and #(-0e5), which are not negative.
  */
 export function parseDelay(text: string): ParsedDelay {
   const { raw, body: t, parenthesised } = stripDelaySyntax(text);
@@ -400,8 +409,10 @@ export function parseDelay(text: string): ParsedDelay {
       if (written > TWO_POW_63) return invalid("That magnitude does not fit a 64-bit two's-complement value, so it is outside this lab (§9.4.1 sizes the result like a time variable).");
       return { kind: "negative", text, written: -written, asUnsigned: TWO_POW_64 - written };
     }
-    // A real or a time literal whose value is below zero. Anything else (an x or z operand, a name, a nested expression, -0.0) has no value the lab can call negative.
-    const negReal = /^-\s*(\d+)(?:\.(\d+))?(s|ms|us|ns|ps|fs)?$/.exec(t);
+    // A real (plain or scientific, A.8.7) or a time literal whose value is below zero. Anything else (an x or z operand, a name, a nested expression, -0.0, -0e5) has no value the lab can call negative.
+    // A scientific real is negative exactly when its mantissa is nonzero: the exponent only scales it (§5.7.2), so -1e3 is -1000.0.
+    const operand = t.replace(/^-\s*/, "");
+    const negReal = PLAIN_DELAY.exec(operand) ?? SCIENTIFIC.exec(operand);
     if (negReal && /[1-9]/.test(`${negReal[1]}${negReal[2] ?? ""}`)) return invalid(NEGATIVE_REAL_OR_LITERAL);
     return invalid(WRITE_A_DELAY);
   }
@@ -424,7 +435,9 @@ export function parseDelay(text: string): ParsedDelay {
     }
     // §5.7.1 sizes the digits first: a sized literal is padded or truncated on the left, so the bits that reach the delay decide whether it is known.
     const sized = sizeBasedLiteral(t);
-    const sizeNote = sized.truncated ? ` Its digits give more than ${sized.size} bit${sized.size === 1 ? "" : "s"}, so §5.7.1 truncates it from the left to ${sized.size}.` : "";
+    const sizeNote = sized.truncated
+      ? ` Its digits give more than ${sized.size} bit${sized.size === 1 ? "" : "s"}, so §5.7.1 truncates it from the left to ${sized.size}${sized.droppedOnlyZeros ? "; only leading zeros were dropped, so its value is unchanged" : ""}.`
+      : "";
     if (sized.bits !== undefined && /^[xz]+$/.test(sized.bits)) {
       // Reached only through truncation: an all-x/z digit string was taken by BASED_UNKNOWN above.
       return { kind: "xz", text, sizing: `${sizeNote.trim()} Every bit left is x or z.` };
@@ -441,6 +454,22 @@ export function parseDelay(text: string): ParsedDelay {
       const value = unsignedValue - (ONE << BigInt(sized.size));
       return invalid(
         `${legal} The s marks it signed, and §5.7.1 reads a signed literal as two's complement, so as a ${sized.size}-bit value it is ${value}. A negative delay falls under §9.4.1, but this lab does not decide how a ${sized.size}-bit signed value is widened to the size of a time variable, so it offers no plain number for it; #(${value}) is the nearest form the lab computes.`,
+      );
+    }
+    // §5.7.1: an unsized number has at least 32 bits, and one "that requires more than 32 bits" gets the width that properly represents the value, "including a sign bit if the number is signed";
+    // its example gives 4294967296 (2^32), a positive signed integer, at least 34 bits, so the sign bit counts toward the width. A signed value from 2^31 to 2^32 - 1 therefore needs 33 bits.
+    // A decimal base names the value itself, so 'sd4294967295 is 4294967295 and positive.
+    // For b, o and h the digits name a bit pattern, and §5.7.1 also says the s designator changes only the interpretation of that pattern; the clause does not say outright whether
+    // the value that "requires more than 32 bits" is the pattern read unsigned (positive) or as 32-bit two's complement (negative). The sign-bit sentence points to the positive reading;
+    // the lab records the other as an open question, not as a conforming option, and offers no plain number.
+    if (sized.signed && sized.size === undefined && unsignedValue >= TWO_POW_31 && unsignedValue < TWO_POW_32) {
+      if (sized.base === "d") {
+        return invalid(
+          `${legal} A decimal base names the value itself, and §5.7.1 gives an unsized number that needs more than 32 bits a width that includes a sign bit (its example: 4294967296, a positive signed integer, at least 34 bits), so the signed ${unsignedValue} needs 33 bits and stays positive. Its value is ${unsignedValue}, so write #${unsignedValue} instead.`,
+        );
+      }
+      return invalid(
+        `${legal} The s marks it signed, and its digits give the bit pattern ${unsignedValue}, 32 bits with the leftmost bit 1. §5.7.1 says "An unsized number that requires more than 32 bits shall have at least the minimum width needed to properly represent the value, including a sign bit if the number is signed", and its example gives 4294967296 (2^32), a positive signed integer, at least 34 bits: the sign bit counts toward the width. Read as the positive value ${unsignedValue}, this number needs 33 bits, so that sentence points to ${unsignedValue}. Uncertain: §5.7.1 also says the s designator "does not affect the bit pattern specified, only its interpretation", and it does not say outright whether a based literal's value is its pattern read unsigned or as 32-bit two's complement (${unsignedValue - TWO_POW_32}). Check your simulator; the lab does not settle this, so it offers no plain number for it.`,
       );
     }
     if (unsignedValue >= TWO_POW_64) return invalid(`${legal} Its value is ${unsignedValue}, 2^64 or more, more than a 64-bit time variable (§6.11) can count, so the lab offers no plain number for it.`);
