@@ -42,6 +42,30 @@ sources:
 - **Why it matters:** If you build or modify a RISC-V core, its correctness is your job: the open specification gives you no verified implementation. Typical escapes hide in instruction decode, register forwarding (handing a result straight to the next instruction before it reaches the register file), traps, interrupts and control registers. A green compare means nothing if the compare cannot see a hung core or an interrupt the reference never heard about.
 - **The Analogy:** Two accountants book the same transactions. A **post-run compare** checks the two ledgers at year end; a **lock-step compare** checks each entry the moment it is booked. *Where it breaks:* some entries cannot be recomputed by the second accountant, such as the bank's interest or the time of day. For a core these are cycle counters and the moment an interrupt arrives. The testbench must copy them from the first ledger to the second, or every ledger disagrees.
 
+<ArchitectureDiagram
+  title="Four tools around one stream of retirements"
+  caption="Read it top to bottom. The generator writes one program; the core and the ISS both run it. The compare checks the core's retirements against the ISS's, either after the run or in lock-step. ISA coverage measures what the retirements exercised, and formal checks test properties of the same RVFI retirement port, by default up to a bounded depth. Every check works on retired instructions, never on clock cycles."
+  cellWidth={130}
+  gapX={100}
+  spreadAnchors
+  nodes={[
+    { id: "gen", label: "program generator", sublabel: "random, legal", kind: "sequence", col: 0, row: 0 },
+    { id: "iss", label: "ISS", sublabel: "reference", kind: "model", col: 1, row: 0 },
+    { id: "core", label: "core (DUT)", sublabel: "RVFI port", kind: "dut", col: 0, row: 1 },
+    { id: "cmp", label: "compare", sublabel: "post-run or lock-step", kind: "scoreboard", col: 1, row: 1 },
+    { id: "cov", label: "ISA coverage", kind: "subscriber", col: 0, row: 2 },
+    { id: "formal", label: "formal checks", sublabel: "on the RVFI port", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "gen", to: "iss", style: "data", label: "program" },
+    { from: "gen", to: "core", style: "data", label: "program" },
+    { from: "iss", to: "cmp", style: "data", label: "reference" },
+    { from: "core", to: "cmp", style: "data", label: "RVFI" },
+    { from: "core", to: "cov", style: "data", label: "RVFI" },
+    { from: "core", to: "formal", style: "data", label: "RVFI" }
+  ]}
+/>
+
 **You will be able to:**
 1. **Explain** why verifying a processor differs from verifying a peripheral: architectural state checked at retirement, privilege modes, synchronous exceptions versus asynchronous interrupts, and the sources of nondeterminism.
 2. **Configure** a riscv-dv test with documented testlist keys, `gen_opts` options and directed streams, and **read** an ISA coverage model (a riscv-isac CGF file or an ACT4 SystemVerilog covergroup) to find what a regression did not exercise.
@@ -74,11 +98,42 @@ Each term is used on the rest of the page, so each gets one plain sentence here.
 - **Core:** the processor design under test (DUT), in RTL.
 - **Architectural state:** everything the ISA lets software see: the integer registers `x0` to `x31` (`x0` always reads 0), the program counter (`pc`), the **CSRs** (control and status registers, such as `mstatus` with the global interrupt enable MIE, `mip` with the pending-interrupt bits, the trap registers `mcause` and `mepc`, and the cycle counter `mcycle`) and memory.
 - **Microarchitectural state:** everything else inside the core, such as pipeline registers, caches and branch predictors. It is invisible to software, so the reference model does not have it and it cannot be compared directly.
+
+<ArchitectureDiagram
+  title="Architectural state versus microarchitectural state"
+  caption="Left: the state the ISA defines, which both the core and the ISS hold and which the testbench compares at each retirement (x0 always reads 0). Right, drawn dim: state only the RTL has. The ISS has no pipeline, cache or predictor, so this state is never compared directly; a bug in it is found only when it corrupts the architectural state on the left."
+  cellWidth={150}
+  gapX={64}
+  legend={false}
+  nodes={[
+    { id: "arch", label: "architectural: compared", kind: "generic", col: 0, row: 0, rowSpan: 4, container: true },
+    { id: "gpr", label: "x0 to x31", sublabel: "x0 always reads 0", kind: "generic", col: 0, row: 0 },
+    { id: "pc", label: "pc", kind: "generic", col: 0, row: 1 },
+    { id: "csr", label: "CSRs", sublabel: "mstatus, mip, mcause, ...", kind: "generic", col: 0, row: 2 },
+    { id: "mem", label: "memory", kind: "generic", col: 0, row: 3 },
+    { id: "uarch", label: "RTL only: not compared", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true, state: "dim" },
+    { id: "pipe", label: "pipeline registers", kind: "generic", col: 1, row: 0, state: "dim" },
+    { id: "cache", label: "caches", kind: "generic", col: 1, row: 1, state: "dim" },
+    { id: "bp", label: "branch predictor", kind: "generic", col: 1, row: 2, state: "dim" }
+  ]}
+/>
+
 - **Retire:** an instruction retires when it has finished and its results are committed to architectural state. Retirement is the moment a processor testbench compares, because it is the only moment the RTL and the specification agree on what "done" means.
 - **Trap:** a transfer of control to a handler. A **synchronous exception** is caused by the instruction itself (an illegal encoding, a misaligned access the core does not support, an `ecall`). An **interrupt** is **asynchronous**: something outside the program (a timer, an external line, a debug request) asks for attention between instructions. When a trap is taken into machine mode, `mepc` holds the address of the interrupted or faulting instruction, and the top bit of `mcause` says whether it was an interrupt.
 - **Privilege modes:** RISC-V defines machine (M), supervisor (S) and user (U) mode. Each trap and each return (`mret`) can change mode, and what an instruction may do depends on the mode.
 - **ISS (instruction set simulator):** a program that executes RISC-V instructions one at a time and updates a model of architectural state. It is **instruction-accurate, not cycle-accurate**: it knows what each instruction does, not how long it takes. Spike and Sail are the common open-source ISSes.
 - **ELF:** the binary file a compiler or assembler produces; the testbench loads it into the core's memory model and the ISS loads the same file.
+
+The two kinds of trap side by side, because the testbench treats them in opposite ways:
+
+| | Synchronous exception | Interrupt (asynchronous) |
+|---|---|---|
+| Caused by | The instruction itself | Something outside the program, between instructions |
+| Examples | Illegal encoding, misaligned access the core does not support, `ecall`; a load or store access fault from a bus error | Timer, external line; a debug request arrives the same asynchronous way (it enters Debug Mode, not an M-mode trap, so it sets neither `mcause` nor `mepc`; it is still forwarded) |
+| Top bit of `mcause`, when taken into machine mode | 0 | 1 (for example `0x80000007` on RV32: interrupt bit set, code 7, the machine timer interrupt) |
+| `mepc`, when taken into machine mode | The faulting instruction's address | The address of the interrupted instruction |
+| Can the ISS reproduce it from the program? | Yes for causes in the program (illegal encoding, `ecall`, misaligned access under the core's policy), if it is configured like the core (ISA string, misaligned policy); no for an access fault from a bus error, which the memory system decides | No: nothing in the program says when it arrived |
+| What the testbench does | Configures the ISS to match the core; a bus error needs one more step from the testbench, because configuration cannot predict it (see the prediction below and the lock-step sections) | Forwards the event to the ISS (lock-step, later on this page) |
 
 ### What makes a processor different
 
@@ -95,8 +150,26 @@ You have verified peripherals in earlier modules: a transaction goes in, a trans
 The last row is the one that breaks naive testbenches. An ISS reproduces only what the ISA fully determines. Four kinds of value are not fully determined:
 1. **Cycle and performance counters.** `mcycle` counts clock cycles of the RTL; an instruction-accurate ISS has no cycles to count.
 2. **Interrupt and debug-request arrival.** The testbench raises them at some clock edge; the ISS runs no clock and cannot know which instruction boundary they landed on.
-3. **Implementation-defined behaviour.** The ISA leaves some choices to the implementation, for example whether a misaligned load is handled in hardware or traps. The ISS must be configured to make the same choice.
+3. **Implementation-defined behaviour.** The ISA leaves some choices to the implementation, for example whether a misaligned load is handled in hardware or traps.
 4. **External responses.** A bus error on a load is decided by the memory system, not by the program.
+
+**Predict.** A testbench has four ways to keep the ISS in agreement with the core. It can **forward** an event (tell the ISS it happened, before the ISS executes the next instruction), **override** a value (set a register value in the ISS during the run), **notify** a memory access (report an access result to the ISS during the run), or **configure** the ISS (set an option once, before the run starts). Interrupt and debug-request arrival is forwarded. Match each of the other three kinds of value above to override, notify or configure. Hint: ask when each value becomes known, and who knows it.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+| Value the ISS cannot derive | Treatment | Why that one |
+|---|---|---|
+| Cycle and performance counters (`mcycle`) | Override | The ISS has no cycles to count, so it takes the RTL's count |
+| Interrupt and debug-request arrival | Forward | Only the testbench saw which instruction boundary it landed on |
+| Implementation-defined behaviour (misaligned loads) | Configure | It is a fixed choice of the design, known before the run |
+| External responses (a bus error on a load) | Notify | The memory system decided it, during the run |
+
+In the words of the full definitions: override copies the RTL's value into the ISS; notify tells the ISS what the memory system answered; configure makes the ISS take the same implementation choice as the core. For implementation-defined behaviour, the ISS must be configured to make the same choice.
+
+The lock-step sections below use these words. Push Further turns forward, override and notify into a per-bench policy and adds one more treatment, **exclude** (leave a value out of the compare).
+
+</details>
 
 <ArchitectureDiagram
   title="What a core testbench observes"
@@ -126,7 +199,32 @@ Read the diagram as a text list: the memory model feeds the core its program; th
 
 **Classic mistake: comparing the PC only.** A PC-only compare passes a core that computes `add` wrongly, because a wrong sum does not change where the next instruction is fetched. It only fails much later, if ever, when a branch happens to depend on the bad value. Compare every architectural effect of each retirement.
 
+Here is that case at retirement #2 of the lesson's program, with an RTL whose `add` produces 13:
+
+| Retirement #2 (`add x3, x1, x2`) | `pc` | Next `pc` | `rd` | `rd_wdata` |
+|---|---|---|---|---|
+| ISS (reference) | `0x108` | `0x10C` | `x3` | 12 |
+| RTL with a bad adder | `0x108` | `0x10C` | `x3` | **13** |
+| PC-only compare | match | match | not checked | not checked: **PASS** |
+| Every-field compare | match | match | match | **FAIL** at #2: `rd_wdata` |
+
 **Classic mistake: comparing per clock cycle.** The RTL may take one cycle or forty for the same instruction, and the ISS has no cycles. The only shared timeline is the sequence of retirements.
+
+<TimingDiagram
+  title="Retirements do not line up with clock edges"
+  caption="The x-axis is the RTL's rising clock edges, with illustrative cycle counts (not from a real core). The six instructions of the lesson's program retire at edges 1, 2, 4, 5, 8 and 9; the load retires three cycles after the store. Retirement number k always pairs with ISS instruction k, whatever edge it lands on, so a compare walks the retirement numbers, not the clock. (RVFI, later on this page, reports this number as rvfi_order.) Lanes: retires is high when an instruction retires; ret # is the retirement number; insn is the retiring instruction (addi1 and addi2 are the two addi instructions, writing x1 and x2). The ● marked none at edge 3 is a cycle where nothing retires, so there is no ISS instruction to compare; the ▼ marked #4 at edge 8 is the lw retiring as #4, compared with ISS instruction 4."
+  edges={10}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "retires", kind: "bit", values: [0, 1, 1, 0, 1, 1, 0, 0, 1, 1] },
+    { name: "ret #", kind: "bus", values: [undefined, "0", "1", undefined, "2", "3", undefined, undefined, "4", "5"] },
+    { name: "insn", kind: "bus", values: [undefined, "addi1", "addi2", undefined, "add", "sw", undefined, undefined, "lw", "nop"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "nothing retires: no ISS instruction to compare", short: "none" },
+    { edge: 8, tone: "sample", label: "edge 8 retires #4, the lw: compare it with ISS instruction 4", short: "#4" }
+  ]}
+/>
 
 ### The processor verification loop
 
@@ -241,6 +339,14 @@ A custom entry follows the same pattern. This one keeps the arithmetic focus and
 
 **Misconception: "random instruction streams need no constraints."** Fill a memory with random 32-bit words and call it a program, and you get a poor test. Many words decode to illegal or reserved encodings, so the core spends its time in the illegal-instruction handler. Random branches and jumps leave the program. Random loads and stores hit unmapped addresses. Nothing guarantees the program ever ends. A generator like riscv-dv exists to make every instruction legal by construction, keep branches inside the program, point loads and stores at real data pages, reserve registers for the stack and the handlers, and end every program the same way.
 
+| Concern | Raw random 32-bit words | A riscv-dv program |
+|---|---|---|
+| Encodings | Many illegal or reserved; the core sits in the illegal-instruction handler | Legal by construction; illegal and HINT encodings only when you ask (`+illegal_instr_ratio`, `+hint_instr_ratio`) |
+| Branch and jump targets | Leave the program | Stay inside the program |
+| Load and store addresses | Hit unmapped addresses | Point at real data pages |
+| Registers | Any instruction may overwrite the stack pointer or a handler's registers | Registers reserved for the stack and the handlers |
+| End of test | Nothing guarantees the program ends | Every program ends the same way |
+
 **Pitfall: an invented key passes silently.** A key such as `dist:` with per-instruction weights is not a riscv-dv testlist key. Nothing reads it, and your "distribution" never reaches the generator. The same happens to `+num_of_tests` placed in `gen_opts`: `run.py` already passes `+num_of_tests` (computed from `iterations`) before your `gen_opts`, and the generator reads the first match. Use `iterations` to set the count.
 
 **Debugging: "my run never produces a MUL."** Check, in order: the `--isa` you passed to `run.py` (or the target) includes `m`; `supported_isa` in `riscv_core_setting.sv` lists `RV32M`; `unsupported_instr` does not exclude it; no `gen_opts` removes it. Then open the generated `.S` file and search for `mul`: the program is the ground truth.
@@ -309,6 +415,23 @@ Two details carry over to any processor coverage model. The `iff (ins.trap == 0)
 
 **Pitfall: coverage from an ISS trace measures the program, not the RTL.** It tells you what the stimulus asked for. If the RTL silently dropped an instruction, the ISS trace still shows it. riscv-isac's own documentation warns that coverage from Spike traces is inaccurate, because Spike does not log instructions that trap, and recommends Sail. Sample coverage from the RTL's retirement port when you want to know what the core did.
 
+<ArchitectureDiagram
+  title="Two places to sample ISA coverage"
+  caption="Top row: coverage computed from the ISS's trace log measures the program as that ISS logged it; a Spike log leaves out instructions that trap, so their coverpoints read low. Bottom row: coverage sampled from the core's retirement port, one retired instruction per sample, measures what the core actually retired. The port reports trapping instructions too (rvfi_trap), so every retirement is sampled and the covergroup, not the trace, decides whether a trap counts: ACT4 excludes it with iff (ins.trap == 0)."
+  cellWidth={150}
+  gapX={80}
+  nodes={[
+    { id: "iss", label: "ISS", sublabel: "runs the ELF", kind: "model", col: 0, row: 0 },
+    { id: "covi", label: "coverage", sublabel: "measures the program", kind: "subscriber", col: 1, row: 0, state: "dim" },
+    { id: "core", label: "core (DUT)", sublabel: "retirement port", kind: "dut", col: 0, row: 1 },
+    { id: "covr", label: "coverage", sublabel: "measures the core", kind: "subscriber", col: 1, row: 1, state: "ok" }
+  ]}
+  edges={[
+    { from: "iss", to: "covi", style: "data", label: "trace log" },
+    { from: "core", to: "covr", style: "data", label: "retired" }
+  ]}
+/>
+
 **Pitfall: certification tests are not verification.** The ACT4 README states that the architectural tests "are not verification tests". They are self-checking ELFs whose expected results Sail computes, which your own testbench runs. They show that common behaviour matches the specification; they do not hunt for your pipeline's bugs.
 
 ### Comparing against an ISS after the run
@@ -350,9 +473,61 @@ The rules a robust post-run compare follows:
 3. **Count.** Fail on an empty trace, and fail when the RTL retired fewer or more instructions than the reference. Missing outputs are found only by counting; this is the same end-of-test accounting you met in [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 4. Print the number matched, so "PASS, 0 matched" can never look like success.
 
+**Predict.** A robust compare applies rules 1 to 3 in some order. Take an RTL trace that is both wrong and short: its `add` (retirement #2) writes `x4` instead of `x3`, and then the core hangs, so it has 3 entries against the ISS's 6. Which single message would you want the compare to print, and in what order must the checks run to print it?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+The divergence, because it is the earlier and more useful fact: `first divergence at #2 (pc 0x108): rd RTL=0x4 ISS=0x3`. To get it, the compare checks for an empty trace first, then compares the common prefix field by field, and checks the lengths **last**. The worked example's `robust_compare` runs in exactly this order and prints exactly this line for that trace (CPython 3.13.4).
+
+<ArchitectureDiagram
+  title="The order of checks in robust_compare"
+  caption="Top to bottom: the empty check, then the field-by-field walk over the common prefix, then the length check. The first check that fails returns its message and ends the compare. Only a trace that passes all three returns None, which the script prints as PASS with the matched count."
+  cellWidth={150}
+  gapX={72}
+  nodes={[
+    { id: "q1", label: "either trace empty?", kind: "generic", col: 0, row: 0 },
+    { id: "f1", label: "FAIL", sublabel: "empty trace", kind: "generic", col: 1, row: 0, state: "error" },
+    { id: "q2", label: "a field differs?", sublabel: "walk the common prefix", kind: "generic", col: 0, row: 1 },
+    { id: "f2", label: "FAIL", sublabel: "first divergence at #i", kind: "generic", col: 1, row: 1, state: "error" },
+    { id: "q3", label: "lengths differ?", kind: "generic", col: 0, row: 2 },
+    { id: "f3", label: "FAIL", sublabel: "length mismatch", kind: "generic", col: 1, row: 2, state: "error" },
+    { id: "ok", label: "PASS", sublabel: "N matched", kind: "generic", col: 0, row: 3, state: "ok" }
+  ]}
+  edges={[
+    { from: "q1", to: "f1", style: "causal", label: "yes" },
+    { from: "q1", to: "q2", style: "causal", label: "no" },
+    { from: "q2", to: "f2", style: "causal", label: "yes" },
+    { from: "q2", to: "q3", style: "causal", label: "no" },
+    { from: "q3", to: "f3", style: "causal", label: "yes" },
+    { from: "q3", to: "ok", style: "causal", label: "no" }
+  ]}
+/>
+
+</details>
+
+The same counting rule protects any scoreboard. In this transaction-level version, a dropped response causes no error while the test runs and is caught only by the end-of-test leftover check. The visualizer opens on a correct DUT, so set it up yourself: set **DUT bug** to "Drops the last id-0 response" and predict the report before you step through it; then clear **check_phase reports leftovers** and watch the same run pass. Leave the matching policy, the DUT ordering and the end-of-test setting at their defaults; this exercise needs only the two controls named above.
+
+<ScoreboardMatchingVisualizer />
+
 **What riscv-dv's own compare checks.** riscv-dv's `scripts/instr_trace_compare.py` compares the sequence of **integer-register updates** in two trace CSVs: it skips instructions that write no register, never compares stores directly (a bad store shows up only if a later load reads it back), and counts leftover register-writing entries as mismatches. Its `iss_cmp` step in `run.py` compares two ISSes. Know this before you trust a green result from it; the robust compare above is your own, stricter design.
 
+| Question | riscv-dv `instr_trace_compare.py` (master, fetched 2026-10-11) | This lesson's robust compare |
+|---|---|---|
+| Which retirements are compared? | Only those that write an integer register | Every retirement |
+| Which fields? | The register updates | `pc`, `insn`, trap flag, `rd`, `rd_wdata` (0 for `x0`), store mask, address and masked data |
+| A bad store | Seen only if a later load reads it back | Fails at the store itself |
+| Extra or missing entries | Leftover register-writing entries count as mismatches | Length mismatch fails, and an empty trace fails |
+| With `+compare_final_value_only=1` | In-order compare off; prints `[PASSED]: 0 matched` (Push Further) | Not applicable; a zero count would fail |
+
 **The limit of any post-run compare: interrupts.** The ISS runs the ELF alone. If the testbench raised a timer interrupt after instruction 2, the RTL trace continues in the interrupt handler while the ISS trace continues with instruction 3. The compare fails at the first handler instruction, and nothing in the logs says it was not a bug. riscv-dv's interrupt and debug tests therefore set `compare_opts: +compare_final_value_only=1`, which gives up comparing instruction by instruction (see Push Further for what that does in riscv-dv's script today). The fix is the next section.
+
+| Retirement # | RTL `pc` | ISS `pc` | Post-run verdict |
+|---|---|---|---|
+| 0 | `0x100` | `0x100` | match |
+| 1 | `0x104` | `0x104` | match |
+| 2 | `0x108` | `0x108` | match; the timer interrupt is taken after this instruction, in the RTL only |
+| 3 | `0x800` (first handler instruction) | `0x10C` (`sw`) | **first divergence**; nothing in the logs tells it apart from an RTL bug |
 
 ### Lock-step step-and-compare
 
@@ -369,6 +544,12 @@ The open-source Ibex core's UVM environment is a complete, public example. Its c
 | `riscv_cosim_step(handle, write_reg, write_reg_data, pc, sync_trap, suppress_reg_write)` | Execute one instruction and check it against what the RTL retired; returns 0 on mismatch |
 
 How a step works, per the Ibex documentation: for a retired instruction, `step` executes one ISS instruction and checks the PC and the register write. For an instruction that raised a synchronous trap, it checks that the ISS traps on the same instruction. And **if an interrupt is pending when `step` is called, the ISS takes it first**, expecting the checked instruction to be the first instruction of the handler.
+
+| When `step` is called for... | The ISS... | And checks |
+|---|---|---|
+| An instruction that retired normally | Executes one instruction | The PC and the register write |
+| An instruction that raised a synchronous trap | Executes it, and must trap on it too | That both sides trapped on the same instruction |
+| Any retirement while an interrupt is pending | Takes the interrupt first | That the checked instruction is the handler's first |
 
 Now the interrupt case, as the scoreboard in Make It Work sees it:
 
@@ -404,7 +585,47 @@ Now the interrupt case, as the scoreboard in Make It Work sees it:
 
 **Pitfall: a hang produces no mismatch.** Lock-step compares only what retires. A core that stops retiring generates no steps, so the scoreboard never complains. End-of-test accounting is still required: a cycle timeout that is fatal, an end-of-test handshake from the program, and a check at the end that the scoreboard compared a sensible number of instructions. Ibex's base test, for example, waits for a `TEST_RESULT` handshake written by the program, with a cycle timeout that ends in `uvm_fatal` "TEST TIMEOUT!!", and its scoreboard prints "Co-simulation matched N instructions" in `final_phase`.
 
+<TimingDiagram
+  title="A hung core in lock-step: no step, no mismatch"
+  caption="The x-axis is rising clock edges, with an illustrative timeout far shorter than a real one. The core retires three instructions and then stops. With no retirement there is no step, so the step count stays at 3 and no mismatch is ever reported. Only the fatal cycle timeout ends the test as a failure, and a check of the count shows how far the program got. Lanes: retires is high when an instruction retires; steps is the number of ISS steps so far. The shaded band from edge 5 to edge 9 is where the core stopped retiring; the ● marked no step at edge 6 is a cycle with no retirement, so no step and no mismatch; the ✕ marked timeout at edge 9 is the fatal cycle timeout, where the test fails."
+  edges={10}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "retires", kind: "bit", values: [0, 1, 1, 0, 1, 0, 0, 0, 0, 0] },
+    { name: "steps", kind: "bus", values: ["0", "1", "2", "2", "3", "3", "3", "3", "3", "3"] }
+  ]}
+  highlights={[{ from: 5, to: 9, tone: "fail", label: "core stopped retiring" }]}
+  markers={[
+    { edge: 6, tone: "info", label: "no retirement, so no step and no mismatch", short: "no step" },
+    { edge: 9, tone: "fail", label: "fatal cycle timeout: the test fails here", short: "timeout" }
+  ]}
+/>
+
 **Debugging a lock-step mismatch:** look at the first mismatch only, and ask three questions. Is it the first instruction after an interrupt, an NMI or a debug request (forwarding)? Does it read a counter or another CSR the ISS cannot model (override)? Does it follow a load or store that saw a bus error, or a misaligned access (notification, or ISS configuration)? Only when all three answers are no is it time to suspect the RTL.
+
+<ArchitectureDiagram
+  title="Triage the first lock-step mismatch"
+  caption="Ask the questions top to bottom about the first mismatch only. A yes points at the testbench: forward the event, override the value, or notify the access (or fix the ISS configuration). Only after three noes is the RTL the suspect."
+  cellWidth={150}
+  gapX={72}
+  nodes={[
+    { id: "q1", label: "after irq/NMI/debug?", sublabel: "first instruction after one", kind: "generic", col: 0, row: 0 },
+    { id: "a1", label: "forward it", sublabel: "before the step", kind: "generic", col: 1, row: 0, state: "active" },
+    { id: "q2", label: "reads a counter?", sublabel: "or a CSR the ISS lacks", kind: "generic", col: 0, row: 1 },
+    { id: "a2", label: "override it", sublabel: "e.g. set_mcycle", kind: "generic", col: 1, row: 1, state: "active" },
+    { id: "q3", label: "after a bus error?", sublabel: "or a misaligned access", kind: "generic", col: 0, row: 2 },
+    { id: "a3", label: "notify / configure", sublabel: "the access, or ISS options", kind: "generic", col: 1, row: 2, state: "active" },
+    { id: "rtl", label: "suspect the RTL", kind: "dut", col: 0, row: 3, state: "error" }
+  ]}
+  edges={[
+    { from: "q1", to: "a1", style: "causal", label: "yes" },
+    { from: "q1", to: "q2", style: "causal", label: "no" },
+    { from: "q2", to: "a2", style: "causal", label: "yes" },
+    { from: "q2", to: "q3", style: "causal", label: "no" },
+    { from: "q3", to: "a3", style: "causal", label: "yes" },
+    { from: "q3", to: "rtl", style: "causal", label: "no" }
+  ]}
+/>
 
 ### RVFI and riscv-formal
 
@@ -454,6 +675,25 @@ Two metadata rules matter most for a compare. `rvfi_trap` is set for an instruct
 
 **What a pass means.** The checks `genchecks.py` generates are **bounded model checks** by default (configuration `mode`, which also accepts `prove`): each check explores every input sequence up to a configured `[depth]` from reset. A pass in `bmc` mode means no violation within that depth, not "correct for all programs". And riscv-formal states its own limit for multiply and divide: they are beyond practical model checkers, so with `RISCV_FORMAL_ALTOPS` the core implements stand-in operations (an add or subtract, then an XOR with a fixed mask). That checks the forwarding and control around the M unit, not the multiplier itself.
 
+<figure className="my-4">
+  <p className="mb-2 text-sm font-semibold">What a bmc pass at depth N covers</p>
+  <svg viewBox="0 0 340 104" role="img" aria-label="A timeline from reset. The first part, up to depth N, is shaded and labelled every input explored; a violation of a checked property there is found, marked with a check in a solid circle. The part after depth N is dashed and labelled not explored; a violation there is missed, marked with a question mark in a dashed circle." style={{ width: "100%", maxWidth: 480 }}>
+    <text x="12" y="20" fontSize="10.5" fill="currentColor">reset</text>
+    <text x="200" y="20" fontSize="10.5" fill="currentColor" textAnchor="middle">depth N</text>
+    <rect x="12" y="28" width="188" height="26" fill="currentColor" fillOpacity="0.12" stroke="currentColor" />
+    <rect x="200" y="28" width="128" height="26" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="106" y="45" fontSize="10.5" fill="currentColor" textAnchor="middle">every input explored</text>
+    <text x="264" y="45" fontSize="10.5" fill="currentColor" textAnchor="middle">not explored</text>
+    <circle cx="106" cy="70" r="9" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M101 70 L105 74 L112 65" fill="none" stroke="currentColor" strokeWidth="2" />
+    <circle cx="264" cy="70" r="9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+    <text x="264" y="74" fontSize="11" fill="currentColor" textAnchor="middle">?</text>
+    <text x="106" y="94" fontSize="10.5" fill="currentColor" textAnchor="middle">violation here: found</text>
+    <text x="264" y="94" fontSize="10.5" fill="currentColor" textAnchor="middle">violation here: missed</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">A conceptual illustration, not a tool run. The x-axis is cycles from reset. A bounded check explores every input sequence up to its [depth], so a violation of a checked property within that horizon is found, and one that first appears later is not. State a result as "insn checks pass to depth N in bmc mode". Under RISCV_FORMAL_ALTOPS the checked M-extension results are the stand-ins, so the real multiplier is outside the check at any depth.</figcaption>
+</figure>
+
 An illustrative SVA version of one `insn`-style check, written by hand for this lesson. It is not riscv-formal source: riscv-formal generates its checks per instruction and writes them with immediate assertions for tool compatibility.
 
 ```systemverilog
@@ -501,6 +741,43 @@ The `rd == 0` arm is the point. Write the obvious `rvfi_rd_wdata == rvfi_rs1_rda
 - A post-run compare must **count** and check every field; it cannot follow interrupts.
 - Lock-step steps the ISS once per retirement and needs the testbench to **forward** asynchronous events and **override** counters. It still needs a timeout, because a hang produces no mismatch.
 - RVFI is the retirement port for both simulation and formal. A riscv-formal pass is bounded by default and does not cover the real multiplier under ALTOPS.
+
+<VisualRecap
+  title="Check every retirement, tell the ISS what it cannot know, and count"
+  rule="Compare every architectural effect of each retirement, in retirement order and never per clock cycle; before each ISS step, forward asynchronous events and override values the ISS cannot model; and count, because a missing retirement produces no mismatch."
+  code={`// one retirement: excerpt of rv_cosim_scb::run_phase
+// (forwarding calls and the uvm_fatal message abridged)
+riscv_cosim_set_mip(cosim_handle, t.pre_mip, t.post_mip);  // forward
+riscv_cosim_set_mcycle(cosim_handle, t.mcycle);            // override
+if (!riscv_cosim_step(cosim_handle, t.rd_addr, t.rd_wdata, t.pc,
+                      t.trap, t.rf_wr_suppress))
+  \`uvm_fatal("COSIM", "mismatch")
+n_checked++;                                               // count`}
+  mistake="Trusting a green result that compared nothing: a zip()-style post-run loop passes a truncated trace, and a hung core in lock-step makes no step, so neither reports a mismatch. Fail on empty, short or long traces and on a zero count, behind a fatal cycle timeout."
+  inTestbench="The RVFI monitor sends one rvfi_item per retirement to the cosim scoreboard (forward, override, step, count) and to a coverage subscriber; riscv-formal checks the same RVFI port, bounded by its depth in the default bmc mode."
+>
+  <ArchitectureDiagram
+    title="One retirement, three consumers"
+    caption="Each retirement leaves the core once, on RVFI. The scoreboard forwards and overrides, then steps the ISS and counts; coverage samples the same item; formal checks properties of the same port, by default up to a bounded depth."
+    cellWidth={130}
+    gapX={100}
+    nodes={[
+      { id: "core", label: "core (DUT)", kind: "dut", col: 0, row: 0 },
+      { id: "mon", label: "RVFI monitor", kind: "monitor", col: 0, row: 1 },
+      { id: "formal", label: "riscv-formal", sublabel: "bounded by depth", kind: "generic", col: 1, row: 0 },
+      { id: "scb", label: "rv_cosim_scb", sublabel: "forward, override, count", kind: "scoreboard", col: 1, row: 1 },
+      { id: "cov", label: "coverage", kind: "subscriber", col: 0, row: 2 },
+      { id: "iss", label: "ISS", kind: "model", col: 1, row: 2 }
+    ]}
+    edges={[
+      { from: "core", to: "formal", style: "data", label: "RVFI" },
+      { from: "core", to: "mon", style: "data", label: "RVFI" },
+      { from: "mon", to: "scb", style: "data", label: "rvfi_item" },
+      { from: "mon", to: "cov", style: "data", label: "rvfi_item" },
+      { from: "scb", to: "iss", style: "causal", label: "step" }
+    ]}
+  />
+</VisualRecap>
 
 ## Make It Work
 
@@ -780,6 +1057,29 @@ UVM_FATAL @ 51230: uvm_test_top.env.scb [COSIM] mismatch at pc 0x00000800: ...
 
 Ibex's `ibex_cosim_scoreboard` (lowRISC/ibex master, `dv/uvm/core_ibex/common/ibex_cosim_agent/ibex_cosim_scoreboard.sv`, fetched 2026-10-11) extends `uvm_scoreboard` and reads RVFI items from a `uvm_tlm_analysis_fifo`. Before each step it calls, in this order: `riscv_cosim_set_debug_req`, `riscv_cosim_set_nmi`, `riscv_cosim_set_nmi_int`, `riscv_cosim_set_mip(pre_mip, post_mip)`, `riscv_cosim_set_mcycle`, `riscv_cosim_set_csr` for each of ten `mhpmcounter` registers and their high halves, and `riscv_cosim_set_ic_scr_key_valid`; then `riscv_cosim_step(rd_addr, rd_wdata, pc, trap, rf_wr_suppress)`. The source comment explains the order: debug, NMI and normal interrupts must be handled "with the correct priority when they occur together". On a mismatch it calls `uvm_fatal`, unless the configuration's `relax_cosim_check` downgrades it to `uvm_info`. Separate threads notify every data-side access and instruction-fetch bus errors. The co-simulation documentation states that only VCS is supported as the simulator, though no VCS-specific feature is needed (tool-dependent).
 
+<SequenceDiagram
+  title="Ibex's calls for one retirement, in order"
+  caption="Read top to bottom. The cosim scoreboard is ibex_cosim_scoreboard. First, a separate thread notifies each data-side access; that notification must reach the ISS before the step of the instruction that made the access, because the ISS performs the access inside that step. Then, for the retirement itself, the scoreboard tells the ISS every event and value it cannot derive, in priority order (debug, NMI, NMI_INT, interrupts), then overrides the counters, and only then steps. A 0 from the step is uvm_fatal, or uvm_info under relax_cosim_check. Names follow ibex_cosim_scoreboard.sv (lowRISC/ibex master, fetched 2026-10-11)."
+  participants={[
+    { id: "scb", label: "cosim scoreboard", sublabel: "ibex_cosim_scoreboard", kind: "scoreboard" },
+    { id: "iss", label: "ISS (Spike)", kind: "model" }
+  ]}
+  messages={[
+    { kind: "divider", label: "separate thread, before the step" },
+    { from: "scb", to: "iss", label: "riscv_cosim_notify_dside_access, for every data-side access" },
+    { kind: "divider", label: "per retirement" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_debug_req" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_nmi" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_nmi_int" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_mip(pre_mip, post_mip)" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_mcycle" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_csr, for ten mhpmcounters and their high halves" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_ic_scr_key_valid" },
+    { from: "scb", to: "iss", label: "riscv_cosim_step(rd_addr, rd_wdata, pc, trap, rf_wr_suppress)" },
+    { kind: "return", from: "iss", to: "scb", label: "1 match, 0 mismatch" }
+  ]}
+/>
+
 ### Expert: A nondeterminism policy: forward, override, notify, exclude
 
 Every value the ISS cannot derive from the program needs one of four treatments, decided once per bench and written in the verification plan (source: Ibex `doc/03_reference/cosim.rst`, sections "Trap Handling", "Interrupts and Debug Requests", "Memory Access Checking and Bus Errors").
@@ -797,6 +1097,15 @@ The documentation also notes that a co-simulated Spike "doesn't produce matching
 
 Post-run needs no DPI integration and works with any ISS that writes a log; lock-step finds the first divergence while the simulation is still running and can follow asynchronous events. riscv-dv's interrupt and debug tests (`riscv_full_interrupt_test` and others in `yaml/base_testlist.yaml`) set `+compare_final_value_only=1`. In `scripts/instr_trace_compare.py` at riscv-dv master (fetched 2026-10-11), that option turns off the in-order compare, and the final-value compare it should select is a commented-out TODO. The script then reports `[PASSED]: 0 matched`. Read the matched count of every compare you rely on, and treat zero as a failure. Cores with their own lock-step bench (Ibex) do not depend on this path.
 
+| | Post-run compare | Lock-step compare |
+|---|---|---|
+| Integration | None: two log files | DPI calls into the ISS from the bench |
+| ISS needed | Any ISS that writes a log | One the bench can step once per retirement |
+| Interrupts, NMI, debug requests | Cannot follow them; riscv-dv falls back to `+compare_final_value_only=1` | Forwarded before the step |
+| When the divergence is found | After the run | While the simulation is still running |
+| A hung core | Caught by the length check, once a fatal timeout ends the RTL run | No step, no mismatch: needs a fatal timeout and a count |
+| riscv-dv at master | Final-value mode prints `[PASSED]: 0 matched` | Not in riscv-dv; cores bring their own (Ibex) |
+
 ### Expert: What a riscv-formal pass guarantees
 
 From `docs/source/procedure.rst` (YosysHQ/riscv-formal main, fetched 2026-10-11): the tests "might be set up as bounded model checks or as unbounded verification tasks"; checks generated by `genchecks.py` are bounded model checks run with SymbiYosys; the configuration's `mode` accepts `bmc` or `prove` and defaults to `bmc`; each check's bound comes from the `[depth]` section. So state results as "insn checks pass to depth N in bmc mode", never as "ISA-compliant". Three further limits: under `RISCV_FORMAL_ALTOPS` the M-extension results are stand-in operations (`rvfi.rst`, "Alternative arithmetic operations"); the README calls the project "work in progress" with interfaces "likely to change"; and properties are written as immediate assertions "for maximal compatibility with other tools", so running them in a commercial formal tool is possible but tool-dependent.
@@ -804,6 +1113,25 @@ From `docs/source/procedure.rst` (YosysHQ/riscv-formal main, fetched 2026-10-11)
 ### Expert: Multi-retire cores and reordered retirement
 
 RVFI has `NRET` channels, one per instruction a core can retire in a cycle; if two retirements in one cycle write the same register, the higher channel wins. Retirement may even be reordered "as long as causality is preserved" (`rvfi.rst`). A trace compare that assumes one retirement per cycle, in program order, breaks on such cores. Sort by `rvfi_order` before comparing, and decide how to treat same-cycle writes to one register. riscv-dv's `instr_trace_compare.py` has an out-of-order mode for cores that commit several instructions per cycle, but at master it is a commented-out TODO. Speculative cores add a rollback interface (`rvfi_rollback_valid`, `rvfi_rollback_order`) that invalidates earlier packets, so a monitor must buffer until a retirement can no longer be rolled back.
+
+<TimingDiagram
+  title="Two RVFI channels (NRET = 2)"
+  caption="The x-axis is rising clock edges; the values are illustrative. ch0 and ch1 are RVFI channels 0 and 1. At edge 1 both channels retire and both write x5: the higher channel (ch1, order 11) wins. Order 13 (writing x7) retires at edge 3, and order 12 (writing x6) follows one cycle later at edge 4, out of order, so the compare sorts by rvfi_order before it steps the ISS: 10, 11, 12, 13. The reordering is illustrative: rvfi.rst allows it only as long as causality is preserved, and here 12 and 13 write different registers. ch0 rd and ch1 rd are each channel's rvfi_rd_addr. The ▼ marked x5 at edge 1 is the same-cycle write; the ● marked sort at edge 4 is where the sort is needed."
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "ch0 valid", kind: "bit", values: [0, 1, 0, 1, 1, 0] },
+    { name: "ch0 order", kind: "bus", values: [undefined, "10", undefined, "13", "12", undefined] },
+    { name: "ch0 rd", kind: "bus", values: [undefined, "x5", undefined, "x7", "x6", undefined] },
+    { name: "ch1 valid", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "ch1 order", kind: "bus", values: [undefined, "11", undefined, undefined, undefined, undefined] },
+    { name: "ch1 rd", kind: "bus", values: [undefined, "x5", undefined, undefined, undefined, undefined] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "same-cycle write to x5: the higher channel wins", short: "x5" },
+    { edge: 4, tone: "info", label: "order 12 arrives after order 13: sort by rvfi_order before comparing", short: "sort" }
+  ]}
+/>
 
 ### Expert: Trusting ISA coverage
 
@@ -816,6 +1144,14 @@ Read the generator before you trust a distribution. In `src/isa/riscv_instr.sv`,
 ### Expert: The verification-interface landscape
 
 RVFI is the retirement interface riscv-formal defines. **RVVI** (RISC-V Verification Interface, `riscv-verification/RVVI`) is a draft open standard for lock-step processor DV, which its README describes as "a superset of RVFI": RVVI-TRACE (version 1.7, SystemVerilog) for the core's trace, RVVI-API (version 1.37, C/C++ with a DPI wrapper) for the reference model, and RVVI-VVP for virtual peripherals such as interrupt generators. The README lists Synopsys ImperasDV and the OpenHW Group's CV32E40X verification as users. Choosing RVVI over a home-grown interface buys reusable reference-model and coverage components; choosing RVFI keeps the formal flow open.
+
+| | RVFI | RVVI |
+|---|---|---|
+| Defined by | riscv-formal (`YosysHQ/riscv-formal`, `docs/source/rvfi.rst`) | `riscv-verification/RVVI`, a draft open standard |
+| Scope | Retirement interface for riscv-formal, also read by simulation benches | Lock-step processor DV; "a superset of RVFI" |
+| Parts | The RVFI signals (table in the RVFI section) | RVVI-TRACE (1.7, SystemVerilog), RVVI-API (1.37, C/C++ with a DPI wrapper), RVVI-VVP (virtual peripherals) |
+| Named users on this page | riscv-formal; Ibex's monitor (an extended RVFI) | Synopsys ImperasDV; OpenHW Group CV32E40X verification |
+| What choosing it buys | An open formal flow | Reusable reference-model and coverage components |
 
 ### Interview angles
 

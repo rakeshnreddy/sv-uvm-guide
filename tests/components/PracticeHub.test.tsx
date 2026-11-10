@@ -32,8 +32,9 @@ describe('PracticeHub', () => {
 
   it('never links coming-soon labs (their routes 404); only available labs are links', () => {
     render(<PracticeHub />);
-    const comingSoon = screen.getAllByText(/coming soon/i);
-    expect(comingSoon.length).toBeGreaterThan(0);
+    // Every registered lab may be available, so there need not be any coming-soon badge.
+    const comingSoon = screen.queryAllByText(/coming soon/i);
+    expect(comingSoon.length > 0).toBe(getAllLabs().some((lab) => lab.status === 'coming_soon'));
     comingSoon.forEach((badge) => expect(badge.closest('a')).toBeNull());
 
     const labLinks = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/practice/lab/'));

@@ -78,7 +78,7 @@ describe("POST /api/labs/run", () => {
   it("answers the shared policy's precheck codes with the same statuses", async () => {
     const valid = submission("task automatic drive_sequence(input byte start_value, input int unsigned repeat_count, input byte step = 8'h01);\n  @(posedge clk);\n  enable <= 1;\nendtask");
     const cases: Array<[unknown, number, string]> = [
-      [{ ...valid, labId: "fifo-1" }, 404, "LAB_NOT_FOUND"],
+      [{ ...valid, labId: "this-is-not-a-lab" }, 404, "LAB_NOT_FOUND"],
       [{ ...valid, labVersion: "1" }, 409, "LAB_VERSION_MISMATCH"],
       [{ ...valid, stepVersion: "9" }, 409, "LAB_STEP_VERSION_MISMATCH"],
       [{ ...valid, stepId: "run-starter" }, 409, "LAB_STEP_IS_SELF_ATTESTED"],

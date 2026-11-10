@@ -150,3 +150,116 @@ describe("sv-selfcheck-v1 grader (simple-dut-1)", () => {
     expect((await grade("verdict", mutate("    report();\n    $finish;", "    report();"))).diagnostics[0].code).toBe("NO_FINISH");
   });
 });
+
+describe("sv-clocking-v1 grader (constructs-1)", () => {
+  const clocking = graderRegistry.get("sv-clocking-v1")!;
+  const labDir = path.join(process.cwd(), "content", "curriculum", "labs", "constructs");
+  const read = (relative: string) => fs.readFileSync(path.join(labDir, relative), "utf8");
+  const DUT = read("work/rot_pipe.sv");
+  const STARTER_IF = read("work/pipe_if.sv");
+  const STARTER_TB = read("work/tb_top.sv");
+  const SOLUTION_IF = read("solution/pipe_if.sv");
+  const SOLUTION_TB = read("solution/tb_top.sv");
+  const GRADED_STEPS = ["clocking-blocks", "driver", "monitor", "verdict"];
+
+  function grade(stepId: string, iface: string, tb: string): Promise<GraderResult> {
+    const submission: LabSubmission = {
+      labId: "constructs-1",
+      labVersion: "2",
+      stepId,
+      stepVersion: "1",
+      files: [
+        { path: "work/rot_pipe.sv", content: DUT },
+        { path: "work/pipe_if.sv", content: iface },
+        { path: "work/tb_top.sv", content: tb },
+      ],
+    };
+    return clocking.grade(submission);
+  }
+
+  /** One exact piece of text replaced; fails loudly if the text is not there. */
+  function swap(source: string, from: string, to: string): string {
+    expect(source).toContain(from);
+    return source.replace(from, to);
+  }
+  const ifWith = (from: string, to: string) => grade("clocking-blocks", swap(SOLUTION_IF, from, to), SOLUTION_TB);
+  const tbWith = (step: string, from: string, to: string) => grade(step, SOLUTION_IF, swap(SOLUTION_TB, from, to));
+  const codeOf = (result: GraderResult) => result.diagnostics[0]?.code;
+
+  it("rejects the untouched starter on every graded step", async () => {
+    for (const step of GRADED_STEPS) {
+      expect((await grade(step, STARTER_IF, STARTER_TB)).success, step).toBe(false);
+    }
+  });
+
+  it("accepts the reference solution on every graded step, and grades structure only", async () => {
+    expect(clocking.requiresSandbox).toBe(false);
+    for (const step of GRADED_STEPS) {
+      await expect(grade(step, SOLUTION_IF, SOLUTION_TB), step).resolves.toMatchObject({ success: true });
+    }
+    expect((await grade("prove-it-fails", SOLUTION_IF, SOLUTION_TB)).hint).toContain("not graded");
+  });
+
+  it("ignores clocking blocks hidden in comments", async () => {
+    const commented = STARTER_IF.replace("endinterface", "// default clocking cb @(posedge clk); output in_vld; endclocking\nendinterface");
+    expect(codeOf(await grade("clocking-blocks", commented, STARTER_TB))).toBe("CB_NOT_FOUND");
+  });
+
+  it("clocking-blocks: cb must be the default, sample #1step, drive #0, and leave the asynchronous reset out", async () => {
+    expect(codeOf(await ifWith("default clocking cb @(posedge clk);", "clocking cb @(posedge clk);"))).toBe("CB_NOT_DEFAULT");
+    expect(codeOf(await ifWith("default input #1step output #0;", "default input #1step output #2;"))).toBe("CB_SKEWS");
+    expect(codeOf(await ifWith("default clocking cb @(posedge clk);", "default clocking cb @(negedge clk);"))).toBe("CB_WRONG_EVENT");
+    const resetInCb = await ifWith("output in_vld, in_data;", "output rst_n, in_vld, in_data;");
+    expect(codeOf(resetInCb)).toBe("CB_DRIVES_RESET");
+    expect(resetInCb.hint).toContain("asynchronous");
+    expect(codeOf(await ifWith("output in_vld, in_data;", "output in_vld;"))).toBe("CB_OUTPUT_MISSING");
+  });
+
+  it("clocking-blocks: mon_cb has inputs only and includes reset; wait_cycles uses ##", async () => {
+    expect(codeOf(await ifWith("input rst_n, in_vld, in_data, out_vld, out_data;", "input rst_n, out_vld, out_data;\n    output in_vld, in_data;"))).toBe("MON_CB_CAN_DRIVE");
+    expect(codeOf(await ifWith("input rst_n, in_vld, in_data, out_vld, out_data;", "input in_vld, in_data, out_vld, out_data;"))).toBe("MON_CB_INPUT_MISSING");
+    expect(codeOf(await ifWith("repeat (n) ##1;", "repeat (n) @(posedge clk);"))).toBe("WAIT_CYCLES_NO_CYCLE_DELAY");
+  });
+
+  it("driver: raw writes, blocking writes to a clockvar and waiting on the clock fail", async () => {
+    const raw = await tbWith("driver", "bus.cb.in_vld  <= 1'b1;", "bus.in_vld = 1'b1;");
+    expect(codeOf(raw)).toBe("RAW_DRIVE");
+    expect(codeOf(await tbWith("driver", "bus.cb.in_data <= data;", "bus.cb.in_data = data;"))).toBe("BLOCKING_CLOCKVAR");
+    const racy = await tbWith("driver", "    bus.cb.in_vld  <= 1'b1;\n", "    @(posedge clk);\n    bus.cb.in_vld  <= 1'b1;\n");
+    expect(codeOf(racy)).toBe("SEND_WAITS_ON_CLOCK");
+    expect(racy.hint).toContain("@(bus.cb)");
+    expect(codeOf(await tbWith("driver", "    @(bus.cb);\n  endtask\n\n  // No item", "  endtask\n\n  // No item"))).toBe("SEND_NO_WAIT");
+    expect(codeOf(await tbWith("driver", "    repeat (n) @(bus.cb);", "    ##(n);"))).toBe("CYCLE_DELAY_OUTSIDE");
+  });
+
+  it("driver: the expectation needs the model and a due time", async () => {
+    const noDue = await tbWith("driver", "dout: model_rotl(data),\n                           due: $time + SAMPLE_EDGES * CLK_PERIOD", "dout: model_rotl(data), due: 0");
+    expect(codeOf(noDue)).toBe("NO_DUE_TIME");
+    expect(codeOf(await tbWith("driver", "dout: model_rotl(data),", "dout: bus.out_data,"))).toBe("MODEL_NOT_USED");
+  });
+
+  it("monitor: waiting on the clock, raw reads, reads of cb and a value-only check fail", async () => {
+    const onClock = await tbWith("monitor", "@(bus.mon_cb);", "@(posedge clk);");
+    expect(codeOf(onClock)).toBe("MONITOR_WAITS_ON_CLOCK");
+    expect(onClock.hint).toContain("races");
+    expect(codeOf(await tbWith("monitor", "end else if (bus.mon_cb.out_vld) begin", "end else if (bus.out_vld) begin"))).toBe("RAW_READ");
+    expect(codeOf(await tbWith("monitor", "end else if (bus.mon_cb.out_vld) begin", "end else if (bus.cb.out_vld) begin"))).toBe("MONITOR_USES_CB");
+    const valueOnly = await tbWith("monitor", "if ($time != e.due) begin", "if (1'b0) begin");
+    expect(codeOf(valueOnly)).toBe("NO_TIME_CHECK");
+    expect(valueOnly.hint).toContain("BUG=2");
+    expect(codeOf(await tbWith("monitor", "bus.mon_cb.out_data !== e.dout", "bus.mon_cb.out_data != e.dout"))).toBe("NOT_CASE_INEQUALITY");
+    expect(codeOf(await tbWith("monitor", "if (exp_q.size() == 0) begin", "if (1'b0) begin"))).toBe("NO_EMPTY_GUARD");
+    expect(codeOf(await tbWith("monitor", "if ($isunknown(bus.mon_cb.out_vld)) begin", "if (1'b0) begin"))).toBe("NO_X_CHECK");
+  });
+
+  it("verdict: reset through cb, ## in tb_top, no drain, join and a vacuous pass fail", async () => {
+    const viaCb = await tbWith("verdict", "#12 bus.rst_n = 1'b1;", "#12 bus.cb.rst_n <= 1'b1;");
+    expect(codeOf(viaCb)).toBe("RESET_THROUGH_CB");
+    expect(codeOf(await tbWith("verdict", "bus.wait_cycles(SAMPLE_EDGES + 2);", "##6;"))).toBe("CYCLE_DELAY_OUTSIDE");
+    expect(codeOf(await tbWith("verdict", "bus.wait_cycles(SAMPLE_EDGES + 2);", "repeat (6) @(bus.cb);"))).toBe("NO_DRAIN");
+    expect(codeOf(await tbWith("verdict", "@(bus.cb);                           // the 15 ns edge", "@(posedge clk);"))).toBe("MAIN_WAITS_ON_CLOCK");
+    expect(codeOf(await tbWith("verdict", "join_any", "join"))).toBe("JOIN_WAITS_FOR_WATCHDOG");
+    expect(codeOf(await tbWith("verdict", "if (pass_cnt == 0 && fail_cnt == 0) begin", "if (1'b0) begin"))).toBe("VACUOUS_PASS");
+    await expect(tbWith("verdict", "if (pass_cnt == 0 && fail_cnt == 0) begin", "if (pass_cnt + fail_cnt == 0) begin")).resolves.toMatchObject({ success: true });
+  });
+});

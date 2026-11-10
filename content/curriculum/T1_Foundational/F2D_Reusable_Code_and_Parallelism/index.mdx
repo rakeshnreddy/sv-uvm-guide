@@ -545,6 +545,10 @@ if (timed_out)
   ]}
 />
 
+Now run it yourself. In the explorer below, pick the statement that the failing check calls (`$error`, `$fatal`, `$stop` or `$finish`) and whether the branch increments `n_fail`, predict which later lines print and what the summary says, then step through the process lanes. Notice which of the four statements returns to the `initial` block, whether the `final` summary prints, and how the `FAIL` count changes when you untick the `n_fail++`.
+
+<RunEndingExplorer view="lanes" preset="severity-and-end" />
+
 ### Printing time: $time, $realtime, %t and $timeformat
 
 - `$time` returns a 64-bit integer: the current time in the time unit of the module that calls it, rounded to a whole number. `$realtime` returns the same time as a real number, and `$stime` returns it as a 32-bit unsigned value (§20.3). [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) explains time units, precision and rounding across modules.
@@ -721,6 +725,10 @@ Trace it on a file of two lines, `0a 05` and `ff 01`, each ending in a newline.
 That third call explains a classic bug (Debug it, case 3, below). A `while (!$feof(fd))` loop makes the third call, ignores the -1 and processes `ff 01` a second time.
 
 </details>
+
+Watch the read cursor move through the same `in.txt`, one character at a time. Step the `forever` loop and see where the cursor stops after each `$fscanf`; then switch the loop to `while (!$feof)` and watch the third read return -1 while the old `x` and `y` are used again.
+
+<FileReadCursorVisualizer mode="cursor" preset="feeding-files" />
 
 **In a real testbench:** files carry golden vectors exported from a C, Python or MATLAB model, expected responses, and results for later analysis. The same calls appear inside UVM sequences and reference models later on.
 
@@ -955,6 +963,10 @@ Run it with `+VECTORS=vectors_bad.txt +VERBOSE`:
 | `$test$plusargs("V")` (not in the code) | nonzero | `+VECTORS=...` begins with V: the prefix trap |
 
 The run prints `vectors=vectors_bad.txt seed=1 verbose=1`. Printing the effective configuration at time 0 is the cheapest defence against a misspelt plusarg, which is otherwise ignored in silence. Where you type plusargs on the simulator's command line is tool-specific. **In a real testbench:** plusargs select the test, the vector file, the seed, the verbosity and waveform dumping, so one compiled bench serves a whole regression.
+
+The lab below starts on this command line, `+VECTORS=vectors_bad.txt +VERBOSE`. Pick each lookup and watch which plusarg its prefix matches, including the query `"V"`, and notice that `SEED=%d` misses and leaves `seed` at its default, 1. Then add `+SEED=7` to the command line and run `SEED=%d` again.
+
+<FileReadCursorVisualizer mode="plusargs" preset="lesson" />
 
 <VisualRecap
   title="Plusargs: prefix matching and command-line order"
@@ -1348,6 +1360,10 @@ vectors=nope.txt dump=0
 
 In run 3, `$fscanf` assigned `ff` and `01`, then stopped at `g`, so it returned 2. The bench counts that as a failure and stops reading, because a stream read cannot find the start of the next vector reliably; the kata below reads line by line instead. Run 4 prints no summary line at all: the run died at time 0, and a regression script that requires `FAIL=0` in the summary marks it failed. An empty vector file ends with `no vectors in ...` and `PASS=0 FAIL=1`, so it cannot pass either. Add `+DUMP` to any run to get `waves.vcd` as well, and the first line then says `dump=1`.
 
+Replay the four runs in the bench lab below. Pick a `+VECTORS` file and whether `+DUMP` is given, predict the summary line, then step the run and watch the vector travel from the file to `u_dut` and back to the check. Notice that the garbled file stops at its second line and that `nope.txt` never reaches the summary.
+
+<FileReadCursorVisualizer mode="bench" preset="worked-example" />
+
 > [!NOTE]
 > **Run it.** Put `tb_top.sv` and the three vector files in one directory. Compile `tb_top.sv` with your simulator's SystemVerilog option, then run the compiled model four times, with `+VECTORS=vectors.txt`, `+VECTORS=vectors_bad.txt`, `+VECTORS=vectors_garbled.txt` and `+VECTORS=nope.txt`. Simulators pass `+name` arguments to `$test$plusargs` and `$value$plusargs`; where they go on the command line is tool-specific, so check your simulator's manual.
 
@@ -1498,6 +1514,10 @@ After the fourth read the final newline is still unread, so `$feof` is still 0 (
 The failing branch called `$error` but did not increment `n_fail`, and `n_pass++` ran for every vector. `$error` prints and lets the run continue; it never touches your counters (§20.10). Fix it by incrementing `n_fail` in every failing branch and deriving the verdict only from the counters, and make the regression script look for error messages as well. Many simulators also print their own error totals at exit, but that is tool-dependent.
 
 </details>
+
+Now debug cases 2, 3 and 4 yourself on the worked example's bench. Pick a case, read its log, click the line you suspect, then try each fix and rerun: notice which fixes repair the cause for every input, and which only make this one run look right or leave the log lying. (Case 1 is about `$monitor`, not files, so it is not in this lab.)
+
+<FileReadCursorVisualizer mode="debug" preset="case-2" />
 
 ## Push Further
 
@@ -1658,6 +1678,10 @@ end
 - `$sscanf` returns -1 if its string contains x or z bits (§21.3.4.3).
 - After a failed `$fopen` or read, `$ferror` returns an error code and a description of the most recent I/O error (§21.3.1, §21.3.7). Put that description in the `$fatal` message.
 
+See the first point happen in the cursor lab below, which opens `vectors_short.txt`: its first line holds only two fields. Step the `forever` loop and watch the first `$fscanf` take its third field from the next line; then switch the loop to `$fgets + $sscanf` and compare the checks.
+
+<FileReadCursorVisualizer mode="cursor" preset="robust-parsing" />
+
 ### Expert: Plusargs at regression scale
 
 - Prefix matching cuts both ways (§21.6). `$test$plusargs("TEST")` matches `+TEST=5` and also `+TESTNAME=t1`. Give options distinct names, and include the `=` in value lookups such as `"TEST=%d"`, which `+TESTNAME=t1` cannot match.
@@ -1666,6 +1690,10 @@ end
 - `$test$plusargs` returns a nonzero integer, not necessarily 1. Compare it with 0 before you assign it to a 1-bit variable.
 - How you pass the simulator's own random seed is tool-dependent. Print the seed in every log so that any failure can be rerun.
 - UVM wraps the same mechanism: `uvm_cmdline_processor::get_inst().get_arg_value("+NAME=", value)` returns how many arguments matched (uvm-core 2020.3.1, `uvm_cmdline_processor.svh`).
+
+The plusargs lab below starts on `+SEED=7 +SEED=2`; neither value is the default 1, so you can tell which plusarg won. Reorder the two, try `+SEED=12x` with `seed` as an `int` and then as a `logic [31:0]`, and try `+TESTNAME=t1` against the queries `TEST` and `TEST=%d`.
+
+<FileReadCursorVisualizer mode="plusargs" preset="regression-scale" />
 
 ### Expert: Random stability and seeds
 

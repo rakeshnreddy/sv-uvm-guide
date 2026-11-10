@@ -39,6 +39,21 @@ A few words in one line each:
 - The **driver** turns sequence items into pin activity, the **monitor** turns pin activity back into transactions, and the **scoreboard** compares them with the expected values of a **reference model** ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 - A UVM **log line** has the form `SEVERITY file(line) @ time: reporter [ID] message`, and the run ends with a **report summary** of counts by severity and by ID ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)). The logs on this page omit `file(line)` to keep lines short.
 
+**Anatomy of one log line.** Every triage step on this page reads these six fields, so here is one real-looking line taken apart. It is the same line that Step 1b later turns into a signature:
+
+```text
+UVM_ERROR /proj/tb/axi_mon.sv(212) @ 5000: uvm_test_top.env.agt[3].mon [AXI_PROTO] RVALID dropped before RREADY: id='h3
+```
+
+| Field | Example | What it tells you |
+|---|---|---|
+| severity | `UVM_ERROR` | How serious the report is: `UVM_INFO`, `UVM_WARNING`, `UVM_ERROR` or `UVM_FATAL` |
+| `file(line)` | `/proj/tb/axi_mon.sv(212)` | Where the report macro sits in the source |
+| `@ time` | `@ 5000` | The simulation time of the report |
+| reporter | `uvm_test_top.env.agt[3].mon` | The full hierarchical name of the component that reported |
+| `[ID]` | `[AXI_PROTO]` | The message ID that the reporting code chose |
+| message | `RVALID dropped before RREADY: id='h3` | The text, often with values at the end |
+
 ### The debug loop
 
 Every step below answers one question, and you do not move on until it is answered.
@@ -91,6 +106,27 @@ UVM_FATAL @ 1000000: reporter [PH_TIMEOUT] Explicit timeout of 1000000 hit, indi
 | 1325, 1435 | `MISMATCH` pkt 10, 11 | consequence | Each `act` equals the previous `exp`: the scoreboard's queue is one item behind, so these errors repeat the first one. |
 | 52000 | `ORPHAN` | consequence | Expected items left over at the end, from the same slip. |
 | 1000000 | `PH_TIMEOUT` | consequence | The run never finished. Something stayed blocked after the bad read; [Hang Triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) teaches that triage. |
+
+<ArchitectureDiagram
+  title="One bad read, five log lines"
+  caption="Time runs down the rows, in the order the lines appear in the log; the timeout, last of all, sits in the right column so that its arrow from the lead has room. Each dashed arrow means 'explains' or 'led to': the lead warning and the first failure are two symptoms of the same read; the later MISMATCH lines and the ORPHAN line are the same queue slip seen again; the timeout comes from something that stayed blocked after the bad read. Only the box marked 'debug this' is worth debugging first; the dimmed boxes are consequences."
+  cellWidth={170}
+  gapX={40}
+  gapY={48}
+  nodes={[
+    { id: "lead", label: "AXI_PROTO warning", sublabel: "@ 1205: the lead", kind: "monitor", col: 0, row: 0 },
+    { id: "first", label: "MISMATCH pkt 9", sublabel: "@ 1215: first failure", kind: "scoreboard", col: 0, row: 1, state: "error", badge: "debug this" },
+    { id: "casc", label: "MISMATCH pkt 10, 11", sublabel: "each act = previous exp", kind: "scoreboard", col: 0, row: 2, state: "dim" },
+    { id: "orphan", label: "ORPHAN", sublabel: "@ 52000: 3 left over", kind: "scoreboard", col: 0, row: 3, state: "dim" },
+    { id: "tout", label: "PH_TIMEOUT fatal", sublabel: "loudest, least useful", kind: "generic", col: 1, row: 4, state: "dim" }
+  ]}
+  edges={[
+    { from: "lead", to: "first", style: "causal", label: "same read" },
+    { from: "first", to: "casc", style: "causal", label: "same slip" },
+    { from: "casc", to: "orphan", style: "causal", label: "leftovers" },
+    { from: "lead", to: "tout", style: "causal", label: "stayed blocked", via: [[1, 0]] }
+  ]}
+/>
 
 So the rule is: start at the first `UVM_ERROR` or `UVM_FATAL`, then read the few lines **before** it for warnings about the same transaction. The summary's `UVM_FATAL :    1` and the timeout are the loudest lines in this log, and the least useful.
 
@@ -213,11 +249,50 @@ The **reproduction contract**: rerun the same test, the same seed, the **same bu
 
 **Debugging the reproduction.** If the archived build with the same seed and command line does *not* fail again, the run is not deterministic. Look for a race between processes (IEEE 1800-2023 §4.7, §4.8; [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)), C code called through the DPI that reads the clock or uninitialized memory, input files that changed, or simulator options that differ (tool-dependent). Push Further covers flaky failures at scale.
 
+<ArchitectureDiagram
+  title="Does the failure reproduce?"
+  caption="The first move after triage, as a decision with both outcomes: rerun on the archived build, with the same seed and the copied command line. Yes: the run is deterministic, so go on to isolate it. No: something outside the recipe changed between runs, or the bench has a race, and finding it is now the bug. The tempting third branch, rerunning with a different seed, is missing on purpose: a new seed starts a new search, it does not reproduce anything."
+  cellWidth={170}
+  gapX={40}
+  nodes={[
+    { id: "rerun", label: "rerun the failing run", sublabel: "same build, seed, command line", kind: "generic", col: 0, row: 0 },
+    { id: "again", label: "fails again?", sublabel: "same first failure, same time", kind: "generic", col: 0, row: 1 },
+    { id: "iso", label: "Step 3: isolate", sublabel: "the run is deterministic", kind: "generic", col: 1, row: 1, state: "ok" },
+    { id: "nondet", label: "nondeterminism", sublabel: "race, DPI, input files, options", kind: "generic", col: 0, row: 2, state: "error" }
+  ]}
+  edges={[
+    { from: "rerun", to: "again", style: "causal", label: "then ask" },
+    { from: "again", to: "iso", style: "causal", label: "yes" },
+    { from: "again", to: "nondet", style: "causal", label: "no" }
+  ]}
+/>
+
 ### Will my debug edit keep the seed?
 
 Once a failure reproduces, you add visibility. Some ways of adding it leave the random streams alone, and some move them. The rules underneath are in IEEE 1800-2023 §18.14 and, for UVM, IEEE 1800.2-2020 §1.4.6, §6.2.2.2 and Annex F.4.1.4.26. [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) teaches the mechanism; here is what it means for debug edits.
 
 Two kinds of random stream matter. Each **process** (a thread such as a component's `run_phase`) has its own generator, and draws such as `$urandom` or `new` take its next value in order (IEEE 1800-2023 §18.14.1, §18.14.2). Each **object** has its own generator too, which `randomize()` uses (§18.14.3), and UVM seeds objects by type and full name (Annex F.4.1.4.26). In uvm-core 2020.3.1, `start_item` reseeds every sequence item from its type, its full name and a per-name count (`uvm_sequence_base.svh`, `set_item_context` in `uvm_sequence_item.svh`, `uvm_create_random_seed` in `uvm_misc.svh`). So an edit in the driver can move the driver's own later draws, such as random idle gaps, but not the field values of the items it receives.
+
+<ArchitectureDiagram
+  title="Two random streams that a driver edit cannot cross"
+  caption="Read each column top to bottom. Left, the driver's thread: a new, fork or random call added in run_phase takes the next value from that thread's generator, so every later draw in the thread shifts (IEEE 1800-2023 §18.14.1, §18.14.2). Right, each item: its randomize() uses the item's own generator (§18.14.3), and in uvm-core 2020.3.1 start_item reseeds it from the item's type, full name and per-name count (UVM seeding by name: IEEE 1800.2-2020 Annex F.4.1.4.26). No arrow joins the columns, so the edit on the left leaves a and b unchanged."
+  cellWidth={170}
+  gapX={40}
+  nodes={[
+    { id: "edit", label: "edit in drv run_phase", sublabel: "adds new, fork or $urandom", kind: "driver", col: 0, row: 0, state: "error" },
+    { id: "trng", label: "driver thread RNG", sublabel: "hands out values in order", kind: "generic", col: 0, row: 1 },
+    { id: "later", label: "later driver draws", sublabel: "random delays, choices", kind: "generic", col: 0, row: 2, state: "error" },
+    { id: "start", label: "start_item(req)", sublabel: "reseed: type, name, count", kind: "sequence", col: 1, row: 0 },
+    { id: "orng", label: "req's object RNG", sublabel: "one per item", kind: "generic", col: 1, row: 1 },
+    { id: "rand", label: "req.randomize()", sublabel: "a, b: same values", kind: "generic", col: 1, row: 2, state: "ok" }
+  ]}
+  edges={[
+    { from: "edit", to: "trng", style: "causal", label: "takes next" },
+    { from: "trng", to: "later", style: "causal", label: "all shift" },
+    { from: "start", to: "orng", style: "causal", label: "reseeds" },
+    { from: "orng", to: "rand", style: "causal", label: "draws a, b" }
+  ]}
+/>
 
 **Predict first.** For each debug edit below, on seed 42, decide whether the stimulus stays the same, then open the answers.
 
@@ -250,7 +325,7 @@ The safe habit: **debug with plusargs and waveforms on the unchanged build first
 
 **Isolating** means narrowing the failure until only a few candidate causes remain. Narrow three things:
 
-1. **Time.** You know the time of the first failure. Raise visibility only for a window before it: the `time` form of `+uvm_set_verbosity` (Annex G.2.3) raises verbosity from a given time, and `+UVM_MAX_QUIT_COUNT=1` (G.2.6) stops the run at the first counted error, so the log ends at your failure. The time value is in UVM's time unit, which is tool-dependent, so check one run before relying on it. A waveform dump of the same window shows the pins. Start it *before* the failure: `$dumpvars` begins recording only at the end of the time unit in which it is called (IEEE 1800-2023 §21.7.1.3), so a dump started by the error itself cannot show the cause.
+1. **Time.** You know the time of the first failure. Raise visibility only for a window before it: the `time` form of `+uvm_set_verbosity` (Annex G.2.3) raises verbosity from a given time, and `+UVM_MAX_QUIT_COUNT=1` (G.2.6) stops the run at the first counted error, so the log ends at your failure. The time value is in UVM's time unit, which is tool-dependent, so check one run before relying on it. A waveform dump of the same window shows the pins. Start it *before* the failure: `$dumpvars` begins recording only at the end of the time unit in which it is called (IEEE 1800-2023 §21.7.1.3), so a dump started by the error itself cannot show the cause. The module overview's [trigger-started dump waveform](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index#selective-waveforms-and-transaction-recording) pictures exactly this.
 2. **Place.** Decide which part of the bench is wrong. In a scoreboard mismatch there are only three suspects: the **TB plumbing** (the driver drove something other than the item, or the monitor recorded something other than the pins), the **reference model** (the scoreboard's expected value is wrong), or the **DUT**. Compare the probes in the picture below.
 3. **Stimulus.** Find what is special about the failing transaction: its fields, the transactions just before it, the configuration. Passing transactions in the same log are evidence too.
 
@@ -280,6 +355,15 @@ The safe habit: **debug with plusargs and waveforms on the unchanged build first
     { from: "aif", to: "dut", style: "structural", label: "a, b in; y out" }
   ]}
 />
+
+**Reading the probes**, in the order you compare them:
+
+| What the probes show | Suspect | Why |
+|---|---|---|
+| Probe 1 differs from probe 2 | TB plumbing: the driver | It drove something other than the item it logged |
+| Probe 2 differs from probe 3 | TB plumbing: the monitor | It recorded something other than the pins |
+| Probes 1, 2 and 3 agree; probe 4 contradicts the specification | the reference model | The expected value is wrong |
+| Probes 1, 2 and 3 agree; probe 4 matches the specification | the DUT | Only the DUT's `y` is left |
 
 **Pitfall: isolating by editing.** Commenting out agents or constraints to "see if it still fails" changes the stimulus (previous section). Narrow with plusargs, the time window and the waveform first; change code only to *test* a hypothesis, in a new directed test.
 
@@ -330,6 +414,26 @@ A passing rerun of the old seed on the fixed build counts as evidence only if th
 
 Nightly regressions run thousands of tests. A triage script records, for every failing run, the first-failure line, the normalized signature, the test, seed, build and full command line. It groups runs into buckets and marks each bucket **new** or **known** against the last good regression. Engineers then take one bucket each, reproduce one run on the archived build, and work the loop. The fix lands together with its directed test, and the bucket stays open until a full regression on the fixed build no longer shows the signature. Teams that skip this end up debugging the same root cause several times under different test names.
 
+<SequenceDiagram
+  title="Who does what between a red run and a closed bucket"
+  caption="Read top to bottom: the order in which a nightly failure travels from the regression script, through the triage database, to one engineer and back. Message 1 records, for each red run, its first failure, signature, test, seed, build and command line. The two boxes are work done inside one participant: the database buckets runs by signature and marks each bucket new or known, and the engineer reruns one run on the archived build and works the loop. The bucket is closed by a regression result, not by the engineer's word."
+  columnWidth={130}
+  participants={[
+    { id: "script", label: "regression script", kind: "generic" },
+    { id: "db", label: "triage database", kind: "generic" },
+    { id: "eng", label: "engineer", kind: "generic" }
+  ]}
+  messages={[
+    { from: "script", to: "db", label: "record each red run" },
+    { kind: "note", from: "db", label: "bucket by signature; mark new or known" },
+    { from: "eng", to: "db", label: "take one bucket" },
+    { kind: "note", from: "eng", label: "rerun one run on the archived build; work the loop" },
+    { from: "eng", to: "script", label: "fix + its directed test" },
+    { from: "script", to: "db", label: "full regression on the fixed build" },
+    { kind: "note", from: "db", label: "bucket closes when the signature no longer appears", tone: "active" }
+  ]}
+/>
+
 ### Recap
 
 - The first failure is the earliest `UVM_ERROR` or `UVM_FATAL`; later errors are usually its consequences. Classify the ending before you debug.
@@ -344,6 +448,23 @@ Nightly regressions run thousands of tests. A triage script records, for every f
 ### Worked example: a saturating adder that fails on half the seeds
 
 The DUT is an 8-bit **saturating adder**: `y` is `a + b`, or `0xff` when the sum does not fit in 8 bits. It has a planted bug that makes it fail only for some random values, as real bugs do. The bench is a minimal UVM environment (a real bench would wrap `sqr`, `drv` and `mon` in an agent). It contains the three things this lesson needs: a reproduction line in the log, error messages that normalize well, and a directed test that the factory can swap in.
+
+**A map of the file**, top to bottom, so you can find each part the loop uses:
+
+| Part | What it does | Where the loop uses it |
+|---|---|---|
+| `add_if` | the pins, with clocking blocks `cb` (driver) and `mon_cb` (monitor) | probe 2: `valid`, `a`, `b`, `y` in the waveform |
+| `sat_add` | the DUT, with the planted bug `sum > 9'd256` | the suspect; Run 4 fixes it |
+| `add_item` | `rand` fields `a`, `b`, observed `y`, and `convert2string` | the `a=… b=…` fields that end every `DRV` and `MISMATCH` message |
+| `add_seq` | 200 random items (by default), all created with the name `req` | the stimulus that the seed decides |
+| `add_boundary_seq` | five directed items with sums 255, 256, 257, 256, 256 | step 5, confirm (Run 3) |
+| `add_driver` | one item every two clocks, and its `DRV` message | probe 1 |
+| `add_monitor` | samples `a` and `b`, then `y` one edge later, and writes the item | probe 3 |
+| `add_scb` | the reference model, the compare, the `MISMATCH` message and the `NO_CHECKS` guard | probe 4 |
+| `add_env` | builds and connects `sqr`, `drv`, `mon` and `scb` | the layout of the probe picture in Step 3 |
+| `add_rand_test` | reads `+NUM_ITEMS`, sets the timeout, prints the `REPRO` line | steps 1 and 2: the recipe in the log; shrinking (Run 2) |
+| `add_boundary_test` | a factory override from `add_seq` to `add_boundary_seq` | lock-in, chosen with `+UVM_TESTNAME` |
+| `tb_top` | the 10 ns clock, the interface and DUT instances, `run_test` | the clock that every log time counts (printed in `uvm_pkg`'s time unit; see "Run it") |
 
 ```systemverilog
 // compile
@@ -599,6 +720,15 @@ endmodule
 
 **Why only some seeds fail.** 255 of the 65,536 possible (a, b) pairs sum to exactly 256. With uniform random values, each item has about a 0.39% chance to hit one, so a 200-item run fails on roughly 54% of seeds (1 − (65281/65536)²⁰⁰ ≈ 0.54). A regression of this test is red about half the time, with different item numbers each time.
 
+| Items per run | Chance that a seed fails, 1 − (65281/65536)ⁿ |
+|---|---|
+| 1 | about 0.39% |
+| 60 (a new random seed with `+NUM_ITEMS=60`) | about 21% |
+| 200 (the default) | about 54% |
+| 1,000 | about 98% |
+
+The same arithmetic, same assumption of uniform random values: a short run hides a rare bug, and a seed that passes says little about it.
+
 ### Walking the loop on this bench
 
 **Run 1: the regression failure.** One failing seed's log, end to end. **Expected output** (illustrative, worked out by hand from the code above, not copied from a simulator run: the item values come from one hypothetical failing seed, and your simulator's times may be printed in another unit):
@@ -627,6 +757,25 @@ UVM_FATAL :    0
 ```
 
 The timing follows from the code: the clock rises at 5, 15, 25 … ns; item *i* is driven just after the edge at 5 + 20*i* ns, sampled at the next edge, and its registered result reaches the scoreboard at 25 + 20*i* ns. So the first failure at 1165 ns is item 57. The run ends at 4015 ns: the last `item_done()` is at 3995 ns, and the test waits 20 ns more (two clocks, `#20ns` in `run_phase`) before it drops its objection, so the monitor can deliver the last result. That delay is written in the test's own scope, so it is 20 ns whatever time unit `uvm_pkg` has.
+
+<TimingDiagram
+  title="Item 57, from drive to MISMATCH"
+  caption="The x-axis is simulation time: rising clock edges at 1145, 1155 and 1165 ns of the failing run (edges 0 to 2). values[k] is the value sampled at edge k. Just after the 1145 ns edge the driver drives item 57 through cb; the drive lands one nanosecond later. Its DRV line is logged at UVM_HIGH, so it is not in Run 1's log; it appears at 1145 ns once Run 2 raises DRV to UVM_HIGH. The DUT and mon_cb sample a = 0x9c, b = 0x64 with valid high at 1155 ns. The registered y carries the DUT's answer, 0x00, and mon_cb samples it at 1165 ns, when the scoreboard reports the first failure. At edge 0, y = 0xab is item 56's result (0x31 + 0x7a), which the scoreboard checks at 1145 ns. Item 56's values are taken from the Run 2 excerpt below, which uses the same seed."
+  cycleWidth={90}
+  edges={3}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 0] },
+    { name: "a", kind: "bus", values: ["31", "9c", "9c"] },
+    { name: "b", kind: "bus", values: ["7a", "64", "64"] },
+    { name: "y", kind: "bus", values: ["ab", "ab", "00"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", short: "drive", label: "1145 ns: driver drives item 57" },
+    { edge: 1, tone: "sample", short: "sample", label: "1155 ns: a = 0x9c, b = 0x64 sampled" },
+    { edge: 2, tone: "fail", short: "MISMATCH", label: "1165 ns: y = 0x00, exp = 0xff" }
+  ]}
+/>
 
 **Triage.** The first failure is the `MISMATCH` at 1165 ns. Its signature is `` UVM_ERROR [MISMATCH] uvm_test_top.env.scb: sat_add result wrong: exp={H} act={H} a={H} b={H} ``, and every failing seed of this test lands in that one bucket.
 
@@ -668,9 +817,9 @@ UVM_INFO @ 1215: uvm_test_top.env.scb [SCB_SUMMARY] matches=59 mismatches=1
     { name: "y", kind: "bus", values: [undefined, undefined, "ff", "ff", "00", "00", "ff"] }
   ]}
   markers={[
-    { edge: 2, tone: "pass", label: "sum 255: y = 0xff, correct" },
-    { edge: 4, tone: "fail", label: "sum 256: y = 0x00, scb expects 0xff" },
-    { edge: 6, tone: "pass", label: "sum 257: y = 0xff, correct" }
+    { edge: 2, tone: "pass", short: "255", label: "sum 255: y = 0xff, correct" },
+    { edge: 4, tone: "fail", short: "256", label: "sum 256: y = 0x00, scb expects 0xff" },
+    { edge: 6, tone: "pass", short: "257", label: "sum 257: y = 0xff, correct" }
   ]}
 />
 
@@ -705,6 +854,17 @@ Exactly the three sums of 256 fail, and 255 and 257 pass: the hypothesis is conf
 9. **Fix**, then **lock in**: the directed test joins the regression, add coverage or an assertion, rerun the bucket and many new seeds.
 10. **Write it down**: signature, root cause, fix and test, so the next person who sees the signature starts at the answer.
 
+The ten steps on the six-box loop from the start of the lesson, with what this bench used for each:
+
+| Loop box | Steps above | On the adder bench |
+|---|---|---|
+| 1 Triage | 1 to 3 | the signature script; one bucket, `MISMATCH` from `uvm_test_top.env.scb` |
+| 2 Reproduce | 4 and 5 | Run 2: same seed and build, `+NUM_ITEMS=60` |
+| 3 Isolate | 6 | the `DRV` and `CHK` verbosity plusargs; probes 1 to 4 |
+| 4 Hypothesize | 7 | "fails exactly when `a + b == 256`" |
+| 5 Confirm | 8 | Run 3: `add_boundary_test` on the buggy build |
+| 6 Fix and lock in | 9 and 10 | Run 4: limit `9'd255`, `add_boundary_test` in the regression, new seeds |
+
 **Checklist before moving on:**
 - [ ] I can find the first failure in a log with a cascade and a timeout, and say why the timeout is not it.
 - [ ] I can turn a first-failure line into a normalized signature, including a path-like ID.
@@ -729,6 +889,12 @@ Staff-level angle: if a team must add instrumentation to a long-lived regression
 
 ### Expert: comparing runs: two seeds, two builds and bisecting
 
+| Comparison | What it can show | Only meaningful if |
+|---|---|---|
+| Two seeds, one build | correlation: stimulus features every failing seed has and no passing seed has | you compare features (coverage), not logs line by line |
+| One seed, two builds | the first differing monitor transaction, where behaviour diverged | the driver streams of the two runs are identical |
+| Bisecting revisions | the commit that introduced the bug | a directed test reproduces it, so the seed does not matter |
+
 - **Two seeds, one build.** Different seeds produce different stimulus from the first random draw, so there is no meaningful "first divergence" between a passing and a failing seed. What the comparison *can* show is correlation: which stimulus features every failing seed has and no passing seed has (here, a sum of exactly 256). Coverage from both sets answers that faster than log diffs.
 - **One seed, two builds.** When a failure appears after a code change, run the same seed on the last good build and the first bad one. If the change did not alter the TB's random draws or their order (for example an RTL-only change in a TB whose draws do not depend on DUT responses), the stimulus is identical and the first differing *monitor* transaction is where behaviour diverged. Diff the *driver* streams first: if they already differ from item 0, the stimulus moved, and the comparison means nothing. This follows from the ordering rule in IEEE 1800-2023 §18.14.1; reactive TBs, whose draws depend on DUT timing, can shift even on RTL-only changes.
 - **Bisecting revisions.** Once a *directed* test reproduces the bug, its stimulus does not depend on the seed, so you can search the revision history for the commit that introduced it, for example with `git bisect run` and a script that runs the test (tool-dependent: your version-control system and simulator).
@@ -736,6 +902,30 @@ Staff-level angle: if a team must add instrumentation to a long-lived regression
 ### Expert: triage at scale: new, known and flaky failures
 
 Methodology; the tooling is tool-dependent.
+
+<ArchitectureDiagram
+  title="What happens to each red run's signature"
+  caption="Read top to bottom. A signature already in the database joins its known bucket, and a jump in that bucket's count is news too. A new signature is rerun once with the same build, seed and command line, the check from Step 2's decision diagram: if it fails again it is a new bucket to debug; if it does not, the bench is nondeterministic, which is a bug of its own and never a reason to label the test flaky."
+  cellWidth={170}
+  gapX={40}
+  nodes={[
+    { id: "sig", label: "red run's signature", sublabel: "first failure, normalized", kind: "generic", col: 0, row: 0 },
+    { id: "indb", label: "in the database?", sublabel: "signatures with bug IDs", kind: "generic", col: 0, row: 1 },
+    { id: "known", label: "known bucket", sublabel: "count jump: a fix regressed?", kind: "generic", col: 1, row: 1 },
+    { id: "rerun", label: "new: rerun once", sublabel: "same build, seed, command line", kind: "generic", col: 0, row: 2 },
+    { id: "again", label: "fails again?", sublabel: "same signature", kind: "generic", col: 0, row: 3 },
+    { id: "newb", label: "new bucket", sublabel: "debug it first", kind: "generic", col: 1, row: 3, state: "active" },
+    { id: "nondet", label: "nondeterminism bug", sublabel: "race, DPI, input; not flaky", kind: "generic", col: 0, row: 4, state: "error" }
+  ]}
+  edges={[
+    { from: "sig", to: "indb", style: "causal", label: "look up" },
+    { from: "indb", to: "known", style: "causal", label: "yes" },
+    { from: "indb", to: "rerun", style: "causal", label: "no" },
+    { from: "rerun", to: "again", style: "causal", label: "then ask" },
+    { from: "again", to: "newb", style: "causal", label: "yes" },
+    { from: "again", to: "nondet", style: "causal", label: "no" }
+  ]}
+/>
 
 - **New versus known.** Keep a database of signatures with their bug IDs. A regression report then shows new signatures first. A known signature with a sudden jump in count is also news: a fix may have regressed.
 - **Flaky failures.** Rerun each new signature once on the same build, seed and command line. A run that does not repeat is nondeterministic, and that is a bug in itself: a race (IEEE 1800-2023 §4.7, §4.8), DPI code that reads the clock or uninitialized memory, or an input that changed. Never mark it "flaky" and move on; a nondeterministic bench cannot reproduce the next real bug either.
@@ -769,6 +959,27 @@ Methodology; the tooling is tool-dependent.
 ## Practice & Reinforce
 
 Start with the quiz, which covers all five objectives. Then do the two katas: the first is the module's log-bucketing drill, the second practises hypotheses on the Make It Work bench. The flashcards at the end of this section cover the whole page.
+
+<VisualRecap
+  title="First failure, exact recipe, a prediction, then the fix"
+  rule="Debug one run per bucket: take its earliest UVM_ERROR or UVM_FATAL, normalize it into a signature, rerun the same test, seed, build, simulator version and plusargs, isolate in time, place and stimulus, and fix only after a directed test confirms a hypothesis that predicted something new."
+  code={`// Run 2: the failing run's command line plus +NUM_ITEMS and
+// the two verbosity plusargs, same seed, same archived build
++UVM_TESTNAME=add_rand_test +NUM_ITEMS=60
++uvm_set_verbosity=uvm_test_top.env.drv,DRV,UVM_HIGH,build
++uvm_set_verbosity=uvm_test_top.env.scb,CHK,UVM_HIGH,build`}
+  mistake="Rebuilding with debug prints, rerunning the failing seed, seeing it pass and calling the bug fixed: the rebuild may have moved the stimulus away from the bug."
+  inTestbench="The triage script records, for every failing run, the first-failure line, its signature, the test, seed, build and full command line, so anyone can rerun it exactly; the fix lands with its directed test (add_boundary_test on this page)."
+>
+  <ol style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+    <li><strong>Triage:</strong> first failure, then signature, then bucket.</li>
+    <li><strong>Reproduce:</strong> the exact recipe; it fails again.</li>
+    <li><strong>Isolate:</strong> a time window, one suspect, the special stimulus.</li>
+    <li><strong>Hypothesize:</strong> a cause that predicts an unseen result.</li>
+    <li><strong>Confirm:</strong> a directed test; refuted means back to step 3.</li>
+    <li><strong>Lock in:</strong> fix, directed test, coverage, new seeds.</li>
+  </ol>
+</VisualRecap>
 
 ### Retrieval quiz
 
@@ -938,6 +1149,14 @@ UVM_ERROR :    1
 UVM_FATAL :    1
 ```
 
+**Fill this in before you open the solution** (on paper or in a notes file):
+
+| Log | First failure (time, ID) | Signature | Bucket | Rerun first? |
+|---|---|---|---|---|
+| A | … | … | … | … |
+| B | … | … | … | … |
+| C | … | … | … | … |
+
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the worked solution</summary>
 
@@ -958,6 +1177,10 @@ UVM_FATAL :    1
 ```
 
 `+UVM_MAX_QUIT_COUNT=1` ends the run at the pkt 17 mismatch, so the log stops at the first failure; the verbosity plusarg raises only the scoreboard. Neither changes the stimulus. Add `+uvm_set_verbosity` for the monitor next if you need probe 3.
+
+**Log C, step by step.** The preset below is the "get_next_item twice" bug from the handshake lessons. Predict what the driver's second call returns, then step it to see why the driver and the sequencer fall out of step.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="double_get" />
 
 </details>
 

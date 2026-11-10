@@ -42,7 +42,12 @@ function conceptElement(concept: ConceptNode, label: string): AstNode {
   };
 }
 
-function linkText(value: string, conceptsByName: ReadonlyMap<string, ConceptNode>, matcher: RegExp): AstNode[] {
+function linkText(
+  value: string,
+  conceptsByName: ReadonlyMap<string, ConceptNode>,
+  matcher: RegExp,
+  linked: Set<string>,
+): AstNode[] {
   const result: AstNode[] = [];
   let cursor = 0;
 
@@ -51,8 +56,16 @@ function linkText(value: string, conceptsByName: ReadonlyMap<string, ConceptNode
     const label = match[0];
     if (index > cursor) result.push({ type: "text", value: value.slice(cursor, index) });
 
+    // Only the first occurrence of each concept in a lesson becomes a link;
+    // later ones stay plain text so generic words ("queue", "driver") do not
+    // turn a page into a sea of links.
     const concept = conceptsByName.get(label.toLocaleLowerCase());
-    result.push(concept ? conceptElement(concept, label) : { type: "text", value: label });
+    if (concept && !linked.has(concept.id)) {
+      linked.add(concept.id);
+      result.push(conceptElement(concept, label));
+    } else {
+      result.push({ type: "text", value: label });
+    }
     cursor = index + label.length;
   }
 
@@ -65,6 +78,7 @@ function transformChildren(
   ancestors: readonly AstNode[],
   conceptsByName: ReadonlyMap<string, ConceptNode>,
   matcher: RegExp,
+  linked: Set<string>,
 ): void {
   if (!parent.children || skippedNodeTypes.has(parent.type)) return;
 
@@ -74,11 +88,11 @@ function transformChildren(
 
   for (const child of parent.children) {
     if (child.type === "text" && child.value && isEligibleProse) {
-      transformed.push(...linkText(child.value, conceptsByName, matcher));
+      transformed.push(...linkText(child.value, conceptsByName, matcher, linked));
       continue;
     }
 
-    transformChildren(child, nextAncestors, conceptsByName, matcher);
+    transformChildren(child, nextAncestors, conceptsByName, matcher, linked);
     transformed.push(child);
   }
 
@@ -86,9 +100,10 @@ function transformChildren(
 }
 
 /**
- * Wraps concept names in lesson prose with <ConceptLink>. Opt-in per lesson:
- * the lesson page runs it only when the frontmatter sets `conceptLinking: true`
- * (the default is false while the knowledge graph is a placeholder; G30 request 10).
+ * Wraps the first occurrence of each concept name in lesson prose with
+ * <ConceptLink>. Opt-in per lesson: the lesson page runs it only when the
+ * frontmatter sets `conceptLinking: true`, with the key terms from
+ * getLinkableConcepts().
  */
 export function remarkConceptLinks({ concepts }: { concepts: readonly ConceptNode[] }) {
   const uniqueConcepts = new Map(
@@ -109,6 +124,6 @@ export function remarkConceptLinks({ concepts }: { concepts: readonly ConceptNod
   );
 
   return (tree: AstNode) => {
-    transformChildren(tree, [], uniqueConcepts, matcher);
+    transformChildren(tree, [], uniqueConcepts, matcher, new Set<string>());
   };
 }

@@ -33,7 +33,7 @@ describe('SITE_FEATURES and the account switches', () => {
       aiTutor: false,
       simulation: false,
       draftPages: false,
-      assessmentCenter: false,
+      assessmentCenter: true,
     });
     expect(Object.isFrozen(SITE_FEATURES)).toBe(true);
   });
@@ -49,7 +49,8 @@ describe('SITE_FEATURES and the account switches', () => {
     expect(SITE_FEATURES.aiTutor).toBe(false);
     expect(SITE_FEATURES.simulation).toBe(false);
     expect(SITE_FEATURES.draftPages).toBe(false);
-    expect(SITE_FEATURES.assessmentCenter).toBe(false);
+    // The self-assessment reads only this browser's data, so it is always on.
+    expect(SITE_FEATURES.assessmentCenter).toBe(true);
   });
 
   it('keeps community, aiTutor and simulation off without accounts, even with their own flags on', async () => {
@@ -92,9 +93,9 @@ describe('SITE_FEATURES and the account switches', () => {
     expect(SITE_FEATURES.simulation).toBe(false);
   });
 
-  it('maps personalization to draft pages and tracking to the assessment center', async () => {
+  it('maps personalization to draft pages and keeps the self-assessment on whatever tracking says', async () => {
     vi.stubEnv('NEXT_PUBLIC_FEATURE_FLAG_PERSONALIZATION', 'true');
-    vi.stubEnv('NEXT_PUBLIC_FEATURE_FLAG_TRACKING', 'true');
+    vi.stubEnv('NEXT_PUBLIC_FEATURE_FLAG_TRACKING', 'false');
 
     const { SITE_FEATURES } = await importSwitches();
 

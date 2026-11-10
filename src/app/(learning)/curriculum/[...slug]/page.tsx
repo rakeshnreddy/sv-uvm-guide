@@ -22,7 +22,7 @@ import { LESSON_PRACTICE_SLOT, lessonRemarkPlugins } from "@/lib/curriculum/less
 import { resolveCurriculumRequest } from "@/lib/curriculum/lesson-urls";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { getDeckCards } from "@/lib/flashcard-decks";
-import { getFullKnowledgeGraph } from "@/lib/knowledge-graph-engine";
+import { getLinkableConcepts } from "@/lib/knowledge-graph-engine";
 import { getAllLabs } from "@/lib/lab-registry";
 import { getPracticeForModule } from "@/lib/practice-links";
 import { cn } from "@/lib/utils";
@@ -67,9 +67,9 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   const readingMinutes = wordCount ? Math.max(1, Math.round(wordCount / 180)) : 0;
   const flashcardDeckId = frontmatter.flashcards ?? frontmatter.flashcardId;
   const flashcardDeck = flashcardDeckId ? getDeckCards(flashcardDeckId) : null;
-  // Automatic concept links are opt-in per lesson (`conceptLinking: true`): the
-  // knowledge graph behind them is still a placeholder (G30 request 10).
-  const concepts = frontmatter.conceptLinking ? (await getFullKnowledgeGraph()).nodes : [];
+  // Automatic concept links are opt-in per lesson (`conceptLinking: true`) and
+  // cover the key terms only; each term is linked at its first occurrence.
+  const concepts = frontmatter.conceptLinking ? getLinkableConcepts() : [];
 
   // The module's labs, exercises and interactive models (G30-PAGE-13), from the practice map.
   const practice = getPracticeForModule(sectionSlug, `${sectionSlug}/${topicSlug}`, getAllLabs());

@@ -70,7 +70,7 @@ def main():
         for path in args.usage:
             blob = json.loads(Path(path).read_text())
             for key, val in (blob.get("fixers") or blob).items():
-                m = re.match(r"fix:([a-z0-9-]+):", key)
+                m = re.match(r"(?:fix|build):([a-z0-9-]+)(?::|$)", key)
                 if m and isinstance(val, dict) and val.get("mdxUsage"):
                     usage[m.group(1)] = val["mdxUsage"]
         by_file = {}

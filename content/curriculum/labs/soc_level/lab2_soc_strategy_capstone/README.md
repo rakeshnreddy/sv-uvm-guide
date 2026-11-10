@@ -1,6 +1,6 @@
 # Capstone: Staff-Level SoC Verification Strategy Review
 
-This capstone belongs to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). It is the planning step of the milestone M8 code capstone, a DMA subsystem bench (`dma-1`, planned and not yet available): the strategy you write here is the one that bench would implement.
+This capstone belongs to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). It is the planning step of the milestone M8 code capstone, a DMA subsystem bench that is planned and not yet available: the strategy you write here is the one that bench would implement. (Lab `dma-1` is a smaller, earlier DMA lab in I-UVM-3B, not this capstone.)
 
 ## Scenario
 

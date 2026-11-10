@@ -1,19 +1,19 @@
 import React from 'react';
-import { notFound } from 'next/navigation';
-import { SITE_FEATURES } from '@/lib/site-features';
+import type { Metadata } from 'next';
 import KnowledgeHubClient from './KnowledgeHubClient';
 
 /*
- * A draft page: its concept graph is 15 hand-written placeholder nodes that
- * link to no lesson (src/lib/knowledge-graph-engine.ts), so the page is hidden
- * (404, unlinked and out of the sitemap) unless draft pages are switched on
- * for a preview build (SITE_FEATURES.draftPages). The lessons and the Practice
- * Hub already cover what it would teach.
+ * The knowledge hub: a module map and a searchable concept list derived from
+ * the curriculum manifest and the curriculum spine (src/lib/knowledge-graph-engine.ts).
+ * Static: the graph is built from generated data at build time. Public: it
+ * is in the sitemap and the footer's site map.
  */
-export default function KnowledgeHubPage() {
-  if (!SITE_FEATURES.draftPages) {
-    notFound();
-  }
+export const metadata: Metadata = {
+  title: 'Knowledge Hub',
+  description:
+    'A map of every module in the SystemVerilog, UVM and AMBA curriculum with its prerequisites, and a searchable list of modules, lessons and key terms linked to the lessons that teach them.',
+};
 
+export default function KnowledgeHubPage() {
   return <KnowledgeHubClient />;
 }

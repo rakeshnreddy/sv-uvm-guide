@@ -9,6 +9,7 @@ const EXPECTED = [
   { name: 'Dashboard', href: '/dashboard', section: 'dashboard' },
   { name: 'Review', href: '/dashboard/review', section: 'review' },
   { name: 'Notebook', href: '/dashboard/notebook', section: 'notebook' },
+  { name: 'Self-assessment', href: '/assessment', section: 'assessment' },
   { name: 'Settings', href: '/settings', section: 'settings' },
 ] as const;
 
@@ -17,7 +18,7 @@ describe('LearnerSectionNav', () => {
     cleanup();
   });
 
-  it('is a navigation landmark named "Your learning" with the four learner links', () => {
+  it('is a navigation landmark named "Your learning" with the five learner links', () => {
     render(<LearnerSectionNav current="dashboard" />);
 
     const nav = screen.getByRole('navigation', { name: 'Your learning' });

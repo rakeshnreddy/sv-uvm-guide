@@ -10,7 +10,7 @@
 4. use `assert`, `assume` and `cover property` for the right jobs, and see a run pass vacuously;
 5. read a failure from its action-block message and fix the design.
 
-**Time:** about 45 minutes. **You need:** a simulator that supports IEEE 1800-2023 immediate, deferred and concurrent assertions. No UVM library is needed.
+**Time:** about 50 minutes. **You need:** a simulator that supports IEEE 1800-2023 immediate, deferred and concurrent assertions. Verilator 5 is enough (the free option; the expected outputs below were captured with Verilator 5.052). No UVM library is needed.
 
 ## The bench
 
@@ -65,7 +65,9 @@ What the kinds in the table mean (you test *why* each check has its kind in Step
 
 ## Run it
 
-Run every command from this folder. Pick one of the example recipes in the `Makefile` with `SIM=questa`, `SIM=xcelium` or `SIM=vcs`, or pass your own commands with `COMPILE="..." RUN="..."`. The recipes are examples: check the switches against your simulator's manual. Support for concurrent assertions in open-source simulators varies, so check your tool's documentation first.
+Run every command from this folder. Pick a recipe in the `Makefile` with `SIM=verilator`, `SIM=questa`, `SIM=xcelium` or `SIM=vcs`, or pass your own commands with `COMPILE="..." RUN="..."`. The `verilator` recipe is the one the logs below were captured with. The other three are examples: check their switches against your simulator's manual.
+
+The Verilator recipe compiles with `verilator --binary --timing --assert --coverage-user <files> --top-module tb_top` and runs `./obj_dir/Vtb_top +verilator+error+limit+100`. Two of those switches matter for this lab: without `--coverage-user` Verilator does not run `cover property` pass statements, so both cover counts stay at 0; without `+verilator+error+limit+100` the first `$error` stops the run, so you would never see the scoreboard or the summary.
 
 | Command | What it compiles and runs |
 |---|---|
@@ -77,7 +79,7 @@ Run every command from this folder. Pick one of the example recipes in the `Make
 
 The compile order is `hs_slice.sv`, `hs_slice_sva.sv`, `tb_top.sv`, and the top module is `tb_top`.
 
-**About the logs below.** They were traced by hand, edge by edge, from the IEEE 1800-2023 rules (§16.5.1, §16.9.3, §16.12, §16.14), not captured from a simulator. Every line that reports an event starts with its own `[<time> ns]` tag, so the times match on any simulator (the plusarg banner and the final `[SVA] summary` line carry no time). A `$error` line also gets a tool-specific prefix with the severity, the file, the line and the scope (§20.10), and your simulator adds its own `$finish` and assertion-summary lines. Those are left out here.
+**About the logs below.** They were traced by hand, edge by edge, from the IEEE 1800-2023 rules (§16.5.1, §16.9.3, §16.12, §16.14), and then captured from Verilator 5.052 with `make <target> SIM=verilator`: every line matched the trace. Every line that reports an event starts with its own `[<time> ns]` tag, so the times match on any simulator (the plusarg banner and the final `[SVA] summary` line carry no time). A `$error` line also gets a tool-specific prefix with the severity, the file, the line and the scope (§20.10); Verilator prints, for example, `[75000] %Error: hs_slice_sva.sv:69: Assertion failed in tb_top.u_sva.a_out_data_stable: ` before the message. Your simulator also adds its own `$finish` and statistics lines. Those prefixes and lines are left out here.
 
 ## Step 1: Run the starter and read the scoreboard error
 
@@ -165,6 +167,32 @@ Find the line in `rtl/hs_slice.sv` that loads `out_data`, and fix it so that the
 
 Now compare your files with `solution/hs_slice_sva.sv` and `solution/hs_slice.sv` (`make solution-fixed` runs them; its output is the same as above).
 
+## Step 6: Prove it fails: plant a valid-drop bug for R1
+
+So far only R2 has failed. A check that has never failed has not been tested: R1 could be written so that it can never fire (Q2) and you would not know. Plant a second bug, one that only R1 is written to name.
+
+In your **fixed** `rtl/hs_slice.sv`, replace the `out_valid` line with:
+
+```systemverilog
+      out_valid <= in_valid && in_ready;   // PLANTED BUG: drops out_valid during a stall
+```
+
+Predict first: at the stalled edge at 65 ns `in_ready` is 0, so what does `out_valid` become just after that edge, which check reports it, and at which edge? Then run `make run SIM=<tool>`. Expected output:
+
+```text
+[75 ns] [SVA] a_out_valid_hold: out_valid dropped before the sink took the word
+[85 ns] [TB] scoreboard: expected a2, got a3
+[95 ns] [TB] scoreboard: expected a3, got a4
+[105 ns] [TB] scoreboard: expected a4, got a5
+[1015 ns] [TB] TIMEOUT: 5 of 6 words received
+[1035 ns] [TB] FAIL: 5 words received, 3 scoreboard mismatch(es), 1 assertion failure(s)
+[SVA] summary: 1 check failure(s); c_stall_then_ready hit 0 time(s); c_transfer hit 5 time(s)
+```
+
+R1 names the cause at the first edge where the rule is broken (75 ns). The scoreboard sees only the consequence: word a2 was withdrawn and lost, so every later word is off by one and the sixth word never arrives; the watchdog ends the run after 100 edges. Notice that `c_stall_then_ready` is 0 here: the stall never ended in a transfer, because the design withdrew the word. If your R1 uses `|->`, this run reports no assertion failure at all: that is Q2 made visible.
+
+Restore the fixed line (`if (in_ready) out_valid <= in_valid;`) and rerun `make run SIM=<tool>` to see the clean result from Step 5 again. Leave the repository with the fix in place.
+
 **Checklist before you finish:**
 - [ ] Your R1 and R2 use `|=>`, and you can say why `|->` is wrong for each.
 - [ ] Your fail messages print `$past` and `$sampled` values, not current ones.
@@ -172,6 +200,7 @@ Now compare your files with `solution/hs_slice_sva.sv` and `solution/hs_slice.sv
 - [ ] You can explain why the `+NO_STALL` run passed although the bug was there, and which cover count (`c_stall_then_ready` = 0) showed that the stall path was never exercised.
 - [ ] You can say why R3 is an `assume`, not an `assert`, in this bench.
 - [ ] You can name the edge where R2 failed, the edge where the design misbehaved, and why they differ.
+- [ ] You saw R1 fail on the planted valid-drop bug in Step 6, and restored the fix.
 
 ## Hints
 
@@ -201,14 +230,14 @@ You printed `out_data` instead of `$past(out_data)` for the earlier value.
 <details>
 <summary>Hint 4: both covers stay at 0 on the stalled run</summary>
 
-The pass statement must increment the counter (`n_transfer++;` and `n_stall_then_ready++;`). Without it the cover still matches, but the summary has nothing to count.
+The pass statement must increment the counter (`n_transfer++;` and `n_stall_then_ready++;`). Without it the cover still matches, but the summary has nothing to count. On Verilator, also check that you compiled with `--coverage-user` (the `verilator` recipe does): without it the cover pass statements never run.
 
 </details>
 
 <details>
 <summary>Hint 5: a cover counts far more often than the summaries above</summary>
 
-You covered an implication, for example `(out_valid && !out_ready) |=> (out_valid && out_ready)`. An implication succeeds vacuously at every edge where its trigger is false, and a cover's pass statement runs for every successful attempt (§16.14.3), so the counter climbs on every idle edge. Cover the sequence instead: `(out_valid && !out_ready) ##1 (out_valid && out_ready)`.
+You covered an implication, for example `(out_valid && !out_ready) |=> (out_valid && out_ready)`. An implication succeeds vacuously at every edge where its trigger is false (§16.14.8). A cover's pass statement runs once for each successful attempt (§16.14.3), and by default a pass action also runs on a vacuous success (§20.11, VacuousOff), so on a tool that follows that default the counter climbs on every idle edge. Tools differ here: Verilator 5.052 does not run the cover's pass statement on a vacuous success, so with this mistake it prints `c_stall_then_ready hit 1 time(s)` and hides it. Cover the sequence instead: `(out_valid && !out_ready) ##1 (out_valid && out_ready)`. A sequence is never vacuous (§16.14.8), so its count means the same on every tool.
 
 </details>
 
@@ -260,6 +289,8 @@ Predict each result before you run it; the expected results are in Answers.
   ```
 
   At 70 ns the log is the same as in Step 4, failure at 75 ns included: `$assertoff` stops new attempts, but attempts that are already running, and their action blocks, are not affected (§20.11, Off). `$assertkill` at 70 ns also aborts the attempt in flight, so the log matches the time-0 one above (§20.11, Kill). Either way, pair every `$assertoff` or `$assertkill` with an `$asserton` and keep the reason in a comment.
+
+  Tool note: Verilator 5.052 does not honour the scope argument here. In our runs `$assertoff(0, tb_top.u_sva.a_out_data_stable)` switched off every assertion in the bench, the scoreboard's `a_sb_match` and `a_end_of_test` included, so the run printed only the `[SVA] summary` line. Run this exercise on a simulator that supports per-assertion control, or read it as a prediction exercise.
 - **Choose a severity.** The run stops at the first failure. `$fatal` calls `$finish` implicitly (§20.10), and the checker's `final` procedure still runs when the simulation ends (§9.2.3):
 
   ```text
@@ -267,7 +298,7 @@ Predict each result before you run it; the expected results are in Answers.
   [SVA] summary: 1 check failure(s); c_stall_then_ready hit 0 time(s); c_transfer hit 2 time(s)
   ```
 
-  You lose the scoreboard's confirmation at 85 ns, the end-of-test check and the cover counts for the rest of the run. Use `$error` for a protocol violation, so the run goes on collecting evidence, and keep `$fatal` for states where going on is pointless or misleading, such as an X on a control signal or a broken environment. `$warning` flags something suspicious but legal; `$info` is a note.
+  You lose the scoreboard's confirmation at 85 ns, the end-of-test check and the cover counts for the rest of the run. (Tool note: Verilator 5.052 prints the fatal message and then stops with `Verilog $stop` without running `final` procedures, so there the summary line is lost too.) Use `$error` for a protocol violation, so the run goes on collecting evidence, and keep `$fatal` for states where going on is pointless or misleading, such as an X on a control signal or a broken environment. `$warning` flags something suspicious but legal; `$info` is a note.
 - **No `$past(rst_n)` guard.** R2 and R4 look back only to the edge where their own attempt started, and only attempts that start at an edge where `rst_n` is already 1 are enabled (the attempts at 5 and 15 ns are disabled). Here reset is released at 22 ns, between two edges, so the first enabled attempt (25 ns) already sampled out-of-reset values (§16.5.1). If reset were released by a flop at an edge, the attempt at that edge would be enabled, because the disable condition uses current values (§16.12), while its samples were taken in reset; then add the guard.
 - **Reset at 78 ns.** The attempt is disabled at 78 ns: it neither passes nor fails, and its action block does not run. The disable condition uses current values, not sampled ones, and is checked throughout the attempt, not only at clock edges (§16.12, §16.14.1).
 

@@ -1,20 +1,101 @@
 {
   "id": "dma-1",
-  "version": "1",
-  "title": "DMA Verification",
-  "description": "Build a verify environment for a Direct Memory Access controller.",
+  "version": "2",
+  "title": "DMA Copy Engine: Layered and Virtual Sequences",
+  "description": "Verify a one-channel DMA copy engine with UVM: a translation sequence that turns whole copies into register programming, a virtual sequence that loads memory and starts the memory-model responder before anything starts the DMA, a scoreboard that predicts every destination write and register read, and a reprogram-while-busy test that runs two sequences on one register sequencer. Two planted DUT bugs and one bench bug prove the bench can fail, and show which test catches which bug.",
   "owningModule": "I-UVM-3B",
   "routeSlug": "dma-1",
-  "status": "coming_soon",
+  "status": "available",
   "labPrerequisites": [
-    "arbiter-1"
+    "uvm-mini-capstone"
   ],
-  "modulePrerequisites": [],
-  "steps": [],
+  "modulePrerequisites": [
+    "I-UVM-3A"
+  ],
+  "steps": [
+    {
+      "id": "run-starter",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 1: Read the specification and run the starter",
+      "instructions": "Read the dma_copy specification in the README (registers R1 to R6, memory port M1 to M3) and the bench diagram. Build rtl/dma_copy.sv, tb/dma_ifs.sv, work/dma_tb_pkg.sv and tb/tb_top.sv with the UVM library and run dma_smoke_test. It ends with one UVM_ERROR, 'no transfer was checked', and [RESULT] FAIL: 1 errors. Before you open the README's answer, explain why a run with no errors from the DUT is still a failure.",
+      "starterCode": ""
+    },
+    {
+      "id": "translation-sequence",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 2: The translation sequence",
+      "instructions": "In dma_xfer_to_cfg_seq::body (work/dma_tb_pkg.sv), turn each dma_xfer_item pulled from up_sqr into register accesses: cfg_write SRC, DST and LEN, cfg_write 1 to CTRL, then cfg_read STATUS until bit 1 (DONE) is 1, with a uvm_fatal after poll_limit reads. Leave up_sqr.item_done() last. Rerun: nothing changes yet, because no virtual sequence starts the translator. Answer the README's question on when the upper sequence's finish_item returns.",
+      "starterCode": ""
+    },
+    {
+      "id": "virtual-sequence",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 3: The virtual sequence and its ordering rule",
+      "instructions": "Write dma_base_vseq::start_background: preload the sources with dma_preload_sources(p_sequencer.mem), set translate.up_sqr = p_sequencer.xfer_sqr, then start rsp_seq on p_sequencer.mem_sqr and translate on p_sequencer.cfg_sqr inside fork...join_none. Write dma_smoke_vseq::body: call start_background, then start xfers on p_sequencer.xfer_sqr. Rerun dma_smoke_test: the copies now run, and the scoreboard reports every destination write as unexpected, because it predicts nothing yet. Explain why.",
+      "starterCode": ""
+    },
+    {
+      "id": "scoreboard",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 4: Predict and account in the scoreboard",
+      "instructions": "Write dma_scoreboard::predict_transfer: for i from 0 to len-1, push_back '{addr: dst + 4*i, data: mem.peek(src + 4*i)} onto exp_q. Write end_of_transfer: a uvm_error for a done pulse while no transfer runs, a uvm_error naming how many words are still in exp_q and the first missing address, otherwise n_checked++; then empty exp_q. Rerun dma_smoke_test and compare with the README's expected log: transfers started 9, checked 9, and [RESULT] PASS.",
+      "starterCode": ""
+    },
+    {
+      "id": "busy-vseq",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: Reprogram while busy",
+      "instructions": "Write dma_busy_vseq::body: call start_background and set first.n_random = 0. In a fork...join, run first on the upper-layer sequencer and, in parallel, read STATUS and LEN with dma_cfg_access_seq on p_sequencer.cfg_sqr until the DMA is BUSY with LEN 16, then write DST_ALT to DST. After the join, read DST back. Run +UVM_TESTNAME=dma_busy_test: [RESULT] PASS. Explain how two sequences share the register sequencer without corrupting each other's accesses.",
+      "starterCode": ""
+    },
+    {
+      "id": "prove-it-fails",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6: Prove the bench can fail, and which test catches what",
+      "instructions": "Predict, then run both tests with +DMA_BUG=1 (the copy ends one word early) and +DMA_BUG=2 (a DST write while BUSY is accepted). Fill in the README's table: which test catches each bug and which message names it. Then plant a bench bug: comment out rsp_seq.start in start_background, rebuild and run dma_smoke_test; the translator's poll limit ends the run with a uvm_fatal. Restore the line, rebuild, and confirm PASS for both tests with no plusarg.",
+      "starterCode": ""
+    }
+  ],
   "assets": [
     {
-      "path": "lab1_simple_tb/test_dma.sv",
+      "path": "README.md",
+      "role": "guide",
+      "language": "markdown",
+      "editable": false
+    },
+    {
+      "path": "rtl/dma_copy.sv",
       "role": "reference",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "tb/dma_ifs.sv",
+      "role": "reference",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "tb/tb_top.sv",
+      "role": "reference",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "work/dma_tb_pkg.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "solution/dma_tb_pkg.sv",
+      "role": "solution",
       "language": "systemverilog",
       "editable": false
     }

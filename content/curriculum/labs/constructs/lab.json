@@ -1,50 +1,119 @@
 {
   "id": "constructs-1",
-  "version": "1",
-  "title": "SV Constructs",
-  "description": "Explore advanced SystemVerilog procedural constructs.",
-  "owningModule": "F2B",
+  "version": "2",
+  "title": "Race-Aware Interface Testbench with Clocking Blocks",
+  "description": "Milestone M1, without UVM: put a driver clocking block and an input-only monitor clocking block in an interface, drive and sample a three-register pipeline through them, check every result for its value and its arrival cycle, keep the asynchronous reset outside the clocking blocks, and prove with a racy copy of the bench that the same code can pass or fail depending on the process order.",
+  "owningModule": "F4C",
   "routeSlug": "constructs-1",
-  "status": "coming_soon",
-  "labPrerequisites": [],
-  "modulePrerequisites": [],
-  "steps": [],
+  "status": "available",
+  "labPrerequisites": [
+    "simple-dut-1"
+  ],
+  "modulePrerequisites": [
+    "F3C",
+    "F4B"
+  ],
+  "steps": [
+    {
+      "id": "run-starter",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 1: Read the specification and run the starter",
+      "instructions": "Read the rot_pipe specification in the README (rules R1 to R4) and the timing rule: an item driven through cb just after edge k is seen by mon_cb at edge k+4. Compile work/rot_pipe.sv, work/pipe_if.sv and work/tb_top.sv and run it. It prints PASS=0 FAIL=0 at 0 ns. Before you open the README's answer, explain why that line is not a pass.",
+      "starterCode": ""
+    },
+    {
+      "id": "clocking-blocks",
+      "version": "1",
+      "completion": "graded",
+      "title": "Step 2: Two clocking blocks in the interface",
+      "instructions": "In work/pipe_if.sv, declare the driver's block as the default clocking: default clocking cb @(posedge clk); with default input #1step output #0; in_vld and in_data as outputs and out_vld and out_data as inputs. Leave rst_n out of cb. Add clocking mon_cb @(posedge clk); with inputs only: rst_n, in_vld, in_data, out_vld and out_data. Add task automatic wait_cycles(input int n) that waits with a cycle delay: repeat (n) ##1;. The check reads your code's structure only.",
+      "starterCode": ""
+    },
+    {
+      "id": "driver",
+      "version": "1",
+      "completion": "graded",
+      "title": "Step 3: The driver",
+      "instructions": "In work/tb_top.sv, fill in send: drive bus.cb.in_vld <= 1'b1; and bus.cb.in_data <= data;, push exp_t'{din: data, dout: model_rotl(data), due: $time + SAMPLE_EDGES * CLK_PERIOD} onto exp_q, then wait with @(bus.cb). Fill in idle: bus.cb.in_vld <= 1'b0; then repeat (n) @(bus.cb);. No @(posedge clk), no raw bus.in_vld writes and no ## in tb_top.",
+      "starterCode": ""
+    },
+    {
+      "id": "monitor",
+      "version": "1",
+      "completion": "graded",
+      "title": "Step 4: The monitor",
+      "instructions": "Fill in monitor: forever, wait for @(bus.mon_cb) and read only bus.mon_cb. Skip samples where mon_cb.rst_n is not 1, fail on $isunknown(bus.mon_cb.out_vld), and when out_vld is 1: fail with $error on an empty exp_q, otherwise pop the oldest expectation and fail if $time != e.due (wrong cycle) or if out_data !== e.dout (wrong value). Count pass_cnt or fail_cnt for every check.",
+      "starterCode": ""
+    },
+    {
+      "id": "verdict",
+      "version": "1",
+      "completion": "graded",
+      "title": "Step 5: Reset, drain, verdict and watchdog",
+      "instructions": "In report, add leftover expectations to fail_cnt and count a failure when nothing was checked. In main, make the first branch of a fork drive bus.cb.in_vld <= 1'b0;, release reset directly with #12 bus.rst_n = 1'b1;, wait for the 15 ns edge with @(bus.cb), call run_test() and drain with bus.wait_cycles(SAMPLE_EDGES + 2);. The second branch is a watchdog: #(TIMEOUT), fail_cnt++, report(), $fatal. Join with join_any, then disable fork, report() and $finish. Run it and expect five PASS lines and PASS=5 FAIL=0.",
+      "starterCode": ""
+    },
+    {
+      "id": "prove-it-fails",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6: Break the DUT and watch the bench catch it",
+      "instructions": "Set .BUG(1) (shift instead of rotate) and predict which items fail before you run. Set .BUG(2) (one extra register) and run again: every result is right but late. Then turn the time check off (if (1'b0) instead of if ($time != e.due)) and rerun BUG=2: it passes, which is why the check is there. Restore it, set .BUG(0), plant your own bug (rotate right instead of left) and name the item that cannot catch it. Compare each summary line with the README's table, then put everything back: PASS=5 FAIL=0.",
+      "starterCode": ""
+    },
+    {
+      "id": "prove-the-race",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 7: Prove that the bench without clocking blocks races",
+      "instructions": "Compile work/rot_pipe.sv with work/tb_racy.sv, the same test without an interface or clocking blocks: its driver writes the DUT's inputs with blocking assignments right after @(posedge clk). Run it, then run it again with +DUT_FIRST, which replays the other order the standard allows. Compare the two summary lines with the README, explain from IEEE 1800-2023 4.7 why both are legal results of the same code, and explain why your tb_top gives PASS=5 FAIL=0 in every order.",
+      "starterCode": ""
+    }
+  ],
   "assets": [
     {
-      "path": "lab1_race_condition/README.md",
+      "path": "README.md",
       "role": "guide",
       "language": "markdown",
       "editable": false
     },
     {
-      "path": "lab1_race_condition/solution.sv",
-      "role": "solution",
+      "path": "work/rot_pipe.sv",
+      "role": "starter",
       "language": "systemverilog",
-      "editable": false
+      "editable": true
     },
     {
-      "path": "lab1_race_condition/testbench.sv",
+      "path": "work/pipe_if.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/tb_top.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/tb_racy.sv",
       "role": "reference",
       "language": "systemverilog",
       "editable": false
     },
     {
-      "path": "lab2_scheduler/README.md",
-      "role": "guide",
-      "language": "markdown",
-      "editable": false
-    },
-    {
-      "path": "lab2_scheduler/solution.sv",
+      "path": "solution/pipe_if.sv",
       "role": "solution",
       "language": "systemverilog",
       "editable": false
     },
     {
-      "path": "lab2_scheduler/testbench.sv",
-      "role": "reference",
+      "path": "solution/tb_top.sv",
+      "role": "solution",
       "language": "systemverilog",
       "editable": false
     }
-  ]
+  ],
+  "graderId": "sv-clocking-v1"
 }

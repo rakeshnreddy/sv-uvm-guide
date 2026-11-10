@@ -27,22 +27,6 @@ const HIDDEN_PAGES: Array<{ path: string; shownWhen: (flags: ServerFlags) => boo
     reason: 'community and accountUI are on for this server',
   },
   { path: '/notifications', shownWhen: (flags) => Boolean(flags.accountUI), reason: 'accountUI is on for this server' },
-  { path: '/assessment', shownWhen: (flags) => Boolean(flags.tracking), reason: 'tracking (draft preview) is on for this server' },
-  {
-    path: '/projects',
-    shownWhen: (flags) => Boolean(flags.personalization),
-    reason: 'personalization (draft preview) is on for this server',
-  },
-  {
-    path: '/history',
-    shownWhen: (flags) => Boolean(flags.personalization),
-    reason: 'personalization (draft preview) is on for this server',
-  },
-  {
-    path: '/resources',
-    shownWhen: (flags) => Boolean(flags.personalization),
-    reason: 'personalization (draft preview) is on for this server',
-  },
 ];
 
 test.describe('hidden pages on the default site', () => {
@@ -64,7 +48,7 @@ test.describe('hidden pages on the default site', () => {
 
   test('the navigation links no hidden page', async ({ page }) => {
     test.skip(
-      Boolean(serverFlags.accountUI || serverFlags.personalization || serverFlags.tracking),
+      Boolean(serverFlags.accountUI || serverFlags.personalization),
       'A draft or accounts flag is on for this server; this checks the default build.',
     );
     await page.goto('/curriculum');

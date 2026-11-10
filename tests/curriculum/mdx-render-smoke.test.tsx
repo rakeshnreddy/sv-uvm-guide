@@ -42,7 +42,7 @@ import { getMdxComponents } from "@/generated/mdx-component-registry";
 import { parseLessonFrontmatter } from "@/lib/curriculum/lesson-frontmatter";
 import { LESSON_PRACTICE_SLOT, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
-import { getFullKnowledgeGraph } from "@/lib/knowledge-graph-engine";
+import { getLinkableConcepts } from "@/lib/knowledge-graph-engine";
 import { getAllLabs } from "@/lib/lab-registry";
 import { getPracticeForModule } from "@/lib/practice-links";
 
@@ -170,7 +170,7 @@ async function renderLesson(file: string): Promise<string[]> {
   const [, sectionSlug = "", lessonFile = ""] = relToCurriculum;
   const topicSlug = lessonFile.replace(/\.mdx$/, "");
   const practice = getPracticeForModule(sectionSlug, `${sectionSlug}/${topicSlug}`, getAllLabs());
-  const concepts = frontmatter.conceptLinking ? (await getFullKnowledgeGraph()).nodes : [];
+  const concepts = frontmatter.conceptLinking ? getLinkableConcepts() : [];
   const toc: TocEntry[] = [];
   const remarkPlugins = lessonRemarkPlugins({
     toc,

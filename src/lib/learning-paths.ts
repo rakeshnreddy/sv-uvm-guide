@@ -128,7 +128,7 @@ export const MILESTONES: readonly Milestone[] = [
   { id: 'M2', name: 'Reusable UVM agent, active and passive', lab: 'uvm-mini-capstone' },
   { id: 'M3', name: 'Reference-model scoreboard with end-of-test accounting', lab: 'scoreboard-reference-model' },
   { id: 'M4', name: 'Coverage-driven environment with a closure loop', lab: 'coverage-advanced-1' },
-  { id: 'M5', name: 'Multi-agent environment with virtual sequences' },
+  { id: 'M5', name: 'Multi-agent environment with virtual sequences', lab: 'multi-agent-vseq' },
   { id: 'M6', name: 'Out-of-order, ID-aware protocol verification', lab: 'axi-scoreboard-lab' },
   { id: 'M7', name: 'RAL-integrated environment with a predictor', lab: 'ral-mirror-bug' },
   { id: 'M8', name: 'Subsystem or SoC capstone: reset, errors, concurrency, closure', lab: 'soc-strategy-capstone' },

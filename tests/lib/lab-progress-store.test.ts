@@ -387,11 +387,11 @@ describe("browser lab progress store", () => {
     expect(grade).not.toHaveBeenCalled();
   });
 
-  it("completes each of the 21 self-attested-only labs from local state alone", async () => {
+  it("completes each self-attested-only lab from local state alone", async () => {
     const selfChecked = getAllLabs().filter(
       (lab) => lab.status === "available" && lab.steps.every((step) => step.completion === "self_attested"),
     );
-    expect(selfChecked).toHaveLength(21);
+    expect(selfChecked.length).toBeGreaterThanOrEqual(21);
     for (const lab of selfChecked) {
       const store = createBrowserLabProgressStore(toLabPolicyInput(lab), { now: () => NOW });
       for (const step of lab.steps) {

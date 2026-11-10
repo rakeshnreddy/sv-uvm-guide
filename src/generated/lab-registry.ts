@@ -162,21 +162,105 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "arbiter-1",
-    "version": "1",
-    "title": "Arbiter Verification",
-    "description": "Verify a synchronous round-robin arbiter.",
-    "owningModule": "I-UVM-2A",
+    "version": "2",
+    "title": "Verify a Round-Robin Arbiter with UVM",
+    "description": "Build a small UVM environment for a synchronous round-robin arbiter from its specification: an agent that drives request vectors through a clocking block, a monitor that publishes one decision per cycle, a scoreboard with a grant predictor and a fairness bound, and coverage of grant patterns. Then prove it catches a planted starvation bug that a single-requester smoke test lets through.",
+    "owningModule": "I-UVM-3C",
     "routeSlug": "arbiter-1",
-    "status": "coming_soon",
+    "status": "available",
     "labPrerequisites": [
-      "simple-dut-1"
+      "uvm-mini-capstone"
     ],
-    "modulePrerequisites": [],
-    "steps": [],
+    "modulePrerequisites": [
+      "I-UVM-2A",
+      "I-UVM-2B",
+      "I-UVM-3A",
+      "I-SV-3A"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read rules R1 to R5 and the fairness bound in the README. Compile uvm_pkg, work/arb_if.sv, work/arb_pkg.sv, work/rr_arbiter.sv and work/tb_top.sv, and run with no plusargs. The log ends with ARB_SUMMARY cycles=0 grants=0 ... and UVM_ERROR : 0. Before you open the README's answer, explain why that run is not a pass.",
+        "starterCode": ""
+      },
+      {
+        "id": "agent",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: Driver, monitor and agent",
+        "instructions": "In work/arb_pkg.sv, write the driver's run_phase (wait for a drv_cb edge with rst_n at 1, then for each item drive vif.drv_cb.req <= req.req and wait @(vif.drv_cb), req.cycles times, then item_done), the monitor's run_phase (one NEW arb_txn per mon_cb edge with the sampled rst_n at 1, published on ap), and the agent's build and connect: the monitor always, the sequencer and driver only when get_is_active() == UVM_ACTIVE, and mon.ap promoted to the agent's ap.",
+        "starterCode": ""
+      },
+      {
+        "id": "scoreboard",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: Scoreboard: grant predictor, fairness bound and accounting",
+        "instructions": "Write the scoreboard from the specification, not from the RTL: start the model's last winner at ARB_N-1 (R5); predict() returns the first requester after the last winner, wrapping; write() counts the cycle and the grant, reports ARB_PROTOCOL for a grant that is not zero or one-hot or goes to a non-requester (R1), reports ARB_MISMATCH when gnt !== predict(req) (R2, R3), moves the model's last winner to its own prediction (R4), and reports ARB_STARVED once when a requester has waited ARB_N cycles (the bound is ARB_N-1). check_phase reports ARB_NO_TRAFFIC when no grant was seen. Connect agent.ap to the scoreboard in the env.",
+        "starterCode": ""
+      },
+      {
+        "id": "coverage-plan",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Sequences from the plan and grant-pattern coverage",
+        "instructions": "Write arb_smoke_seq and arb_load_seq from the README's plan table with send(). Complete the covergroup: cp_gnt (one bin per winner), cp_load (one, some, all), cp_wait (one bin per wait 0 to ARB_N-1) and the cross x_gnt_load. In write(), sample on a one-hot grant with the winner, the number of requesters and the winner's wait, then update every wait count. Connect agent.ap to the coverage subscriber in the env.",
+        "starterCode": ""
+      },
+      {
+        "id": "clean-run",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: The clean regression",
+        "instructions": "Run arb_regress_test (the default) on the correct DUT. Expect ARB_SUMMARY cycles=30 grants=24 mismatches=0 protocol=0 starved=0, grant-pattern coverage = 100.00%, UVM_ERROR : 0 and UVM_FATAL : 0. Then run +UVM_TESTNAME=arb_smoke_test and arb_load_test alone and explain from the bins which plan rows each one leaves uncovered.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Plant the starvation bug and watch the environment catch it",
+        "instructions": "Predict, then run with +define+ARB_BUG=1 (the pointer does not move when requester 3 wins): arb_smoke_test passes and arb_regress_test ends ARB_SUMMARY cycles=30 grants=24 mismatches=8 protocol=0 starved=4. Rerun with +ARB_FAIRNESS_ONLY: the fairness bound alone still reports starved=4. Then try +define+ARB_BUG=2 and your own bug (search from last instead of last + 1), compare with the README's table, and finish with a clean run.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
-        "path": "lab1_simple_tb/test_arbiter.sv",
-        "role": "reference",
+        "path": "README.md",
+        "role": "guide",
+        "language": "markdown",
+        "editable": false
+      },
+      {
+        "path": "work/rr_arbiter.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/arb_if.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "work/arb_pkg.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_top.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "solution/arb_pkg.sv",
+        "role": "solution",
         "language": "systemverilog",
         "editable": false
       }
@@ -185,12 +269,12 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "assertions-1",
-    "version": "2",
+    "version": "3",
     "title": "Catch a Valid/Ready Bug with Assertions",
-    "description": "Write the valid/ready protocol checks for a one-word register slice (valid hold, payload stable, a bounded-ready assumption and two covers), watch a run without backpressure pass vacuously, then let the checks pinpoint a seeded payload bug and confirm the fix.",
+    "description": "Write the valid/ready protocol checks for a one-word register slice (valid hold, payload stable, a bounded-ready assumption and two covers), watch a run without backpressure pass vacuously, let the checks pinpoint a seeded payload bug, fix it, then plant a valid-drop bug to prove the valid-hold check can fail.",
     "owningModule": "I-SV-4A",
     "routeSlug": "assertions-1",
-    "status": "coming_soon",
+    "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [
       "F3B",
@@ -235,6 +319,14 @@ export const GENERATED_LAB_MANIFESTS = [
         "completion": "self_attested",
         "title": "Step 5: Fix the design and confirm a clean run",
         "instructions": "Use the failure to find the bug in rtl/hs_slice.sv and fix it with a one-line change. Rerun make run SIM=<your simulator>: expect '[135 ns] [TB] PASS: 6 words received in order, no assertion failures' and a summary with 0 check failures, c_stall_then_ready hit 1 time and c_transfer hit 6 times. Compare your files with solution/hs_slice.sv and solution/hs_slice_sva.sv (make solution-fixed runs them).",
+        "starterCode": ""
+      },
+      {
+        "id": "6",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Prove it fails: plant a valid-drop bug for R1",
+        "instructions": "In your fixed rtl/hs_slice.sv, replace the out_valid line with 'out_valid <= in_valid && in_ready;' (the planted bug in Step 6 of the README). Predict which check fires and at which edge, then run make run SIM=<your simulator>. Expect '[75 ns] [SVA] a_out_valid_hold: out_valid dropped before the sink took the word', three scoreboard errors from 85 ns, '[1015 ns] [TB] TIMEOUT: 5 of 6 words received', '[1035 ns] [TB] FAIL: 5 words received, 3 scoreboard mismatch(es), 1 assertion failure(s)' and a summary with 1 check failure, c_stall_then_ready hit 0 times and c_transfer hit 5 times. Explain why an R1 written with |-> would report nothing here. Then restore 'if (in_ready) out_valid <= in_valid;' and confirm the clean run from Step 5.",
         "starterCode": ""
       }
     ],
@@ -546,44 +638,113 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "common-1",
-    "version": "1",
-    "title": "Common Structures",
-    "description": "Practice using structs, enums, and arrays.",
-    "owningModule": "F2C",
+    "version": "2",
+    "title": "Structs, Enums and Arrays in a Packet-Decoder Bench",
+    "description": "Give a packet decoder's flat ports names and meaning: typedef enums with a 4-state base, packed structs for the header and the decoder's answer, a dynamic array of stimulus grown with new[N](old), and associative-array traffic tables checked key by key. The bench predicts every result from the specification, compares with !==, prints one PASS/FAIL line and is proven to fail on planted DUT and bench bugs.",
+    "owningModule": "F2A",
     "routeSlug": "common-1",
-    "status": "coming_soon",
-    "labPrerequisites": [
-      "basics-1"
+    "status": "available",
+    "labPrerequisites": [],
+    "modulePrerequisites": [
+      "F2B"
     ],
-    "modulePrerequisites": [],
-    "steps": [],
-    "assets": [
+    "steps": [
       {
-        "path": "rtl/and_gate.sv",
-        "role": "reference",
-        "language": "systemverilog",
-        "editable": false
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the pkt_decoder specification in the README (header layout and rules D1 to D5). Compile work/pkt_pkg.sv, work/pkt_decoder.sv and work/tb_top.sv in that order and run tb_top. It prints TEST 0 packets and PASS=0 FAIL=0. Before you open the README's answer, explain why that line is not a pass.",
+        "starterCode": ""
       },
       {
-        "path": "rtl/arbiter.sv",
-        "role": "reference",
-        "language": "systemverilog",
-        "editable": false
+        "id": "types",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: Write the types",
+        "instructions": "In work/pkt_pkg.sv, replace the four placeholders: kind_e as typedef enum logic [2:0] {K_IDLE = 3'd0, K_READ = 3'd1, K_WRITE = 3'd2, K_RESP = 3'd4}; err_e as typedef enum logic [1:0] {E_NONE, E_KIND, E_CHK, E_LEN}; hdr_t as a packed struct of kind_e kind, logic [3:0] dest, logic [4:0] len and logic [3:0] chk; dec_t as a packed struct of logic accept, err_e err, logic [3:0] dest and logic [4:0] len. Then delete the /* and */ lines in check_types() in work/tb_top.sv and rerun: no TYPES fatal. Answer the README's question on swapping dest and len.",
+        "starterCode": ""
       },
       {
-        "path": "rtl/dma_ctrl.sv",
-        "role": "reference",
-        "language": "systemverilog",
-        "editable": false
+        "id": "model",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: The reference model",
+        "instructions": "Write the bodies of hdr_chk (D2: XOR of h[15:12], h[11:8] and h[7:4]), kind_is_member ($cast called as a function into a kind_e), make_hdr (an assignment pattern by member name, then the checksum), raw_hdr (the whole struct from the concatenation {kind, d, l, 4'h0}, then a right or wrong checksum) and model_decode (err in D3's priority order, accept from D4, dest and len from D5). Write them from the specification, not from the RTL. Then explain why raw_hdr can put kind 5 into the struct when h.kind = 3'd5; does not compile.",
+        "starterCode": ""
       },
       {
-        "path": "rtl/fifo.sv",
-        "role": "reference",
-        "language": "systemverilog",
-        "editable": false
+        "id": "stimulus",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: The stimulus list",
+        "instructions": "Fill in build_stimulus from the README's plan table: stim = new[6]; entries 0 to 5 with make_hdr; then stim = new[stim.size() + 4](stim); so the first six survive; entries 6, 7 and 8 with raw_hdr and entry 9 with make_hdr. Rerun: TEST 10 packets, and still PASS=0 FAIL=0. Name the row that tests the order of D3, and the two rows that test the length limit.",
+        "starterCode": ""
+      },
+      {
+        "id": "check",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: The per-packet check",
+        "instructions": "Write dec_str with $sformatf and d.err.name(). Write check_packet: act = {accept, err, dest, len}; exp = model_decode(h); seen_err[exp.err]++; compare act !== exp and count pass_cnt or fail_cnt with an $error that prints both; add exp.len to exp_bytes[exp.dest] when the model accepts, and act.len to act_bytes[act.dest] plus count_by_kind[h.kind]++ when act.accept === 1'b1. Rerun: PASS=10 FAIL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "tables-verdict",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Tables, plan and verdict",
+        "instructions": "Write print_traffic (walk count_by_kind with first() and next(); foreach over exp_bytes), compare_tables (every key of exp_bytes must exist in act_bytes with the same value, and every key of act_bytes must exist in exp_bytes; call exists() before reading the other table), check_plan (walk err_e from first() to last() with next() and fail for each member that seen_err does not contain) and, in report, count a run that checked nothing as a failure. Run with DUT_BUG = 0 and expect the README's log, ending PASS=17 FAIL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 7: Break the DUT and the bench, and watch the checks catch it",
+        "instructions": "Predict, then run: DUT_BUG = 1 (length limit off by one), DUT_BUG = 2 (checksum checked before kind) and DUT_BUG = 3 (dest from the wrong bits). Then plant your own DUT bug, accept = (err == 2'd0); so IDLE is accepted, and a bench bug, new[stim.size() + 4] without (stim). Compare each summary line and the check that caught it with the README's table, then undo everything and rerun: PASS=17 FAIL=0.",
+        "starterCode": ""
       }
     ],
-    "assetLocation": "content/curriculum/labs/common"
+    "assets": [
+      {
+        "path": "README.md",
+        "role": "guide",
+        "language": "markdown",
+        "editable": false
+      },
+      {
+        "path": "solution/pkt_pkg.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "solution/tb_top.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "work/pkt_decoder.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/pkt_pkg.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_top.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      }
+    ],
+    "assetLocation": "content/curriculum/labs/common/lab1_packet_decoder"
   },
   {
     "id": "config-debug",
@@ -706,49 +867,118 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "constructs-1",
-    "version": "1",
-    "title": "SV Constructs",
-    "description": "Explore advanced SystemVerilog procedural constructs.",
-    "owningModule": "F2B",
+    "version": "2",
+    "title": "Race-Aware Interface Testbench with Clocking Blocks",
+    "description": "Milestone M1, without UVM: put a driver clocking block and an input-only monitor clocking block in an interface, drive and sample a three-register pipeline through them, check every result for its value and its arrival cycle, keep the asynchronous reset outside the clocking blocks, and prove with a racy copy of the bench that the same code can pass or fail depending on the process order.",
+    "owningModule": "F4C",
     "routeSlug": "constructs-1",
-    "status": "coming_soon",
-    "labPrerequisites": [],
-    "modulePrerequisites": [],
-    "steps": [],
+    "status": "available",
+    "graderId": "sv-clocking-v1",
+    "labPrerequisites": [
+      "simple-dut-1"
+    ],
+    "modulePrerequisites": [
+      "F3C",
+      "F4B"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the rot_pipe specification in the README (rules R1 to R4) and the timing rule: an item driven through cb just after edge k is seen by mon_cb at edge k+4. Compile work/rot_pipe.sv, work/pipe_if.sv and work/tb_top.sv and run it. It prints PASS=0 FAIL=0 at 0 ns. Before you open the README's answer, explain why that line is not a pass.",
+        "starterCode": ""
+      },
+      {
+        "id": "clocking-blocks",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 2: Two clocking blocks in the interface",
+        "instructions": "In work/pipe_if.sv, declare the driver's block as the default clocking: default clocking cb @(posedge clk); with default input #1step output #0; in_vld and in_data as outputs and out_vld and out_data as inputs. Leave rst_n out of cb. Add clocking mon_cb @(posedge clk); with inputs only: rst_n, in_vld, in_data, out_vld and out_data. Add task automatic wait_cycles(input int n) that waits with a cycle delay: repeat (n) ##1;. The check reads your code's structure only.",
+        "starterCode": ""
+      },
+      {
+        "id": "driver",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 3: The driver",
+        "instructions": "In work/tb_top.sv, fill in send: drive bus.cb.in_vld <= 1'b1; and bus.cb.in_data <= data;, push exp_t'{din: data, dout: model_rotl(data), due: $time + SAMPLE_EDGES * CLK_PERIOD} onto exp_q, then wait with @(bus.cb). Fill in idle: bus.cb.in_vld <= 1'b0; then repeat (n) @(bus.cb);. No @(posedge clk), no raw bus.in_vld writes and no ## in tb_top.",
+        "starterCode": ""
+      },
+      {
+        "id": "monitor",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 4: The monitor",
+        "instructions": "Fill in monitor: forever, wait for @(bus.mon_cb) and read only bus.mon_cb. Skip samples where mon_cb.rst_n is not 1, fail on $isunknown(bus.mon_cb.out_vld), and when out_vld is 1: fail with $error on an empty exp_q, otherwise pop the oldest expectation and fail if $time != e.due (wrong cycle) or if out_data !== e.dout (wrong value). Count pass_cnt or fail_cnt for every check.",
+        "starterCode": ""
+      },
+      {
+        "id": "verdict",
+        "version": "1",
+        "completion": "graded",
+        "title": "Step 5: Reset, drain, verdict and watchdog",
+        "instructions": "In report, add leftover expectations to fail_cnt and count a failure when nothing was checked. In main, make the first branch of a fork drive bus.cb.in_vld <= 1'b0;, release reset directly with #12 bus.rst_n = 1'b1;, wait for the 15 ns edge with @(bus.cb), call run_test() and drain with bus.wait_cycles(SAMPLE_EDGES + 2);. The second branch is a watchdog: #(TIMEOUT), fail_cnt++, report(), $fatal. Join with join_any, then disable fork, report() and $finish. Run it and expect five PASS lines and PASS=5 FAIL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Break the DUT and watch the bench catch it",
+        "instructions": "Set .BUG(1) (shift instead of rotate) and predict which items fail before you run. Set .BUG(2) (one extra register) and run again: every result is right but late. Then turn the time check off (if (1'b0) instead of if ($time != e.due)) and rerun BUG=2: it passes, which is why the check is there. Restore it, set .BUG(0), plant your own bug (rotate right instead of left) and name the item that cannot catch it. Compare each summary line with the README's table, then put everything back: PASS=5 FAIL=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-the-race",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 7: Prove that the bench without clocking blocks races",
+        "instructions": "Compile work/rot_pipe.sv with work/tb_racy.sv, the same test without an interface or clocking blocks: its driver writes the DUT's inputs with blocking assignments right after @(posedge clk). Run it, then run it again with +DUT_FIRST, which replays the other order the standard allows. Compare the two summary lines with the README, explain from IEEE 1800-2023 4.7 why both are legal results of the same code, and explain why your tb_top gives PASS=5 FAIL=0 in every order.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
-        "path": "lab1_race_condition/README.md",
+        "path": "README.md",
         "role": "guide",
         "language": "markdown",
         "editable": false
       },
       {
-        "path": "lab1_race_condition/solution.sv",
-        "role": "solution",
+        "path": "work/rot_pipe.sv",
+        "role": "starter",
         "language": "systemverilog",
-        "editable": false
+        "editable": true
       },
       {
-        "path": "lab1_race_condition/testbench.sv",
+        "path": "work/pipe_if.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_top.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_racy.sv",
         "role": "reference",
         "language": "systemverilog",
         "editable": false
       },
       {
-        "path": "lab2_scheduler/README.md",
-        "role": "guide",
-        "language": "markdown",
-        "editable": false
-      },
-      {
-        "path": "lab2_scheduler/solution.sv",
+        "path": "solution/pipe_if.sv",
         "role": "solution",
         "language": "systemverilog",
         "editable": false
       },
       {
-        "path": "lab2_scheduler/testbench.sv",
-        "role": "reference",
+        "path": "solution/tb_top.sv",
+        "role": "solution",
         "language": "systemverilog",
         "editable": false
       }
@@ -854,21 +1084,102 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "dma-1",
-    "version": "1",
-    "title": "DMA Verification",
-    "description": "Build a verify environment for a Direct Memory Access controller.",
+    "version": "2",
+    "title": "DMA Copy Engine: Layered and Virtual Sequences",
+    "description": "Verify a one-channel DMA copy engine with UVM: a translation sequence that turns whole copies into register programming, a virtual sequence that loads memory and starts the memory-model responder before anything starts the DMA, a scoreboard that predicts every destination write and register read, and a reprogram-while-busy test that runs two sequences on one register sequencer. Two planted DUT bugs and one bench bug prove the bench can fail, and show which test catches which bug.",
     "owningModule": "I-UVM-3B",
     "routeSlug": "dma-1",
-    "status": "coming_soon",
+    "status": "available",
     "labPrerequisites": [
-      "arbiter-1"
+      "uvm-mini-capstone"
     ],
-    "modulePrerequisites": [],
-    "steps": [],
+    "modulePrerequisites": [
+      "I-UVM-3A"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the dma_copy specification in the README (registers R1 to R6, memory port M1 to M3) and the bench diagram. Build rtl/dma_copy.sv, tb/dma_ifs.sv, work/dma_tb_pkg.sv and tb/tb_top.sv with the UVM library and run dma_smoke_test. It ends with one UVM_ERROR, 'no transfer was checked', and [RESULT] FAIL: 1 errors. Before you open the README's answer, explain why a run with no errors from the DUT is still a failure.",
+        "starterCode": ""
+      },
+      {
+        "id": "translation-sequence",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: The translation sequence",
+        "instructions": "In dma_xfer_to_cfg_seq::body (work/dma_tb_pkg.sv), turn each dma_xfer_item pulled from up_sqr into register accesses: cfg_write SRC, DST and LEN, cfg_write 1 to CTRL, then cfg_read STATUS until bit 1 (DONE) is 1, with a uvm_fatal after poll_limit reads. Leave up_sqr.item_done() last. Rerun: nothing changes yet, because no virtual sequence starts the translator. Answer the README's question on when the upper sequence's finish_item returns.",
+        "starterCode": ""
+      },
+      {
+        "id": "virtual-sequence",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: The virtual sequence and its ordering rule",
+        "instructions": "Write dma_base_vseq::start_background: preload the sources with dma_preload_sources(p_sequencer.mem), set translate.up_sqr = p_sequencer.xfer_sqr, then start rsp_seq on p_sequencer.mem_sqr and translate on p_sequencer.cfg_sqr inside fork...join_none. Write dma_smoke_vseq::body: call start_background, then start xfers on p_sequencer.xfer_sqr. Rerun dma_smoke_test: the copies now run, and the scoreboard reports every destination write as unexpected, because it predicts nothing yet. Explain why.",
+        "starterCode": ""
+      },
+      {
+        "id": "scoreboard",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: Predict and account in the scoreboard",
+        "instructions": "Write dma_scoreboard::predict_transfer: for i from 0 to len-1, push_back '{addr: dst + 4*i, data: mem.peek(src + 4*i)} onto exp_q. Write end_of_transfer: a uvm_error for a done pulse while no transfer runs, a uvm_error naming how many words are still in exp_q and the first missing address, otherwise n_checked++; then empty exp_q. Rerun dma_smoke_test and compare with the README's expected log: transfers started 9, checked 9, and [RESULT] PASS.",
+        "starterCode": ""
+      },
+      {
+        "id": "busy-vseq",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Reprogram while busy",
+        "instructions": "Write dma_busy_vseq::body: call start_background and set first.n_random = 0. In a fork...join, run first on the upper-layer sequencer and, in parallel, read STATUS and LEN with dma_cfg_access_seq on p_sequencer.cfg_sqr until the DMA is BUSY with LEN 16, then write DST_ALT to DST. After the join, read DST back. Run +UVM_TESTNAME=dma_busy_test: [RESULT] PASS. Explain how two sequences share the register sequencer without corrupting each other's accesses.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Prove the bench can fail, and which test catches what",
+        "instructions": "Predict, then run both tests with +DMA_BUG=1 (the copy ends one word early) and +DMA_BUG=2 (a DST write while BUSY is accepted). Fill in the README's table: which test catches each bug and which message names it. Then plant a bench bug: comment out rsp_seq.start in start_background, rebuild and run dma_smoke_test; the translator's poll limit ends the run with a uvm_fatal. Restore the line, rebuild, and confirm PASS for both tests with no plusarg.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
-        "path": "lab1_simple_tb/test_dma.sv",
+        "path": "README.md",
+        "role": "guide",
+        "language": "markdown",
+        "editable": false
+      },
+      {
+        "path": "rtl/dma_copy.sv",
         "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "tb/dma_ifs.sv",
+        "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "tb/tb_top.sv",
+        "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "work/dma_tb_pkg.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "solution/dma_tb_pkg.sv",
+        "role": "solution",
         "language": "systemverilog",
         "editable": false
       }
@@ -877,23 +1188,122 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "fifo-1",
-    "version": "1",
-    "title": "FIFO Implementation",
-    "description": "Implement and verify a simple synchronous FIFO.",
+    "version": "2",
+    "title": "A Class-Based Bench for a Synchronous FIFO",
+    "description": "Without UVM: verify a 4-entry synchronous FIFO with a layered class-based bench (transaction, generator, driver, monitor and a scoreboard whose reference model is a queue), reach every full and empty corner case, guard against vacuous passes, and prove that the bench catches two planted DUT bugs and two handle-aliasing bugs of its own.",
     "owningModule": "I-SV-1",
     "routeSlug": "fifo-1",
-    "status": "coming_soon",
+    "status": "available",
     "labPrerequisites": [
-      "common-1"
+      "simple-dut-1"
     ],
-    "modulePrerequisites": [],
-    "steps": [],
+    "modulePrerequisites": [
+      "F2B",
+      "F2D",
+      "F4B"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the sync_fifo specification in the README (rules F1 to F5). Compile work/sync_fifo.sv, work/fifo_if.sv, work/fifo_tb_pkg.sv and work/tb_top.sv in that order and run without +TEST= (on Verilator, keep +verilator+error+limit+1000). The run ends PASS=0 FAIL=2. Before you open the README's answer, name the two checks in report() that failed and explain why a bench that prints PASS=0 FAIL=0 here would have been worse.",
+        "starterCode": ""
+      },
+      {
+        "id": "transactions",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: The transaction classes",
+        "instructions": "In work/fifo_tb_pkg.sv, fill in fifo_item's copy, clone and convert2string. clone creates a new fifo_item and calls its copy(this). Then override all three in fifo_obs: copy calls super.copy(rhs) first and gets a fifo_obs handle with if (!$cast(o, rhs)) $fatal(...); clone creates a fifo_obs, not a fifo_item; convert2string adds the cycle and the three output fields to super.convert2string(). Answer the README's question on what goes wrong if fifo_obs does not override clone.",
+        "starterCode": ""
+      },
+      {
+        "id": "generator",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: The generator clones a blueprint",
+        "instructions": "Fill in fifo_gen::add: set the blueprint's three fields (wr_data = next_data when wr is 1, then next_data++; 0 otherwise) and push blueprint.clone() onto items. Then write fill_drain and simultaneous from the README's plan table using write, read, both and idle. fill_drain must try two writes while full and two reads while empty; simultaneous must put a write and a read on one edge when the FIFO is empty, in the middle and full.",
+        "starterCode": ""
+      },
+      {
+        "id": "driver",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: The driver",
+        "instructions": "Fill in fifo_drv::run: for each item, wait @(posedge vif.clk) and drive vif.wr_en, vif.wr_data and vif.rd_en with <=. After the last item, wait one more edge and drive both enables to 0. The driver reaches the DUT only through its virtual interface handle vif.",
+        "starterCode": ""
+      },
+      {
+        "id": "monitor",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: The monitor makes a new object on every edge",
+        "instructions": "Fill in fifo_mon::run: forever wait @(posedge vif.clk); while vif.rst_n is not 1, set the cycle count to 0 and skip the edge; otherwise create a NEW fifo_obs, fill in ++cycle and the six signals from vif, and call sb.write(o). Explain in one sentence why the values read here are the values from just before the edge.",
+        "starterCode": ""
+      },
+      {
+        "id": "scoreboard",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: The scoreboard and its reference queue",
+        "instructions": "Fill in fifo_sb::write in three parts, in this order. 1: if rd_pending, compare o.rd_data with exp_rd.wr_data using !== and count a pass or a failure. 2: compare o.full and o.empty with the model's level (ref_q.size() == DEPTH, ref_q.size() == 0) and count a pass or a failure. 3: update the corner counters, then let the model, not the DUT's flags, decide: on rd_en with the model not empty pop_front into exp_rd and set rd_pending; on wr_en with the model not full push_back(o).",
+        "starterCode": ""
+      },
+      {
+        "id": "regression",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 7: Run every test and compare with the expected log",
+        "instructions": "Run without +TEST= (on Verilator, keep +verilator+error+limit+1000), then with +TEST=smoke, +TEST=fill_drain, +TEST=simultaneous and +TEST=mixed. Compare the CORNERS and PASS lines with the README's table: without +TEST= the run ends PASS=155 FAIL=0 and every corner counter is above 0. If a count differs, find the first cycle where your bench and the reference solution disagree.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 8: Break the DUT, then break the bench",
+        "instructions": "Set .BUG(1) in work/tb_top.sv (a write while full is stored) and predict which tests fail; run each one. Repeat with .BUG(2) (a write and a read on one edge add 1 to the count). Then set .BUG(0) and plant two bench bugs one at a time: in the monitor create one fifo_obs before the forever loop instead of one per edge; in the generator push the blueprint instead of its clone. Compare every summary line with the README's table, explain each with handles, then undo the bugs and rerun: PASS=155 FAIL=0.",
+        "starterCode": ""
+      }
+    ],
     "assets": [
       {
-        "path": "lab1_simple_tb/test_fifo.sv",
+        "path": "README.md",
+        "role": "guide",
+        "language": "markdown",
+        "editable": false
+      },
+      {
+        "path": "solution/fifo_tb_pkg.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "work/fifo_if.sv",
         "role": "reference",
         "language": "systemverilog",
         "editable": false
+      },
+      {
+        "path": "work/fifo_tb_pkg.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/sync_fifo.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/tb_top.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
       }
     ],
     "assetLocation": "content/curriculum/labs/fifo"
@@ -1140,6 +1550,114 @@ export const GENERATED_LAB_MANIFESTS = [
       }
     ],
     "assetLocation": "content/curriculum/labs/methodology_customization/lab1_custom_phase"
+  },
+  {
+    "id": "multi-agent-vseq",
+    "version": "1",
+    "title": "Multi-Agent Environment with Virtual Sequences",
+    "description": "Milestone M5: wire a configuration agent, a data-in agent and a passive data-out agent into one environment, order configuration before data and reconfigure at a safe point with a virtual sequence, check end to end with a scoreboard that follows the configuration bus by time stamp, add cross-interface ordering assertions, and prove that three mutant tests and two planted DUT bugs all fail.",
+    "owningModule": "A-UVM-8",
+    "routeSlug": "multi-agent-vseq",
+    "status": "available",
+    "labPrerequisites": [
+      "uvm-mini-capstone"
+    ],
+    "modulePrerequisites": [
+      "I-UVM-3B",
+      "A-UVM-7",
+      "I-SV-5"
+    ],
+    "steps": [
+      {
+        "id": "run-starter",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 1: Read the specification and run the starter",
+        "instructions": "Read the key_stream specification in the README (rules R1 to R4) and the complete parts of work/mx_tb.sv: the three interfaces, the agents, the agent sequences and mx_reconfig_test. Build work/key_stream.sv with work/mx_tb.sv and run it. It stops at 0 ns with UVM_FATAL [NO_CFG] from uvm_test_top.env.cfg_agt. Before you open the README's answer, say which component failed to do its job.",
+        "starterCode": ""
+      },
+      {
+        "id": "env-topology",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 2: The topology: per-agent configuration and the virtual sequencer",
+        "instructions": "In mx_env::build_phase, set each agent's configuration object at its own path (cfg_agt, din_agt, dout_agt; field name cfg) before the agents are created. In connect_phase, copy cfg_agt.sqr and din_agt.sqr into vsqr, and connect cfg_agt.ap, din_agt.ap and dout_agt.ap to the scoreboard's cfg_imp, in_imp and out_imp. Rerun: the run now ends with SCB_SUMMARY matches=0 mismatches=0 pending=0 order=0 and RESULT TEST PASSED. Answer the README's question: is it a pass?",
+        "starterCode": ""
+      },
+      {
+        "id": "virtual-sequence",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 3: The virtual sequence decides the order",
+        "instructions": "In mx_reconfig_vseq, fill in check_handles (a named UVM_FATAL NO_SQR for each null handle in p_sequencer) and body: check the handles, program_dut(KEY_1, MODE_XOR), send_burst(FIRST_1, BURST_LEN), program_dut(KEY_2, MODE_ADD), send_burst(FIRST_2, BURST_LEN), each one after the other. Explain why the second program_dut call is a safe point.",
+        "starterCode": ""
+      },
+      {
+        "id": "scoreboard",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 4: The end-to-end scoreboard follows the configuration bus",
+        "instructions": "Fill in mx_scoreboard from the specification: apply (R1 and R4 on the shadow registers, ORDER for a KEY write while en is 1), commit_before (apply every pending write stamped earlier than t), predict (R3), write_cfg, write_in (ORDER for a byte sent while en is 0, otherwise push the prediction), write_out (compare with !==) and check_phase (SCB_PENDING, SCB_NO_TRAFFIC). Run mx_reconfig_test and expect SCB_SUMMARY matches=12 mismatches=0 pending=0 order=0.",
+        "starterCode": ""
+      },
+      {
+        "id": "assertions",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5: Cross-interface ordering assertions",
+        "instructions": "In tb_top, add ORDER_SVA (din_bus.valid implies dut.en) and LOCK_SVA (a KEY write on cfg_bus implies !dut.en), clocked on posedge clk, disabled while rst_n is 0, each reporting with `uvm_error in its action block. Rerun mx_reconfig_test: the log must still end with RESULT TEST PASSED, UVM_ERROR : 0 and UVM_FATAL : 0.",
+        "starterCode": ""
+      },
+      {
+        "id": "mutants",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 6: Run the mutant tests",
+        "instructions": "Without editing work/mx_mutants.svh, run +UVM_TESTNAME=mx_data_first_test, mx_no_quiesce_test and mx_passive_cfg_test. Predict each signature before you run it, then compare with the README's table: 3 ORDER and 3 ORDER_SVA with matches=9; 1 ORDER and 1 LOCK_SVA with matches=12; UVM_FATAL [NO_SQR] at 0 ns. Every mutant must end with RESULT TEST FAILED or a fatal.",
+        "starterCode": ""
+      },
+      {
+        "id": "prove-it-fails",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 7: Break the DUT and watch the bench catch it",
+        "instructions": "Run mx_reconfig_test with +BUG=1 (MODE ignored) and with +BUG=2 (EN takes effect one edge late), and compare each summary with the README's table. Then plant your own bug in work/key_stream.sv: make a CTRL write while EN is 1 also update MODE. Predict which test catches it, run all four tests, then remove it and rerun mx_reconfig_test: RESULT TEST PASSED.",
+        "starterCode": ""
+      }
+    ],
+    "assets": [
+      {
+        "path": "README.md",
+        "role": "guide",
+        "language": "markdown",
+        "editable": false
+      },
+      {
+        "path": "solution/mx_tb.sv",
+        "role": "solution",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "work/key_stream.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/mx_tb.sv",
+        "role": "starter",
+        "language": "systemverilog",
+        "editable": true
+      },
+      {
+        "path": "work/mx_mutants.svh",
+        "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      }
+    ],
+    "assetLocation": "content/curriculum/labs/multi_agent"
   },
   {
     "id": "power-aware-retention",

@@ -17,6 +17,20 @@ sources:
 - **Why it matters:** As a testbench (TB) grows from one block to a subsystem, a single `` `uvm_do `` loop on one agent no longer describes the test. The bugs change too. Data reaches the design under test (DUT) before its configuration, a background stream starves an urgent one, an interrupt is serviced late, or the test ends while stimulus is still running. Most of these print no error at all. Knowing which tool controls which decision is what lets you write such tests on purpose and debug them quickly.
 - **The Analogy:** Think of each agent as an airport with one runway. The driver is the runway, the sequencer is the control tower, and each sequence is an airline asking the tower for a slot. The tower's rule (the arbitration mode) decides who flies next, and priority is a number written on each request. `lock()` books a block of consecutive slots; `grab()` is an emergency block booking, served before any ordinary block booking that is still waiting. A virtual sequence is the airline operations centre that tells several airports what to do and in which order, and a virtual sequencer is only that centre's phone book. *Where it breaks:* a real tower clears planes on its own schedule, but a UVM sequencer chooses only when its driver asks for the next item. A block booking never expires by itself: a `lock()` lasts until `unlock()`, and other sequences wait silently while it is held. And the phone book never schedules anything: the virtual sequencer decides no order at all.
 
+The analogy at a glance, with the three places it breaks:
+
+| At the airport | In UVM | Where the analogy breaks |
+|---|---|---|
+| The runway | The driver | Holds |
+| The control tower | The sequencer | A tower clears planes on its own schedule; a sequencer chooses only when its driver asks for the next item |
+| An airline asking the tower for a slot | A sequence asking to send its next item | Holds |
+| The tower's rule for who flies next | The arbitration mode | Holds |
+| The number written on each request | Priority | Holds |
+| A block of consecutive slots | `lock()` | A block booking never expires: a lock lasts until `unlock()`, and other sequences wait silently while it is held |
+| An emergency block booking | `grab()` | Holds: it is served before any ordinary block booking still waiting |
+| The airline operations centre | A virtual sequence | Holds: it tells several airports what to do and in which order |
+| The operations centre's phone book | A virtual sequencer | The phone book schedules nothing: a virtual sequencer decides no order at all |
+
 **You will be able to:**
 1. **Choose** the tool for a stimulus requirement (arbitration mode and priority, `lock()`, `grab()`, a sequence library, layering, a virtual sequence, the interrupt pattern or the response handler), and say whether it controls the order inside one sequencer or the order across sequencers.
 2. **Predict** which waiting request a sequencer grants under the default FIFO mode, under `UVM_SEQ_ARB_WEIGHTED` and `UVM_SEQ_ARB_STRICT_FIFO`, and when locks and grabs are waiting.
@@ -52,6 +66,30 @@ Every question in this module is one of two questions:
 2. **Across sequencers:** stimulus on one agent must happen before, during or after stimulus on another. Who enforces that order? No sequencer can, because each one only sees its own requests. The order comes from *your code*: the `body()` of a **virtual sequence** that starts sequences on several sequencers.
 
 Keep the two apart and most confusion in this module disappears. A priority never orders two agents; a virtual sequence never decides which of two sequences on the same sequencer goes first. The next two subsections give the core rule for each decision.
+
+<ArchitectureDiagram
+  title="The two decisions: who chooses the order"
+  caption="Top panel: two sequences wait on one sequencer, and the sequencer chooses which is granted next for its driver. Bottom panel: a virtual sequence starts work on two different sequencers, and the order is the order of the start() calls in its body(). No sequencer sees both cfg_sqr and data_sqr."
+  spreadAnchors={true}
+  nodes={[
+    { id: "d1", label: "Decision 1: inside one sequencer", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "seqa", label: "seq_a", kind: "sequence", col: 0, row: 0 },
+    { id: "seqb", label: "seq_b", kind: "sequence", col: 1, row: 0 },
+    { id: "sqr", label: "sqr", sublabel: "the sequencer decides", kind: "sequencer", col: 0, row: 1, colSpan: 2 },
+    { id: "drv", label: "drv", sublabel: "asks for the next item", kind: "driver", col: 0, row: 2, colSpan: 2 },
+    { id: "d2", label: "Decision 2: across sequencers", col: 0, row: 3, colSpan: 2, rowSpan: 2, container: true },
+    { id: "vseq", label: "top_vseq.body()", sublabel: "your code decides", kind: "sequence", col: 0, row: 3, colSpan: 2 },
+    { id: "csqr", label: "cfg_sqr", kind: "sequencer", col: 0, row: 4 },
+    { id: "dsqr", label: "data_sqr", kind: "sequencer", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "seqa", to: "sqr", style: "causal" },
+    { from: "seqb", to: "sqr", style: "causal" },
+    { from: "drv", to: "sqr", style: "control" },
+    { from: "vseq", to: "csqr", style: "causal", label: "1st" },
+    { from: "vseq", to: "dsqr", style: "causal", label: "2nd" }
+  ]}
+/>
 
 ### Inside one sequencer: who is granted next
 
@@ -94,6 +132,27 @@ The rules, in the order the sequencer applies them:
    - `UVM_SEQ_ARB_USER`: your sequencer's `user_priority_arbitration()` decides (§15.3.2.3).
 3. **Priority** is an integer attached to a sequence. A sequence started with no parent gets 100 by default, and a child gets its parent's priority (§14.2.3.1). Pass another value as the third argument of `start()`, as in `isr.start(sqr, null, 300)`. Use values of 1 or more.
 
+<ArchitectureDiagram
+  title="The grant ladder: filter, then pick"
+  caption="Read it top to bottom each time the driver asks for an item. Blocked requests drop out first. The sequencer then calls is_relevant() on each requesting, unblocked sequence; that method returns 1 by default, and a sequence can override it to say it is not ready yet (IEEE 1800.2-2020 §14.2.5.3). Only then does the arbitration mode choose among what is left."
+  cellWidth={240}
+  cellHeight={52}
+  gapY={36}
+  nodes={[
+    { id: "q", label: "waiting requests", sublabel: "the arbitration queue, oldest first", col: 0, row: 0 },
+    { id: "blk", label: "drop blocked ones", sublabel: "another sequence holds a lock or grab", col: 0, row: 1 },
+    { id: "rel", label: "drop irrelevant ones", sublabel: "is_relevant() returns 0", col: 0, row: 2 },
+    { id: "mode", label: "the mode picks one", sublabel: "FIFO and RANDOM ignore priority", col: 0, row: 3 },
+    { id: "grant", label: "grant", sublabel: "that sequence's start_item() returns", kind: "sequencer", col: 0, row: 4 }
+  ]}
+  edges={[
+    { from: "q", to: "blk", style: "causal" },
+    { from: "blk", to: "rel", style: "causal" },
+    { from: "rel", to: "mode", style: "causal" },
+    { from: "mode", to: "grant", style: "causal" }
+  ]}
+/>
+
 Now apply the rules. In this traced example the three requests arrived in the order `bg_seq`, `burst_seq`, `isr_seq`, with the priorities in the picture, and nobody holds a lock unless the row says so:
 
 | Situation | Next grant | Why |
@@ -107,6 +166,32 @@ Now apply the rules. In this traced example the three requests arrived in the or
 
 Two misconceptions to drop now. **`UVM_SEQ_ARB_WEIGHTED` is not strict priority**: `isr_seq` loses two times in five. If the urgent sequence must win whenever it is waiting, use `UVM_SEQ_ARB_STRICT_FIFO`, or `grab()`. And **`grab()` is not just another name for `lock()`**: both give exclusive access until released, but when a lock and a grab are both waiting, the grab is served first, as in the last row. Choose by intent: `grab()` to pre-empt, `lock()` to keep a burst together. The [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) lesson owns these rules in full, with a sandbox that replays each case grant by grant.
 
+`lock()` and `grab()` side by side:
+
+| | `lock()` | `grab()` |
+|---|---|---|
+| Where the request enters the arbitration queue | At the back (§14.2.5.5) | At the front (§14.2.5.6) |
+| Exclusive until | `unlock()` | `ungrab()` |
+| When a lock and a grab are both waiting | Waits | Served first |
+| Choose it to | Keep a burst together | Pre-empt other traffic, such as for an interrupt |
+| When nothing is held | The standard: arbitrated like any other request. uvm-core 2020.3.1: granted at once, ahead of older item requests | Granted when no other grab or lock blocks it (§14.2.5.6) |
+| The holder ends without releasing | uvm-core 2020.3.1 removes it and reports `UVM_ERROR [SEQFINERR]` | The same: uvm-core 2020.3.1 keeps grabs in the same lock list |
+
+**Predict before you open.** Take the same three requests: `bg_seq` (priority 100), `burst_seq` (priority 100) and `isr_seq` (priority 300), arrived in that order, with no lock or grab held. (a) Under `UVM_SEQ_ARB_STRICT_RANDOM`, who is granted next? (b) Suppose instead `isr_seq` had been started with priority 100 too. Under `UVM_SEQ_ARB_STRICT_FIFO`, who is granted next?
+
+<details>
+<summary>Check your predictions</summary>
+
+**(a)** `isr_seq`, every time. `UVM_SEQ_ARB_STRICT_RANDOM` picks at random only among the requests at the highest priority, and `isr_seq` is alone at 300 (Annex F.2.4.1). The randomness matters only when several requests share the top priority.
+
+**(b)** `bg_seq`. All three now tie at 100, and `UVM_SEQ_ARB_STRICT_FIFO` breaks a tie by age, so the oldest request wins. With equal priorities it behaves like the default FIFO mode.
+
+</details>
+
+Try the same rules in the sandbox. Its sequences are named A, B and C: pick a preset (FIFO, STRICT_FIFO, WEIGHTED, `lock()`, a forgotten `unlock()`, or grab versus lock), predict each grant, then change the mode or the priorities and predict again.
+
+<SequencerArbitrationSandbox />
+
 ### Across sequencers: virtual sequences
 
 A **virtual sequence** is a sequence whose `body()` sends no items of its own. Instead it starts other sequences, each on the sequencer of the agent it targets, and the order of those `start()` calls in its code *is* the cross-agent order. Because `start()` returns only after the child's `body()` has finished, a plain sequence of calls is already an ordering rule.
@@ -115,6 +200,23 @@ A **virtual sequence** is a sequence whose `body()` sends no items of its own. I
 - a driver that pulls items with `get()`, which completes the handshake at once, before anything is driven;
 - a **pipelined driver**, one that accepts the next item before the previous one has finished on the bus;
 - a DUT that needs a **write response** (an acknowledgement it returns after a write) or **settling time** (time after a write before the new setting takes effect).
+
+<TimingDiagram
+  title="Handshake order versus pin order"
+  caption="The x-axis is rising clock edges 0 to 5 on an illustrative bus where a CTRL write takes two cycles and completes at edge 2. Row data A: the configuration driver pulls CTRL with get(), so ctrl.start() returns at once and the data driver puts D0 on its bus while CTRL is still in flight. Row data B: the configuration driver calls item_done() after the transfer, so the data sequence starts only after edge 2. A pipelined driver that calls item_done() before its transfer ends can give the picture of row data A."
+  edges={6}
+  signals={[
+    { name: "CLK", kind: "clock" },
+    { name: "cfg bus", kind: "bus", values: ["idle", "CTRL", "CTRL", "idle", "idle", "idle"] },
+    { name: "data A", kind: "bus", values: ["idle", "D0", "D1", "D2", "idle", "idle"] },
+    { name: "data B", kind: "bus", values: ["idle", "idle", "idle", "D0", "D1", "D2"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "Row data A: get() ends the handshake here, so ctrl.start() returns before CTRL is driven" },
+    { edge: 1, tone: "fail", label: "Row data A: D0 is accepted before the CTRL write has completed" },
+    { edge: 2, tone: "pass", label: "CTRL write completes; row data B calls item_done() here, so ctrl.start() returns now" }
+  ]}
+/>
 
 The bench's ordering check should therefore watch completed transfers, as the driver's check in Make It Work does. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#expert-handshake-order-is-not-pin-order) takes this further.
 
@@ -177,6 +279,26 @@ class top_vseq_vsqr extends top_vseq;
 endclass
 ```
 
+<ArchitectureDiagram
+  title="With a virtual sequencer: handles, not scheduling"
+  caption="The test starts top_vseq_vsqr with vseq.start(env.vsqr), so its p_sequencer points to vsqr. The plain lines are the two handles vsqr holds, filled in env.connect_phase. The dashed lines are where the children really run: ctrl and thr on cfg_agt.sqr, data on data_agt.sqr. vsqr has no driver and arbitrates nothing."
+  cellWidth={130}
+  gapX={120}
+  nodes={[
+    { id: "vsqr", label: "vsqr", sublabel: "two_agent_vsqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "vseq", label: "top_vseq_vsqr", sublabel: "virtual sequence", kind: "sequence", col: 1, row: 0 },
+    { id: "csqr", label: "cfg_agt.sqr", sublabel: "vsqr.cfg_sqr", kind: "sequencer", col: 0, row: 1 },
+    { id: "dsqr", label: "data_agt.sqr", sublabel: "vsqr.data_sqr", kind: "sequencer", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "vseq", to: "vsqr", style: "control", label: "p_sequencer" },
+    { from: "vsqr", to: "csqr", style: "structural" },
+    { from: "vsqr", to: "dsqr", style: "structural" },
+    { from: "vseq", to: "csqr", style: "causal" },
+    { from: "vseq", to: "dsqr", style: "causal", label: "data" }
+  ]}
+/>
+
 The virtual sequencer is a convenience, not a scheduler. IEEE 1800.2-2020 does not define a virtual sequencer class at all; it is a usage pattern, and uvm-core 2020.3.1 only adds the name `uvm_virtual_sequencer` as a typedef of `uvm_sequencer #(uvm_sequence_item)`. **The virtual sequencer does not decide the order of your sub-sequences.** They run on the agents' sequencers, so the virtual sequencer never arbitrates between them; the order is exactly what `body()` says. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) owns the virtual sequence itself; [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) owns the virtual sequencer, its wiring and `p_sequencer` in depth.
 
 ### Dispatch timing: sequential, fork…join and fork…join_none
@@ -191,6 +313,82 @@ Trace them with the Make It Work bench. The configuration driver takes 10 ns per
 | B. `ctrl`; then `fork data; thr; join` (Make It Work) | 10 | 14, 18, 22 | 20, 30 | 30 ns | Correct and faster: the two agents overlap after configuration |
 | C. `fork ctrl; join_none`; then `data`; then `thr` | 10 | **4, 8**, 12 | 22, 32 | 32 ns | Data at 4 and 8 ns arrives before CTRL is enabled: two ordering errors |
 | D. `ctrl`; then `fork data; thr; join_none` | 10 | — | — | **10 ns** | `body()` returns as soon as the fork starts, the test ends at 10 ns, and the forked sequences are killed before any of their items completes |
+
+<figure role="group" aria-label="The four body() shapes on one time axis">
+  <p><strong>The four shapes on one time axis</strong></p>
+  <svg viewBox="0 0 352 298" role="img" aria-label="Four timelines from 0 to 42 ns, each with a cfg lane and a data lane. A, sequential: ctrl 0 to 10, data items end at 14, 18 and 22, thr items end at 32 and 42; body() returns at 42 ns. B, the Make It Work shape: ctrl 0 to 10, then data items end at 14, 18 and 22 while thr items end at 20 and 30; returns at 30 ns. C: data items end at 4, 8 and 12 while ctrl runs 0 to 10, so the items at 4 and 8 ns are ordering errors; thr items end at 22 and 32; returns at 32 ns. D: ctrl 0 to 10, then body() returns at 10 ns and the forked data and thr are killed before any item completes." style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+    <text x="44" y="11" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+    <line x1="44" y1="14" x2="44" y2="19" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="114" y="11" fontSize="10" textAnchor="middle" fill="currentColor">10</text>
+    <line x1="114" y1="14" x2="114" y2="19" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="184" y="11" fontSize="10" textAnchor="middle" fill="currentColor">20</text>
+    <line x1="184" y1="14" x2="184" y2="19" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="254" y="11" fontSize="10" textAnchor="middle" fill="currentColor">30</text>
+    <line x1="254" y1="14" x2="254" y2="19" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="324" y="11" fontSize="10" textAnchor="middle" fill="currentColor">40 ns</text>
+    <line x1="324" y1="14" x2="324" y2="19" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="4" y="34" fontSize="10" fontWeight="600" fill="currentColor">A. ctrl; data; thr in sequence: returns at 42 ns</text>
+    <text x="4" y="51" fontSize="10" fill="currentColor">cfg</text>
+    <line x1="44" y1="54" x2="338" y2="54" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="4" y="69" fontSize="10" fill="currentColor">data</text>
+    <line x1="44" y1="72" x2="338" y2="72" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="44.5" y="41" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="79.0" y="51" fontSize="10" textAnchor="middle" fill="currentColor">ctrl</text>
+    <rect x="198.5" y="41" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="233.0" y="51" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="268.5" y="41" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="303.0" y="51" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="114.5" y="59" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="142.5" y="59" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="170.5" y="59" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <line x1="338" y1="38" x2="338" y2="74" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+    <text x="4" y="85" fontSize="10" fill="currentColor">cfg idles from 10 to 22 ns while data runs</text>
+    <text x="4" y="102" fontSize="10" fontWeight="600" fill="currentColor">B. ctrl; fork data; thr; join: returns at 30 ns</text>
+    <text x="4" y="119" fontSize="10" fill="currentColor">cfg</text>
+    <line x1="44" y1="122" x2="338" y2="122" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="4" y="137" fontSize="10" fill="currentColor">data</text>
+    <line x1="44" y1="140" x2="338" y2="140" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="44.5" y="109" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="79.0" y="119" fontSize="10" textAnchor="middle" fill="currentColor">ctrl</text>
+    <rect x="114.5" y="109" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="149.0" y="119" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="184.5" y="109" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="219.0" y="119" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="114.5" y="127" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="142.5" y="127" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <rect x="170.5" y="127" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <line x1="254" y1="106" x2="254" y2="142" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+    <text x="4" y="153" fontSize="10" fill="currentColor">after ctrl, the two agents overlap</text>
+    <text x="4" y="170" fontSize="10" fontWeight="600" fill="currentColor">C. ctrl in join_none; data; thr: returns at 32 ns</text>
+    <text x="4" y="187" fontSize="10" fill="currentColor">cfg</text>
+    <line x1="44" y1="190" x2="338" y2="190" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="4" y="205" fontSize="10" fill="currentColor">data</text>
+    <line x1="44" y1="208" x2="338" y2="208" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="44.5" y="177" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="79.0" y="187" fontSize="10" textAnchor="middle" fill="currentColor">ctrl</text>
+    <rect x="128.5" y="177" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="163.0" y="187" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="198.5" y="177" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="233.0" y="187" fontSize="10" textAnchor="middle" fill="currentColor">thr</text>
+    <rect x="44.5" y="195" width="27" height="12" rx="2" fill="rgb(220,38,38)" fillOpacity="0.15" stroke="rgb(220,38,38)" strokeWidth="1.5" />
+    <text x="58.0" y="205" fontSize="10" textAnchor="middle" fill="rgb(220,38,38)">✕</text>
+    <rect x="72.5" y="195" width="27" height="12" rx="2" fill="rgb(220,38,38)" fillOpacity="0.15" stroke="rgb(220,38,38)" strokeWidth="1.5" />
+    <text x="86.0" y="205" fontSize="10" textAnchor="middle" fill="rgb(220,38,38)">✕</text>
+    <rect x="100.5" y="195" width="27" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <line x1="268" y1="174" x2="268" y2="210" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+    <text x="4" y="221" fontSize="10" fill="rgb(220,38,38)">✕ data done at 4 and 8 ns, before CTRL.enable: 2 ORDER errors</text>
+    <text x="4" y="238" fontSize="10" fontWeight="600" fill="currentColor">D. ctrl; fork data; thr; join_none: returns at 10 ns</text>
+    <text x="4" y="255" fontSize="10" fill="currentColor">cfg</text>
+    <line x1="44" y1="258" x2="338" y2="258" stroke="currentColor" strokeOpacity="0.25" />
+    <text x="4" y="273" fontSize="10" fill="currentColor">data</text>
+    <line x1="44" y1="276" x2="338" y2="276" stroke="currentColor" strokeOpacity="0.25" />
+    <rect x="44.5" y="245" width="69" height="12" rx="2" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="79.0" y="255" fontSize="10" textAnchor="middle" fill="currentColor">ctrl</text>
+    <line x1="114" y1="242" x2="114" y2="278" stroke="rgb(220,38,38)" strokeWidth="1.5" strokeDasharray="3 2" />
+    <text x="4" y="289" fontSize="10" fill="rgb(220,38,38)">✕ body() returns at 10 ns; data and thr are killed unfinished</text>
+  </svg>
+  <figcaption>The x-axis is simulation time, 0 to 42 ns. Each bar is one item being driven: 10 ns on the cfg lane, 4 ns on the data lane. The dashed line marks when <code>body()</code> returns. Row C shows the two data items that finish before CTRL is enabled; in row D nothing runs after 10 ns, because the forked sequences are killed when the test ends.</figcaption>
+</figure>
 
 Read the table twice:
 
@@ -276,6 +474,32 @@ The interrupt path is the one tool that uses both decisions at once. A monitor n
   ]}
 />
 
+The same path in time order:
+
+<SequenceDiagram
+  title="The interrupt path, step by step"
+  caption="Read top to bottom. bg is already waiting for a grant when the interrupt arrives. The grab puts svc ahead of it, so the recovery items are granted first; bg is granted again only after ungrab(cfg_sqr)."
+  columnWidth={150}
+  participants={[
+    { id: "mon", label: "irq_mon", kind: "monitor" },
+    { id: "svc", label: "svc", sublabel: "service sequence", kind: "sequence" },
+    { id: "sqr", label: "cfg_sqr", kind: "sequencer" },
+    { id: "bg", label: "bg", sublabel: "background traffic", kind: "sequence" }
+  ]}
+  messages={[
+    { from: "bg", to: "sqr", label: "start_item(): bg's next request waits for a grant" },
+    { kind: "async", from: "mon", to: "svc", label: "write(tr) into irq_fifo; svc's get(tr) returns" },
+    { from: "svc", to: "sqr", label: "grab(cfg_sqr)" },
+    { kind: "return", from: "sqr", to: "svc", label: "grab granted" },
+    { kind: "note", from: "svc", to: "sqr", label: "Only svc's items are granted now. The item the driver already holds is not pre-empted." },
+    { from: "svc", to: "sqr", label: "recovery items: start_item, finish_item" },
+    { from: "svc", to: "sqr", label: "ungrab(cfg_sqr)" },
+    { kind: "return", from: "sqr", to: "bg", label: "bg's start_item() returns" },
+    { kind: "note", from: "svc", to: "bg", tone: "error", label: "If ungrab() comes only after a long status wait, bg starves with no message" },
+    { kind: "self", from: "svc", label: "back to get(tr)" }
+  ]}
+/>
+
 ### When stimulus stops: read the symptom first
 
 Advanced sequencing bugs look alike from the outside: "the test hangs" or "the test passed but drove too little". Each one stops the handshake at a different point. This diagram marks those points on the call sequence you already know.
@@ -319,6 +543,31 @@ Advanced sequencing bugs look alike from the outside: "the test hangs" or "the t
 ### How the sub-lessons fit together
 
 The module runs in three steps. The first three lessons stay on **one sequencer**: how the handshake blocks, how the sequencer chooses, and how a library feeds it. Layering then connects **two layers of sequencers**, one sequence feeding another. The next three lessons work **across agents**: virtual sequences, the virtual sequencer and asynchronous interrupts. The lab then combines them all.
+
+<ArchitectureDiagram
+  title="The module map: three steps, one lab"
+  caption="Each band is one step of the module, read top to bottom; each box is one lesson, numbered as in the list below. The list has the links."
+  cellWidth={110}
+  gapX={24}
+  nodes={[
+    { id: "one", label: "One sequencer", col: 0, row: 0, colSpan: 3, container: true },
+    { id: "hs", label: "handshake", sublabel: "lesson 1", col: 0, row: 0 },
+    { id: "arb", label: "arbitration", sublabel: "lesson 2", col: 1, row: 0 },
+    { id: "lib", label: "libraries", sublabel: "lesson 3", col: 2, row: 0 },
+    { id: "two", label: "Two layers", col: 0, row: 1, colSpan: 3, container: true },
+    { id: "lay", label: "layering", sublabel: "lesson 4", col: 1, row: 1 },
+    { id: "across", label: "Across agents", col: 0, row: 2, colSpan: 3, container: true },
+    { id: "vs", label: "virtual seqs", sublabel: "lesson 5", col: 0, row: 2 },
+    { id: "vsq", label: "virtual sqr", sublabel: "lesson 6", col: 1, row: 2 },
+    { id: "irq", label: "interrupts", sublabel: "lesson 7", col: 2, row: 2 },
+    { id: "lab", label: "Coordinated Attack", sublabel: "lesson 8: the lab", kind: "test", col: 0, row: 3, colSpan: 3 }
+  ]}
+  edges={[
+    { from: "one", to: "two", style: "causal" },
+    { from: "two", to: "across", style: "causal" },
+    { from: "across", to: "lab", style: "causal" }
+  ]}
+/>
 
 1. [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): what blocks where, responses including out-of-order ones, and the hang signatures.
 2. [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): the six modes, priority, `lock()`, `grab()` and `is_relevant()`.
@@ -564,12 +813,36 @@ Make each change, predict the log before you look, then restore the original.
 1. **Configuration in the background.** Replace `ctrl.start(cfg_sqr, this);` with `fork ctrl.start(cfg_sqr, this); join_none` and replace the final `fork…join` with two sequential calls, `data.start(data_sqr, this);` then `thr.start(cfg_sqr, this);`.
 2. **Children in the background.** Restore the original, then change the final `join` to `join_none`.
 
+**Commit to two predictions first.** For change 1: how many `UVM_ERROR [ORDER]` lines appear, and for which addresses? For change 2: what does `check_phase` report for each agent, and would the run still pass if the test did not count what was driven?
+
 <details>
 <summary>Predicted logs (illustrative, traced as above)</summary>
 
 **1.** This is row C. `data` no longer waits for `ctrl`, so the data driver finishes 0x40 at 4 ns and 0x44 at 8 ns while CTRL.enable is still 0: two `UVM_ERROR [ORDER]` lines, "write to 0x40 before CTRL.enable" and "write to 0x44 before CTRL.enable". CTRL completes at 10 ns, 0x48 is accepted at 12 ns, and `thr` writes at 22 and 32 ns. Both counts are 3, so the summary shows `UVM_ERROR :    2`.
 
 **2.** This is row D. `body()` returns at 10 ns, right after CTRL, and the test drops its objection. The run phase ends and UVM kills the two forked threads before either driver finishes another item, so the last `DRV` line is the 10 ns one. uvm-core 2020.3.1 then prints `UVM_WARNING [SEQPRTZMB]` once for `vseq.data` and once for `vseq.thr`: the thread that called `start()` was killed without killing the sequence. In `check_phase`, both counts fail: "cfg_agt drove 1 of 3 items" and "data_agt drove 0 of 3 items". Without the count check, this run would have passed.
+
+<SequenceDiagram
+  title="Change 2 as a chain of events"
+  caption="Each step follows from the one before: join_none lets body() return at 10 ns, the objection drops, the run phase ends and kills the forked children, and only the count in check_phase turns the short run into errors."
+  participants={[
+    { id: "test", label: "two_agent_test", kind: "test" },
+    { id: "vseq", label: "vseq", kind: "sequence" },
+    { id: "kids", label: "data, thr", sublabel: "forked children", kind: "sequence" },
+    { id: "phase", label: "run phase", sublabel: "uvm-core 2020.3.1" }
+  ]}
+  messages={[
+    { from: "test", to: "vseq", label: "vseq.start(null)" },
+    { kind: "self", from: "vseq", label: "ctrl.start(cfg_sqr, this): CTRL done at 10 ns" },
+    { kind: "async", from: "vseq", to: "kids", label: "fork data.start; thr.start; join_none" },
+    { kind: "return", from: "vseq", to: "test", label: "body() and start() return at 10 ns" },
+    { from: "test", to: "phase", label: "drop_objection(this)" },
+    { kind: "async", from: "phase", to: "kids", tone: "error", label: "phase ends: running threads killed" },
+    { kind: "note", from: "kids", to: "phase", tone: "error", label: "UVM_WARNING [SEQPRTZMB] for vseq.data and vseq.thr" },
+    { kind: "divider", label: "check_phase" },
+    { kind: "note", from: "test", to: "kids", tone: "error", label: "COUNT: cfg_agt drove 1 of 3 items; data_agt drove 0 of 3 items" }
+  ]}
+/>
 
 </details>
 
@@ -640,6 +913,18 @@ Answer each one yourself before you open the options' feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="Two decisions at one glance"
+  rule="Inside one sequencer, the sequencer decides: locks and grabs filter first, then the arbitration mode picks (the default FIFO ignores priority). Across sequencers, your virtual sequence decides: the order of its start() calls is the order, because start() returns only when the child is done."
+  code={`ctrl.start(cfg_sqr, this);      // "before": a sequential start()
+fork                            // "overlap, then wait": fork...join
+  data.start(data_sqr, this);
+  thr.start(cfg_sqr, this);
+join`}
+  mistake="Ordering two agents with a priority or a virtual sequencer (priority acts only inside one sequencer; the virtual sequencer only holds handles), or ending body() with fork...join_none and nothing after it, which lets the test end and kill the children."
+  inTestbench="Every multi-agent test: the test starts one virtual sequence under an objection, its body() orders the agents, and each agent's sequencer arbitrates among the sequences sent to it."
+/>
 
 ### Retrieval quiz
 

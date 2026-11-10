@@ -242,6 +242,10 @@ Read the tally and the failures together. Zero nonvacuous successes and zero fai
 - **One assertion is a false alarm:** `count == 3'd6 |-> count == 3'd7` checks the same cycle, so it fails even on a correct counter.
 - **Only `count == 3'd6 |=> count == 3'd7`** fails on the bug and stays silent on the fix. "Apply the fix" is the mutation idea in reverse: a good check separates the broken design from the fixed one.
 
+The same question applies to a testbench compare. The lab below runs the bench you will read in Make It Work, starting with card 4's trap: the DUT's `rst` is tied to 0, so `count` stays X, and the compare is `!=`. The bench prints two lines: the PASS and FAIL counts, then `COVERAGE seen_max=...`, where `seen_max` is the number of checks that saw `count` equal to 7. Predict the two lines the bench prints, step through the 20 checks, then switch the compare to `!==` and watch the same X fail. Try the other DUT variants and compare forms too, and notice that a commented-out compare, or one against a copy of `count` (card 1), prints the same PASS/FAIL line for every DUT variant.
+
+<CounterBenchLab mode="mutation" preset="x-blind" />
+
 ### Directed, constrained-random and formal
 
 There are three ways to look for bugs, and each explores a different part of the design's behaviour:
@@ -501,6 +505,10 @@ Predict before you look: with a budget of 20 cycles after reset, which of these 
 
 What the picture shows: **directed tests find what you imagine**, and none of the three asks for load and increment together. **Random stimulus finds what is probable**: the bug needs a situation that comes up in about 0.55% of cycles, so a 20-cycle run finds it only about 8% of the time, while a 1,000-cycle run almost always does. **Formal finds what is possible within your assumptions**: a three-edge counterexample, unless an assumption such as `!(ld && en)` rules the situation out, in which case the proof passes with the bug inside.
 
+Now run the same bug yourself. On the Directed tab, pick tests (or build a fourth) and predict whether they find the bug before the grid fills in; on Random, change the seed and the cycle budget; on Formal, add an assumption. Notice that only a test that drives count 7 with `ld` and `en` together, and `d` not 0, can see the bug.
+
+<VerificationMethodsExplorer />
+
 The methods also run at different points of the design flow. Step through the methods below and notice which design representation each one runs on. Then answer its question before you read the feedback.
 
 <VerificationMethodologiesDiagram />
@@ -578,6 +586,17 @@ Functional coverage against the plan
 ```
 
 Every line and branch ran, yet one planned feature, reset in the middle of counting, was never exercised. The reset branch counts as covered because of the reset at the first edge. Code coverage cannot tell the two situations apart; the plan can. (Under §40.2.2, `rst` counts as toggled because it was seen at 1 and at 0. Tools that count 0-to-1 and 1-to-0 transitions may report it as only partly toggled.)
+
+Now make the report live. Change the run (a shorter run, `rst` asserted again in the middle of counting, or the compare disabled), predict what the coverage report does, then run it and compare. One prediction to make before you start: what happens to the coverage counts, and to the verdict, when the compare is disabled?
+
+<CounterBenchLab mode="coverage" />
+
+<details>
+<summary>What disabling the compare showed</summary>
+
+Disabling the compare leaves every code-coverage count and every scenario count where it was; only the count of compares that ran drops to 0. Coverage records what ran, and only the checks decide pass or fail.
+
+</details>
 
 **A war story (composite).** A team reached 100% code coverage on a one-hot state machine (one flip-flop per state, exactly one set at a time), and the chip taped out. In the lab, the state machine occasionally held two set bits. The cause was two next-state conditions that could be true in the same cycle, so the RTL set two bits at once; no test happened to make both conditions true together. Code coverage measures the code that exists, and there was no illegal-state handler, so there was nothing to cover. One concurrent assertion would have flagged the state the moment any simulation produced it:
 
@@ -662,6 +681,10 @@ Predict before you look: 16 bins are common and one bin has probability 0.1%. Ro
 </svg>
 <figcaption>An exact model, not project data: 17 bins, 16 of them sharing 99.9% of the probability and one rare bin getting 0.1%. The 16 common bins close after about 54 random samples on average; all 17 take about 1,002. A directed test aimed at the rare bin needs one run.</figcaption>
 </figure>
+
+Now spend a budget on closure yourself. The lab first asks the same question for a rare bin of 1%, which the figure above does not answer; predict, then it opens on the lesson's 0.1% bin. There, try more random seeds, a directed test, and a waiver (marking the hole as accepted, with a typed reason, without hitting it). Notice how little each extra batch of seeds adds on the plateau, and that a waiver changes what the report says without exercising or checking anything.
+
+<ClosureBudgetLab />
 
 The **coverage closure trap** is coverage that looks closed while proving little:
 - bins hit while the checks were off or vacuous, so they were counted but nothing was checked;
@@ -886,7 +909,11 @@ The first seven checks pass (0 to 6). The first failure is the check at 80 ns, w
 5. Revert the mutant and rerun to see PASS again.
 6. Record which row caught the mutant, and look for plan rows whose coverage is still 0.
 
-To run it, compile both modules with an IEEE 1800-compliant simulator and make `tb_top` the top module. The exact commands are tool-dependent.
+To run the Step 2 bench, compile both modules with an IEEE 1800-compliant simulator and make `tb_top` the top module. The exact commands are tool-dependent.
+
+Steps 4 to 6 for the whole bench at once: the matrix below extends the lab in "A test must be able to fail" and runs each compare form against three mutants (`WRAP_AT(6)`, `rst` never reaching the DUT, and reset ignored mid-count). Predict every cell before you reveal it. Then read the plan's coverage counts and ask: does any mutant survive every compare form, and which plan row with a coverage count of 0 should have warned you? Fill that hole (the checkbox under the plan) and see which compare forms now catch reset ignored mid-count.
+
+<CounterBenchLab mode="matrix" />
 
 **Checklist before moving on:**
 - [ ] Every row of my plan has a scenario, a check and a coverage item.
@@ -963,6 +990,10 @@ The four assertion statements side by side:
 - Keep a small set of mutants in the regression, so a later change that silently disables a check is caught.
 - A scoreboard must also report what it never matched: items still pending at the end of the test are failures, not passes ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 - Commercial mutation-analysis tools automate mutant generation; what they support is tool-dependent.
+
+Qualify a weak bench yourself: the lab below loads the `WRAP_AT(6)` mutant against a bench whose "model" is `expected = count`, a copy of the DUT's own output. From card 1 and the matrix you already know the self-copy cannot catch the mutant; step through the run to see why every check passes. Then predict the second printed line, `COVERAGE seen_max=...`: does the self-copy change what coverage records? Finally, switch the compare to `count !== expected` (the model compare) and watch the same mutant fail.
+
+<CounterBenchLab mode="mutation" preset="self-copy" />
 
 ### Expert: Coverage at sign-off
 

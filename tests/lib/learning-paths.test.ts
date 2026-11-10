@@ -34,6 +34,12 @@ const PAGE_KINDS = new Set<string>(['exercise', 'interactive', 'diagram', 'chart
 
 const manifest: ManifestLike = readManifest();
 const labs = getAllLabs();
+/**
+ * A lab that is not available yet. Every registered lab is available today,
+ * so the coming-soon handling is checked against this copy of one.
+ */
+const PLANNED_LAB_ID = 'planned-lab';
+const labsWithPlanned = [...labs, { ...labs.find((l) => l.id === 'dma-1')!, id: PLANNED_LAB_ID, status: 'coming_soon' as const }];
 const modulePosition = new Map(manifest.tiers.flatMap((t) => t.modules).map((m, i) => [m.id, i]));
 const manifestModule = new Map(manifest.tiers.flatMap((t) => t.modules.map((m) => [m.id, { ...m, tier: t.id }] as const)));
 
@@ -97,18 +103,18 @@ describe('learning routes against the manifest', () => {
             { id: 'F1B_The_Verification_Mindset' },
             { id: 'F2D_Reusable_Code_and_Parallelism', lessons: ['ipc', 'tasks-functions', 'no-such-lesson'] },
           ],
-          practice: [{ kind: 'lab', labId: 'dma-1' }],
+          practice: [{ kind: 'lab', labId: PLANNED_LAB_ID }],
           milestones: ['M7'],
         },
       ],
     };
-    const problems = validateRoutes(manifest, [broken], { labs });
+    const problems = validateRoutes(manifest, [broken], { labs: labsWithPlanned });
     expect(problems).toEqual(
       expect.arrayContaining([
         expect.stringContaining('F1B_The_Verification_Mindset needs F1A_The_Cost_of_Bugs'),
         expect.stringContaining('lesson F2D_Reusable_Code_and_Parallelism/tasks-functions is out of manifest order'),
         expect.stringContaining('lesson F2D_Reusable_Code_and_Parallelism/no-such-lesson is not in the manifest'),
-        expect.stringContaining('lab dma-1 is coming_soon'),
+        expect.stringContaining(`lab ${PLANNED_LAB_ID} is coming_soon`),
         expect.stringContaining('milestone M7 is not fed'),
       ]),
     );
@@ -195,13 +201,12 @@ describe('resolved routes', () => {
   });
 
   it('render a lab that is not available as text marked coming soon, never as a link', () => {
-    expect(labs.find((l) => l.id === 'dma-1')?.status).toBe('coming_soon');
     const junior = getRoute('junior');
     const planned: LearningRoute = {
       ...junior,
-      steps: [{ ...junior.steps[0], practice: [{ kind: 'lab', labId: 'dma-1' }] }, ...junior.steps.slice(1)],
+      steps: [{ ...junior.steps[0], practice: [{ kind: 'lab', labId: PLANNED_LAB_ID }] }, ...junior.steps.slice(1)],
     };
-    const [resolved] = resolveRoutes(curriculumData, { routes: [planned], labs });
+    const [resolved] = resolveRoutes(curriculumData, { routes: [planned], labs: labsWithPlanned });
     const item = resolved.steps[0].practice.find((p) => p.kind === 'lab')!;
     expect(item.href).toBeUndefined();
     expect(item.note).toBe('coming soon');
@@ -247,7 +252,9 @@ describe('milestone ladder', () => {
     }
     expect(ladder.find((m) => m.id === 'M0')!.routes).toEqual(['junior']);
     expect(ladder.find((m) => m.id === 'M8')!.routes).toEqual(['expert']);
-    expect(MILESTONES.filter((m) => !m.lab).map((m) => m.id)).toEqual(['M5']);
+    expect(MILESTONES.filter((m) => !m.lab).map((m) => m.id)).toEqual([]);
+    expect(MILESTONES.find((m) => m.id === 'M1')!.lab).toBe('constructs-1');
+    expect(MILESTONES.find((m) => m.id === 'M5')!.lab).toBe('multi-agent-vseq');
   });
 });
 

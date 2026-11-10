@@ -22,12 +22,14 @@ const PAGE_SOURCE = fs.readFileSync(
 type ClientProps = React.ComponentProps<typeof LabClientPage>;
 
 describe("static lab page", () => {
-  it("prerenders exactly the 23 available labs", () => {
+  it("prerenders exactly the available labs", () => {
     const available = getAllLabs().filter((lab) => lab.status === "available").map((lab) => lab.id);
     const params = generateStaticParams();
     expect(params.map((param) => param.labId).sort()).toEqual([...available].sort());
-    expect(params).toHaveLength(23);
-    expect(params.map((param) => param.labId)).not.toContain("fifo-1");
+    expect(params.length).toBeGreaterThanOrEqual(23);
+    for (const lab of getAllLabs().filter((entry) => entry.status !== "available")) {
+      expect(params.map((param) => param.labId)).not.toContain(lab.id);
+    }
   });
 
   it("is static: unknown ids 404 through dynamicParams, and nothing may make it dynamic", () => {
@@ -76,7 +78,9 @@ describe("static lab page", () => {
 
   it("404s an unknown or coming-soon lab through the notFound guard", async () => {
     await expect(LabPage({ params: { labId: "this-is-not-a-lab" } })).rejects.toThrow(/NEXT_NOT_FOUND/);
-    await expect(LabPage({ params: { labId: "fifo-1" } })).rejects.toThrow(/NEXT_NOT_FOUND/);
+    for (const lab of getAllLabs().filter((entry) => entry.status !== "available")) {
+      await expect(LabPage({ params: { labId: lab.id } }), lab.id).rejects.toThrow(/NEXT_NOT_FOUND/);
+    }
   });
 
   it("keeps the lab's metadata and canonical URL", () => {

@@ -29,6 +29,16 @@ sources:
 
 This module also assumes [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): the four message macros, verbosity, actions, the report summary and the basic plusargs. This page is the module's hub. Two sub-lessons go deeper: [systematic debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug) (first failure, signatures and buckets, exact reproduction, isolating and confirming a cause) and [hang triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) (objections, timeouts, heartbeats).
 
+**The method on one page.** Each of the five parts answers one question. Use this map to jump to the section that teaches it.
+
+| Part | The question it answers | Where it is taught |
+|---|---|---|
+| Honest verdict | Can I trust that this run passed? | [Honest verdicts](#honest-verdicts-what-uvm_error--0-does-and-does-not-prove) |
+| Report catchers | How can a test expect some errors without hiding the real ones? | [Report catchers](#report-catchers-narrow-counted-audited) |
+| Traces and prints | What did UVM actually do with my configuration, factory overrides, tree, objections and phases? | [Command-line control](#command-line-control-the-debug-subset), [Choosing the right trace](#choosing-the-right-trace) |
+| Debug event bus | How can a debug action react to what happened without rewiring the bench? | [A debug event bus](#a-debug-event-bus), [Selective waveforms](#selective-waveforms-and-transaction-recording) |
+| Regression flow | Can every red result be reproduced, grouped and fixed? | [The regression loop](#the-regression-loop-from-a-red-result-to-a-locked-in-fix) |
+
 ## Build Your Mental Model
 
 **How to read this page.** The core path is the first two sections: honest verdicts and report catchers. Practitioner depth follows: command-line control, choosing a trace, the debug event bus, selective waveforms and recording, and the regression loop. Push Further holds the expert corner cases.
@@ -48,6 +58,41 @@ Words this page uses, each in one line:
 ### Honest verdicts: what `UVM_ERROR : 0` does and does not prove
 
 A UVM run's **verdict** comes from the report summary: it passes when the summary is present, `UVM_ERROR :    0` and `UVM_FATAL :    0`, a checker proves it compared something, and the log has no simulator-format errors ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches this four-condition rule). The counts come from `get_severity_count` on the report server (IEEE 1800.2-2020 §6.5.1.2.6). At the scale of a regression, the question is no longer "did this run pass?" but "**can I trust that it passed?**"
+
+To answer it, follow a failure on its way to the summary. Every place it can leave that path is a way for the verdict to lie.
+
+<ArchitectureDiagram
+  title="Where a failure can leave the path to the summary"
+  cellWidth={150}
+  gapX={44}
+  gapY={34}
+  spreadAnchors={true}
+  caption="Badges give the mechanism number in the table below. Solid arrows carry the report; dashed arrows are die() ending the run early. Two lanes reach the CI gate: the report summary, and the simulator log that a failing assertion's $error reaches. Only a gate that reads both, and the run's command line, sees every lane."
+  nodes={[
+    { id: "chk", label: "checker", sublabel: "compared nothing: nothing to fail", kind: "scoreboard", badge: "mech 3", col: 0, row: 0 },
+    { id: "mac", label: "`uvm_error", sublabel: "NO_ACTION: never built", kind: "generic", badge: "mech 1", col: 0, row: 1 },
+    { id: "hdl", label: "report handler", sublabel: "override, then action", kind: "generic", col: 0, row: 2 },
+    { id: "cat", label: "server: catchers", sublabel: "CAUGHT: dropped", kind: "generic", badge: "mech 1", col: 0, row: 3 },
+    { id: "srv", label: "report server", sublabel: "drop NO_ACTION; count", kind: "generic", badge: "mech 1", col: 0, row: 4 },
+    { id: "sum", label: "report summary", sublabel: "UVM_ERROR : n", kind: "generic", col: 0, row: 5 },
+    { id: "sva", label: "assertion $error", sublabel: "simulator log only", kind: "generic", state: "error", badge: "mech 2", col: 1, row: 5 },
+    { id: "die", label: "die()", sublabel: "fatal, quit, timeout", kind: "generic", badge: "mech 4", col: 1, row: 4 },
+    { id: "gate", label: "CI gate", sublabel: "reads summary, log, command line", kind: "generic", col: 0, row: 6, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "chk", to: "mac", style: "data" },
+    { from: "mac", to: "hdl", style: "data" },
+    { from: "hdl", to: "cat", style: "data" },
+    { from: "cat", to: "srv", style: "data" },
+    { from: "srv", to: "sum", style: "data" },
+    { from: "srv", to: "die", style: "causal" },
+    { from: "die", to: "sum", style: "causal" },
+    { from: "sum", to: "gate", style: "data" },
+    { from: "sva", to: "gate", style: "data" }
+  ]}
+/>
+
+Read the left column top to bottom: a checker's `` `uvm_error `` passes the macro's pre-check; the report handler applies any severity override and picks the action; the server runs the report catchers, then drops a CAUGHT or `UVM_NO_ACTION` report or counts it into the summary. A `UVM_EXIT` action or a reached quit count calls `die()`, which prints the summary and ends the run before later phases. Bottom right: a failing assertion with no `else` clause calls `$error`, which goes only to the simulator log, a lane UVM never sees. A checker that compared nothing has nothing to fail, so it issues no error at all. Only a gate that reads both the summary and the log sees every lane.
 
 Four mechanisms make a verdict lie. Learn them as a checklist:
 
@@ -116,8 +161,16 @@ A **report catcher** is an object of a class derived from `uvm_report_catcher` (
 - `catch()` runs inside the server, after the report handler has applied any severity override (`+uvm_set_severity`) and chosen the action. A catcher therefore sees the *overridden* severity.
 - Catchers run in registration order. A catcher registered with `add(null, c)` is **type-wide**: it sees reports from every report object. One registered with `add(obj, c)` sees only that object's reports (§10.7.2.3.1).
 - Inside `catch()`, the `get_*` methods read the current report (§6.6.3): `get_severity`, `get_id`, `get_message`, `get_verbosity`, `get_action`, `get_client` (the report object). The protected `set_*` methods change it, and later catchers see the change (§6.6.4): `set_severity`, `set_id`, `set_message`, `set_verbosity`, `set_action`, `set_context`.
-- `catch()` returns **THROW**, which passes the (possibly changed) report on to the next catcher and then to the server, or **CAUGHT**, which ends processing at once: no later catcher runs, and the report is neither printed nor counted (§6.6.5, §6.5.1.2.14 a).
+- `catch()` returns **THROW**, which passes the (possibly changed) report on to the next catcher and then to the server, or **CAUGHT**, which ends processing at once: no later catcher runs, and the report is neither printed nor counted (§6.5.1.2.14 a; §6.6.5 defines `catch()` and its return values).
 - The catcher class keeps counts of demoted and caught warnings, errors and fatals, and the server prints them before the report summary (§6.6 overview).
+
+The two return values side by side:
+
+| After `catch()` returns | THROW | CAUGHT |
+|---|---|---|
+| Do later catchers run? | Yes, and they see any change this catcher made | No: processing ends at once (§6.5.1.2.14 a) |
+| Is the report printed and counted? | The server goes on with its current severity and action: it is dropped only if that action is `UVM_NO_ACTION` (§6.5.1.2.14 b) | No: neither printed nor counted (§6.5.1.2.14 a) |
+| Which catcher-summary count moves? (uvm-core `process_all_report_catchers`) | `demoted`, for its original severity, if its final severity is lower than the original | `caught`, for its original severity (and `demoted` too if a catcher had already lowered its severity: uvm-core checks for demotion after the loop, on the final severity) |
 
 Now follow one injected error through a catcher. **Predict first:** if `crc_demoter` calls `set_severity(UVM_INFO)` but not `set_action()`, will the demoted report still be counted toward the quit limit?
 
@@ -145,12 +198,42 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
 
 **Debrief.** No. In uvm-core 2020.3.1, when a catcher changes the severity without calling `set_action()`, and the action was still the old severity's default, the server switches it to the new severity's default action (`uvm_report_catcher.svh`, `process_all_report_catchers`). `UVM_INFO`'s default is `UVM_DISPLAY`, so the demoted report is printed and counted under `UVM_INFO`, and it no longer feeds the quit counter. Call `set_action()` yourself if you want something else.
 
+| Inside `catch()` | Action the server then uses (uvm-core 2020.3.1) | Printed? | Counted under | Feeds the quit count? |
+|---|---|---|---|---|
+| `set_severity(UVM_INFO)` only, with the action still `UVM_ERROR`'s default `UVM_DISPLAY \| UVM_COUNT` | `UVM_INFO`'s default, `UVM_DISPLAY` | Yes | `UVM_INFO` | No |
+| `set_severity(UVM_INFO)` and `set_action(UVM_DISPLAY \| UVM_COUNT)` | `UVM_DISPLAY \| UVM_COUNT`, as set | Yes | `UVM_INFO` | Yes, when a quit count is set |
+
 **Pitfalls, and why each is wrong:**
 - **The catch-all.** `if (get_severity() == UVM_ERROR) return CAUGHT;` hides every error, the real bug included. A catcher must be **narrow** in the sense [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) uses: one reporter, one severity and one ID, and a count. This page adds one refinement: match the message pattern too whenever the ID alone does not single out the injected failure, for example when a monitor reports several different checks under one ID. `crc_demoter` matches its message as well; where an ID is used only by the injected check, a catcher without a message match, like A-UVM-9's, is just as narrow.
 - **Demoting without counting.** If the injection stops working (a refactored sequence no longer corrupts the CRC), a catcher alone lets the test pass while it tests nothing. Count demotions and check the count in `check_phase`. A-UVM-9's catcher also stops demoting at the planned count, so a surplus error stays a `UVM_ERROR`; `crc_demoter` has no cap, and its exact check in `check_phase` fails the run on a surplus instead.
 - **Registering too early.** Build is top-down (§9.8.1.1): in the test's `build_phase`, `env.chk` does not exist yet. `uvm_report_cb::add(env.chk, demoter)` then passes `null`, and the catcher silently becomes type-wide. Register on a specific component in `connect_phase` or later.
 - **Attaching to the wrong object.** A sequence reports through its sequencer (§14.1.3), so a catcher for a sequence's errors must be attached to the sequencer, not the driver.
 - **Returning neither THROW nor CAUGHT.** uvm-core reports `RPTCTHR` ("must return THROW or CAUGHT").
+
+**Picture the registration trap.** The same three components of the Make It Work test, at two moments:
+
+<ArchitectureDiagram
+  title="What exists when the catcher is registered"
+  cellWidth={150}
+  gapX={48}
+  gapY={40}
+  caption="Build is top-down (IEEE 1800.2-2020 §9.8.1.1). Left: while the test's build_phase runs, env has just been created, but env's own build_phase, which creates chk, has not run yet, so env.chk is null (dim) and uvm_report_cb::add(env.chk, demoter) registers the catcher type-wide. Right: by connect_phase every build_phase has run and env.chk exists, so add() attaches the catcher to that one component. Plain lines are parent-child links."
+  nodes={[
+    { id: "early", label: "in the test's build_phase", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "t1", label: "uvm_test_top", sublabel: "build_phase running", kind: "test", state: "active", col: 0, row: 0 },
+    { id: "e1", label: "env", sublabel: "just created", kind: "env", col: 0, row: 1 },
+    { id: "k1", label: "env.chk", sublabel: "null: not built yet", kind: "generic", state: "dim", col: 0, row: 2 },
+    { id: "late", label: "in connect_phase", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "t2", label: "uvm_test_top", sublabel: "connect_phase", kind: "test", col: 1, row: 0 },
+    { id: "e2", label: "env", sublabel: "built", kind: "env", col: 1, row: 1 },
+    { id: "k2", label: "env.chk", sublabel: "exists: add() here", kind: "generic", state: "ok", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "t1", to: "e1", style: "structural" },
+    { from: "t2", to: "e2", style: "structural" },
+    { from: "e2", to: "k2", style: "structural" }
+  ]}
+/>
 
 **Real testbench use.** Error-injection tests (see [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)), and temporary waivers for a known, filed DUT bug, each with an owner and an expiry. Not for silencing noisy warnings: fix their source, or demote one ID with `+uvm_set_severity`.
 
@@ -166,7 +249,14 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
 | Demote one reviewed warning | `+uvm_set_severity=uvm_test_top.env.agt.drv,CFG,UVM_WARNING,UVM_INFO` | G.2.5; one ID, never a whole severity |
 | Stop at the first error | `+UVM_MAX_QUIT_COUNT=1` | G.2.6; the log then ends at the first failure |
 
+**Predict:** you add `+uvm_set_verbosity=uvm_test_top.env.sbc,SCB,UVM_HIGH,build` (note the spelling of the component) and the `SCB` messages look exactly as before. Recall the last rule of the CI gate above: which word do you search the log for, and what could it mean?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
 If a plusarg seems to do nothing, search the log for `INVLCMDARGS` (uvm-core): the component pattern matched nothing, or the setting was malformed. Code that calls `set_report_*` after construction also replaces a command-line setting.
+
+</details>
 
 ### Choosing the right trace
 
@@ -186,7 +276,7 @@ UVM can explain itself, but each trace answers one question. Pick by the questio
 
 A **heartbeat** (`uvm_heartbeat`, §10.6) watches a list of components: each must raise or drop a heartbeat objection in every window between two triggers of an event, or the heartbeat reports a failure. It finds a stalled agent within one window instead of at the global timeout. Setting one up, and the window rules, are in [hang triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab).
 
-**Reading the output: three traced excerpts.** The lines below follow the message formats in the uvm-core 2020.3.1 source; they are illustrative, not captured from a simulator. Real lines also carry a file name and line number, and the `(type …)` text is formatted by your simulator.
+**Reading the output: three traced excerpts.** The lines below follow the message formats in the uvm-core 2020.3.1 source; they are illustrative, not captured from a simulator. Real lines also carry a file name and line number, and the `(type …)` text is formatted by your simulator. **Try each one first:** find the line that answers the trace's question before you open its reveal.
 
 A configuration miss (`+UVM_CONFIG_DB_TRACE`):
 
@@ -195,7 +285,12 @@ UVM_INFO @ 0 ns: reporter [CFGDB/SET] Configuration scope='uvm_test_top.env.agt*
 UVM_INFO @ 0 ns: reporter [CFGDB/GET] Configuration scope='uvm_test_top.env.agent' name='cfg' (type agt_cfg) read accessor=uvm_test_top.env.agent = null (failed lookup)
 ```
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what to look for</summary>
+
 What to look for: compare the `GET` scope with the `SET` scope character by character. Here the component is named `agent`, but the setting targets `agt*`.
+
+</details>
 
 A hang (`+UVM_OBJECTION_TRACE`):
 
@@ -204,7 +299,12 @@ UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_test_top raised 1 objectio
 UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_top added 1 objection(s) to its total (raised from source object uvm_test_top, send 500 beats): count=0  total=1
 ```
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what to look for</summary>
+
 What to look for: the last `raised` line with no later `dropped` line from the same object. Here the test raised and never dropped, so whatever the test waits on is stuck.
+
+</details>
 
 The tree (`print_topology()` in `end_of_elaboration_phase`):
 
@@ -219,7 +319,12 @@ uvm_test_top   crc_inject_test  -     @335
 ----------------------------------------------
 ```
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what to look for</summary>
+
 What to look for: missing components (a `create` that never ran) and wrong types (an override that did or did not apply). The `@` numbers are object handles and vary from run to run.
+
+</details>
 
 ### A debug event bus
 
@@ -287,16 +392,56 @@ endfunction
   ]}
 />
 
+The diagram shows who is connected to whom. The order, and where time does and does not pass, is clearer as a sequence: one watchdog timeout in run 1 of the lab, the run that dumps nothing until the bus asks (the two-run window below explains run 1 and run 2).
+
+<SequenceDiagram
+  title="One WATCHDOG_TIMEOUT through the debug event bus"
+  caption="Read top to bottom. Every step down to the two returns runs in the watchdog's own process, in zero simulation time. tb_top's dump_ctl block, woken by the event, resumes in the same time step and opens the dump. Names and strings match the lab's solution."
+  columnWidth={135}
+  participants={[
+    { id: "wdg", label: "wdg", sublabel: "watchdog_timer", kind: "generic" },
+    { id: "bus", label: "bus", sublabel: "debug_event_bus", kind: "generic" },
+    { id: "sub", label: "trig_sub", sublabel: "waveform_trigger_sub", kind: "subscriber" },
+    { id: "top", label: "tb_top", sublabel: "initial block dump_ctl", kind: "generic" }
+  ]}
+  messages={[
+    { from: "wdg", to: "bus", label: "publish(WATCHDOG_TIMEOUT, detail, last_ok_ns)" },
+    { kind: "self", from: "bus", label: "create evt; `uvm_info BUS Broadcasting" },
+    { from: "bus", to: "sub", label: "ap.write(evt) calls write(evt)" },
+    { kind: "note", from: "bus", to: "sub", label: "write() is a function: no delay, no wait (IEEE 1800-2023 §13.4)" },
+    { kind: "self", from: "sub", label: "`uvm_info WAVE_TRIG: last transfer time and the +DUMP_START value" },
+    { kind: "async", from: "sub", to: "top", label: "dump_now.trigger() wakes wait_trigger()" },
+    { kind: "return", from: "sub", to: "bus", label: "write returns" },
+    { kind: "return", from: "bus", to: "wdg", label: "publish returns" },
+    { kind: "self", from: "top", label: '$dumpfile("after_trigger.vcd"); $dumpvars(0, tb_top)' },
+    { kind: "note", from: "top", label: "dumping starts at the end of this time unit (§21.7.1.3)", tone: "error" }
+  ]}
+/>
+
 **Pitfalls, and why each is wrong:**
 - **Using the bus instead of `` `uvm_error ``.** The bus is for debug actions; it is not a reporting channel. A failure must still be reported with `` `uvm_error `` or `` `uvm_fatal `` so the server counts it.
 - **Blocking in `write()`.** `write()` is a function, so it cannot wait. Anything that takes time (open a window *later*, wait for a quiet bus) belongs in a task the subscriber starts, or in a process that waits on a `uvm_event`.
 - **Calling `$dumpvars(0, tb_top)` from a class.** It compiles only while the class sits outside any package. Items in a package cannot make hierarchical references (IEEE 1800-2023 §26.2), and real benches keep classes in packages. Share a named event instead: `uvm_event_pool::get_global("dump_now")` returns the same `uvm_event` to every caller that uses that key (IEEE 1800.2-2020 §10.4.1.2.3), so the subscriber triggers it and an `initial` block in `tb_top` waits on it.
 
+**Try it: where does slow work go?** A debug subscriber that must wait before it acts has the same problem as any slow analysis subscriber. In the explorer below, predict where a checker's 25 ns of waiting can go, then try each implementation.
+
+<AnalysisBroadcastVisualizer section="slow" />
+
 **Real testbench use.** Typical events are reset done, a watchdog timeout, a first scoreboard mismatch and an interrupt storm. Typical subscribers open a waveform window, raise verbosity for one agent, or append one JSON line per event to a file for dashboards.
 
 ### Selective waveforms and transaction recording
 
-Dumping every signal for every run of a long regression costs more disk space and simulation time than most teams can spend, so waveforms are captured selectively. The standard's VCD tasks are `$dumpfile` (file name), `$dumpvars` (what to dump), `$dumpoff` and `$dumpon` (pause and resume), `$dumplimit` (a cap on file size, in bytes) and `$dumpflush` (IEEE 1800-2023 §21.7.1.1–§21.7.1.6). One rule decides how you use them:
+Dumping every signal for every run of a long regression costs more disk space and simulation time than most teams can spend, so waveforms are captured selectively. The standard's VCD tasks (IEEE 1800-2023 §21.7.1.1–§21.7.1.6):
+
+| Task | What it controls | Clause |
+|---|---|---|
+| `$dumpfile` | the VCD file's name (`dump.vcd` if none is given) | §21.7.1.1 |
+| `$dumpvars` | which scopes and how many levels are dumped | §21.7.1.2 |
+| `$dumpoff`, `$dumpon` | pausing and resuming the dump | §21.7.1.3 |
+| `$dumplimit` | the file size, in bytes, at which dumping stops | §21.7.1.5 |
+| `$dumpflush` | emptying the operating system's buffer into the file | §21.7.1.6 |
+
+One rule decides how you use them:
 
 > Executing `$dumpvars` "causes the value change dumping to start at the end of the current simulation time unit" (IEEE 1800-2023 §21.7.1.3).
 
@@ -347,6 +492,21 @@ A regression is only useful if every red result can be turned into a fix quickly
 - the full run command line, including every plusarg.
 
 **Why the build matters as much as the seed.** The seed only starts the random number generators. Random stability (IEEE 1800-2023 §18.14) makes each thread's and each object's random sequence depend on the order in which threads and objects are created, so a code change, even an added debug print that creates objects, can shift what the same seed produces. "Seed 42 passes after my rebuild" does not mean the bug is gone; it may mean seed 42 no longer reaches it. Reproduce on the archived original build first. The [systematic debug lesson](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug) explains exactly what keeps UVM's random streams stable and what breaks them.
+
+**Predict the shift.** In the original build, one thread creates two objects with `new`: first `cfg`, then `pkt`. Under object stability, an object created with `new` has its RNG seeded with the next random value from the thread that creates it (IEEE 1800-2023 §18.14.1). Your debug print adds a third object, `dbg`, created by the same thread. With the same seed, which of `cfg` and `pkt` are seeded differently (a) if `dbg` is created before `cfg`, and (b) if it is created after `pkt`?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+| Build | Thread's 1st value seeds | 2nd value seeds | 3rd value seeds |
+|---|---|---|---|
+| Original | `cfg` | `pkt` | — |
+| (a) `dbg` created first | `dbg` | `cfg` | `pkt` |
+| (b) `dbg` created last | `cfg` | `pkt` | `dbg` |
+
+(a) Both: the thread hands out the same sequence of values, but `dbg` takes the first one, so `cfg` and `pkt` each get a different seed and randomize to different stimulus. (b) Neither, provided nothing else in the thread changed: the standard keeps stability when new objects, threads and random numbers are created after the existing ones (§18.14.1). These are plain SystemVerilog objects; what UVM adds for its own components and sequences is in the systematic debug lesson. You rarely know which case a code change falls into, which is why you reproduce on the archived build.
+
+</details>
 
 <ArchitectureDiagram
   title="From a regression to a locked-in fix"
@@ -596,9 +756,37 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 - **What catchers never see.** Reports filtered by verbosity, reports whose action is `UVM_NO_ACTION` when issued through the macros (the macro checks first), `$display` and `$error`. A catcher does see a `UVM_NO_ACTION` report issued through the `uvm_report_*` functions, because only the server drops it, after the catchers.
 - **Auditing catchers.** uvm-core's `uvm_report_catcher::debug_report_catcher(1)` makes every CAUGHT behave like THROW, so you can see what the catchers are hiding; bit 1 (`debug_report_catcher(2)`) stops catchers from modifying reports. Both are uvm-core implementation features (tagged `@uvm-accellera`), not in IEEE 1800.2-2020.
 
+**Predict the order.** Two catchers are registered on `env.chk`. First `waiver`, with `uvm_report_cb::add(env.chk, waiver)`, returns CAUGHT for every report with ID `CRC`. Then `audit`, with `uvm_report_cb::add(env.chk, audit, UVM_PREPEND)`, counts every `CRC` report and returns THROW. The checker reports two `CRC` errors. Does `audit` count them, and does the report summary?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+`audit` counts both; the summary counts neither. `UVM_PREPEND` runs `audit` ahead of the catchers added before it (§10.7.2.3.1), so it sees each report and throws it on. `waiver` then returns CAUGHT, which ends processing (§6.5.1.2.14 a): the errors are not printed, `UVM_ERROR` stays 0, and the catcher summary shows `Number of caught UVM_ERROR reports   :    2`. Registered with the default `UVM_APPEND`, `audit` would run after `waiver` and never see them.
+
+</details>
+
 ### Expert: Waveform and recording budgets
 
 - **The `$dumpvars` rules.** All `$dumpvars` calls in a run must execute at the same simulation time (§21.7.1.2), so you cannot add scopes later in the run. `$dumpoff` writes a checkpoint in which every dumped variable is `x`, and `$dumpon` writes their current values (§21.7.1.3). A window that pauses and resumes therefore shows `x` in the gap, not stale values.
+
+**Picture the pause.** What the simulator computes and what a viewer later draws from the VCD file, for one counter, when `$dumpoff` and `$dumpon` bracket a gap:
+
+<TimingDiagram
+  title="A paused dump shows x, not stale values"
+  caption="x-axis: rising clock edges 0 to 9; each value is the one sampled at that edge, and the counter changes just after each edge. Dumping began with $dumpvars before edge 0. The top bus is the counter in the simulation; the bottom bus is the same counter as the viewer draws it from the VCD file. $dumpoff at edge 2 writes a checkpoint in which every dumped variable is x, and no changes are written until $dumpon at edge 5, which writes each variable's current value (IEEE 1800-2023 §21.7.1.3). Counts 3, 4 and 5 are never in the file. The clk row shows the simulation; because the checkpoint covers every dumped variable, a dumped clk is x in the file's gap too."
+  edges={10}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "count (simulated)", kind: "bus", values: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] },
+    { name: "count (in the VCD)", kind: "bus", values: ["0", "1", "2", undefined, undefined, undefined, "6", "7", "8", "9"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", short: "off", label: "$dumpoff: checkpoint writes every dumped variable as x" },
+    { edge: 5, tone: "info", short: "on", label: "$dumpon: writes each variable's current value, then dumping resumes" }
+  ]}
+  highlights={[{ from: 2, to: 5, tone: "info", label: "dump paused: no value changes written" }]}
+/>
+
 - **One dump per run, chosen up front.** A practical budget: regressions dump nothing; a failing signature gets one rerun with a window of a few microseconds before the last good activity; recording is enabled only on the agents on the failing path. Disk and run-time costs vary too much between tools and designs to quote figures; measure your own.
 - **Dump scope.** `$dumpvars(1, tb_top.u_dut.u_axi_bridge)` limits depth and scope; levels and scopes are standard (§21.7.1.2). Whether interface instances and class objects appear in a VCD is tool-dependent: VCD is defined for variables in module scopes.
 - **Recording knobs.** uvm-core reads a component's `recording_detail` setting from the configuration database in the component's constructor, so it must be set before that component is created; `set_recording_enabled` (§13.1.7.13) is the standard switch. Reports can be sent to the recorder too, with the `UVM_RM_RECORD` action (Annex F.2.2.2).
@@ -613,6 +801,19 @@ Methodology practice; no standard defines regression management.
 - **Keep the evidence visible.** uvm-core prints the catcher summary at `UVM_LOW`, `RNTST` at `UVM_LOW` and the `CFGDB` trace at `UVM_LOW`; a regression run at `UVM_NONE` hides all three. Either run regressions at `UVM_LOW` or have error-injection tests print their own accounting line at `UVM_NONE`, as `CRC_ACCT` does.
 - **Record the recipe.** IEEE 1800-2023 defines no system function that returns the seed given on the simulator command line, so the regression script records the value it passed, with the build revision, compile options, tool version and full command line.
 - **New, known and flaky failures, waivers and rerun budgets** belong to triage, after the gate: see "Expert: triage at scale" in the [systematic debug lesson](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/effective-debug).
+
+The same checks, sorted by when they can run:
+
+| When | What the gate or reviewer checks | What it would otherwise hide |
+|---|---|---|
+| Before the run (lint) | Regression command lines: `UVM_NO_ACTION` or `+uvm_set_severity` on errors | errors dropped or demoted before counting |
+| In code review | Catcher code: `return CAUGHT` without a narrow match, `uvm_report_cb::add(null, …)` | errors caught, or demoted bench-wide |
+| In code review | `$assertoff` or `$assertcontrol` calls in tests | assertions switched off (mechanism 2) |
+| After the run | Summary present; `UVM_ERROR` and `UVM_FATAL` at 0 | a crash, a kill, or counted failures |
+| After the run | Simulator-format error lines | failures UVM never saw (mechanism 2) |
+| After the run, at `UVM_LOW` or above | Catcher summary: caught or demoted errors only in reviewed tests | errors removed by a catcher (mechanism 1) |
+| After the run | One count line above 0 for every checker ID the test expects | zero activity, or a checker never built (mechanism 3) |
+| After the run | `INVLCMDARGS` warnings in the log | a debug or demotion plusarg that silently did nothing |
 
 ### Expert: Interview angles
 
@@ -834,6 +1035,19 @@ UVM_FATAL :    0
 5. **Run E: honest.** The demotions are accounted for (`demoted 2 of 2`), nothing was caught, work was done (`checked=5`), and `crc_inject_test` is on the reviewed list of tests allowed to demote. It passes under every rule.
 
 </details>
+
+### One-glance recall card
+
+Six rules from this page, each with the mistake that breaks it. Cover the middle column and say each rule from memory.
+
+| Topic | The rule | The common mistake |
+|---|---|---|
+| Verdict | A run passes only when the summary is present, `UVM_ERROR` and `UVM_FATAL` are 0, a checker proves it compared something, and the log has no simulator-format errors. | Trusting `UVM_ERROR : 0` alone. |
+| Catcher | Narrow (one reporter, one severity, one ID, plus the message when the ID is shared), returns THROW, counts its demotions, the test checks the count in `check_phase`, registered in `connect_phase` or later. | A catch-all that returns CAUGHT, or `add(env.chk, …)` in `build_phase`, which is type-wide because `env.chk` is still null. |
+| Trace | Pick the trace by the question it answers, and know which ones are uvm-core only. | Running `+UVM_CONFIG_DB_TRACE` at `UVM_NONE`, which hides its `CFGDB` lines. |
+| Event bus | An analysis port for debug actions; `write()` is a zero-time function; dump control lives in `tb_top`, reached through `uvm_event_pool::get_global`. | Reporting failures on the bus instead of with `` `uvm_error ``, or calling `$dumpvars` from a class in a package. |
+| Dump window | Dumping starts at the end of the current time unit, so rerun the same seed and build with a window that opens before the cause. | Starting the dump when the watchdog fires. |
+| Recipe | Log the test, seed, build revision and compile options, tool version and full command line of every run. | Rerunning the seed on a new build and calling the bug fixed. |
 
 ### Hands-on lab
 

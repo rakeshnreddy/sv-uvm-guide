@@ -1,22 +1,121 @@
 {
   "id": "fifo-1",
-  "version": "1",
-  "title": "FIFO Implementation",
-  "description": "Implement and verify a simple synchronous FIFO.",
+  "version": "2",
+  "title": "A Class-Based Bench for a Synchronous FIFO",
+  "description": "Without UVM: verify a 4-entry synchronous FIFO with a layered class-based bench (transaction, generator, driver, monitor and a scoreboard whose reference model is a queue), reach every full and empty corner case, guard against vacuous passes, and prove that the bench catches two planted DUT bugs and two handle-aliasing bugs of its own.",
   "owningModule": "I-SV-1",
   "routeSlug": "fifo-1",
-  "status": "coming_soon",
+  "status": "available",
   "labPrerequisites": [
-    "common-1"
+    "simple-dut-1"
   ],
-  "modulePrerequisites": [],
-  "steps": [],
+  "modulePrerequisites": [
+    "F2B",
+    "F2D",
+    "F4B"
+  ],
+  "steps": [
+    {
+      "id": "run-starter",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 1: Read the specification and run the starter",
+      "instructions": "Read the sync_fifo specification in the README (rules F1 to F5). Compile work/sync_fifo.sv, work/fifo_if.sv, work/fifo_tb_pkg.sv and work/tb_top.sv in that order and run without +TEST= (on Verilator, keep +verilator+error+limit+1000). The run ends PASS=0 FAIL=2. Before you open the README's answer, name the two checks in report() that failed and explain why a bench that prints PASS=0 FAIL=0 here would have been worse.",
+      "starterCode": ""
+    },
+    {
+      "id": "transactions",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 2: The transaction classes",
+      "instructions": "In work/fifo_tb_pkg.sv, fill in fifo_item's copy, clone and convert2string. clone creates a new fifo_item and calls its copy(this). Then override all three in fifo_obs: copy calls super.copy(rhs) first and gets a fifo_obs handle with if (!$cast(o, rhs)) $fatal(...); clone creates a fifo_obs, not a fifo_item; convert2string adds the cycle and the three output fields to super.convert2string(). Answer the README's question on what goes wrong if fifo_obs does not override clone.",
+      "starterCode": ""
+    },
+    {
+      "id": "generator",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 3: The generator clones a blueprint",
+      "instructions": "Fill in fifo_gen::add: set the blueprint's three fields (wr_data = next_data when wr is 1, then next_data++; 0 otherwise) and push blueprint.clone() onto items. Then write fill_drain and simultaneous from the README's plan table using write, read, both and idle. fill_drain must try two writes while full and two reads while empty; simultaneous must put a write and a read on one edge when the FIFO is empty, in the middle and full.",
+      "starterCode": ""
+    },
+    {
+      "id": "driver",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 4: The driver",
+      "instructions": "Fill in fifo_drv::run: for each item, wait @(posedge vif.clk) and drive vif.wr_en, vif.wr_data and vif.rd_en with <=. After the last item, wait one more edge and drive both enables to 0. The driver reaches the DUT only through its virtual interface handle vif.",
+      "starterCode": ""
+    },
+    {
+      "id": "monitor",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5: The monitor makes a new object on every edge",
+      "instructions": "Fill in fifo_mon::run: forever wait @(posedge vif.clk); while vif.rst_n is not 1, set the cycle count to 0 and skip the edge; otherwise create a NEW fifo_obs, fill in ++cycle and the six signals from vif, and call sb.write(o). Explain in one sentence why the values read here are the values from just before the edge.",
+      "starterCode": ""
+    },
+    {
+      "id": "scoreboard",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 6: The scoreboard and its reference queue",
+      "instructions": "Fill in fifo_sb::write in three parts, in this order. 1: if rd_pending, compare o.rd_data with exp_rd.wr_data using !== and count a pass or a failure. 2: compare o.full and o.empty with the model's level (ref_q.size() == DEPTH, ref_q.size() == 0) and count a pass or a failure. 3: update the corner counters, then let the model, not the DUT's flags, decide: on rd_en with the model not empty pop_front into exp_rd and set rd_pending; on wr_en with the model not full push_back(o).",
+      "starterCode": ""
+    },
+    {
+      "id": "regression",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 7: Run every test and compare with the expected log",
+      "instructions": "Run without +TEST= (on Verilator, keep +verilator+error+limit+1000), then with +TEST=smoke, +TEST=fill_drain, +TEST=simultaneous and +TEST=mixed. Compare the CORNERS and PASS lines with the README's table: without +TEST= the run ends PASS=155 FAIL=0 and every corner counter is above 0. If a count differs, find the first cycle where your bench and the reference solution disagree.",
+      "starterCode": ""
+    },
+    {
+      "id": "prove-it-fails",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 8: Break the DUT, then break the bench",
+      "instructions": "Set .BUG(1) in work/tb_top.sv (a write while full is stored) and predict which tests fail; run each one. Repeat with .BUG(2) (a write and a read on one edge add 1 to the count). Then set .BUG(0) and plant two bench bugs one at a time: in the monitor create one fifo_obs before the forever loop instead of one per edge; in the generator push the blueprint instead of its clone. Compare every summary line with the README's table, explain each with handles, then undo the bugs and rerun: PASS=155 FAIL=0.",
+      "starterCode": ""
+    }
+  ],
   "assets": [
     {
-      "path": "lab1_simple_tb/test_fifo.sv",
+      "path": "README.md",
+      "role": "guide",
+      "language": "markdown",
+      "editable": false
+    },
+    {
+      "path": "solution/fifo_tb_pkg.sv",
+      "role": "solution",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "work/fifo_if.sv",
       "role": "reference",
       "language": "systemverilog",
       "editable": false
+    },
+    {
+      "path": "work/fifo_tb_pkg.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/sync_fifo.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "work/tb_top.sv",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
     }
   ]
 }

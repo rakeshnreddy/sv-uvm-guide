@@ -25,11 +25,36 @@ const FORWARD_LAB: LabManifest = {
   assetLocation: 'labs/synthetic',
 };
 
+/** A lab that is not available yet. Every registered lab is available today, so the coming-soon chip is checked with this one. */
+const PLANNED_LAB: LabManifest = {
+  id: 'synthetic-planned-lab',
+  version: '1.0.0',
+  title: 'Synthetic planned lab',
+  description: 'A lab that cannot be opened yet.',
+  owningModule: 'F2A',
+  routeSlug: 'synthetic-planned-lab',
+  status: 'coming_soon',
+  labPrerequisites: [],
+  modulePrerequisites: [],
+  steps: [],
+  assets: [],
+  assetLocation: 'labs/synthetic',
+};
+
+/** The same, with a module prerequisite, so the chip shows lesson links. */
+const PLANNED_LAB_WITH_PREREQUISITE: LabManifest = {
+  ...PLANNED_LAB,
+  id: 'synthetic-planned-lab-with-prerequisite',
+  routeSlug: 'synthetic-planned-lab-with-prerequisite',
+  modulePrerequisites: ['F2B'],
+};
+
 vi.mock('@/lib/lab-registry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/lab-registry')>();
   return {
     ...actual,
-    getLabById: (id: string) => (id === FORWARD_LAB.id ? FORWARD_LAB : actual.getLabById(id)),
+    getLabById: (id: string) =>
+      [FORWARD_LAB, PLANNED_LAB, PLANNED_LAB_WITH_PREREQUISITE].find((lab) => lab.id === id) ?? actual.getLabById(id),
   };
 });
 
@@ -106,8 +131,8 @@ describe('LabLink in a lesson', () => {
   });
 
   it('renders a coming-soon lab as a "Coming soon" chip with no link to the lab (G30-PRAC-09)', () => {
-    expect(getLabById('dma-1')?.status).toBe('coming_soon');
-    render(<LabLink labId="dma-1" />);
+    expect(getLabById(PLANNED_LAB.id)?.status).toBe('coming_soon');
+    render(<LabLink labId={PLANNED_LAB.id} />);
     expect(screen.getByText('Coming soon')).toBeInTheDocument();
     expect(screen.getByText('This lab is planned and cannot be opened yet.')).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
@@ -116,8 +141,9 @@ describe('LabLink in a lesson', () => {
   });
 
   it('keeps lesson links but never links a coming-soon lab itself', () => {
-    expect(getLabById('common-1')?.status).toBe('coming_soon');
-    render(<LabLink labId="common-1" />);
+    expect(getLabById(PLANNED_LAB_WITH_PREREQUISITE.id)?.status).toBe('coming_soon');
+    render(<LabLink labId={PLANNED_LAB_WITH_PREREQUISITE.id} />);
+    expect(screen.queryAllByRole('link').length).toBeGreaterThan(0);
     for (const link of screen.queryAllByRole('link')) {
       expect(link.getAttribute('href')).toMatch(/^\/curriculum\//);
     }

@@ -50,6 +50,31 @@ This lesson applies, to AXI, what four earlier lessons taught: the five channels
 - A **reference model** computes what the design under test (DUT) should do; a **predictor** is the component that calls it for each observed request and publishes an **expected** transaction. The monitor's output is the **actual** transaction. A **scoreboard** pairs and compares them ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 - A **clocking block** samples signals just before a clock edge and drives them just after it, so testbench code never races the design ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
 
+The channel words in one picture: a single read of two beats, with one stall on each channel it uses.
+
+<TimingDiagram
+  title="One two-beat read: handshake, stall, beat, RLAST and outstanding"
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 6; each column is the value sampled at that edge. The read has ARLEN 1, so its burst is 2 beats. The shaded span, edges 2 to 5, is the time the read is outstanding: from its AR handshake to its last beat."
+  edges={7}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 1, 0, 0, 0, 0] },
+    { name: "ARREADY", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0] },
+    { name: "RVALID", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0] },
+    { name: "RREADY", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0] },
+    { name: "RDATA", kind: "bus", values: [undefined, undefined, undefined, "D0", "D1", "D1", undefined] },
+    { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 1, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "pending", short: "stall", label: "AR stalled: ARVALID HIGH, ARREADY LOW" },
+    { edge: 2, tone: "pass", short: "AR", label: "AR handshake: the read is outstanding from here" },
+    { edge: 3, tone: "pass", short: "beat 1", label: "R handshake: beat 1 of 2 (D0)" },
+    { edge: 4, tone: "pending", short: "stall", label: "R stalled: RREADY LOW, so D1 and RLAST are held" },
+    { edge: 5, tone: "pass", short: "last", label: "beat 2 with RLAST: the burst ends and the read is no longer outstanding" }
+  ]}
+  highlights={[{ from: 2, to: 5, tone: "info", label: "outstanding: AR handshake to the last beat" }]}
+/>
+
 ### The environment at a glance
 
 An AXI verification environment has one job split among many components, and the split is the design. The picture below is the environment that Make It Work builds for the read path, with the same component names as the code.
@@ -96,7 +121,13 @@ An AXI verification environment has one job split among many components, and the
 Three design decisions hide in that picture:
 - **The monitor is passive and judges no data values.** It turns handshakes into transactions, checks only the framing it must understand to build them (RLAST position, an RID that matches nothing), and publishes. Everything else is someone else's job.
 - **Prediction happens at the request.** The predictor builds the expected read when the AR handshake is seen, not when data returns, so a read that never returns is still expected and is counted at the end of the test.
-- **Both ends of the bus are verification components here.** The master driver and the responder talk to each other back to back, which is how a VIP proves its own monitor and scoreboard (a **VIP self-test**, [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). To verify a real slave, replace `rsp` with the DUT; to verify a real master, replace `drv`. The monitor, scoreboard, checker and coverage stay as they are. The reference model must then describe the DUT instead of the responder (its memory contents and its error map), and the `+MUTANT` switches no longer apply, because they live in the responder.
+- **Both ends of the bus are verification components here.** The master driver and the responder talk to each other back to back, which is how a VIP proves its own monitor and scoreboard (a **VIP self-test**, [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). To verify a real slave, replace `rsp` with the DUT; to verify a real master, replace `drv`. The monitor, scoreboard, checker and coverage stay as they are. To verify a real slave, the reference model must then describe the DUT instead of the responder (its memory contents and its error map), and the `+MUTANT` switches no longer apply, because they live in the responder. To verify a real master, the responder stays, so its model and its `+MUTANT` switches stay too.
+
+| What the bench verifies | `drv` position | `rsp` position | The reference model describes | Unchanged |
+|---|---|---|---|---|
+| the VIP itself (self-test, as in Make It Work) | master driver | responder | the responder's memory and error window | `mon`, `prd`, `scb`, `u_chk`, `cov`, `perf` |
+| a real slave | master driver | the slave DUT | the DUT: its memory contents and error map | the same six, with `prd` calling the DUT's model; no `+MUTANT` switches |
+| a real master | the master DUT | responder | the responder, which still answers | the same six; the `+MUTANT` switches still apply |
 
 ### Who checks what: the responsibility matrix
 
@@ -208,9 +239,49 @@ Details that matter:
 - When the length and RLAST disagree, the monitor reports once and closes the read anyway. If it kept the read open, every later beat of that ID would be attributed to the wrong read and one fault would cascade into dozens of errors.
 - During reset it empties `open_q` without publishing. IHI0022E §A3.1.2 defines only the interface during reset (VALIDs LOW), not what happens to transactions in flight, so dropping open reads is this testbench's reset policy, not a protocol rule. The scoreboard must apply the same policy and flush its expected queues on the same reset, or it reports reads the monitor dropped; [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) teaches the reset protocol between components.
 
+**Predict first.** A faulty slave drives RVALID, with RID 1 and RLAST, at the very edge where the AR handshake of a one-beat read with ARID 1 happens; no other read is open, and RREADY is HIGH. The bullet above says an AR-first monitor would not flag it. What does this monitor, which processes R first, report at that edge, and what happens later to the read that the AR handshake opened?
+
+<details>
+<summary>Check your prediction</summary>
+
+<TimingDiagram
+  title="A slave that answers in the cycle of the AR handshake"
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 3. At edge 1 ARVALID and ARREADY are HIGH (ARID 1, ARLEN 0), and RVALID, RREADY and RLAST are HIGH with RID 1 at the same edge."
+  edges={4}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "ARREADY", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "ARID", kind: "bus", values: [undefined, "1", undefined, undefined] },
+    { name: "RVALID", kind: "bit", values: [0, 1, 0, 0] },
+    { name: "RREADY", kind: "bit", values: [1, 1, 1, 1] },
+    { name: "RID", kind: "bus", values: [undefined, "1", undefined, undefined] },
+    { name: "RLAST", kind: "bit", values: [0, 1, 0, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", short: "unexp", label: "R processed first: no ARID 1 read is open yet, so UNEXPECTED_R (A3.3.1)" }
+  ]}
+/>
+
+- **AR first:** `on_ar()` opens the read, then `on_r_beat()` appends the beat, sees RLAST on beat 1 of 1 and publishes a complete, correct-looking read. The violation passes the monitor silently (only the checker catches it).
+- **R first (this monitor):** `on_r_beat()` finds `open_q[1]` empty and reports `UNEXPECTED_R`; only then does `on_ar()` open the read. That read never gets a beat of its own, so the scoreboard's end-of-test accounting reports it as well.
+- In both cases the checker's `a_r_after_ar` also fires at edge 1, since the checker does not depend on the monitor's order, and because its counters are sampled before the edge, so `ar_done` does not yet count this AR.
+
+</details>
+
 **The mistake everyone makes: one slot per ID.** The obvious structure is `axi_rd_item open[int]`, one entry per ID. It works until two reads with one ID are outstanding, which AXI allows and real masters do constantly. Then `open[1] = C` overwrites A, A's beats are appended to C, and the next RLAST publishes the wrong read. The same bug in a write monitor (`pending_writes[AWID] = txn`) makes the first B complete the second write and the second B report "no pending write". A queue per ID is the fix, not an optimisation.
 
 **Pitfall: one queue for all IDs.** The opposite mistake keeps a single first-in, first-out list of open reads. It works until a slave reorders across IDs, which is legal, and then beat B0 is appended to A.
+
+The three structures against the three situations of the trace above (A and C share ARID 1, B has ARID 2):
+
+| Structure | Two same-ID reads open (A, then C) | B overtakes A | Beats of A and B interleave |
+|---|---|---|---|
+| one slot per ID, `axi_rd_item open[int]` | **wrong:** `open[1] = C` overwrites A, A's beats go to C, and the next RLAST publishes the wrong read | works | works |
+| one queue for all IDs | works: same-ID reads return in issue order | **wrong:** B0 is appended to A, the oldest open read | **wrong:** every beat goes to the oldest open read, whatever its RID |
+| a queue per ID, `open_q[id][$]` | works: C waits behind A in `open_q[1]` | works | works |
+
+Only the queue per ID survives all three, and a correct slave produces all three in one short trace. Each wrong structure fails on legal traffic, so it raises errors against a correct DUT.
 
 ### The write monitor: W follows AW, and may arrive first
 
@@ -220,7 +291,41 @@ Writes are harder than reads for two reasons:
 
 So the monitor keeps two FIFOs that wait for each other: AWs waiting for data, and complete W bursts waiting for an address. When one of each is present, it pairs them, checks that the burst had AWLEN + 1 beats (the WLAST check must wait for the AW, because only the AW carries AWLEN), and moves the write to a per-AWID queue that waits for B. A B with BID n completes the oldest paired write with AWID n, because responses to same-ID writes are issued in order (§A6.4).
 
+<ArchitectureDiagram
+  title="Inside the AXI4 write monitor"
+  caption="Read top to bottom. An AW waits in aw_q only while no complete W burst is waiting, and a complete W burst (collected beat by beat in w_cur) waits in w_bursts only while no AW is waiting, so at most one of the two FIFOs holds anything. pair() joins the oldest of each, checks the beat count against AWLEN, and files the write under its AWID. Each B pops the oldest write of its BID, and that write is published."
+  cellWidth={140}
+  gapY={64}
+  nodes={[
+    { id: "aw", label: "AW handshake", sublabel: "on_aw()", kind: "generic", col: 0, row: 0 },
+    { id: "w", label: "W handshake", sublabel: "on_w_beat(), w_cur", kind: "generic", col: 1, row: 0 },
+    { id: "awq", label: "aw_q", sublabel: "AWs waiting for data", kind: "fifo", col: 0, row: 1 },
+    { id: "wb", label: "w_bursts", sublabel: "bursts waiting for an AW", kind: "fifo", col: 1, row: 1 },
+    { id: "pair", label: "pair()", sublabel: "WLAST check: AWLEN + 1 beats", kind: "generic", col: 0, row: 2, colSpan: 2 },
+    { id: "openb", label: "open_b[AWID][$]", sublabel: "paired writes waiting for B", kind: "fifo", col: 0, row: 3, colSpan: 2 },
+    { id: "b", label: "B handshake", sublabel: "on_b(): oldest of BID", kind: "generic", col: 0, row: 4 },
+    { id: "ap", label: "ap.write(t)", sublabel: "one write published", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "aw", to: "awq", style: "data" },
+    { from: "w", to: "wb", style: "data" },
+    { from: "awq", to: "pair", style: "data" },
+    { from: "wb", to: "pair", style: "data" },
+    { from: "pair", to: "openb", style: "data" },
+    { from: "b", to: "openb", style: "control", label: "pop" },
+    { from: "openb", to: "ap", style: "data" }
+  ]}
+/>
+
 What the write monitor cannot see: B carries only BID and BRESP (§A3.4.4), so if a slave swaps the B responses of two same-ID writes and both say OKAY, the pins look exactly the same. Popping the oldest write per BID accounts for every response but cannot detect that swap. Same-ID write order is checked end to end instead, by reading the data back after the last B, or by making the two responses differ; [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) gives both remedies.
+
+Two writes with the same AWID n, both paired and waiting for B:
+
+| The slave sends | 1st B on the pins | 2nd B on the pins | The monitor completes first | Visible to the scoreboard? |
+|---|---|---|---|---|
+| the older write's B first (correct), both OKAY | BID n, OKAY | BID n, OKAY | the older write | nothing to see |
+| the younger write's B first (a swap), both OKAY | BID n, OKAY | BID n, OKAY | the older write | **no:** the pins equal the row above |
+| the younger write's B first, with the younger predicted SLVERR and the older OKAY | BID n, SLVERR | BID n, OKAY | the older write, recorded with SLVERR | **yes:** each recorded BRESP differs from its write's prediction |
 
 **Predict first.** In this trace, which AW owns the W burst at edges 2 and 3?
 
@@ -408,7 +513,7 @@ end
 
 ### Error responses: legal, recorded, judged elsewhere
 
-AXI has four responses, on RRESP for every read beat and on BRESP once per write (§A3.4.4):
+AXI has four responses, on RRESP for every read beat and on BRESP once per write (§A3.4.4; the encodings are Table A3-4):
 
 | RRESP or BRESP | Name | Meaning |
 |---|---|---|
@@ -456,6 +561,17 @@ Who decides what about that SLVERR:
 
 **No RDATA compare on an error beat.** §A3.4.4 requires every beat of a failed read to transfer, but it places no requirement on RDATA for a beat whose RRESP is SLVERR or DECERR. So the scoreboard compares each beat's response first, and a difference is reported as a response mismatch. When the predicted and actual responses are both SLVERR or DECERR (`resp[1]` is 1), it compares nothing more for that beat. Comparing RDATA there would fail a legal slave that returns zeros or stale data with its SLVERR, and the message would name the data instead of the response. The Make It Work responder returns the reference data on its SLVERR beats only as a convenience of the self-test; the scoreboard does not rely on it, so a real slave can replace `rsp` unchanged. AHB states the same rule outright for HRDATA on an ERROR response ([B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index)). One cost follows: two same-ID reads of equal length answered SLVERR on every beat cannot be told apart. To stay simple, the `SAME_ID_SWAP` mutant skips every pair whose reads both start in the error window, a wider rule than that case needs, so it swaps only a pair in which at least one read starts outside the window.
 
+How `diff()` walks the four-beat read in the waveform above, when the reference model predicted SLVERR for beat 2:
+
+| Beat (edge) | Predicted RRESP | Actual RRESP | RDATA compared? | Result |
+|---|---|---|---|---|
+| 1 (edge 2) | OKAY | OKAY | yes | match if D0 equals the prediction |
+| 2 (edge 3) | SLVERR | SLVERR | no: the predicted `resp[1]` is 1 | match, whatever D1 holds |
+| 3 (edge 4) | OKAY | OKAY | yes | match if D2 equals the prediction |
+| 4 (edge 5) | OKAY | OKAY | yes | match if D3 equals the prediction |
+
+Had the model predicted OKAY for beat 2, the response compare would stop at that beat with `beat 1 resp: exp 0, act 2` (`diff()` counts beats from 0 and prints the encodings), and the SLVERR beat's RDATA would never be looked at.
+
 **The misconception: "SLVERR is a protocol error, so the monitor should flag it."** SLVERR is a defined, legal response. A monitor that raises `uvm_error` on it fails every error-injection test and every test of a slave's error path, and it gets switched off, taking its real checks with it. The monitor records; the scoreboard decides whether the error was expected.
 
 ### Protocol assertions: rules on the pins
@@ -479,6 +595,21 @@ a_r_known: assert property (RVALID |-> !$isunknown({RID, RRESP, RLAST}))
 ```
 
 `|->` is overlapping implication: when the left side holds at an edge, the right side must hold at the same edge (IEEE 1800-2023 §16.12.7). The checker's `default disable iff (!ARESETn)` turns every check off during reset. `ar_done` and `rlast_done` are handshake counters updated by an `always_ff`; an assertion samples them just before the edge, so at the first R beat the AR handshake of the previous edge is already counted.
+
+Every assertion in the Make It Work `axi_rd_checker`, with its label:
+
+| Assertion | Label | What it needs | May it be switched off? |
+|---|---|---|---|
+| `a_r_after_ar` | [Protocol §A3.3.1] | RVALID, plus the `ar_done` and `rlast_done` counters | no |
+| `a_wrap_len` | [Protocol §A3.4.1] | ARVALID, ARBURST, ARLEN | no |
+| `a_wrap_align` | [Protocol §A3.4.1] | ARVALID, ARBURST, ARADDR, ARSIZE | no |
+| `a_size_fits` | [Protocol §A3.4.1] | ARVALID, ARSIZE, the `DATA_BYTES` parameter | no |
+| `a_burst_enc` | [Protocol Table A3-3] | ARVALID, ARBURST | no |
+| `a_hs_known` | [Policy] | ARVALID, ARREADY, RVALID, RREADY | yes, for a block that legitimately breaks it |
+| `a_ar_known` | [Policy] | ARVALID, ARID, ARADDR, ARLEN, ARSIZE, ARBURST | yes, likewise |
+| `a_r_known` | [Policy] | RVALID, RID, RRESP, RLAST | yes, likewise |
+
+None of them needs expected data or a per-ID history: that is what keeps them in the checker. The hold and stability checks are not in the list; they come from B-AXI-1, and the kata "Close the hold gap" adds the read-path ones.
 
 **X checks only where data is valid.** IHI0022E has no rule about X; an X check is always `[Policy]`. And on W, only the byte lanes whose WSTRB bit is 1 carry valid data: "a master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (§A3.4.3). The other lanes may legally hold anything, including X in simulation.
 
@@ -586,6 +717,39 @@ The cell names are the bin names of `cp_len` and `cp_ahead` in the Make It Work 
 - **Error injection.** Beats whose address falls in a configured window answer SLVERR; every beat still transfers.
 - **Knobs in one configuration object.** `ar_ready_pct`, `r_gap_pct`, `interleave`, `err_lo`/`err_hi`, plus the master's `rready_pct` and `max_outstanding`. A test changes behaviour by changing knobs, never by editing the responder.
 
+<ArchitectureDiagram
+  title="Inside the reordering responder"
+  caption="Read top to bottom. Each accepted AR joins the back of pend for its ARID. When the R channel is free, and not idled by a random gap (r_gap_pct), next_beat() picks among the heads of the non-empty ID queues; with interleave = 0 it finishes the burst already under way first. Data and response come from the same memory model the predictor uses, and the beat stays on the pins until RREADY. After a read's last beat, beat_done() pops it from its queue."
+  cellWidth={140}
+  nodes={[
+    { id: "ar", label: "AR handshake", sublabel: "accept_ar()", kind: "generic", col: 0, row: 0 },
+    { id: "pend", label: "pend[ARID][$]", sublabel: "arrival order per ID", kind: "fifo", col: 0, row: 1 },
+    { id: "cfg", label: "axi_rd_cfg", sublabel: "interleave, r_gap_pct", kind: "generic", col: 1, row: 1 },
+    { id: "nb", label: "next_beat()", sublabel: "head of a non-empty ID", kind: "generic", col: 0, row: 2 },
+    { id: "mem", label: "axi_mem_model", sublabel: "data_at(), resp_at()", kind: "model", col: 1, row: 2 },
+    { id: "r", label: "R beat on the pins", sublabel: "held until RREADY", kind: "interface", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "ar", to: "pend", style: "data" },
+    { from: "pend", to: "nb", style: "data", label: "heads" },
+    { from: "cfg", to: "nb", style: "control" },
+    { from: "mem", to: "nb", style: "data" },
+    { from: "nb", to: "r", style: "data" }
+  ]}
+/>
+
+What each knob changes, and where a run shows that it was exercised:
+
+| Knob | Set in | Default | Changes | Shows in |
+|---|---|---|---|---|
+| `max_outstanding` | `axi_rd_cfg`, used by the master | 8 | reads in flight at once | `cp_depth` (`deep` needs 4 or more open) and `mean_outstanding` on the `PERF` line |
+| `rready_pct` | `axi_rd_cfg`, used by the master | 60 | how often RREADY is HIGH | `cp_stall` and `stalls=` on the `PERF` line |
+| `ar_ready_pct` | `axi_rd_cfg`, used by the responder | 70 | how often ARREADY is HIGH | nothing directly: no coverpoint or `PERF` value counts AR stalls |
+| `r_gap_pct` | `axi_rd_cfg`, used by the responder | 25 | idle cycles on R | `latency min/avg/max` on the `PERF` line |
+| `interleave` | `axi_rd_cfg`, used by the responder | 1 | whether the RID may change mid-burst | nothing directly: no coverpoint or `PERF` value records interleaving (the kata "Turn the knobs" asks what it would take) |
+| `err_lo`, `err_hi` | `axi_rd_cfg`, used by `axi_mem_model::resp_at` (responder and predictor) | `0x3000` to `0x30FF` | which beats answer SLVERR | `cp_err` and `x_err_len`; the item's `addr dist` starts about 15% of reads in the window |
+| ID range | `axi_rd_item` constraint `c_shape` | `id inside {[0:3]}` | how often IDs repeat | `cp_ahead` and `x_len_ahead` |
+
 **Predict first.** In the waveform below, at which edges does a handshake happen, and is ARREADY falling at edge 2 legal?
 
 <TimingDiagram
@@ -663,6 +827,29 @@ The definitions must separate the slave's delay from the master's:
 | responder | per-ID queues of accepted requests | — | answers in only one order |
 | performance | cycle counts | contracts from the product spec | mixes master stalls into slave latency |
 
+<VisualRecap
+  title="One key, three queues"
+  rule="A beat with RID n belongs to the oldest open read with ARID n: same-ID read data returns in issue order and the beats of two same-ID reads never mix, while reads with different IDs may overtake and interleave (IHI0022E §A5.3.1)."
+  code={`axi_rd_item open_q[int unsigned][$];  // per ARID: a queue, never a slot
+t = open_q[id][0];                     // the oldest open read with this RID`}
+  mistake="One slot per ID: a second same-ID read overwrites the first and a correct slave fails. One queue for all IDs fails the other way, on legal cross-ID reordering."
+  inTestbench="The responder answers only the head of pend[ARID], the monitor fills and closes the head of open_q[RID] on RLAST, and the scoreboard pops the head of exp_q[ID]: all three key by ID."
+>
+  <ArchitectureDiagram
+    title="The same per-ID queue in three components"
+    caption="Each component keeps one queue per ID in AR-handshake order and works only on its head. The responder's R beats reach the monitor through the pins; the monitor's completed reads reach the scoreboard through its analysis port."
+    nodes={[
+      { id: "rsp", label: "rsp", sublabel: "pend[ARID][$]", kind: "driver", col: 0, row: 0 },
+      { id: "mon", label: "mon", sublabel: "open_q[ARID][$]", kind: "monitor", col: 0, row: 1 },
+      { id: "scb", label: "scb", sublabel: "exp_q[ID][$]", kind: "scoreboard", col: 0, row: 2 }
+    ]}
+    edges={[
+      { from: "rsp", to: "mon", style: "data", label: "R beats" },
+      { from: "mon", to: "scb", style: "data", label: "ap.write" }
+    ]}
+  />
+</VisualRecap>
+
 ## Make It Work
 
 ### The M6 read-path environment
@@ -670,6 +857,28 @@ The definitions must separate the slave's delay from the master's:
 This is one complete file, `tb_top.sv`, for the read path of an AXI4 interface with a 32-bit data bus and 4-bit IDs. It contains every component in the architecture picture: the interface with three clocking blocks, the bound checker, and a package with the configuration object, the reference memory, the item and sequence, the master driver, the reordering responder, the monitor, the predictor, the per-ID scoreboard, coverage, performance, the environment and the test. Reads are INCR with 4-byte beats, so every byte lane is active on every beat. The write path follows the same pattern with the write monitor above. The lab's stretch step has you write the W-to-AW pairing logic as a plain-SystemVerilog class and check it against a replayed trace; a UVM write path (write monitor, write responder, WSTRB-masked memory) is left as an extension.
 
 Read it in this order: `axi_rd_monitor`, `axi_rd_predictor`, `axi_rd_scoreboard`, then `axi_rd_responder`, then the rest. The checker holds the read-path burst and X checks; the hold and stability checks come from B-AXI-1 (Practice has a kata that adds the read-path ones).
+
+<details>
+<summary>A map of the file in that reading order, to find a class again</summary>
+
+| Read | Class | Role | Key state | Taught in | Mutant evidence |
+|---|---|---|---|---|---|
+| 1 | `axi_rd_monitor` | rebuilds reads from AR and R handshakes | `open_q[int unsigned][$]`, `n_open`, `cycle` | The read monitor | `RLAST` (DROP_RLAST; SAME_ID_SWAP with unequal lengths; EXTRA_BEAT when a new read of that ID is open), `UNEXPECTED_R` (EXTRA_BEAT, WRONG_RID; SAME_ID_SWAP with unequal lengths) |
+| 2 | `axi_rd_predictor` | builds the expected read at each AR | uses `axi_mem_model::data_at`, `resp_at` | The per-ID read scoreboard | — |
+| 3 | `axi_rd_scoreboard` | per-ID compare and end-of-test accounting | `exp_q[int unsigned][$]`, `n_match`, `n_mismatch`, `n_pending` | The per-ID read scoreboard | `SCB_MISMATCH` (SAME_ID_SWAP; EXTRA_BEAT when a new read of that ID is open), `SCB_PENDING` (WRONG_RID) |
+| 4 | `axi_rd_responder` | the reordering slave | `pend[int unsigned][$]` of `rd_req_t` | Stimulus | holds all four mutants |
+| 5 | `axi_rd_master_drv` | the AR window and random RREADY | `outstanding` | Stimulus | — |
+| 6 | `axi_rd_checker` (an interface) | pin rules, bound into `axi_rd_if` | `ar_done`, `rlast_done` | Protocol assertions | `AXI_CHK` from `a_r_after_ar` (EXTRA_BEAT) |
+| 7 | `axi_rd_cov`, `axi_rd_perf` | coverage and performance subscribers | covergroup `cg`; cycle sums | The coverage model; Performance | — |
+| 8 | `axi_rd_cfg`, `axi_rd_test` | knobs; the test and its end-of-test checks | `EOT_TIMEOUT`, the compared-count check | Stimulus | `[EOT] 39 of 40 reads compared` (WRONG_RID) |
+| 9 | `axi_rd_if` (an interface) | the read-channel signals | clocking blocks `mon_cb`, `mst_cb`, `slv_cb` | The read monitor (`mon_cb`) | — |
+| 10 | `axi_mem_model` | the shared reference memory and error map | static `data_at`, `resp_at` | Stimulus | — |
+| 11 | `axi_rd_item` | one read: request, beats and timing | `id`, `addr`, `len`, `data[$]`, `resp[$]`, constraint `c_shape`, `diff()` | The per-ID read scoreboard; Error responses | — |
+| 12 | `axi_rd_rand_seq` | the stimulus sequence | `n_reads = 40` | Stimulus | — |
+| 13 | `axi_rd_env` | builds and connects the components | `sqr`, `drv`, `rsp`, `mon`, `prd`, `scb`, `cov`, `perf` | The environment at a glance | — |
+| 14 | `tb_top` (the top module) | clock, reset and the `vif` handle | `ACLK`, `ARESETn` | Make It Work (Run it) | — |
+
+</details>
 
 ```systemverilog
 // compile
@@ -1504,6 +1713,17 @@ How to read the less obvious logs:
 - **`EXTRA_BEAT`.** The extra beat raises `UNEXPECTED_R` when no read with its ID is open. If a new read with that ID was accepted before the extra beat went out, the beat is attributed to that read instead, and the log shows `RLAST` or `SCB_MISMATCH`. The extra beat also carries RLAST, so the checker's `rlast_done` counts one more read completion than really happened and stays one ahead of `ar_done` for the rest of the run. `a_r_after_ar` then fires at the extra beat itself if no real read is open, and later at every RVALID edge with exactly one real read in flight, which always happens near the end of the run. `AXI_CHK` comes from an assertion in an interface, not from a component, so the log shows UVM's top-level reporter, named `reporter`.
 - **`WRONG_RID`.** The answered read never receives a beat, so it stays open in the monitor and expected in the scoreboard; the test waits `EOT_TIMEOUT` cycles, warns, and end-of-test accounting reports it.
 
+The `SAME_ID_SWAP` run with different lengths, beat by beat. O is the older read (0x1a40, 4 beats) and Y the younger (0xb20, 2 beats), both ID 2, so `open_q[2]` holds O then Y when the swapped answer starts. Beats of other IDs may come between these rows; they go to their own queues and change nothing here.
+
+| R beat (RID 2) | RLAST | Head of `open_q[2]` before it | What the monitor does | Log |
+|---|---|---|---|---|
+| Y0, data of 0xb20 | 0 | O, 0 of 4 beats | appends it to O (1 of 4) | — |
+| Y1 | 1 | O, 1 of 4 | appends it (2 of 4); RLAST disagrees with the length; closes O and publishes it | `RLAST=1 on beat 2 of 4`, then `beat count: exp 4, act 2` for 0x1a40 |
+| O0, data of 0x1a40 | 0 | Y, 0 of 2 | appends it to Y (1 of 2) | — |
+| O1 | 0 | Y, 1 of 2 | appends it (2 of 2): the last expected beat without RLAST; closes Y and publishes it | `RLAST=0 on beat 2 of 2`, then `beat 0 data: exp 0xc0de0b20, act 0xc0de1a40` for 0xb20 |
+| O2 | 0 | none | no read with ID 2 is open | `UNEXPECTED_R` |
+| O3 | 1 | none | no read with ID 2 is open | `UNEXPECTED_R` |
+
 Every mutant run fails, which is the point.
 
 **Run it.** Compile `tb_top.sv` with `tb_top` as the top module in a simulator that supports IEEE 1800.2 UVM (uvm-core 2020.3.1 or your vendor's library), concurrent assertions and covergroups. The test name is already passed to `run_test`; `+UVM_TESTNAME=axi_rd_test` would override it (IEEE 1800.2-2020 Annex G.2.1). Run once without plusargs, then once with each of `+MUTANT=SAME_ID_SWAP`, `+MUTANT=DROP_RLAST`, `+MUTANT=EXTRA_BEAT` and `+MUTANT=WRONG_RID`. `MUTANT` is this testbench's own plusarg, read with `$value$plusargs` (IEEE 1800-2023 §21.6). Change the seed with your simulator's seed option (tool-dependent) and confirm the clean run stays clean. UVM, assertion and coverage support in open-source simulators varies by tool and version (tool-dependent); this example has not been run on one.
@@ -1549,7 +1769,29 @@ Every mutant run fails, which is the point.
 
 ### Expert: monitors on both sides of an interconnect
 
+<ArchitectureDiagram
+  title="Monitors on both sides of a two-master, two-slave interconnect"
+  caption="Each line is an AXI connection through the interconnect, labelled with the IDs it carries, and a passive monitor (badge mon) watches each of the four ports. On the master side the IDs are the masters' own; on the slave side each ID typically has the master-port bits added (A5.3.5; A6.3 allows other remaps that keep the ordering), so two masters' equal IDs stay distinct. Each slave port sees W in the order its AWs arrived there (A5.3.2). An end-to-end scoreboard maps each master-side (port, ID) to the slave-side ID."
+  cellWidth={140}
+  legend={false}
+  nodes={[
+    { id: "m0", label: "M0", sublabel: "master port 0, monitored", kind: "generic", badge: "mon", col: 0, row: 0 },
+    { id: "m1", label: "M1", sublabel: "master port 1, monitored", kind: "generic", badge: "mon", col: 1, row: 0 },
+    { id: "ic", label: "interconnect", sublabel: "typically adds port bits to IDs", kind: "dut", col: 0, row: 1, colSpan: 2 },
+    { id: "s0", label: "S0", sublabel: "slave port 0, monitored", kind: "generic", badge: "mon", col: 0, row: 2 },
+    { id: "s1", label: "S1", sublabel: "slave port 1, monitored", kind: "generic", badge: "mon", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "m0", to: "ic", style: "structural", label: "ID" },
+    { from: "m1", to: "ic", style: "structural", label: "ID" },
+    { from: "ic", to: "s0", style: "structural", label: "wide ID" },
+    { from: "ic", to: "s1", style: "structural", label: "wide ID" }
+  ]}
+  spreadAnchors
+/>
+
 An SoC environment puts a passive monitor on every master port and every slave port of an interconnect and scoreboards the hops end to end. The orders differ by side:
+
 - **IDs grow.** The interconnect appends master-port bits to ARID and AWID and strips them from RID and BID on the way back (§A5.3.5). A slave-side scoreboard keys on the wide ID; an end-to-end scoreboard must map master-side `(port, ID)` to slave-side IDs, and must not assume the mapping is "append bits": an interconnect may remap IDs, provided "the ordering requirements of the original ID values are maintained" (§A6.3).
 - **W order is per slave.** When the interconnect merges writes from several masters to one slave, "it must ensure that it forwards the write data in address order" (§A5.3.2), so the slave-side monitor pairs W with AW in the order AWs *arrive at that slave*, which differs from any one master's order. The pairing code is the same; only the stream differs.
 - **Same-ID reads to two slaves.** The interconnect must return them to the master in issue order (§A5.3.1), so a master-side scoreboard still pops the oldest read per ID, even though the two slaves answered in the other order.
@@ -1564,6 +1806,39 @@ The Make It Work memory never changes, so every read has one correct answer. Wit
 
 So the reference model keeps, per atomic block, the **set of legal values** (the last value observed as complete, plus every in-flight write's value) and accepts any member; at each B it collapses the set for later reads. The predictor therefore needs B times and AR times, which is why a production predictor subscribes to both the request and response streams. [B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index) states the ordering rules; this is the scoreboard that applies them.
 
+<TimingDiagram
+  title="Two reads of one address around a write"
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 7, and every READY is HIGH. Address A holds OLD, and the word is taken to be one atomic block (A7.1). A single-beat write of NEW to A: AW at edge 1, a single-beat W (WLAST HIGH) at edge 2, B at edge 5. Two single-beat reads of A: R1's AR handshake at edge 3, before B; R2's at edge 6, after B."
+  edges={8}
+  cycleWidth={52}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "AWVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "WVALID", kind: "bit", values: [0, 0, 1, 0, 0, 0, 0, 0] },
+    { name: "WDATA", kind: "bus", values: [undefined, undefined, "NEW", undefined, undefined, undefined, undefined, undefined] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0, 0] },
+    { name: "ARVALID", kind: "bit", values: [0, 0, 0, 1, 0, 0, 1, 0] },
+    { name: "AR read", kind: "bus", values: [undefined, undefined, undefined, "R1", undefined, undefined, "R2", undefined] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", short: "R1", label: "R1 issued while the write is in flight: OLD or NEW is legal (A5.3.4)" },
+    { edge: 5, tone: "pass", short: "B", label: "B: the write is complete, so later reads must see it (A6.4)" },
+    { edge: 6, tone: "info", short: "R2", label: "R2 issued after B: only NEW is legal (A6.4)" }
+  ]}
+  highlights={[{ from: 1, to: 4, tone: "attempt", label: "write outstanding, no B: OLD or NEW legal" }]}
+/>
+
+The reference model's legal-value set for A, around the two reads:
+
+| Edges | Event | Legal set for a read issued now |
+|---|---|---|
+| 1 | the write is outstanding from its AW, but NEW is not yet known | `{OLD}` for now; when W arrives at 2, the model adds NEW to the set of every read still open, so a read issued at 1 that is still open then may return NEW |
+| 2 to 4 | NEW seen on W at 2, no B yet | `{OLD, NEW}`; R1, issued at 3, keeps this set even if its data returns after B |
+| 5 | B at 5: the set collapses for reads issued after it | a read accepted at edge 5 itself was issued before the master saw B, so this model still gives it `{OLD, NEW}`; §A6.4 says only "subsequent", so the same-edge case is this model's choice |
+| 6 onward | issued after B | `{NEW}`; R2, issued at 6, must return NEW |
+
+The table simplifies by issue time: in general, the set for a read grows with every overlapping write that arrives while the read is open.
+
 ### Expert: coverage closure at scale
 
 - **Targeted crosses only.** Cross what interacts: length × same-ID reuse, response × length, stall × outstanding depth. Use `ignore_bins` for combinations that cannot occur in this DUT (IEEE 1800-2023 §19.6.2) and `illegal_bins` for combinations the protocol forbids (§19.6.3), and use cross-bin selection to name only the cells you care about (§19.6.1). On a single coverpoint's values the same keywords are §19.5.5 and §19.5.6.
@@ -1572,11 +1847,28 @@ So the reference model keeps, per atomic block, the **set of legal values** (the
 - **Reachability is a design parameter.** A slave's read reordering depth is "a static value that must be specified by the designer of the slave", and no master can discover it (§A5.3.1). So reordering coverage targets come from the DUT's documentation; a bin above that depth is unreachable and belongs in `ignore_bins` with a comment, not in a waiver spreadsheet.
 - **Closing holes.** A hole in `x_len_ahead` at long bursts with two same-ID reads ahead needs stimulus that keeps reads queued: fewer IDs, a deeper window, a slower responder. Random seeds alone close it only by luck. [I-SV-3B](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) covers closure strategy in general.
 
+**Try it.** The challenge below uses a small bus covergroup (address × operation), not AXI, but the decision is the one above. One cross cell has probability 0 under the constraints. Before you pick a fix, predict which one is right when the spec forbids that combination, and which when the spec allows it.
+
+<CoverageCrossExplorerVisualizer mode="closure" />
+
+**Debrief.** Neither scenario in the challenge is the case for `ignore_bins`. That keyword belongs to a third case: a cell this DUT can never produce (such as reordering deeper than the slave's documented depth).
+
 ### Expert: performance verification
 
 - **Distributions, not averages.** Keep a latency histogram per ID or per QoS class; a mean hides the long tail that a real-time master cares about. Report percentiles over a stated window, in cycles.
 - **Attribution.** Split each read's life into slave latency, RVALID gaps (slave), and RVALID-and-not-RREADY cycles (master). A bandwidth shortfall is then traceable to one side.
 - **Little's law** (a queueing identity, not an AXI rule): mean outstanding = throughput × mean time open. If each read of S bytes stays open for L cycles and the window allows N reads open at once, read throughput is at most N × S / L bytes per cycle. The Make It Work `mean_outstanding` checks the identity on real traffic.
+
+  A worked example (illustrative numbers): four-beat reads of S = 16 bytes on a 32-bit bus, each open for L = 20 cycles.
+
+  | N (reads open at once) | N × S / L (bytes per cycle) | Achievable on a 4-byte bus |
+  |---|---|---|
+  | 1 | 16 / 20 = 0.8 | 0.8 |
+  | 2 | 32 / 20 = 1.6 | 1.6 |
+  | 4 | 64 / 20 = 3.2 | 3.2 |
+  | 8 | 128 / 20 = 6.4 | 4: the bus peak, not the window, is now the limit |
+
+  The table holds L fixed. In a real system L grows as the bus saturates, which is why the measured mean time open must come from the monitor, not from a datasheet.
 - **QoS is a hint.** AxQOS is a 4-bit value whose use "the protocol does not specify"; the specification recommends treating it as a priority, higher meaning more urgent (§A8.1.1). Any fairness or starvation bound is a system contract, checked as such.
 - **Monitor cost.** A monitor that creates and publishes an object per beat costs more simulation time than one per transaction; how much more is **tool-dependent**. Publish per transaction, and give beat-level detail only to subscribers that need it.
 

@@ -56,6 +56,7 @@ const validate = (file) => `VALIDATE (run from ${DATA.root}; other agents edit o
 - node scripts/check-mdx.mjs --render ${file} reports 0 errors and 0 warnings.
 - DIAGRAM_KIT_REPORT=1 NODE_OPTIONS='--require @prisma/client' npx vitest run tests/lib/diagram-kit-content.test.ts shows no finding in ${file}.
 - NODE_OPTIONS='--require @prisma/client' npx vitest run tests/qa/curriculumCoverageAudit.spec.ts names no tag or link from ${file}.
+- Tests that pin this lesson still pass: find them with grep -rl "$(basename $(dirname ${file}))" tests/ and run each with NODE_OPTIONS='--require @prisma/client' npx vitest run <test>. Never edit a test; change the lesson.
 - git diff HEAD -- ${file} shows no removed fact, example, code line, comment, quiz question or link (only additions and re-flow).`
 
 // A lesson may carry its own task (for example an embed pass) in place of the plan-and-write steps.

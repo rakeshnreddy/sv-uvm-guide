@@ -273,6 +273,20 @@ export const LAB_LESSON_OVERRIDES: Readonly<Record<string, readonly LessonRef[]>
     'B-AXI-6_AXI_Verification_Performance/index',
     'A-UVM-6_Scoreboards_and_Reference_Models/index',
   ],
+  // F3C is the pre-lab gate for the M1 clocking-block lab.
+  'constructs-1': ['F4C_Clocking_Blocks/index', 'F3C_Delta_Cycles_and_Race_Conditions/index'],
+  'common-1': ['F2A_Core_Data_Types/structs-unions-enums', 'F2B_Dynamic_Structures/index'],
+  'fifo-1': ['I-SV-1_OOP/copying-and-cloning'],
+  'arbiter-1': ['I-UVM-3C_First_Complete_Testbench/index', 'I-UVM-2A_Component_Roles/index'],
+  'dma-1': [
+    'I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab',
+    'I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences',
+    'I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences',
+  ],
+  'multi-agent-vseq': [
+    'A-UVM-8_Multi_Agent_Topologies/index',
+    'I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab',
+  ],
 };
 
 /** Related lessons for each interview bank, keyed by the bank's `topic`. The first one is the bank's home lesson. */

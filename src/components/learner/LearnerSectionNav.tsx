@@ -3,7 +3,7 @@ import React from "react";
 
 import { cn } from "@/lib/utils";
 
-export type LearnerSection = "dashboard" | "review" | "notebook" | "settings";
+export type LearnerSection = "dashboard" | "review" | "notebook" | "assessment" | "settings";
 
 export interface LearnerSectionLink {
   id: LearnerSection;
@@ -15,6 +15,7 @@ export const LEARNER_SECTION_LINKS: readonly LearnerSectionLink[] = Object.freez
   { id: "dashboard", label: "Dashboard", href: "/dashboard" },
   { id: "review", label: "Review", href: "/dashboard/review" },
   { id: "notebook", label: "Notebook", href: "/dashboard/notebook" },
+  { id: "assessment", label: "Self-assessment", href: "/assessment" },
   { id: "settings", label: "Settings", href: "/settings" },
 ]);
 
@@ -28,8 +29,8 @@ export interface LearnerSectionNavProps {
 }
 
 /**
- * Links between the learner pages (dashboard, review queue, notebook and
- * settings). Server-safe: no hooks and no browser APIs. Wraps onto several
+ * Links between the learner pages (dashboard, review queue, notebook,
+ * self-assessment and settings). Server-safe: no hooks and no browser APIs. Wraps onto several
  * lines on narrow screens.
  */
 export function LearnerSectionNav({ current, className }: LearnerSectionNavProps) {

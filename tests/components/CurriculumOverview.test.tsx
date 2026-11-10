@@ -131,9 +131,17 @@ describe('route chooser', () => {
     expect(rungs[0]).toHaveTextContent('M0');
     expect(within(rungs[0]).getByRole('link')).toHaveAttribute('href', '/practice/lab/simple-dut-1');
     expect(rungs[1]).toHaveTextContent('M1');
-    expect(rungs[1]).toHaveTextContent('Lab coming soon');
-    expect(within(rungs[1]).queryByRole('link')).not.toBeInTheDocument();
     expect(within(rungs[3]).getByRole('link')).toHaveAttribute('href', '/practice/lab/scoreboard-reference-model');
+    // Each rung links its lab only while the lab is available.
+    resolveMilestones(labs).forEach((milestone, index) => {
+      const lab = milestone.lab ? labs.find((entry) => entry.id === milestone.lab!.id) : undefined;
+      if (lab?.status === 'available') {
+        expect(within(rungs[index]).getByRole('link'), milestone.id).toHaveAttribute('href', `/practice/lab/${lab.id}`);
+      } else {
+        expect(rungs[index], milestone.id).toHaveTextContent('Lab coming soon');
+        expect(within(rungs[index]).queryByRole('link'), milestone.id).not.toBeInTheDocument();
+      }
+    });
   });
 });
 

@@ -382,6 +382,11 @@ function gradeVerdict(code: string, withStrings: string): GraderResult {
     return fail("DRAIN_DOES_NOT_WAIT", "drain must wait, edge by edge and for a bounded number of cycles, until exp_q is empty, then watch two more edges.");
   }
 
+  return checkWatchdog(code) ?? passed("Verdict and watchdog shape passed.");
+}
+
+/** F2E's watchdog: fork ... join_any, a #(TIMEOUT) branch ending in $fatal, disable fork, report() and $finish. Null when it is all there. */
+function checkWatchdog(code: string): GraderResult | null {
   const fork = /\bfork\b([\s\S]*?)\b(join_any|join_none|join)\b([\s\S]*)/.exec(code);
   if (!fork) return fail("NO_WATCHDOG", "Run the test in one branch of a fork and a watchdog in another: begin #(TIMEOUT); ... $fatal(...); end.");
   if (fork[2] === "join") return fail("JOIN_WAITS_FOR_WATCHDOG", "With join, main waits for both branches, so every run waits for the watchdog and ends in its $fatal. Use join_any.");
@@ -396,7 +401,7 @@ function gradeVerdict(code: string, withStrings: string): GraderResult {
   if (reportCall < 0 || finish < 0 || finish < reportCall) {
     return fail("NO_FINISH", "After disable fork, call report() and then $finish: the free-running clock keeps the simulation alive forever otherwise.");
   }
-  return passed("Verdict and watchdog shape passed.");
+  return null;
 }
 
 /**
@@ -429,6 +434,243 @@ const selfCheckGrader: LabGrader = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// constructs-1 (v2, milestone M1): the race-aware interface bench of F4C
+// ---------------------------------------------------------------------------
+
+interface ClockingBlock {
+  isDefault: boolean;
+  /** The clocking event, normalised (`posedge clk`). */
+  event: string;
+  /** The clocking items between the header and `endclocking`. */
+  body: string;
+}
+
+function findClockingBlock(code: string, name: string): ClockingBlock | null {
+  const match = new RegExp(`(\\bdefault\\s+)?\\bclocking\\s+${escapeRegExp(name)}\\s*@\\s*\\(([^()]*)\\)\\s*;([\\s\\S]*?)\\bendclocking\\b`).exec(code);
+  return match ? { isDefault: Boolean(match[1]), event: match[2].trim().replace(/\s+/g, " "), body: match[3] } : null;
+}
+
+/** The signal names a clocking block lists under each direction, from its `input`, `output` and `inout` items. */
+function clockingSignals(body: string): Record<"input" | "output" | "inout", string[]> {
+  const signals = { input: [] as string[], output: [] as string[], inout: [] as string[] };
+  for (const item of statementsOf(body)) {
+    if (/^default\b/.test(item)) continue;
+    const declaration = /^(input|output|inout)\b\s*(?:#\s*[\w.]+\s*|(?:posedge|negedge|edge)\s*)?([\s\S]*)$/.exec(item);
+    if (!declaration) continue;
+    const names = declaration[2].split(",").map((part) => /^\s*([A-Za-z_]\w*)/.exec(part)?.[1]).filter(Boolean) as string[];
+    signals[declaration[1] as keyof typeof signals].push(...names);
+  }
+  return signals;
+}
+
+/** The interface declaration `pipe_if`, if present. */
+function findPipeInterface(code: string): string | null {
+  return /\binterface\s+pipe_if\b[\s\S]*?\bendinterface\b/.exec(code)?.[0] ?? null;
+}
+
+/** The body of `initial begin : main`, begin-end nesting counted. */
+function findMainBlock(code: string): string | null {
+  const match = /\binitial\s+(begin\s*:\s*main\b)/.exec(code);
+  return match ? takeStatement(code.slice(match.index + match[0].length - match[1].length)) : null;
+}
+
+const ON_CLOCK_EDGE = /@\s*\(\s*(?:posedge|negedge)\b|@\s*\(\s*(?:bus\s*\.\s*)?clk\s*\)/;
+const WAIT_CB = /@\s*\(\s*bus\s*\.\s*cb\s*\)/;
+const WAIT_MON_CB = /@\s*\(\s*bus\s*\.\s*mon_cb\s*\)/;
+const RESET_HINT = "rst_n is asynchronous: drive it directly, between edges, never through cb. A drive through cb would wait for the next clock edge and land in Re-NBA, after the flops had already taken one more normal edge (1800-2023 14.16).";
+
+function gradeClockingBlocks(code: string): GraderResult {
+  const iface = findPipeInterface(code);
+  if (!iface) return fail("INTERFACE_NOT_FOUND", "Keep interface pipe_if (input logic clk) in pipe_if.sv and add the clocking blocks inside it.");
+  const cb = findClockingBlock(iface, "cb");
+  if (!cb) return fail("CB_NOT_FOUND", "Declare the driver's clocking block inside pipe_if: default clocking cb @(posedge clk); ... endclocking");
+  if (cb.event !== "posedge clk") return fail("CB_WRONG_EVENT", `cb is clocked on @(${cb.event}). The DUT's flops capture on the rising edge, so cb must use @(posedge clk).`);
+  if (!cb.isDefault) {
+    return fail("CB_NOT_DEFAULT", "Declare cb as the default clocking (default clocking cb @(posedge clk);). The ## in wait_cycles counts cycles of the default clocking, and without one it does not compile (1800-2023 14.11, 14.12).");
+  }
+  const skews = statementsOf(cb.body).find((item) => /^default\b/.test(item)) ?? "";
+  if (!/\binput\s*#\s*1step\b/.test(skews) || !/\boutput\s*#\s*0\b(?!\s*\.)/.test(skews)) {
+    return fail("CB_SKEWS", "Write the skews out in cb: default input #1step output #0; Inputs are then sampled in the Preponed region and drives land in Re-NBA of the edge's own time slot (1800-2023 14.4, 14.13, 14.16).");
+  }
+  const cbSignals = clockingSignals(cb.body);
+  if ([...cbSignals.output, ...cbSignals.inout].includes("rst_n")) return fail("CB_DRIVES_RESET", RESET_HINT);
+  for (const signal of ["in_vld", "in_data"]) {
+    if (!cbSignals.output.includes(signal)) return fail("CB_OUTPUT_MISSING", `List ${signal} as an output of cb: the driver writes it through cb.${signal} <= ...`);
+  }
+  for (const signal of ["out_vld", "out_data"]) {
+    if (!cbSignals.input.includes(signal)) return fail("CB_INPUT_MISSING", `List ${signal} as an input of cb, so a driver that must react to the DUT can read its #1step sample.`);
+  }
+  const mon = findClockingBlock(iface, "mon_cb");
+  if (!mon) return fail("MON_CB_NOT_FOUND", "Declare the monitor's clocking block inside pipe_if: clocking mon_cb @(posedge clk); input ...; endclocking");
+  if (mon.event !== "posedge clk") return fail("MON_CB_WRONG_EVENT", `mon_cb is clocked on @(${mon.event}); sample on the same edge as cb: @(posedge clk).`);
+  const monSignals = clockingSignals(mon.body);
+  if (monSignals.output.length > 0 || monSignals.inout.length > 0) {
+    return fail("MON_CB_CAN_DRIVE", "mon_cb must have inputs only. A monitor that cannot drive can never disturb the DUT, even by mistake.");
+  }
+  for (const signal of ["rst_n", "in_vld", "in_data", "out_vld", "out_data"]) {
+    if (!monSignals.input.includes(signal)) return fail("MON_CB_INPUT_MISSING", `List ${signal} as an input of mon_cb: the monitor reads every signal it checks through mon_cb, reset included.`);
+  }
+  const wait = findSubroutine(iface, "task", "wait_cycles");
+  if (!wait) return fail("WAIT_CYCLES_NOT_FOUND", "Add task automatic wait_cycles(input int n) inside pipe_if.");
+  if (!/##/.test(wait.body)) return fail("WAIT_CYCLES_NO_CYCLE_DELAY", "wait_cycles must count cycles of cb with a cycle delay, for example repeat (n) ##1; (1800-2023 14.11).");
+  return passed("Clocking-block shape passed.");
+}
+
+/** Code of the testbench: everything except the interface declaration, so that `##` inside pipe_if is not mistaken for a bench line. */
+function benchCode(code: string): string {
+  return code.replace(/\binterface\s+pipe_if\b[\s\S]*?\bendinterface\b/, " ");
+}
+
+function cycleDelayOutsideInterface(body: string, where: string): GraderResult | null {
+  return /##/.test(body)
+    ? fail("CYCLE_DELAY_OUTSIDE", `${where} uses ##, but the default clocking of pipe_if does not reach tb_top, so ## there does not compile (1800-2023 14.12). Wait with @(bus.cb), or call bus.wait_cycles(n).`)
+    : null;
+}
+
+function gradeClockingDriver(code: string): GraderResult {
+  const bench = benchCode(code);
+  const send = findSubroutine(bench, "task", "send");
+  if (!send) return fail("SEND_NOT_FOUND", "Keep the task send(data) and write its body.");
+  if (ON_CLOCK_EDGE.test(send.body)) {
+    return fail("SEND_WAITS_ON_CLOCK", "send waits on the clock itself. Wait on the clocking block event, @(bus.cb), of the block you drive: never on @(posedge clk) before touching a clockvar.");
+  }
+  if (/\bbus\s*\.\s*(?:in_vld|in_data)\s*<?=(?!=)/.test(send.body)) {
+    return fail("RAW_DRIVE", "send writes bus.in_vld or bus.in_data directly. Drive the DUT's inputs only through the clocking block: bus.cb.in_vld <= 1'b1;");
+  }
+  if (/\bbus\s*\.\s*cb\s*\.\s*(?:in_vld|in_data)\s*=(?!=)/.test(send.body)) {
+    return fail("BLOCKING_CLOCKVAR", "A synchronous drive is written with <=: clockvar <= expression is its only form (1800-2023 14.16).");
+  }
+  for (const signal of ["in_vld", "in_data"]) {
+    if (!new RegExp(`\\bbus\\s*\\.\\s*cb\\s*\\.\\s*${signal}\\s*<=`).test(send.body)) return fail("SEND_MISSING_DRIVE", `send must drive ${signal} through cb: bus.cb.${signal} <= ...;`);
+  }
+  const push = /\bexp_q\s*\.\s*push_back\s*\(([^;]*)\)\s*;/.exec(send.body);
+  if (!push) return fail("NO_EXPECTATION", "send must record what the DUT has to answer: exp_q.push_back(exp_t'{din: ..., dout: model_rotl(data), due: ...});");
+  if (!/\bmodel_rotl\s*\(/.test(push[1])) return fail("MODEL_NOT_USED", "The expected result must come from model_rotl(data), the specification, not from the DUT.");
+  if (!/\$time\b/.test(push[1])) {
+    return fail("NO_DUE_TIME", "Record when the result must arrive: due: $time + SAMPLE_EDGES * CLK_PERIOD. A check of the value alone misses a result in the wrong cycle, which is how this bench's race shows up.");
+  }
+  const lastDrive = Math.max(send.body.search(/\bcb\s*\.\s*in_data\s*<=/), send.body.search(/\bcb\s*\.\s*in_vld\s*<=/));
+  if (!WAIT_CB.test(send.body.slice(lastDrive))) {
+    return fail("SEND_NO_WAIT", "After the drives, wait for the next clocking block event with @(bus.cb), so that the next send drives one cycle later.");
+  }
+  const sendDelay = cycleDelayOutsideInterface(send.body, "send");
+  if (sendDelay) return sendDelay;
+
+  const idle = findSubroutine(bench, "task", "idle");
+  if (!idle) return fail("IDLE_NOT_FOUND", "Keep the task idle(n) and write its body.");
+  if (ON_CLOCK_EDGE.test(idle.body)) return fail("IDLE_WAITS_ON_CLOCK", "idle must wait on @(bus.cb), not on the clock itself.");
+  if (/\bbus\s*\.\s*in_vld\s*<?=(?!=)/.test(idle.body)) return fail("RAW_DRIVE", "idle writes bus.in_vld directly. Drive it through cb: bus.cb.in_vld <= 1'b0;");
+  if (!/\bbus\s*\.\s*cb\s*\.\s*in_vld\s*<=\s*(?:1'b0|'0|0)\s*;/.test(idle.body)) return fail("IDLE_NO_DRIVE", "idle must drive in_vld low through cb: bus.cb.in_vld <= 1'b0;");
+  const idleDelay = cycleDelayOutsideInterface(idle.body, "idle");
+  if (idleDelay) return idleDelay;
+  if (!(/\b(?:repeat|for|while)\b/.test(idle.body) && WAIT_CB.test(idle.body)) && !/\bbus\s*\.\s*wait_cycles\s*\(/.test(idle.body)) {
+    return fail("IDLE_NO_CYCLES", "idle(n) must wait n clocking block events: repeat (n) @(bus.cb);");
+  }
+  return passed("Driver shape passed.");
+}
+
+function gradeClockingMonitor(code: string): GraderResult {
+  const monitor = findSubroutine(benchCode(code), "task", "monitor");
+  if (!monitor) return fail("MONITOR_NOT_FOUND", "Keep the task monitor() and write its body.");
+  if (ON_CLOCK_EDGE.test(monitor.body)) {
+    return fail(
+      "MONITOR_WAITS_ON_CLOCK",
+      "The monitor waits on the clock itself. A process woken by @(posedge clk) runs with the edge, before or after mon_cb stores its new samples, so a read of mon_cb there races (1800-2023 14.13). Wait on @(bus.mon_cb).",
+    );
+  }
+  if (!WAIT_MON_CB.test(monitor.body)) return fail("MONITOR_NO_WAIT", "The monitor must wait for the clocking block event of the block it reads: forever begin @(bus.mon_cb); ... end");
+  if (/\bbus\s*\.\s*cb\s*\./.test(monitor.body)) return fail("MONITOR_USES_CB", "The monitor reads only mon_cb. cb belongs to the driver.");
+  const raw = /\bbus\s*\.\s*(rst_n|in_vld|in_data|out_vld|out_data)\b/.exec(monitor.body);
+  if (raw) return fail("RAW_READ", `The monitor reads bus.${raw[1]} directly. Read the sample instead: bus.mon_cb.${raw[1]}, the value from just before the edge.`);
+  if (!/\bmon_cb\s*\.\s*rst_n\b/.test(monitor.body)) return fail("CHECKS_DURING_RESET", "Skip samples taken in reset: if (bus.mon_cb.rst_n !== 1'b1) continue;");
+  if (!/\$isunknown\s*\(\s*bus\s*\.\s*mon_cb\s*\.\s*out_vld\s*\)/.test(monitor.body)) {
+    return fail("NO_X_CHECK", "Test $isunknown(bus.mon_cb.out_vld) before testing out_vld: an x on out_vld makes if (out_vld) skip the check silently.");
+  }
+  const pop = monitor.body.search(/\.\s*pop_front\s*\(/);
+  if (pop < 0) return fail("NO_POP", "Take the oldest expectation with exp_q.pop_front() when out_vld is 1.");
+  const guard = monitor.body.search(/\bexp_q\s*\.\s*size\s*\(\s*\)/);
+  if (guard < 0 || guard > pop) return fail("NO_EMPTY_GUARD", "Test exp_q.size() before pop_front: a result nobody sent is a failure, and popping an empty queue returns a default value.");
+  if (!/\$time\s*!==?\s*[\w.]+\s*\.\s*due\b|\b\w+\s*\.\s*due\s*!==?\s*\$time\b/.test(monitor.body)) {
+    return fail(
+      "NO_TIME_CHECK",
+      "Compare the arrival time with the expectation's due time: if ($time != e.due) is a failure. Without it, a result one cycle late (BUG=2) or one cycle early (the race in step 7) still passes.",
+    );
+  }
+  if (/\bout_data\s*!=(?!=)|!=(?!=)\s*bus\s*\.\s*mon_cb\s*\.\s*out_data\b/.test(monitor.body)) {
+    return fail("NOT_CASE_INEQUALITY", "Compare out_data with !==, not !=. With != an x or z bit makes the condition x, and the if takes the else branch.");
+  }
+  if (!/\bout_data\s*!==|!==\s*bus\s*\.\s*mon_cb\s*\.\s*out_data\b/.test(monitor.body)) return fail("NO_COMPARE", "Compare bus.mon_cb.out_data with the expected value using !==.");
+  if (!/\bfail_cnt\s*(?:\+\+|\+=)/.test(monitor.body) || !/\bpass_cnt\s*(?:\+\+|\+=)/.test(monitor.body)) {
+    return fail("NO_COUNT", "Count every check: pass_cnt++ on a match, fail_cnt++ with an $error on every failure.");
+  }
+  if (!/\$error\b/.test(monitor.body)) return fail("NO_ERROR_MESSAGE", "Report each failure with $error, naming the input, the actual and the expected value or time.");
+  return passed("Monitor shape passed.");
+}
+
+function gradeClockingVerdict(code: string, withStrings: string): GraderResult {
+  const bench = benchCode(code);
+  const report = findSubroutine(bench, "function", "report");
+  const reportText = findSubroutine(benchCode(withStrings), "function", "report");
+  if (!report || !reportText) return fail("REPORT_NOT_FOUND", "Keep the function report().");
+  if (!/PASS=%0d FAIL=%0d/.test(reportText.body)) return fail("NO_SUMMARY", "report() must print exactly one line in the format PASS=%0d FAIL=%0d.");
+  if (!/\bfail_cnt\s*\+=\s*exp_q\s*\.\s*size\s*\(\s*\)/.test(report.body) && !/\bfail_cnt\s*=\s*fail_cnt\s*\+\s*exp_q\s*\.\s*size/.test(report.body)) {
+    return fail("LEFTOVERS_NOT_COUNTED", "Expectations still in exp_q are results that never arrived: add exp_q.size() to fail_cnt before printing.");
+  }
+  const bothZero = /\bpass_cnt\s*==\s*0\b/.test(report.body) && /\bfail_cnt\s*==\s*0\b/.test(report.body);
+  if (!bothZero && !/\bpass_cnt\s*\+\s*fail_cnt\s*==\s*0\b/.test(report.body)) {
+    return fail("VACUOUS_PASS", "A run that checked nothing must fail: if pass_cnt == 0 && fail_cnt == 0, count a failure. Otherwise PASS=0 FAIL=0 looks like a pass.");
+  }
+
+  const main = findMainBlock(bench);
+  if (!main) return fail("MAIN_NOT_FOUND", "Keep the block initial begin : main ... end.");
+  if (/\bcb\s*\.\s*rst_n\b/.test(bench)) return fail("RESET_THROUGH_CB", RESET_HINT);
+  if (!/\bbus\s*\.\s*cb\s*\.\s*in_vld\s*<=\s*(?:1'b0|'0|0)\s*;/.test(main)) {
+    return fail("NO_INITIAL_DRIVE", "Start main with bus.cb.in_vld <= 1'b0; so the DUT sees a known in_vld from the first edge. With no clocking event yet, it lands at 5 ns (1800-2023 14.16).");
+  }
+  if (!/#\s*\(?\s*[\w.]+\s*\)?\s*bus\s*\.\s*rst_n\s*=\s*(?:1'b1|'1|1)\s*;/.test(main) && !/#\s*\(?\s*[\w.]+\s*\)?\s*;\s*bus\s*\.\s*rst_n\s*=\s*(?:1'b1|'1|1)\s*;/.test(main)) {
+    return fail("RESET_NOT_RELEASED", "Release reset directly and between edges, after a delay: #12 bus.rst_n = 1'b1;");
+  }
+  if (ON_CLOCK_EDGE.test(main)) return fail("MAIN_WAITS_ON_CLOCK", "main waits on the clock itself. Testbench code waits on @(bus.cb), the event of the block it drives.");
+  const delay = cycleDelayOutsideInterface(main, "main");
+  if (delay) return delay;
+  const runCall = main.search(/\brun_test\s*\(/);
+  if (runCall < 0) return fail("NO_TEST", "main must call run_test().");
+  if (!WAIT_CB.test(main.slice(0, runCall))) return fail("NO_FIRST_EDGE", "Wait for the first edge after reset with @(bus.cb) before run_test(): send expects to be called right after a clocking block event.");
+  if (!/\bbus\s*\.\s*wait_cycles\s*\(/.test(main.slice(runCall))) {
+    return fail("NO_DRAIN", "After run_test(), drain: bus.wait_cycles(SAMPLE_EDGES + 2); lets the last result arrive and two quiet edges pass before the verdict.");
+  }
+  return checkWatchdog(main) ?? passed("Verdict and main shape passed.");
+}
+
+/**
+ * constructs-1 (v2, "Race-Aware Interface Testbench with Clocking Blocks",
+ * milestone M1): static structural checks of the learner's pipe_if and tb_top
+ * against F4C's M1 bench, with comments ignored. They do not compile or
+ * simulate anything; the README's simulator runs are the real check.
+ */
+const clockingGrader: LabGrader = {
+  id: "sv-clocking-v1",
+  version: "1",
+  requiresSandbox: false,
+  async grade(submission) {
+    const withStrings = stripComments(submission.files.map((file) => file.content).join("\n"));
+    const code = codeOnly(withStrings);
+    switch (submission.stepId) {
+      case "clocking-blocks":
+        return gradeClockingBlocks(code);
+      case "driver":
+        return gradeClockingDriver(code);
+      case "monitor":
+        return gradeClockingMonitor(code);
+      case "verdict":
+        return gradeClockingVerdict(code, withStrings);
+      default:
+        return fail("UNKNOWN_STEP", `Step ${submission.stepId} is not graded automatically.`);
+    }
+  },
+};
+
 class LabGraderRegistry {
   private readonly graders = new Map<string, LabGrader>();
 
@@ -450,3 +692,4 @@ export const graderRegistry = new LabGraderRegistry();
 graderRegistry.register(basicsGrader);
 graderRegistry.register(basicsTaskGrader);
 graderRegistry.register(selfCheckGrader);
+graderRegistry.register(clockingGrader);

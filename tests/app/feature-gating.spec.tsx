@@ -278,21 +278,20 @@ describe('notifications page (accounts only)', () => {
   });
 });
 
-describe('draft pages (personalization means draft preview only)', () => {
-  const draftRoutes = [
-    { name: 'projects', module: '@/app/(learning)/projects/page', heading: 'Practical Projects & Case Studies' },
-    { name: 'history', module: '@/app/(learning)/history/page', heading: 'History of SystemVerilog & UVM' },
+describe('public reference pages (no switch, session or stored preferences)', () => {
+  const publicRoutes = [
+    { name: 'history', module: '@/app/(learning)/history/page', heading: 'History of SystemVerilog and UVM' },
     { name: 'resources', module: '@/app/(learning)/resources/page', heading: 'Resources' },
+    { name: 'knowledge-hub', module: '@/app/(learning)/knowledge-hub/page', heading: 'Knowledge Hub' },
+    { name: 'projects', module: '@/app/(learning)/projects/page', heading: 'Projects' },
   ];
 
-  draftRoutes.forEach(({ name, module, heading }) => {
-    it(`${name} calls notFound when personalization is off`, async () => {
-      const page = await loadRoute<PageModule>(module, { flags: { personalization: false }, defaultValue: true });
-      await expectNotFound(page);
-    });
-
-    it(`${name} renders its draft when personalization is on, and is a static page`, async () => {
-      const page = await loadRoute<PageModule>(module, { flags: { personalization: true } });
+  publicRoutes.forEach(({ name, module, heading }) => {
+    it(`${name} renders statically with every flag off`, async () => {
+      const page = await loadRoute<PageModule>(module, {
+        flags: { personalization: false, tracking: false, accountUI: false },
+        defaultValue: false,
+      });
       expect(page.dynamic).toBeUndefined();
 
       render(await page.default());
@@ -301,30 +300,15 @@ describe('draft pages (personalization means draft preview only)', () => {
       expect(notFound).not.toHaveBeenCalled();
     });
   });
-
-  it('history no longer depends on the tracking flag, a session or stored preferences', async () => {
-    const page = await loadRoute<PageModule>('@/app/(learning)/history/page', {
-      flags: { personalization: true, tracking: false, accountUI: false },
-    });
-    render(await page.default());
-    expect(screen.getByText('Interactive Timeline of SV & UVM Evolution')).toBeInTheDocument();
-    expect(screen.queryByText(/history module is paused/i)).not.toBeInTheDocument();
-  });
 });
 
-describe('assessment center (tracking means draft preview only)', () => {
-  it('calls notFound when tracking is off', async () => {
-    const page = await loadRoute<PageModule>('@/app/(learning)/assessment/page', {
-      flags: { tracking: false },
-      defaultValue: true,
-    });
-    await expectNotFound(page);
-  });
-
-  it('renders the assessment center when tracking is on', async () => {
-    const page = await loadRoute<PageModule>('@/app/(learning)/assessment/page', { flags: { tracking: true } });
-    const element = await page.default();
-    expect(element).toBeDefined();
+describe('self-assessment (built from this browser, always on)', () => {
+  it('renders whatever the tracking flag says', async () => {
+    for (const tracking of [false, true]) {
+      const page = await loadRoute<PageModule>('@/app/(learning)/assessment/page', { flags: { tracking }, defaultValue: false });
+      const element = await page.default();
+      expect(element).toBeDefined();
+    }
     expect(notFound).not.toHaveBeenCalled();
   });
 });

@@ -66,8 +66,12 @@ test.describe('Interactive lab framework (anonymous)', () => {
     expect(response?.status()).toBe(404);
   });
 
-  test('returns 404 for a coming-soon lab', async ({ page }) => {
-    const response = await page.goto('/practice/lab/fifo-1');
-    expect(response?.status()).toBe(404);
+  // Every registered lab is available, so no coming-soon lab is left to 404;
+  // tests/app/lab-page.test.tsx checks that any future one would.
+  test('opens the labs rebuilt in phase 6a', async ({ page }) => {
+    for (const labId of ['constructs-1', 'common-1', 'fifo-1', 'assertions-1', 'arbiter-1', 'dma-1', 'multi-agent-vseq']) {
+      const response = await page.goto(`/practice/lab/${labId}`);
+      expect(response?.status(), labId).toBe(200);
+    }
   });
 });
