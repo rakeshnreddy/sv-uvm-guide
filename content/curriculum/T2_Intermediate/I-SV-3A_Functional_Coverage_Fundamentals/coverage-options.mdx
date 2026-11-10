@@ -61,6 +61,33 @@ A **clocking block** ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/inde
 
 The trap is *when you read the clockvar*. The clocking block updates its clockvars at the clock edge and then triggers its own **clocking block event**, `@(mon_cb)`, in the Observed region (§14.10). A process that waits on `@(mon_cb)` is guaranteed to read the updated values. A process that waits on `@(posedge clk)` and then reads `mon_cb.addr` races with that update: §14.13 says it "may display the old or the newly updated sampled value". So a covergroup clocked on `@(posedge clk)` whose coverpoints read clockvars can count values one clock stale, with no message.
 
+The same time slot as a picture. Covergroup A is clocked on `@(posedge clk)` and covergroup B on `@(mon_cb)`; both read the clockvar `mon_cb.addr`.
+
+<SequenceDiagram
+  title="One clock edge, region by region: who reads which addr"
+  caption="Time runs down the page through one time slot at a rising edge of clk (IEEE 1800-2023 §4.4.2). The clocking block takes its #1step sample in Preponed, then updates mon_cb.addr when it processes posedge clk, before it triggers @(mon_cb) in Observed (§14.13, §14.10). Covergroup A wakes on the same posedge in an unspecified order relative to that update, so it may read the old or the new sample: the race. Covergroup B always reads this edge's sample. The last divider is where type_option.strobe = 1 would move A's clocked sample (§19.3)."
+  columnWidth={140}
+  participants={[
+    { id: "dut", label: "clk and DUT", sublabel: "addr written with <=", kind: "dut" },
+    { id: "cb", label: "mon_cb", sublabel: "input addr, #1step", kind: "interface" },
+    { id: "cga", label: "covergroup A", sublabel: "@(posedge clk)", kind: "subscriber" },
+    { id: "cgb", label: "covergroup B", sublabel: "@(mon_cb)", kind: "subscriber" }
+  ]}
+  messages={[
+    { kind: "divider", label: "Preponed region" },
+    { kind: "self", from: "cb", label: "#1step: keeps addr's pre-edge value" },
+    { kind: "divider", label: "Active region: posedge clk" },
+    { from: "dut", to: "cb", label: "posedge: update clockvar mon_cb.addr" },
+    { from: "dut", to: "cga", label: "posedge: A samples mon_cb.addr", tone: "error" },
+    { kind: "note", from: "cb", to: "cga", label: "These two run in either order: A may count the old or the new sample (§14.13)", tone: "error" },
+    { kind: "divider", label: "NBA region" },
+    { kind: "self", from: "dut", label: "addr <= next value (post-edge)" },
+    { kind: "divider", label: "Observed region" },
+    { from: "cb", to: "cgb", label: "@(mon_cb) fires: B counts this edge's sample", tone: "active" },
+    { kind: "divider", label: "Postponed region: strobe samples land here" }
+  ]}
+/>
+
 The visualizer below, from F4C, compares three ways of reading a clocked signal. Predict which reading style returns the same value on every simulator, then reveal the table.
 
 <ClockingBlockSkewVisualizer />
@@ -99,6 +126,14 @@ endinterface
 
 Two more pitfalls belong here. A covergroup clocked on `@(mon_cb)` that reads the **raw** signals (`addr` instead of `mon_cb.addr`) sees post-edge values, because the clocking block event fires in Observed, after this edge's nonblocking updates. And `type_option.strobe = 1` moves clocked samples to the Postponed region at the end of the time slot, at most one per slot: raw signals then hold their post-edge values too, while clockvars still hold the clocking block's pre-edge sample.
 
+**Trigger and read source in one table.** What a coverpoint counts at one edge depends on both, assuming the DUT writes `addr` with a nonblocking assignment and the clocking block uses the default `#1step` input skew:
+
+| The covergroup samples on… | …and reads raw `addr` | …and reads clockvar `mon_cb.addr` |
+| --- | --- | --- |
+| `@(posedge clk)` (Active) | the pre-edge value, safe only while nothing writes `addr` with a blocking assignment at the edge | **race:** the previous edge's sample or this edge's (§14.13) |
+| `@(mon_cb)` (Observed) | the **post-edge** value | this edge's sample: **the safe pair** (§14.10, §14.13) |
+| `@(posedge clk)` with `type_option.strobe = 1` (Postponed) | the **post-edge** value | this edge's sample (§19.3, §14.13) |
+
 ### Guards: iff on coverpoints, bins and crosses
 
 An **`iff` guard** is a condition evaluated at each sample (§19.5, §19.6). When it is false, the guarded item ignores that sample.
@@ -107,6 +142,33 @@ An **`iff` guard** is a condition evaluated at each sample (§19.5, §19.6). Whe
 - On a cross, `cross cp_addr, cp_op iff (!reset)` ignores the cross for that sample, and each cross bin may have its own `iff`.
 
 A guard only filters samples that happen; it never causes one. A guard that is always false is a common reason for a coverpoint stuck at 0%.
+
+**Predict: a guard on one bin only.** Take the 8-edge bus trace from the sampling tab above. At edges 0 to 7, `valid` is 0, 1, 0, 1, 0, 0, 1, 0 and `addr` is 13, 12, 14, 2, 15, 13, 0, 12. The covergroup samples on `@(posedge clk)`, and its coverpoint has no guard; only one of its bins does:
+
+```systemverilog
+// snippet
+covergroup cg_guard @(posedge clk);
+  cp_addr: coverpoint addr {
+    bins low  = {[0:3]} iff (valid);   // only this bin is guarded
+    bins high = {[12:15]};
+  }
+endgroup
+```
+
+How many hits do `low` and `high` collect over the 8 edges?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the hits edge by edge</summary>
+
+| Edge | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `valid`, `addr` | 0, 13 | 1, 12 | 0, 14 | 1, 2 | 0, 15 | 0, 13 | 1, 0 | 0, 12 |
+| `low` (guarded) | | | | hit | | | hit | |
+| `high` (no guard) | hit | hit | hit | | hit | hit | | hit |
+
+`low` collects 2 hits and `high` collects 6. The bin guard filters only `low`; `high` still counts every idle edge with a leftover address, exactly like the tab's *no iff* style. Moving the guard up to the coverpoint (`coverpoint addr iff (valid)`) filters both bins: `low` keeps 2 hits and `high` drops to 1.
+
+</details>
 
 ### Options: what you can set, and where
 
@@ -122,6 +184,15 @@ covergroup cg_pkt with function sample(pkt_t pkt);
   }
 endgroup
 ```
+
+**Predict before you read the table.** A different covergroup sets `option.at_least = 2` and `option.weight = 3` at covergroup level, and its coverpoint `cp_kind` sets neither. The defaults are `at_least` 1 and `weight` 1. Some covergroup-level options become the default for every coverpoint and cross; others only describe the covergroup itself. Which values does `cp_kind` end up with? Then check your answer against the fourth column.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+`cp_kind` gets `at_least` 2 and `weight` 1. `at_least` set at covergroup level is the default for every coverpoint and cross. `weight` is one of four options that never are: the covergroup's `weight = 3` only weighs this covergroup in the total above it (§19.7).
+
+</details>
 
 | Option | Default | Allowed at | A covergroup-level value is the default for coverpoints and crosses? | Can be assigned after `new`? | Why you use it |
 | --- | --- | --- | --- | --- | --- |
@@ -144,7 +215,52 @@ endgroup
 
 Read the fourth column carefully. **Except for `weight`, `goal`, `comment` and `per_instance`, an option set at covergroup level is the default for every coverpoint and cross**, which can override it (§19.7). So `option.at_least = 2` at covergroup level raises the threshold of every coverpoint and every cross; `option.goal = 90` at covergroup level changes only the covergroup's own goal. Type options set at covergroup level are never defaults for lower levels, except `real_interval` (§19.7.1).
 
+<ArchitectureDiagram
+  title="Which covergroup-level options reach the items below"
+  caption="A covergroup sets option.at_least = 2, option.goal = 90 and option.weight = 2. Only at_least travels down the dotted configuration arrows as a default (§19.7): cp_kind and the cross inherit at_least 2 and keep goal 100 and weight 1. cp_len writes its own option.at_least = 3, and its own value wins over the default. goal, weight, comment and per_instance never leave the covergroup box."
+  cellWidth={150}
+  gapX={40}
+  gapY={64}
+  nodes={[
+    { id: "cg", label: "covergroup level", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 1, container: true },
+    { id: "down", label: "at_least = 2", sublabel: "default for every item", kind: "generic", col: 1, row: 0, state: "active" },
+    { id: "stay", label: "goal 90, weight 2", sublabel: "the covergroup's own only", kind: "generic", col: 2, row: 0, state: "dim" },
+    { id: "cpk", label: "cp_kind", sublabel: "at_least 2, goal 100", kind: "generic", col: 0, row: 1 },
+    { id: "cpl", label: "cp_len", sublabel: "own at_least 3 wins", kind: "generic", col: 1, row: 1 },
+    { id: "crs", label: "cross", sublabel: "at_least 2, weight 1", kind: "generic", col: 2, row: 1 }
+  ]}
+  edges={[
+    { from: "down", to: "cpk", style: "control", label: "default" },
+    { from: "down", to: "cpl", style: "control", label: "overridden" },
+    { from: "down", to: "crs", style: "control", label: "default" }
+  ]}
+  spreadAnchors
+/>
+
 Three more rules from §19.7: option assignments in the definition are evaluated when the instance is built with `new`, so a covergroup argument can set an option (`option.at_least = arg;`); setting the same option twice in one definition is an error; and `auto_bin_max`, `detect_overlap` and `cross_retain_auto_bins` cannot be assigned procedurally. The options that can be assigned after `new` use the instance's hierarchy, as in `cov.option.comment = "agent 0";` or `cov.cp_len.option.weight = 3;`.
+
+**Legal or not?** Each statement runs after `cov = new();`, where `cov` is an instance of covergroup type `cg_bus`, which has a coverpoint `cp_len`. Use the last column of the table to decide which statements compile, then open the answers.
+
+1. `cov.option.comment = "agent 0";`
+2. `cov.cp_len.option.weight = 3;`
+3. `cov.option.per_instance = 1;`
+4. `cov.option.auto_bin_max = 16;`
+5. `cg_bus::type_option.merge_instances = 1;`
+6. `cg_bus::type_option.strobe = 1;`
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answers</summary>
+
+| # | Legal after `new`? | Why |
+| --- | --- | --- |
+| 1 | yes | `comment` can be assigned through the instance |
+| 2 | yes | a coverpoint's `option.weight` is reached through the instance hierarchy |
+| 3 | **no** | `per_instance` is definition only |
+| 4 | **no** | `auto_bin_max` is definition only (§19.7) |
+| 5 | yes | type options are assigned through the type with `::` (§19.7.1) |
+| 6 | **no** | `strobe` is a definition-only type option |
+
+</details>
 
 ### option versus type_option
 
@@ -172,6 +288,45 @@ Three more rules from §19.7: option assignments in the definition are evaluated
 />
 
 Two consequences follow. First, `option.per_instance` defaults to 0: unless you set it to 1, a tool is not required to save each instance's numbers, and only the type number is guaranteed in the database (Table 19-1). Second, two instances can never hold different `type_option` values, which is why the standard makes type options constant expressions. How the type number is computed from the instances, with and without `merge_instances`, and how to query both numbers while the test runs, is [I-SV-3B Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis)' topic. In one line: by default the type number is the weighted average of the instances (§19.11.3).
+
+### Recap: from one sample to a percentage
+
+<VisualRecap
+  title="The event decides when, guards decide whether, options decide how it counts"
+  rule="A covergroup samples only on its coverage event or a sample() call; each iff guard then decides whether its coverpoint, bin or cross uses that sample; a bin is covered once its hits reach at_least, and the covergroup's percentage is the option.weight average of its coverpoints and crosses. Set options at the lowest level that needs them, because a covergroup-level option other than weight, goal, comment and per_instance becomes every item's default."
+  code={`covergroup cg_pkt with function sample(pkt_t pkt);
+  option.per_instance = 1;            // definition only
+  cp_len: coverpoint pkt.length iff (pkt.valid) {
+    option.at_least = 3;              // this coverpoint only
+    bins len_small = {[0:63]};
+  }
+endgroup`}
+  mistake="A clocked covergroup with no iff counts idle edges, and option.at_least set at covergroup level for one coverpoint's sake raises the threshold of every coverpoint and cross."
+  inTestbench="A monitor or coverage collector calls cov.sample(t) once per observed transaction; an interface-level covergroup samples on @(cb) with an iff on the clockvar valid."
+>
+  <ArchitectureDiagram
+    title="From one sample to a covergroup percentage"
+    caption="Read left to right, then down. A trigger causes a sample; guards filter it per item; bins count hits and close at at_least; each item's percentage is its covered bins over its bins (§19.11.1, §19.11.2); the covergroup's percentage is the option.weight average of its items (§19.11), reported against option.goal."
+    cellWidth={150}
+    gapX={64}
+    gapY={56}
+    nodes={[
+      { id: "trig", label: "trigger", sublabel: "event, sample() or sample(t)", kind: "generic", col: 0, row: 0, state: "active" },
+      { id: "guard", label: "iff guards", sublabel: "coverpoint, bin or cross", kind: "generic", col: 1, row: 0 },
+      { id: "bins", label: "bins count hits", sublabel: "covered at at_least", kind: "generic", col: 1, row: 1 },
+      { id: "item", label: "item %", sublabel: "covered bins ÷ bins", kind: "generic", col: 0, row: 1 },
+      { id: "cg", label: "covergroup %", sublabel: "option.weight average", kind: "generic", col: 0, row: 2 },
+      { id: "goal", label: "report", sublabel: "% against option.goal", kind: "generic", col: 1, row: 2, state: "ok" }
+    ]}
+    edges={[
+      { from: "trig", to: "guard", style: "data", label: "sample" },
+      { from: "guard", to: "bins", style: "data", label: "passes" },
+      { from: "bins", to: "item", style: "data", label: "hits" },
+      { from: "item", to: "cg", style: "data", label: "%" },
+      { from: "cg", to: "goal", style: "data", label: "%" }
+    ]}
+  />
+</VisualRecap>
 
 ### Mistakes to avoid
 
@@ -227,6 +382,9 @@ endmodule
 
 **Predict first.** Which bins does each packet hit, which bins reach their `at_least`, and what are the three percentages? Packet 4 has `valid` = 0.
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the hits, the output and why</summary>
+
 | # | valid, kind, length | `cp_kind` | `cp_len` | `len_small` hits (needs 3) |
 | --- | --- | --- | --- | --- |
 | 1 | 1, 0, 10 | `auto[0]` | `len_small` | 1 |
@@ -249,7 +407,68 @@ Why these numbers:
 - `cp_len` has 5 bins and needs 3 hits per bin. Only `len_small` reached 3; `len_large[0]` and `len_large[2]` have one hit each and do not count yet: 1 of 5 = 20%.
 - The covergroup is the average of its two items, each with weight 1, because the covergroup-level `weight = 2` does not propagate: (75 + 20) ÷ 2 = 47.5%. The goal of 90 is also the covergroup's own; each coverpoint's goal stays 100.
 
-Try one change in your head: move `option.at_least = 3` from `cp_len` to the covergroup level. Then `cp_kind` also needs 3 hits per bin, only `auto[0]` reaches it, and `cp_kind` drops to 25%.
+<figure className="my-6">
+<svg viewBox="0 0 360 252" role="img" aria-labelledby="co-bars-title" aria-describedby="co-bars-desc" style={{ width: "100%", maxWidth: 380 }}>
+  <title id="co-bars-title">{"Hits per bin after the six packets, against each coverpoint's at_least"}</title>
+  <desc id="co-bars-desc">{"Two bar charts. cp_kind, at_least 1: auto[0] has 3 hits, auto[1] 1, auto[2] 1, all covered; auto[3] has 0 hits and is a hole, because packet 4 with kind 3 was ignored by the guard. 3 of 4 covered, 75 percent. cp_len, at_least 3: len_small has 3 hits and is covered; len_large[0] and len_large[2] have 1 hit each and len_large[1] and len_large[3] have 0, so all four are holes. 1 of 5 covered, 20 percent."}</desc>
+  <text x="4" y="14" fontSize="11" fontWeight="700" fill="currentColor">{"cp_kind: 3 of 4 bins covered = 75%"}</text>
+  <line x1="4" y1="84" x2="356" y2="84" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="20" y="42" width="50" height="42" className="fill-emerald-500/30 stroke-emerald-600 dark:stroke-emerald-400" />
+  <text x="45" y="38" fontSize="10" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <text x="45" y="98" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"auto[0]"}</text>
+  <text x="45" y="110" fontSize="10" textAnchor="middle" fontWeight="700" fill="currentColor">{"✓ covered"}</text>
+  <rect x="100" y="70" width="50" height="14" className="fill-emerald-500/30 stroke-emerald-600 dark:stroke-emerald-400" />
+  <text x="125" y="66" fontSize="10" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="125" y="98" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"auto[1]"}</text>
+  <text x="125" y="110" fontSize="10" textAnchor="middle" fontWeight="700" fill="currentColor">{"✓ covered"}</text>
+  <rect x="180" y="70" width="50" height="14" className="fill-emerald-500/30 stroke-emerald-600 dark:stroke-emerald-400" />
+  <text x="205" y="66" fontSize="10" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="205" y="98" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"auto[2]"}</text>
+  <text x="205" y="110" fontSize="10" textAnchor="middle" fontWeight="700" fill="currentColor">{"✓ covered"}</text>
+  <text x="285" y="80" fontSize="10" textAnchor="middle" fill="currentColor">{"0"}</text>
+  <text x="285" y="98" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"auto[3]"}</text>
+  <text x="285" y="110" fontSize="10" textAnchor="middle" fontWeight="400" fill="currentColor">{"hole"}</text>
+  <line x1="4" y1="70" x2="356" y2="70" stroke="currentColor" strokeDasharray="4 3" strokeOpacity="0.8" />
+  <text x="356" y="66" fontSize="10" textAnchor="end" fill="currentColor">{"at_least 1"}</text>
+  <line x1="0" y1="124" x2="360" y2="124" stroke="currentColor" strokeOpacity="0.15" />
+  <text x="4" y="144" fontSize="11" fontWeight="700" fill="currentColor">{"cp_len: 1 of 5 bins covered = 20%"}</text>
+  <line x1="4" y1="214" x2="356" y2="214" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="14" y="172" width="46" height="42" className="fill-emerald-500/30 stroke-emerald-600 dark:stroke-emerald-400" />
+  <text x="37" y="168" fontSize="10" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <text x="37" y="228" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"small"}</text>
+  <text x="37" y="240" fontSize="10" textAnchor="middle" fontWeight="700" fill="currentColor">{"✓ covered"}</text>
+  <rect x="84" y="200" width="46" height="14" className="fill-amber-500/20 stroke-amber-600 dark:stroke-amber-400" />
+  <text x="107" y="196" fontSize="10" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="107" y="228" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"large[0]"}</text>
+  <text x="107" y="240" fontSize="10" textAnchor="middle" fontWeight="400" fill="currentColor">{"hole 1/3"}</text>
+  <text x="177" y="210" fontSize="10" textAnchor="middle" fill="currentColor">{"0"}</text>
+  <text x="177" y="228" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"large[1]"}</text>
+  <text x="177" y="240" fontSize="10" textAnchor="middle" fontWeight="400" fill="currentColor">{"hole"}</text>
+  <rect x="224" y="200" width="46" height="14" className="fill-amber-500/20 stroke-amber-600 dark:stroke-amber-400" />
+  <text x="247" y="196" fontSize="10" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <text x="247" y="228" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"large[2]"}</text>
+  <text x="247" y="240" fontSize="10" textAnchor="middle" fontWeight="400" fill="currentColor">{"hole 1/3"}</text>
+  <text x="317" y="210" fontSize="10" textAnchor="middle" fill="currentColor">{"0"}</text>
+  <text x="317" y="228" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"large[3]"}</text>
+  <text x="317" y="240" fontSize="10" textAnchor="middle" fontWeight="400" fill="currentColor">{"hole"}</text>
+  <line x1="4" y1="172" x2="356" y2="172" stroke="currentColor" strokeDasharray="4 3" strokeOpacity="0.8" />
+  <text x="356" y="168" fontSize="10" textAnchor="end" fill="currentColor">{"at_least 3"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Hits per bin after the six packets (y-axis: hits; dashed line: the coverpoint's <code>at_least</code>). A bin is covered only when its bar reaches the line. <code>small</code> is <code>len_small</code> and <code>large[k]</code> is <code>len_large[k]</code>. Packet 4 adds nothing to either chart because its guard was false.</figcaption>
+</figure>
+
+The covergroup line, written as the weighted average of §19.11 with both item weights filled in: (1 × 75 + 1 × 20) ÷ (1 + 1) = 47.5%. The covergroup's own `weight = 2` appears nowhere in this sum; it only weighs this instance in the totals above it.
+
+</details>
+
+Try one change in your head: move `option.at_least = 3` from `cp_len` to the covergroup level. What does `cp_kind` report now?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check the changed number</summary>
+
+Then `cp_kind` also needs 3 hits per bin, only `auto[0]` reaches it, and `cp_kind` drops to 25%. `cp_len` already needed 3 hits, so it stays at 20%, and `cg_pkt` falls to (25 + 20) ÷ 2 = 22.5%.
+
+</details>
 
 ### Run it
 
@@ -296,6 +515,33 @@ From §19.3, §19.5, §19.8.1 and §14.13:
 - **A clocking event may use covergroup arguments,** for example `covergroup cg (ref logic clk) @(posedge clk);`.
 - **Assertion coverage:** because a `sample()` with arguments can be called from anywhere, a concurrent assertion's match item can call it and pass an assertion local variable, as in §19.8.1's `@(posedge clk) (a, x = b) ##1 (c, cg1.sample(a, x))`. Assertions and local variables are taught in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and I-SV-4B.
 
+The block-event bullet as a picture, with two covergroups on one task: `cg_b @@(begin drive_item)` and `cg_e @@(end drive_item)`.
+
+<SequenceDiagram
+  title="Block events: a sample at the start and the end of each call, but none at the end of a disabled call"
+  caption="Time runs down the page. The begin event triggers immediately before drive_item executes its first statement and the end event immediately after it executes its last statement (§19.3). The second call is disabled part-way through its body, so its end event never triggers and cg_e misses that call. type_option.strobe has no effect on either block event (§19.3)."
+  columnWidth={150}
+  participants={[
+    { id: "drv", label: "caller", sublabel: "a driver process", kind: "driver" },
+    { id: "task", label: "drive_item", sublabel: "task", kind: "generic" },
+    { id: "cgb", label: "cg_b", sublabel: "@@(begin drive_item)", kind: "subscriber" },
+    { id: "cge", label: "cg_e", sublabel: "@@(end drive_item)", kind: "subscriber" }
+  ]}
+  messages={[
+    { kind: "divider", label: "Call 1 runs to the end" },
+    { from: "drv", to: "task", label: "drive_item(t)" },
+    { kind: "async", from: "task", to: "cgb", label: "begin: cg_b samples", tone: "active" },
+    { kind: "self", from: "task", label: "body runs to its last statement" },
+    { kind: "async", from: "task", to: "cge", label: "end: cg_e samples", tone: "active" },
+    { kind: "return", from: "task", to: "drv", label: "returns" },
+    { kind: "divider", label: "Call 2 is disabled part-way through" },
+    { from: "drv", to: "task", label: "drive_item(t)" },
+    { kind: "async", from: "task", to: "cgb", label: "begin: cg_b samples", tone: "active" },
+    { kind: "self", from: "task", label: "disabled by another process", tone: "error" },
+    { kind: "note", from: "cge", label: "No sample: the end event of a disabled task never triggers", tone: "error" }
+  ]}
+/>
+
 Interview angle: "Your clocked covergroup and your monitor disagree by exactly one transfer on some simulators and not others. Why?" (A clockvar read after `@(posedge clk)` races with the clocking block's update.)
 
 ### Expert: weights, zero denominators and counting only the cross
@@ -306,6 +552,18 @@ From §19.7, §19.7.1 and §19.11:
 - **Zero denominators:** an item or covergroup whose denominator is zero (every bin empty, every weight zero, or no items) contributes nothing; it reports 0.0 if its own weight is nonzero and 100.0 if its weight is zero (§19.11, §19.11.1, §19.11.2).
 - **Option arguments:** because options are evaluated at `new`, `covergroup cg (int w) …; option.weight = w;` gives each instance its own weight, but `type_option.weight = w` is a syntax error: type options take constant expressions only (§19.7.1).
 - **Merged `at_least`:** when instances are merged, a bin counts as covered only if its total hits reach the largest `at_least` of all instances (§19.11.1).
+
+**Predict: count only the cross.** A covergroup has two coverpoints at 50% each and their cross at 25%. Its covergroup percentage is the average of the three items weighted by each item's `option.weight`. What does it report with every weight at 1, and with `option.weight = 0` on both coverpoints?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the two averages</summary>
+
+| Item weights (cp_a, cp_b, cross) | Weighted average | Covergroup reports |
+| --- | --- | --- |
+| 1, 1, 1 | (1 × 50 + 1 × 50 + 1 × 25) ÷ (1 + 1 + 1) | 41.67% |
+| 0, 0, 1 | (0 × 50 + 0 × 50 + 1 × 25) ÷ (0 + 0 + 1) | 25%: only the cross counts |
+
+</details>
 
 ### Expert: interview angles
 

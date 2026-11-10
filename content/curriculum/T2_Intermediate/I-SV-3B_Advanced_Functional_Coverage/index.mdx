@@ -17,6 +17,20 @@ sources:
 - **Why it matters:** Coverage is the evidence that the planned scenarios *happened*. Checks (a scoreboard compare, an assertion) are the evidence that the design behaved *correctly* in them. A project signs off only when both are complete for every plan row. Milestone M4 (a coverage-driven environment with a closure loop) is gated on this module, and the classic escapes happen exactly where people confuse the two, or exclude a hole to reach a number.
 - **The Analogy:** A flight-test campaign. The test plan lists the manoeuvres; the flight log (coverage) records which ones were flown; the instruments and the inspector (checks) decide whether the aircraft behaved. *Where it breaks:* a test pilot can be ordered to fly a manoeuvre, but random stimulus cannot. You change probabilities or write a directed test, and some manoeuvres are impossible on this aircraft (unreachable) or forbidden by the rules (illegal).
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Analogy mapping: each part of the flight test and where it stops working</summary>
+
+| Flight-test campaign | Coverage closure |
+|---|---|
+| The test plan lists the manoeuvres | The verification plan lists the scenarios, one row each |
+| The flight log records which manoeuvres were flown | Coverage records which scenarios happened |
+| The instruments and the inspector judge the aircraft | Checks (a scoreboard compare, an assertion) judge the design |
+| *Breaks:* a pilot can be ordered to fly a manoeuvre | Random stimulus cannot: change probabilities or write a directed test |
+| *Breaks:* a manoeuvre impossible on this aircraft | An unreachable scenario |
+| *Breaks:* a manoeuvre forbidden by the rules | An illegal (forbidden) scenario |
+
+</details>
+
 **You will be able to:**
 1. **Explain** why a covered plan row is not a verified one, and **decide** whether a row is closed from its coverage items and its checks.
 2. **Design** where each piece of a closure-capable testbench lives (collector, checker, stimulus, stop decision), and **justify** ending stimulus at the coverage goal or the budget without skipping a single check.
@@ -32,6 +46,22 @@ Review if needed: `dist` weights from [I-SV-2A](/curriculum/T2_Intermediate/I-SV
 1. [Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage): plan rows, plan IDs in `option.comment`, instance names (objective 1 in depth).
 2. [Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis): type vs instance coverage, every query method, `start()`/`stop()`, goals and weights, the coverage system tasks (objectives 2 and 3 in depth).
 3. [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): hole classification, exclusions and waivers, steering, budgets, regression merging and code coverage (objectives 4 and 5 in depth).
+
+<ArchitectureDiagram
+  title="The four pages of I-SV-3B, in reading order"
+  caption="Follow the arrows: This core page first, then the three sub-lessons. Each box names the objectives it takes deeper."
+  nodes={[
+    { id: "core", label: "This core page", sublabel: "objectives 1 to 5", kind: "generic", col: 0, row: 0, state: "active" },
+    { id: "linking", label: "Linking to the Plan", sublabel: "objective 1", kind: "generic", col: 1, row: 0 },
+    { id: "apis", label: "Coverage APIs", sublabel: "objectives 2 and 3", kind: "generic", col: 1, row: 1 },
+    { id: "loop", label: "Closure Loop", sublabel: "objectives 4 and 5", kind: "generic", col: 0, row: 1 }
+  ]}
+  edges={[
+    { from: "core", to: "linking", style: "causal" },
+    { from: "linking", to: "apis", style: "causal" },
+    { from: "apis", to: "loop", style: "causal" }
+  ]}
+/>
 
 ## Build Your Mental Model
 
@@ -98,7 +128,12 @@ Read the picture as a 2×2: is the scenario covered, and was it checked?
 | ALU-5 | every operation with each edge of `b`; DIV with `b == 0` is forbidden by the spec | `x_op_b` (lab): 13 cells that count, plus the illegal bin | ALU-6 compare, plus the constraint and a forbidden-input check |
 | ALU-6 | the result `y` always equals the reference model | none: exercised by ALU-1 to ALU-5 | `y !== alu_model(...)` in `tb_top` |
 
-**A traced example.** Suppose the DUT has a bug: SUB computes `b - a` instead of `a - b`. The covergroup samples `op` and `a` (inputs), so it counts the same bins whether the result is right or wrong:
+**A traced example.** Suppose the DUT has a bug: SUB computes `b - a` instead of `a - b`. The covergroup samples `op` and `a` (inputs), so it counts the same bins whether the result is right or wrong.
+
+**Predict first.** The ALU-6 check compares the DUT's 8-bit `y` with `alu_model`, which computes `a - b` for SUB (results wrap modulo 256). Four transactions run: (1) SUB, `a = 8'h00`, `b = 8'h05`; (2) ADD, `a = 8'hFF`, `b = 8'h01`; (3) SUB, `a = 8'hFF`, `b = 8'hFF`; (4) SUB, `a = 8'h10`, `b = 8'h03`. Which transactions does the check FAIL, and does any SUB transaction pass although the bug is present? Does the coverage these four transactions produce (`cp_op`, `cp_a`, `x_op_a`) differ with and without the bug?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the traced transactions</summary>
 
 | # | op | a | b | DUT `y` (bug: b − a) | `alu_model` | ALU-6 check | Bins hit |
 |---|---|---|---|---|---|---|---|
@@ -109,14 +144,32 @@ Read the picture as a 2×2: is the scenario covered, and was it checked?
 
 After four transactions coverage is the same with or without the bug: `cp_op` 2/7, `cp_a` 2/2, `x_op_a` 3/14. Only the check column knows. Row 3 shows the other half of the rule: a check catches a bug only with data that exposes it (`a == b` hides this one), which is why the plan pairs checks with coverage of interesting values.
 
-**`illegal_bins` is not a checker.** An illegal bin raises a run-time error when its covergroup instance samples a forbidden value (§19.5.6). It sees only the values that covergroup samples, only while the covergroup exists and is sampled, and its error is a simulator error, not a UVM report. Behaviour after `stop()` or a tool's coverage-off switch is tool-dependent. Use it as a second line of defence beside a constraint and a real check, never instead of them.
+</details>
+
+**`illegal_bins` is not a checker.** An illegal bin raises a run-time error when its covergroup instance samples a forbidden value (§19.5.6). Set beside a real check, the difference is plain:
+
+| | `illegal_bins` | A real check (scoreboard compare or assertion) |
+|---|---|---|
+| What it sees | Only the values that covergroup samples | The DUT behaviour it is written to compare with the expected behaviour |
+| When it runs | Only while the covergroup exists and is sampled | On every transaction or clock it is given |
+| How it reports | A simulator error, not a UVM report | Its own report, for example `$error` or a UVM error report |
+| After `stop()` or a tool's coverage-off switch | Tool-dependent | `stop()` does not touch it: `stop()` only stops collecting coverage (Table 19-5) |
+| Its role | A second line of defence beside a constraint and a real check | The evidence of correctness |
+
+Use it as a second line of defence beside a constraint and a real check, never instead of them.
 
 **Pitfalls.**
 - *"100% coverage, so the design is verified."* Coverage has no expected values (§19.11). The SUB bug above leaves every number unchanged.
 - *"The scoreboard reported zero mismatches, so the row is closed."* Zero comparisons also produce zero mismatches. A row closes when its coverage shows the scenarios reached the check and the check passed them.
 - *"Exclude the empty bin and the row is done."* An exclusion removes a bin from the denominator; the scenario still never ran. That is acceptable only for a forbidden or unreachable scenario, with a written reason.
 
-**Debugging the evidence.** When a row looks closed but a bug escaped, read the log for two signatures: the check's own pass count (did it ever compare this scenario?) and the coverage per plan row (did the scenario happen?). A row with high coverage and a check count of zero is the false-confidence quadrant. A planted bug that changes no `FAIL` count means the check cannot see it.
+**Debugging the evidence.** When a row looks closed but a bug escaped, read the log for two signatures: the check's own pass count (did it ever compare this scenario?) and the coverage per plan row (did the scenario happen?). Read the two together:
+
+| What the log shows for the row | What it means |
+|---|---|
+| High coverage, and the check compared those scenarios; a planted bug moves `FAIL` | Evidence: the row can close |
+| High coverage and a check count of zero | The false-confidence quadrant |
+| A planted bug that changes no `FAIL` count | The check cannot see it: it never runs on that path, or its data cannot expose the bug (as `a == b` hides the SUB bug) |
 
 **In a real testbench.** The scoreboard and assertions own correctness, the coverage collector owns "did it happen", and the vplan pairs them row by row. Sign-off reviews both lists, plus code coverage (introduced in F1B; how it complements functional coverage is in [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow)). Interviewers ask this as "you hit 100% coverage and a bug escaped: how?". Push Further lists the answers.
 
@@ -166,7 +219,44 @@ Each step has a page:
 | ≈ 1/1792 (uniform `a`) | 24.4% | 56.7% | ≈ 5,370 |
 | ≈ 1/28 (steered `a`) | ≈ 100% | ≈ 100% | ≈ 83 |
 
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 222" role="img" aria-label="Chart of the chance that N samples hit one x_op_a cell at least once. With uniform a, p about 1/1792, the curve reaches 24% at 500 samples, 57% at 1,500 and 95% only at about 5,370. With steered a, p about 1/28, the curve passes 95% after about 83 samples. Thin grey dashed lines mark budgets of 500 and 1,500 samples, and a dotted line the 95% level." style={{ width: "100%", maxWidth: 440 }}>
+    <line x1="44" y1="30" x2="44" y2="180" stroke="currentColor" strokeWidth="1" />
+    <line x1="44" y1="180" x2="344" y2="180" stroke="currentColor" strokeWidth="1" />
+    <line x1="44" y1="37.5" x2="344" y2="37.5" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="2 3" />
+    <line x1="69" y1="30" x2="69" y2="180" stroke="currentColor" strokeOpacity="0.4" strokeWidth="0.75" strokeDasharray="4 3" />
+    <line x1="119" y1="30" x2="119" y2="180" stroke="currentColor" strokeOpacity="0.4" strokeWidth="0.75" strokeDasharray="4 3" />
+    <path d="M 44.0 180.0 L 56.5 160.5 L 69.0 143.5 L 81.5 128.7 L 94.0 115.8 L 106.5 104.7 L 119.0 94.9 L 131.5 86.5 L 144.0 79.1 L 156.5 72.7 L 169.0 67.2 L 181.5 62.3 L 194.0 58.1 L 206.5 54.4 L 219.0 51.3 L 231.5 48.5 L 244.0 46.1 L 256.5 44.0 L 269.0 42.2 L 281.5 40.6 L 294.0 39.2 L 306.5 38.0 L 319.0 37.0 L 331.5 36.1 L 344.0 35.3" fill="none" className="stroke-amber-600 dark:stroke-amber-400" strokeWidth="2.5" />
+    <path d="M 44.0 180.0 L 44.2 155.1 L 44.5 134.3 L 44.8 116.9 L 45.0 102.5 L 45.5 80.4 L 46.0 65.0 L 46.8 50.3 L 47.5 41.8 L 48.2 36.8 L 49.0 34.0 L 50.5 31.3 L 52.5 30.3 L 56.5 30.0 L 64.0 30.0 L 344.0 30.0" fill="none" className="stroke-emerald-600 dark:stroke-emerald-400" strokeWidth="2.5" strokeDasharray="7 2.5 1.5 2.5" />
+    <line x1="62" y1="25" x2="50.5" y2="35" stroke="currentColor" strokeWidth="1" />
+    <circle cx="48.2" cy="37.5" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    <circle cx="69" cy="143.5" r="3" fill="currentColor" />
+    <circle cx="119" cy="94.9" r="3" fill="currentColor" />
+    <circle cx="312.5" cy="37.5" r="3" fill="currentColor" />
+    <text x="73" y="160" fontSize="11" fill="currentColor">24%</text>
+    <text x="123" y="108" fontSize="11" fill="currentColor">57%</text>
+    <text x="312" y="56" fontSize="11" fill="currentColor" textAnchor="middle">95% at ≈ 5,370</text>
+    <text x="60" y="22" fontSize="11" fill="currentColor">steered a, p ≈ 1/28: 95% after ≈ 83</text>
+    <text x="160" y="125" fontSize="11" fill="currentColor">uniform a, p ≈ 1/1792</text>
+    <text x="40" y="41" fontSize="11" fill="currentColor" textAnchor="end">95%</text>
+    <text x="40" y="109" fontSize="11" fill="currentColor" textAnchor="end">50%</text>
+    <text x="40" y="184" fontSize="11" fill="currentColor" textAnchor="end">0%</text>
+    <text x="44" y="194" fontSize="11" fill="currentColor" textAnchor="middle">0</text>
+    <text x="69" y="194" fontSize="11" fill="currentColor" textAnchor="middle">500</text>
+    <text x="119" y="194" fontSize="11" fill="currentColor" textAnchor="middle">1,500</text>
+    <text x="194" y="194" fontSize="11" fill="currentColor" textAnchor="middle">3,000</text>
+    <text x="340" y="194" fontSize="11" fill="currentColor" textAnchor="end">6,000</text>
+    <text x="194" y="214" fontSize="11" fill="currentColor" textAnchor="middle">samples N</text>
+    <text x="12" y="105" fontSize="11" fill="currentColor" textAnchor="middle" transform="rotate(-90 12 105)">P(hit at least once)</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">One cell of <code>x_op_a</code>, the same numbers as the table. The x-axis is samples N from 0 to 6,000; the y-axis is P = 1 − (1 − p)^N. The thin grey dashed verticals are budgets of 500 and 1,500; the dotted line is 95%. Uniform <code>a</code> (amber, solid) needs about 5,370 samples for 95%; steered <code>a</code> (green, dash-dot) rises almost straight up at the far left, and the leader line points to where it passes 95%, after about 83 samples.</figcaption>
+</figure>
+
 All 14 cells of `x_op_a` must close, which is harder still: at 1/1792 per cell, 1,500 samples close all 14 with probability 0.035%, and a 95% chance needs about 10,050; steered to 1/28, about 155 samples give 95%. When the 95% figure is larger than your budget, steer.
+
+**Watch the long tail.** The explorer below uses a different, smaller cross, address region × operation, and starts from a biased stimulus in which one combination is hit about 1 sample in 200. Predict how many samples it needs, replay a seeded run within a sample budget and watch the last holes take longest, then switch the stimulus and compare the forecast.
+
+<CoverageCrossExplorerVisualizer initialStimulus="biased" />
 
 ### Where each piece lives in a testbench
 
@@ -420,6 +510,16 @@ Why each line looks the way it does:
 - **`PASS=250 FAIL=0`.** Every transaction was checked before it was sampled, so the pass count equals the item count. Stopping the stimulus skipped no check.
 - **`total 100.00%`.** The covergroup's instance coverage is the average of its three items, weight 1 each (§19.11), and the loop compares it with `option.goal` using `>=`, never `== 100.0`.
 
+Where the 1/4 in that 1/28 comes from: `c_corner` gives `a` a total weight of 4, and `:=` and `:/` share it differently (§18.5.3: `:=` gives the weight to every value of a range, `:/` shares it across the range).
+
+| `c_corner` item | Weight | Probability of `a` in corner mode |
+|---|---|---|
+| `8'h00 := 1` | 1 | 1/4 |
+| `8'hFF := 1` | 1 | 1/4 |
+| `[8'h01:8'hFE] :/ 2` | 2, shared by 254 values | 1/2 together, 1/508 for each value |
+
+So one `x_op_a` cell, such as ⟨SUB, `zero`⟩, has p ≈ 1/7 × 1/4 = 1/28 in corner mode, against 1/7 × 1/256 = 1/1792 with `a` uniform. The ratio holds because no other constraint mentions `a` (see Push Further).
+
 **Run it.** Save the code as `alu_closure.sv` and compile it with any simulator that supports IEEE 1800-2023 functional coverage (Clause 19); `tb_top` is the top level. Covergroup support in open-source simulators is partial or absent, and this example was not run on one (tool-dependent).
 
 **See the check do its job.** Change the DUT's SUB line to `y = b - a;` and rerun with the same seed. Every `COV` line is unchanged, and `FAIL` counts the SUB transactions whose operands differ. That is the evidence rule from Build Your Mental Model, in your own log.
@@ -500,16 +600,64 @@ These items are for working engineers and interview preparation. The core path a
 - **Compare with `>=`.** `get_inst_coverage()` returns a `real`; comparing it with `== 100.0` is fragile, and `option.goal` may be set below 100. Use `>= option.goal` of the item or the group you care about.
 - **Polling cost.** Each query asks the simulator to compute coverage over every bin of the item. Poll every N transactions, not every cycle; how much a query costs is tool-dependent.
 
+The two ways to stop, side by side:
+
+<SequenceDiagram
+  title="Stopping from the collector with $finish"
+  caption="The coverage subscriber reaches its goal and calls $finish. The simulator exits at once; SystemVerilog final procedures still run, but nothing UVM does after the run phase happens."
+  participants={[
+    { id: "cov", label: "coverage subscriber", kind: "subscriber" },
+    { id: "sim", label: "simulator", kind: "generic" },
+    { id: "sb", label: "scoreboard", kind: "scoreboard" }
+  ]}
+  messages={[
+    { kind: "self", from: "cov", label: "get_inst_coverage() >= option.goal" },
+    { from: "cov", to: "sim", label: "$finish" },
+    { kind: "note", from: "sim", label: "exits (§20.2); final procedures still run (§9.2.3)" },
+    { kind: "note", from: "cov", to: "sb", label: "skipped: compares of items still in flight; extract, check, report and final phases; report_summarize()", tone: "error" }
+  ]}
+/>
+
+<SequenceDiagram
+  title="Stopping the stimulus and dropping the objection"
+  caption="The test stops starting stimulus at the goal and drops its objection. In uvm-core 2020.3.1, uvm_root::run_test() calls report_summarize() after every phase has run, then $finish when finish_on_completion is 1 (uvm_root.svh)."
+  participants={[
+    { id: "test", label: "test", kind: "test" },
+    { id: "sb", label: "scoreboard", kind: "scoreboard" },
+    { id: "root", label: "uvm_root", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "self", from: "test", label: "goal reached: start no new stimulus" },
+    { kind: "self", from: "test", label: "phase.drop_objection(this)" },
+    { kind: "divider", label: "last objection dropped: run_phase ends" },
+    { kind: "note", from: "test", to: "root", label: "extract phase, then check phase (IEEE 1800.2-2020 §9.8.1)" },
+    { kind: "self", from: "sb", label: "check_phase: end-of-test checks" },
+    { kind: "note", from: "test", to: "root", label: "then report and final phases (IEEE 1800.2-2020 §9.8.1)" },
+    { kind: "self", from: "root", label: "run_test(): report_summarize()" },
+    { kind: "self", from: "root", label: "$finish, if finish_on_completion is 1" }
+  ]}
+/>
+
 ### Expert: steering is feedback, and `dist` is only a request
 
 - **What `dist` guarantees.** "Absent any other constraints", the probability of each item is proportional to its weight; when other constraints make the weights unsatisfiable, "implementations are only required to satisfy the constraints" (§18.5.3). This page's `c_corner` touches only `a`, which no other constraint mentions, so the ratio holds. When a steering weight interacts with a spec constraint (as `b`'s weights interact with `c_spec` in the lab), measure the result with coverage; do not assume the arithmetic.
-- **Steering changes the random stream.** Each object's generator is seeded from the thread that creates it (§18.14.1). Switching a knob, adding a constraint or adding one `randomize()` call changes the values of every later transaction, so a seed reproduces a failure only with the same code. Record the code version with the seed, and expect coverage merged across a steering change to contain stimulus that can no longer occur ([I-SV-2B Randomization Methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)).
+- **Steering changes the random stream.** Each object's generator is seeded, when `new` creates the object, with the next random value from the thread that creates it (§18.14.1, object stability). Switching a knob or adding a constraint can change the values chosen for every transaction it applies to; an extra `new()`, `std::randomize()` or `$urandom` call in the creating thread shifts the seed of every later transaction; an extra `randomize()` on an existing object changes only that object's later values. Either way, a seed reproduces a failure only with the same code. Record the code version with the seed, and expect coverage merged across a steering change to contain stimulus that can no longer occur ([I-SV-2B Randomization Methods](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)).
 - **Plateau rules are heuristics.** "No new bins in the last N transactions" is a common trigger, not a standard one. A rule that triggers too early wastes the uniform phase's broad exploration; one that triggers too late wastes budget. Tune N with the per-sample probability of your rarest legal cell.
 - **When random steering is the wrong tool.** A cell that needs a long, ordered sequence of events is better reached with a directed sequence, a `cover property` with formal reachability ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)), or a portable-stimulus scenario ([E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index)).
 
 ### Expert: code coverage beside functional coverage
 
-IEEE 1800-2023 names the two families of coverage metric (§19.2): code coverage, extracted automatically from the design code, and functional coverage, written by people from the specification. Its coverage API requires at least statement, toggle, FSM (states and transitions) and assertion coverage (§40.2.1, defined in §40.2.2); branch and condition coverage are defined by each tool. The two families answer different questions. A code-coverage hole is RTL that nothing exercised, which usually means a missing plan row or dead code; a functional hole is a planned scenario that never ran, which can hide behind 100% code coverage. Sign-off reviews both. The method, with exclusions and merging, is in [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow).
+IEEE 1800-2023 names the two families of coverage metric (§19.2), and the two families answer different questions:
+
+| | Code coverage | Functional coverage |
+|---|---|---|
+| Where it comes from | Extracted automatically from the design code | Written by people from the specification |
+| What is measured | IEEE 1800-2023's coverage API (§40.2.1, defined in §40.2.2) requires at least statement, toggle and FSM (states and transitions) coverage; branch and condition coverage are defined by each tool | The covergroups, coverpoints and crosses you write (Clause 19) |
+| What a hole means | RTL that nothing exercised, which usually means a missing plan row or dead code | A planned scenario that never ran, which can hide behind 100% code coverage |
+
+The same coverage API (§40.2.1) also requires assertion coverage. That is neither column above: it counts the assertions people write, not code extracted automatically.
+
+Sign-off reviews both. The method, with exclusions and merging, is in [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow).
 
 ### Expert: interview angles
 
@@ -634,6 +782,18 @@ More staff-level prompts to practise aloud:
     objective: 5
   }
 ]} />
+
+**One glance before the kata.** The rules of this page, each with its conditions:
+
+| Rule | Exactly |
+|---|---|
+| Evidence | A plan row is closed only when its coverage items reach their goal *and* its checks passed on those scenarios, or each remaining hole carries a reviewed, written justification |
+| Pairing | Every scenario row has at least one coverage item and at least one check; a check-only row names the scenario rows that exercise it |
+| Sampling | The collector samples once per transaction, after the check, and decides nothing |
+| Polling | `get_inst_coverage(covered, total)` reads this instance; `get_coverage()` reads the type: by default the weighted average over all instances, the union of bins when `type_option.merge_instances = 1` (§19.8, §19.11.3) |
+| Stopping | Stop the stimulus at `>= option.goal` or at the budget, let every check finish, report, then `$finish` from the top |
+| Hole classes | Forbidden: `illegal_bins`, the constraint and a check. Unreachable: a justified exclusion or waiver, with the reason and a reviewer recorded. Under-stimulated: fix the constraint, bias the stimulus, or write a directed test. Unobserved: fix the collector or the sampling |
+| Budget | P = 1 − (1 − p)^N; 1/p samples give about 63%, 95% needs about 3/p (ln 20 / p); a probability-0 bin never closes; steer when the 95% figure exceeds the budget |
 
 ### Kata: add plan row ALU-3 and steer `b`
 

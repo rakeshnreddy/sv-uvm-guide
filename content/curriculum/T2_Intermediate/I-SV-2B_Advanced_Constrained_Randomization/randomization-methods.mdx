@@ -17,6 +17,63 @@ sources:
 - **Why it matters:** A constrained-random test is only useful if a failure can be replayed. A **seed** is the number that starts the random streams; give the simulator the same seed and the same code, and every random value repeats. Change the code, even by adding one harmless-looking `new()`, and some streams shift. The failing scenario may simply vanish, so a seed that now passes proves nothing. Knowing exactly which edits shift which streams is what lets you debug a random failure instead of chasing it.
 - **The Analogy:** Every process holds a roll of pre-printed raffle tickets, and the seed decides what is printed on the roll. Each time the process creates an object or a child process, or calls `$urandom`, `std::randomize()`, `randcase` or `randsequence`, it tears off the next ticket. A new object uses its ticket to print its own private roll. Tear off one extra ticket early, and everyone served after that gets a different ticket, although nothing else changed. *Where it breaks:* a real roll cannot be rewound, but `get_randstate()` and `set_randstate()` can save and restore a generator exactly; and the numbers on these rolls look random, not 1, 2, 3, so you can only predict *which* values change, never the values themselves.
 
+<figure className="my-6">
+<svg viewBox="0 0 360 214" role="img" aria-labelledby="rm-roll-title rm-roll-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-roll-title">{"The ticket roll: three runs with the same seed"}</title>
+  <desc id="rm-roll-desc">{"One process's roll of numbered tickets, torn off in order, drawn for three runs with the same seed. Run 1, the original code: ticket 1 seeds object a, ticket 2 seeds b, ticket 3 seeds c. Run 2, with x = new() inserted before a: ticket 1 now seeds x, so a, b and c get tickets 2, 3 and 4, and all three are marked with a cross as changed. Run 3, with x = new() added after c: a, b and c keep tickets 1, 2 and 3 and are marked with a tick as unchanged; x gets ticket 4."}</desc>
+  <text x="8" y="16" fontSize="10.5" fontWeight="700" fill="currentColor">{"Run 1: the original code"}</text>
+  <circle cx="22" cy="44" r="14" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <circle cx="22" cy="44" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="40" y="26" width="46" height="36" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="63" y="39" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#1"}</text>
+  <text x="63" y="55" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"a"}</text>
+  <rect x="86" y="26" width="46" height="36" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="109" y="39" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#2"}</text>
+  <text x="109" y="55" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"b"}</text>
+  <rect x="132" y="26" width="46" height="36" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="155" y="39" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#3"}</text>
+  <text x="155" y="55" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"c"}</text>
+  <text x="234" y="37" fontSize="10" fill="currentColor">{"a, b, c get tickets"}</text>
+  <text x="234" y="51" fontSize="10" fill="currentColor">{"1, 2, 3:"}</text>
+  <text x="234" y="65" fontSize="10" fill="currentColor">{"replays exactly"}</text>
+  <text x="8" y="88" fontSize="10.5" fontWeight="700" fill="currentColor">{"Run 2: x = new() inserted before a"}</text>
+  <circle cx="22" cy="116" r="14" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <circle cx="22" cy="116" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="40" y="98" width="46" height="36" rx="3" className="fill-amber-500/15 stroke-amber-600 dark:stroke-amber-400" />
+  <text x="63" y="111" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#1"}</text>
+  <text x="63" y="127" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"x new"}</text>
+  <rect x="86" y="98" width="46" height="36" rx="3" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="109" y="111" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#2"}</text>
+  <text x="109" y="127" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"a ✕"}</text>
+  <rect x="132" y="98" width="46" height="36" rx="3" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="155" y="111" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#3"}</text>
+  <text x="155" y="127" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"b ✕"}</text>
+  <rect x="178" y="98" width="46" height="36" rx="3" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="201" y="111" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#4"}</text>
+  <text x="201" y="127" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"c ✕"}</text>
+  <text x="234" y="113" fontSize="10" fill="currentColor">{"✕ a, b, c each get"}</text>
+  <text x="234" y="127" fontSize="10" fill="currentColor">{"a different ticket"}</text>
+  <text x="8" y="160" fontSize="10.5" fontWeight="700" fill="currentColor">{"Run 3: x = new() added after c"}</text>
+  <circle cx="22" cy="188" r="14" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <circle cx="22" cy="188" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="40" y="170" width="46" height="36" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="63" y="183" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#1"}</text>
+  <text x="63" y="199" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"a ✓"}</text>
+  <rect x="86" y="170" width="46" height="36" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="109" y="183" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#2"}</text>
+  <text x="109" y="199" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"b ✓"}</text>
+  <rect x="132" y="170" width="46" height="36" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="155" y="183" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#3"}</text>
+  <text x="155" y="199" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"c ✓"}</text>
+  <rect x="178" y="170" width="46" height="36" rx="3" className="fill-amber-500/15 stroke-amber-600 dark:stroke-amber-400" />
+  <text x="201" y="183" fontSize="9" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#4"}</text>
+  <text x="201" y="199" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"x new"}</text>
+  <text x="234" y="185" fontSize="10" fill="currentColor">{"✓ a, b, c keep"}</text>
+  <text x="234" y="199" fontSize="10" fill="currentColor">{"their tickets"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">◇ Conceptual illustration: **the ticket roll**. A ticket number is a position on the creating process's roll, not a random value. Every `new`, every forked thread and every process-level random call tears off the next ticket, so inserting `x = new()` first hands a, b and c different tickets, while adding it last changes nothing (IEEE 1800-2023 §18.14.1). Where the picture breaks: `get_randstate()` and `set_randstate()` can rewind a generator (§18.13.4, §18.13.5), and real tickets carry random-looking values, so you predict which values change, never the values. The Recap at the end of Build Your Mental Model draws this roll again.</figcaption>
+</figure>
+
 **You will be able to:**
 1. **Choose** between a class `randomize()`, `std::randomize()`, `randcase` and `randsequence` for a stimulus task, and **write** each one with its result checked.
 2. **Predict** the probability of each `randcase` branch and each `randsequence` stream from the weights, including zero, default and expression weights.
@@ -43,6 +100,31 @@ A **random variable** is a variable the solver assigns; a **state variable** is 
 | A structured stream: setup, a body of mixed steps, cleanup | `randsequence` | A grammar that the generator expands at random (§18.17) |
 
 Rule of thumb: if anyone will ever want to change the rules from a test, put them in a class. The procedural tools are for local, throwaway choices.
+
+<ArchitectureDiagram
+  title="Which random tool? Ask three questions in order"
+  caption="Start at the top left. Dashed arrows are your answers: yes leads right to a tool, no leads down to the next question. The first question is the rule of thumb, and it comes first because only a named constraint block can be switched off with constraint_mode() (§18.9) or replaced in a derived class (§18.5.2). The other three tools: randcase takes one weighted branch (§18.16), randsequence expands a grammar (§18.17), and std::randomize() randomizes a few scope variables (§18.12)."
+  legend={false}
+  cellWidth={150}
+  gapX={56}
+  nodes={[
+    { id: "q1", label: "Test may change it?", sublabel: "override or switch off", kind: "generic", col: 0, row: 0 },
+    { id: "t1", label: "class randomize()", sublabel: "named constraint blocks", kind: "generic", col: 1, row: 0 },
+    { id: "q2", label: "One of N actions?", sublabel: "fixed or computed odds", kind: "generic", col: 0, row: 1 },
+    { id: "t2", label: "randcase", sublabel: "one weighted branch", kind: "generic", col: 1, row: 1 },
+    { id: "q3", label: "A shaped stream?", sublabel: "setup, body, cleanup", kind: "generic", col: 0, row: 2 },
+    { id: "t3", label: "randsequence", sublabel: "a random grammar", kind: "generic", col: 1, row: 2 },
+    { id: "t4", label: "std::randomize()", sublabel: "a few local values", kind: "generic", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "q1", to: "t1", style: "causal", label: "yes" },
+    { from: "q1", to: "q2", style: "causal", label: "no" },
+    { from: "q2", to: "t2", style: "causal", label: "yes" },
+    { from: "q2", to: "q3", style: "causal", label: "no" },
+    { from: "q3", to: "t3", style: "causal", label: "yes" },
+    { from: "q3", to: "t4", style: "causal", label: "no" }
+  ]}
+/>
 
 ### `std::randomize()`: randomize variables in the current scope
 
@@ -90,6 +172,43 @@ len=1301 addr=0x18
 len=75 addr=0x04
 checker: addr=0x21 breaks addr < 0x20
 ```
+
+**Predict first.** A colleague writes `int count;` and then `std::randomize(count) with { count < 10; }`, checks the result, and the call succeeds every time. On what fraction of calls is `count` between 0 and 9? Commit to a number, then open the picture.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: what fraction lands in 0 to 9?</summary>
+
+About 1 call in 215 million. The legal set holds 2,147,483,658 values, and only 10 of them are 0 to 9.
+
+<figure className="my-3">
+<svg viewBox="0 0 360 206" role="img" aria-labelledby="rm-sign-title rm-sign-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-sign-title">{"Legal values of int count under count < 10"}</title>
+  <desc id="rm-sign-desc">{"Number line of every int value, from -2,147,483,648 on the left through 0 in the middle to 2,147,483,647 on the right. The left half, every negative value, is legal under count < 10, and so are 0 to 9, a sliver just right of the middle that a callout magnifies: 10 values, about 1 call in 215 million. The right half from 10 upward is excluded. Two fixes give 0 to 9 on every call: declare int unsigned count, or write count inside [0:9]."}</desc>
+  <text x="8" y="14" fontSize="10.5" fontWeight="700" fill="currentColor">{"int count;  count < 10"}</text>
+  <text x="100" y="29" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">{"✓ legal"}</text>
+  <text x="260" y="29" fontSize="10" fontWeight="600" textAnchor="middle" fill="currentColor">{"✕ excluded"}</text>
+  <rect x="20" y="34" width="160" height="22" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="100" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">{"-2,147,483,648 … -1"}</text>
+  <rect x="180" y="34" width="160" height="22" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="260" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">{"10 … 2,147,483,647"}</text>
+  <rect x="180" y="31" width="3" height="28" className="fill-cyan-600 dark:fill-cyan-400" />
+  <text x="20" y="72" fontSize="9" fillOpacity="0.8" fill="currentColor">{"min int"}</text>
+  <text x="181" y="72" fontSize="9" textAnchor="middle" fillOpacity="0.8" fill="currentColor">{"0"}</text>
+  <text x="340" y="72" fontSize="9" textAnchor="end" fillOpacity="0.8" fill="currentColor">{"max int"}</text>
+  <line x1="180" y1="59" x2="110" y2="92" stroke="currentColor" strokeOpacity="0.5" />
+  <line x1="183" y1="59" x2="250" y2="92" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="110" y="92" width="140" height="36" rx="4" strokeWidth="1.5" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="180" y="107" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"0 … 9: only 10 values"}</text>
+  <text x="180" y="121" fontSize="9.5" textAnchor="middle" fill="currentColor">{"about 1 call in 215 million"}</text>
+  <text x="8" y="150" fontSize="10" fontWeight="700" fill="currentColor">{"Two fixes; each gives 0 … 9 on every call:"}</text>
+  <text x="8" y="167" fontSize="10" fill="currentColor">{"✓ int unsigned count;  count < 10"}</text>
+  <text x="8" y="183" fontSize="10" fill="currentColor">{"✓ int count;  count inside {[0:9]}"}</text>
+  <text x="8" y="201" fontSize="9" fillOpacity="0.8" fill="currentColor">{"The two halves are to scale; the 0 … 9 sliver is magnified."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">◇ Illustration. `int` is signed (§6.11.3) and a random variable keeps the signedness of its type, so `count < 10` admits every negative value. The solver picks uniformly among all legal values (§18.5.9), and `std::randomize()` "behaves exactly the same as a class randomize method" (§18.12), so the answer is 10 / 2,147,483,658. The same trap in a class, `rand int delay; delay < 10`, returns in [Solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug).</figcaption>
+</figure>
+
+</details>
 
 **Pitfalls.**
 - **`int` is signed.** `int count; std::randomize(count) with { count < 10; }` is legal, but every value from −2,147,483,648 to 9 satisfies it, so almost every result is negative (§6.11.3). Random variables keep the signedness of their type. Declare `int unsigned`, or write `count inside {[0:9]}`.
@@ -142,6 +261,41 @@ read=6012 write=1988 err=0
 
 The second row is the LRM's own example (§18.16): with weights 3, 1 and 4 the probabilities are 0.375, 0.125 and 0.5. Expect roughly 3000, 1000 and 4000 hits; the exact counts depend on the seed.
 
+<figure className="my-3">
+<svg viewBox="0 0 360 196" role="img" aria-labelledby="rm-rc-title rm-rc-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-rc-title">{"The three randcase weightings as probability bars"}</title>
+  <desc id="rm-rc-desc">{"Three bars, one per row of the table, with segments in declaration order: read, write, err. Weights 3, 1, 0: read fills 3/4 of the bar, write 1/4, and err has zero width, so it is never taken. Weights 3, 1, 4: read 3/8, write 1/8, err 4/8, the LRM's example. Weights 0, 0, 0: an empty dashed bar; no branch is taken and a warning can be issued."}</desc>
+  <text x="8" y="12" fontSize="10" fontWeight="700" fill="currentColor">{"One draw along the bar; smaller draws pick earlier branches"}</text>
+  <text x="8" y="50" fontSize="10" fontWeight="600" fill="currentColor">{"3, 1, 0"}</text>
+  <text x="8" y="63" fontSize="9" fillOpacity="0.8" fill="currentColor">{"sum 4"}</text>
+  <text x="177" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor">{"read"}</text>
+  <text x="317" y="36" fontSize="9.5" textAnchor="middle" fill="currentColor">{"write"}</text>
+  <rect x="72" y="40" width="210" height="22" className="fill-cyan-500/20 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="177" y="55" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"3/4"}</text>
+  <rect x="282" y="40" width="70" height="22" className="fill-violet-500/20 stroke-violet-600 dark:stroke-violet-400" />
+  <text x="317" y="55" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"1/4"}</text>
+  <line x1="352" y1="36" x2="352" y2="66" stroke="currentColor" strokeWidth="2" strokeDasharray="2 2" />
+  <text x="352" y="77" fontSize="9" textAnchor="end" fill="currentColor">{"err: weight 0, zero width, never taken"}</text>
+  <text x="8" y="112" fontSize="10" fontWeight="600" fill="currentColor">{"3, 1, 4"}</text>
+  <text x="8" y="125" fontSize="9" fillOpacity="0.8" fill="currentColor">{"sum 8"}</text>
+  <text x="124" y="98" fontSize="9.5" textAnchor="middle" fill="currentColor">{"read"}</text>
+  <text x="194" y="98" fontSize="9.5" textAnchor="middle" fill="currentColor">{"write"}</text>
+  <text x="282" y="98" fontSize="9.5" textAnchor="middle" fill="currentColor">{"err"}</text>
+  <rect x="72" y="102" width="105" height="22" className="fill-cyan-500/20 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="124" y="117" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"3/8"}</text>
+  <rect x="177" y="102" width="35" height="22" className="fill-violet-500/20 stroke-violet-600 dark:stroke-violet-400" />
+  <text x="194" y="117" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"1/8"}</text>
+  <rect x="212" y="102" width="140" height="22" className="fill-amber-500/20 stroke-amber-600 dark:stroke-amber-400" />
+  <text x="282" y="117" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"4/8"}</text>
+  <text x="72" y="139" fontSize="9" fillOpacity="0.8" fill="currentColor">{"the LRM's example: 0.375, 0.125, 0.5"}</text>
+  <text x="8" y="168" fontSize="10" fontWeight="600" fill="currentColor">{"0, 0, 0"}</text>
+  <text x="8" y="181" fontSize="9" fillOpacity="0.8" fill="currentColor">{"sum 0"}</text>
+  <rect x="72" y="160" width="280" height="22" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="212" y="175" fontSize="9.5" textAnchor="middle" fill="currentColor">{"✕ empty: no branch taken; a warning can be issued"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each execution draws one number in the range 0 to the sum of the weights, and the weights are taken in declaration order: smaller numbers select the first (top) branches (§18.16). A branch's share of the bar is its weight divided by the sum, so a zero weight gets no width at all, and all-zero weights leave nothing to land on.</figcaption>
+</figure>
+
 </details>
 
 **Variants (§18.16).** A weight may be any non-negative integral expression, evaluated each time the `randcase` executes, so a weight can follow a configuration knob or a counter. A zero weight disables its branch. When every weight is zero, no branch runs and the tool may only warn, so a test whose knobs are all zero silently does nothing.
@@ -154,15 +308,13 @@ The second row is the LRM's own example (§18.16): with weights 3, 1 and 4 the p
 
 ### `randsequence`: a random stream from a grammar
 
-**What it is.** A **grammar** is a set of rules that says how a stream may be built. `randsequence` uses one to *generate* a random but legal stream, the reverse of what a parser does (§18.17). The vocabulary:
+**What it is.** A **grammar** is a set of rules that says how a stream may be built. `randsequence` uses one to *generate* a random but legal stream, the reverse of what a parser does (§18.17). Step through the example below: each step lights up the line that one grammar word names. The vocabulary list after the code collects the same words.
 
-- a **production** is a named rule, such as `main : setup execute cleanup ;`;
-- a **production list** is a sequence of items generated in order;
-- `|` separates alternative production lists, and the generator picks one at random;
-- `:=` gives an alternative a **weight**; an alternative without one has weight 1 (§18.17.1);
-- a **terminal** is a production defined only by a **code block** `{ … }` of statements; a **nonterminal** is defined in terms of other productions.
-
-```systemverilog
+<InteractiveCode
+  language="systemverilog"
+  fileName="randsequence_basic.sv"
+  isEditable={false}
+  code={`
 // compile
 module tb_top;
   int n_rd, n_wr;
@@ -181,8 +333,25 @@ module tb_top;
     end
     $display("reads=%0d writes=%0d", n_rd, n_wr);
   end
-endmodule
-```
+endmodule`}
+  explanationSteps={[
+    { target: "6", title: "randsequence (main)", explanation: "Opens the generator and names main as the top-level production. Without a name in the parentheses, the first production would be the top one (§18.17)." },
+    { target: "7", title: "A production and its production list", explanation: "main is a production: a named rule. It is a nonterminal, defined by other productions. Its production list setup execute cleanup is generated in order on every pass; nothing on this line is random." },
+    { target: "8", title: "| separates alternatives", explanation: "setup is either reset or init, picked at random. Neither has a := weight, so each weighs 1 and each is picked with probability 1/2 (§18.17.1)." },
+    { target: "9", title: ":= gives an alternative a weight", explanation: "read := 3 | write := 7 picks read with probability 3/10 and write with 7/10. Like randcase weights, they are relative numbers, not percentages." },
+    { target: "10-14", title: "Terminals are code blocks", explanation: "reset, init, read, write and cleanup are defined only by a code block of statements, so they are terminals. Generating a terminal runs its statements: this is where the stimulus happens." },
+    { target: "3,12,13,17", title: "Counters live outside the grammar", explanation: "n_rd and n_wr are declared in the module, not inside a code block. Each code block is its own automatic scope (its variables are created fresh on each entry, §6.21), so a variable declared in one starts again on every pass (§18.17)." },
+    { target: "5,15,16", title: "One grammar expansion per pass", explanation: "The repeat (4) loop runs the whole randsequence four times, so the output has four streams and then the totals." }
+  ]}
+/>
+
+The vocabulary:
+
+- a **production** is a named rule, such as `main : setup execute cleanup ;`;
+- a **production list** is a sequence of items generated in order;
+- `|` separates alternative production lists, and the generator picks one at random;
+- `:=` gives an alternative a **weight**; an alternative without one has weight 1 (§18.17.1);
+- a **terminal** is a production defined only by a **code block** `{ … }` of statements; a **nonterminal** is defined in terms of other productions.
 
 The diagram shows the same grammar as a tree. **Predict first:** what is the probability that one pass prints `INIT READ CLEAN`?
 
@@ -250,18 +419,158 @@ reads=1 writes=3
 | `return` | `{ if (skip) return; }` | Abort only the current production; generation continues with the next one (§18.17.6) |
 | Values | `bit [7:0] value : { return $urandom; } ;` | A production can take arguments and return a value to the rule that used it (§18.17.7) |
 
+**Predict first: `rand join`.** The LRM's own example is `TOP : rand join S1 S2 ;` with `S1 : A B ;` and `S2 : C D ;`. How many different streams can one execution print, and which orders are impossible?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: every stream rand join S1 S2 can print</summary>
+
+Six streams (§18.17.5). `rand join` shuffles the two lists together but keeps each list's own order, so `A` always comes before `B` and `C` before `D`; `B A …` or `D … C` can never appear.
+
+<figure className="my-3">
+<svg viewBox="0 0 360 170" role="img" aria-labelledby="rm-join-title rm-join-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-join-title">{"The six streams of rand join S1 S2"}</title>
+  <desc id="rm-join-desc">{"Two input lanes: S1 is A then B, drawn as solid chips; S2 is C then D, drawn as dashed chips. Below, the six streams the LRM lists: A B C D, A C B D, A C D B, C D A B, C A B D, C A D B. In every stream A comes before B and C comes before D. rand join (0.0) favours A B C D and C D A B; rand join (1.0) favours the other four."}</desc>
+  <text x="8" y="26" fontSize="10" fontWeight="700" fill="currentColor">{"S1"}</text>
+  <rect x="30" y="12" width="30" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="45" y="26" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <text x="70" y="26" fontSize="10" textAnchor="middle" fill="currentColor">{"→"}</text>
+  <rect x="80" y="12" width="30" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="95" y="26" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <text x="188" y="26" fontSize="10" fontWeight="700" fill="currentColor">{"S2"}</text>
+  <rect x="210" y="12" width="30" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" />
+  <text x="225" y="26" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <text x="250" y="26" fontSize="10" textAnchor="middle" fill="currentColor">{"→"}</text>
+  <rect x="260" y="12" width="30" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" />
+  <text x="275" y="26" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <line x1="8" y1="44" x2="352" y2="44" stroke="currentColor" strokeOpacity="0.3" />
+  <rect x="16" y="54" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="30" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="48" y="54" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="62" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <rect x="80" y="54" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="94" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="112" y="54" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="126" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <text x="146" y="68" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(0.0)"}</text>
+  <rect x="16" y="82" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="30" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="48" y="82" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="62" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="80" y="82" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="94" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <rect x="112" y="82" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="126" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <text x="146" y="96" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(1.0)"}</text>
+  <rect x="16" y="110" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="30" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="48" y="110" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="62" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="80" y="110" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="94" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <rect x="112" y="110" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="126" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <text x="146" y="124" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(1.0)"}</text>
+  <rect x="190" y="54" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="204" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="222" y="54" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="236" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <rect x="254" y="54" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="268" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="286" y="54" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="300" y="68" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <text x="320" y="68" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(0.0)"}</text>
+  <rect x="190" y="82" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="204" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="222" y="82" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="236" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="254" y="82" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="268" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <rect x="286" y="82" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="300" y="96" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <text x="320" y="96" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(1.0)"}</text>
+  <rect x="190" y="110" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="204" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"C"}</text>
+  <rect x="222" y="110" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="236" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="254" y="110" width="28" height="20" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="268" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"D"}</text>
+  <rect x="286" y="110" width="28" height="20" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="300" y="124" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"B"}</text>
+  <text x="320" y="124" fontSize="10" fillOpacity="0.8" fill="currentColor">{"(1.0)"}</text>
+  <text x="8" y="150" fontSize="10" fontWeight="700" fill="currentColor">{"In every stream: A before B, C before D."}</text>
+  <text x="8" y="165" fontSize="9" fillOpacity="0.8" fill="currentColor">{"(0.0) / (1.0): the streams rand join (0.0) or (1.0) favours"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The six streams are the LRM's list (§18.17.5). The optional real number after `rand join` sets how much a sequence's remaining length affects the pick: `(0.0)` gives the shortest sequences priority and favours `A B C D` and `C D A B`, `(1.0)` gives the longest priority and favours the other four, and the default `0.5` prioritizes no length.</figcaption>
+</figure>
+
+</details>
+
 A scope is **automatic** when the variables declared in it are created fresh each time it is entered and disappear when it is left (automatic lifetime, §6.21). `randsequence` creates an automatic scope, and each code block is its own automatic scope, so a variable declared in a code block starts again every time (§18.17). Use variables declared outside the `randsequence` for counts that must survive. Besides `repeat`, a recursive production (one that names itself) makes a grammar loop (§18.17). A `repeat` production cannot be cut short except by `break`, which ends the entire `randsequence` (§18.17.4).
+
+**Predict first: a variable in a code block.** What does one execution of this grammar print?
+
+```systemverilog
+// snippet
+randsequence (main)
+  main : tick tick tick ;
+  tick : { int k; k++; $write("%0d ", k); } ;
+endsequence
+```
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: one k per pass, or one k for the run?</summary>
+
+It prints `1 1 1`. The code block of `tick` is an anonymous automatic scope (§18.17), and an automatic variable is initialized on each entry to its block (§6.21), so each pass gets a new `k` that starts at 0. Write `static int k;` instead, using the `static` prefix that §18.17 provides, and the same grammar prints `1 2 3`: one `k` lives for the whole simulation.
+
+<figure className="my-3">
+<svg viewBox="0 0 360 114" role="img" aria-labelledby="rm-auto-title rm-auto-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-auto-title">{"Lifetime of k: automatic versus static"}</title>
+  <desc id="rm-auto-desc">{"Top row, int k declared in the code block: three separate dashed boxes, one per pass of tick. In each, a new k starts at 0, becomes 1 and is printed, then ends. Output 1 1 1. Bottom row, static int k: one solid box spanning all three passes; k becomes 1, 2 and 3. Output 1 2 3."}</desc>
+  <text x="8" y="13" fontSize="10" fontWeight="700" fill="currentColor">{"int k;  a new k on every pass: prints 1 1 1"}</text>
+  <rect x="8" y="20" width="108" height="36" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="62" y="35" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 1: k 0 → 1"}</text>
+  <text x="62" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">{"prints 1; k ends"}</text>
+  <rect x="126" y="20" width="108" height="36" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="180" y="35" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 2: k 0 → 1"}</text>
+  <text x="180" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">{"prints 1; k ends"}</text>
+  <rect x="244" y="20" width="108" height="36" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="298" y="35" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 3: k 0 → 1"}</text>
+  <text x="298" y="49" fontSize="9.5" textAnchor="middle" fill="currentColor">{"prints 1; k ends"}</text>
+  <text x="8" y="78" fontSize="10" fontWeight="700" fill="currentColor">{"static int k;  one k for the whole run: prints 1 2 3"}</text>
+  <rect x="8" y="85" width="344" height="24" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="62" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 1: k = 1"}</text>
+  <text x="180" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 2: k = 2"}</text>
+  <text x="298" y="101" fontSize="9.5" textAnchor="middle" fill="currentColor">{"pass 3: k = 3"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Dashed boxes are lifetimes that end when the code block is left. That is why the counters `n_rd` and `n_wr` in the example above are declared in the module, outside the `randsequence`.</figcaption>
+</figure>
+
+</details>
 
 **Pitfalls.**
 - `break` and `return` are easy to swap: `break` ends everything, `return` skips the rest of one production.
 - A `break` inside a loop statement *within* a code block exits that loop, not the `randsequence` (§18.17.6).
 - Weights belong to alternatives: a weight on a production with no `|` has no effect (§18.17.1).
 
+**Predict first: `break` or `return`?** This is the LRM's own example (§18.17.6). For `flag` = 0, 1 and 2, write down what it prints. Then predict again with each `return` replaced by `break`.
+
+```systemverilog
+// snippet
+randsequence ()
+  TOP : P1 P2 ;
+  P1  : A B C ;
+  P2  : A { if (flag == 1) return; } B C ;
+  A   : { $display("A"); } ;
+  B   : { if (flag == 2) return; $display("B"); } ;
+  C   : { $display("C"); } ;
+endsequence
+```
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the same grammar with return and with break</summary>
+
+| `flag` | With `return` (the LRM's output) | With `break` in the same two places | Why |
+|---|---|---|---|
+| 0 | `A B C A B C` | `A B C A B C` | Neither statement runs |
+| 1 | `A B C A` | `A B C A` | `return` aborts `P2` after its `A`. `P2` is the last item of `TOP`, so `break` loses nothing more here |
+| 2 | `A C A C` | `A` | `return` aborts only `B`, twice, and generation continues with `C` each time. `break` in `B` ends the whole `randsequence` during `P1` |
+
+The `flag` = 2 row is the difference in one line: `return` leaves the current production and generation continues with the next one; `break` jumps out of the `randsequence`. One exception: a `break` inside a loop statement in a code block, such as `{ for (int i = 0; i < 4; i++) if (i == n) break; }`, exits only that loop, and the code block and generation carry on (§18.17.6, §12.8).
+
+</details>
+
 **In a real testbench.** Grammars suit streams whose *shape* matters: instruction streams for a processor (see [E-RISCV-1](/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index)), packet sequences with headers and trailers, or reset-configure-traffic-drain scripts in a test. Each terminal's code block usually creates and randomizes a sequence item or starts a sequence, so the grammar decides the order and the item's constraints decide the fields.
 
 ### `$urandom` and `$urandom_range`: plain random numbers
 
 `$urandom` returns a 32-bit unsigned random number; `$urandom_range(maxval, minval)` returns an unsigned value between the two limits, inclusive, and swaps them if `maxval` is the smaller one (§18.13.1, §18.13.2). Both draw from the calling process's RNG and are **thread stable**, which the next section explains. `$urandom` also takes an optional seed: `$urandom(254)` first reinitializes the generator with 254, then returns a value (§18.13.1). Because that generator is the calling process's RNG (§18.14.1), the call reseeds the whole process: everything the process creates or draws afterwards follows the new seed, and no longer depends on what came before it. The Verilog-era `$random` returns a *signed* number (§20.14.1) and is not in the random-stability list of §18.14, so prefer `$urandom` in new code.
+
+The four calls side by side:
+
+| Call | Returns | Draws from | In the §18.14 stability list? | Effect on the calling process's RNG |
+|---|---|---|---|---|
+| `$urandom` | a 32-bit unsigned number (§18.13.1) | the calling process's RNG | yes | advances it |
+| `$urandom(seed)` | a 32-bit unsigned number | the calling process's RNG, after reinitializing it with `seed` | yes | reseeds it: everything the process creates or draws afterwards follows the new seed (§18.13.1) |
+| `$urandom_range(maxval, minval = 0)` | an unsigned value from `minval` to `maxval` inclusive; the arguments are swapped if `maxval` is the smaller (§18.13.2) | the calling process's RNG | yes, and thread stable (§18.13.2) | advances it |
+| `$random` or `$random(seed)` | a 32-bit signed number (§20.14.1); `seed` must be an integral variable | its own generator, whose algorithm the standard fixes in Annex N (§20.14) | no | not specified by §18.14 |
+
+One more difference matters later: because `$random`'s algorithm is part of the standard, a given seed variable produces the same `$random` values on every implementation (§20.14), while the generator behind `$urandom` and `randomize()` is only required to be deterministic (§18.13.1). That portability does not make up for `$random` sitting outside random stability.
 
 ### Random stability: who draws from which generator
 
@@ -283,7 +592,7 @@ The picture below is the setup that Make It Work tests: one `initial` block crea
 
 <ArchitectureDiagram
   title="Hierarchical seeding in the Make It Work example"
-  caption="The initial block's RNG hands out draws in creation order: draw 1 seeds a, draw 2 seeds s, draw 3 seeds b. s (highlighted green) then calls srandom(42) in its new(), so its stream no longer depends on draw 2: it is the one protected stream. An extra new() before a would shift a and b to draws 2 and 4; s would not move."
+  caption="The initial block's RNG hands out draws in creation order: draw 1 seeds a, draw 2 seeds s, draw 3 seeds b. s (highlighted green) then calls srandom(42) in its new(), so its stream no longer depends on draw 2: it is the one protected stream."
   legend={false}
   cellWidth={130}
   gapX={24}
@@ -323,12 +632,67 @@ The picture below is the setup that Make It Work tests: one `initial` block crea
 | 6. Add one extra `a.randomize()` before the loop | changes | same | same | Only `a`'s own RNG advances (rule 1) |
 | 7. Change the order of two existing processes in the same time slot | same | same | same | Rule 5 (§18.14.2) |
 
+In the diagram above, an extra `new()` before `a` would shift `a` and `b` to draws 2 and 4; `s` would not move.
+
 </details>
 
-Rows 4 and 5 are the answer to "why can adding one random call change later values?": a process-level call (`$urandom`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()`) uses up a draw that a later `new` or `fork` would have received. Row 6 is the exception: `obj.randomize()` uses the object's own RNG, so it changes only that object. Two more cases complete the picture:
+**One glance: what each action draws, and what it shifts.** Read every row as happening in one process, P, in the ticket-roll picture from the Quick Take.
+
+| Action in process P | Takes a ticket from | What changes afterwards |
+|---|---|---|
+| `obj = new()` | P's RNG: one draw seeds `obj`'s RNG (rule 3) | everything P creates or draws after it |
+| `fork` | P's RNG: one draw seeds each new thread (rule 3) | everything P creates or draws after it |
+| `$urandom`, `$urandom_range`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()` | P's RNG (rule 2) | everything P creates or draws after it |
+| `obj.randomize()` | `obj`'s own RNG (rule 1) | only `obj`'s later values |
+| `obj.srandom(s)` | nothing: it restarts `obj`'s RNG from `s` | only `obj`'s stream |
+| `$display`, `#0`, a waveform dump | nothing | nothing; run order does not matter (rule 5), except for a shared object (below) |
+
+In the prediction table, rows 4 and 5 are the answer to "why can adding one random call change later values?": a process-level call (`$urandom`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()`) uses up a draw that a later `new` or `fork` would have received. Its row 6 is the exception: `obj.randomize()` uses the object's own RNG, so it changes only that object. Two more cases complete the picture:
 
 - **A shared object.** If two processes call `randomize()` on one object, they take turns drawing from that object's single RNG, so each process's values depend on which one runs first. This is the most common place where process order matters.
 - **A shallow copy.** `a2 = new a;` copies `a`'s RNG state along with its fields (§8.12), so `a2` repeats `a`'s next values until one of them is reseeded. [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) covers what else a copy carries.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 212" role="img" aria-labelledby="rm-share-title rm-share-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-share-title">{"A shared object and a shallow copy, as ticket rolls"}</title>
+  <desc id="rm-share-desc">{"Top: object A has one roll whose next values are v1 and v2. Processes T0 and T1 both call A.randomize(). If T0 runs first, T0 gets v1 and T1 gets v2; if T1 runs first, T1 gets v1 and T0 gets v2, so each process's values depend on run order. Bottom: a2 = new a copies a's RNG state, so a2's roll is printed the same as a's, v1 v2 v3, with the copy drawn dashed. a.randomize() gets v1 and a2.randomize() gets v1 too, until either object is reseeded."}</desc>
+  <text x="8" y="14" fontSize="10.5" fontWeight="700" fill="currentColor">{"Shared object: one roll, two takers"}</text>
+  <circle cx="22" cy="46" r="13" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <circle cx="22" cy="46" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="22" y="74" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"A"}</text>
+  <rect x="38" y="30" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="58" y="50" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v1"}</text>
+  <rect x="78" y="30" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="98" y="50" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v2"}</text>
+  <text x="136" y="40" fontSize="10" fill="currentColor">{"T0 runs first: T0 gets v1, T1 gets v2"}</text>
+  <text x="136" y="56" fontSize="10" fill="currentColor">{"T1 runs first: T1 gets v1, T0 gets v2"}</text>
+  <text x="136" y="76" fontSize="10" fontWeight="700" className="fill-rose-700 dark:fill-rose-300">{"✕ values now depend on run order"}</text>
+  <line x1="8" y1="94" x2="352" y2="94" stroke="currentColor" strokeOpacity="0.3" />
+  <text x="8" y="114" fontSize="10.5" fontWeight="700" fill="currentColor">{"Shallow copy: a2 = new a copies the roll (§8.12)"}</text>
+  <circle cx="22" cy="140" r="13" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <circle cx="22" cy="140" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="22" y="166" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"a"}</text>
+  <rect x="38" y="124" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="58" y="144" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v1"}</text>
+  <rect x="78" y="124" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="98" y="144" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v2"}</text>
+  <rect x="118" y="124" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="138" y="144" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v3"}</text>
+  <circle cx="22" cy="186" r="13" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="3 2" />
+  <circle cx="22" cy="186" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="22" y="209" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">{"a2"}</text>
+  <rect x="38" y="170" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="58" y="190" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v1"}</text>
+  <rect x="78" y="170" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="98" y="190" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v2"}</text>
+  <rect x="118" y="170" width="40" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+  <text x="138" y="190" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"v3"}</text>
+  <text x="172" y="144" fontSize="10" fill="currentColor">{"a.randomize() gets v1"}</text>
+  <text x="172" y="190" fontSize="10" fill="currentColor">{"a2.randomize() gets v1 too"}</text>
+  <text x="172" y="168" fontSize="9.5" fillOpacity="0.85" fill="currentColor">{"same values until one is reseeded"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">◇ Conceptual illustration in the ticket-roll style; v1, v2 and v3 stand for the next values of one object's RNG. Top: one object, one RNG, so two processes that randomize it take turns and the scheduler's order decides who gets which value (§4.7). Bottom: the copy starts at the same place on an identical roll (§8.12). The picture shows only the two objects' rolls; it makes no claim about whether `new a` also takes a draw from the creating process.</figcaption>
+</figure>
 
 The rule to carry: **anything that creates an object or a thread, or draws from the process RNG (`$urandom`, `$urandom_range`, `std::randomize()`, `randcase`, `randsequence`, `shuffle()`), before existing work in the same process shifts everything created after it in that process.** A new `$display` shifts nothing, because it draws nothing. The LRM's own advice is to add new objects, threads and random calls *after* the existing ones (§18.14.1).
 
@@ -379,6 +743,27 @@ endmodule
 replay MATCH
 ```
 
+<SequenceDiagram
+  title="Saving and replaying one object's RNG state"
+  caption="Read it as a bookmark in p's ticket roll: get_randstate() records where the roll is, randomize() tears off the next value, and set_randstate() puts the roll back at the bookmark, so the second randomize() tears off the same value (§18.13.4, §18.13.5). Here the ticket-roll analogy breaks: a paper roll cannot be rewound, but a generator can. Only p's RNG moves; after p = new(), the initial process draws nothing."
+  participants={[
+    { id: "tb", label: "initial block", sublabel: "one process" },
+    { id: "p", label: "p", sublabel: "object of class pkt" }
+  ]}
+  messages={[
+    { kind: "self", from: "tb", label: "p = new(): p's RNG gets this process's next draw" },
+    { from: "tb", to: "p", label: "get_randstate()" },
+    { kind: "return", from: "p", to: "tb", label: "saved: the state before any call" },
+    { from: "tb", to: "p", label: "randomize()" },
+    { kind: "return", from: "p", to: "tb", label: "1, data = first; p's RNG moves on" },
+    { from: "tb", to: "p", label: "set_randstate(saved)" },
+    { kind: "note", from: "p", label: "p's RNG is back at the saved state" },
+    { from: "tb", to: "p", label: "randomize()" },
+    { kind: "return", from: "p", to: "tb", label: "1, data = again, equal to first" },
+    { kind: "self", from: "tb", label: "first == again: prints replay MATCH" }
+  ]}
+/>
+
 The state string's length and format are implementation-dependent, and passing a string from a different implementation to `set_randstate()` is undefined (§18.13.4, §18.13.5). Use it within one simulator, for example to replay one interesting transaction many times.
 
 ### Seeds on the command line and in the log
@@ -418,6 +803,61 @@ Good practice:
 - **UVM** reseeds its components and sequence items from their names (expert section below), which makes UVM benches much less sensitive to creation order than a plain class-based bench, but not immune.
 
 ### Recap
+
+<VisualRecap
+  title="The ticket roll: who draws from which generator"
+  rule="Every new object, forked thread and process-level random call takes the next value from the creating process's RNG; obj.randomize() uses only obj's own RNG. Add new work after existing work, or self-seed what must stay fixed (§18.14.1, §18.14.3)."
+  code={`a = new();         // ticket 1 seeds a
+junk = $urandom;   // inserted: takes ticket 2
+b = new();         // ticket 3, was ticket 2: b shifts
+if (!a.randomize()) $fatal(1, "a failed");
+                   // a's own roll: nobody else shifts`}
+  mistake="Rerunning a failing seed after adding a debug new() early in the test, seeing it pass, and calling the bug fixed."
+  inTestbench="The regression picks the seed and writes it into every log header. uvm-core reseeds components, phase processes and sequence items from their names, so plain new() calls are where creation order still matters."
+>
+  <svg viewBox="0 0 345 170" role="img" aria-labelledby="rm-recap-title rm-recap-desc" style={{ width: "100%", maxWidth: 400 }}>
+    <title id="rm-recap-title">{"Process P's ticket roll and the objects it seeds"}</title>
+    <desc id="rm-recap-desc">{"Process P's roll hands out tickets in order: ticket 1 to a = new(), ticket 2 to a $urandom call, ticket 3 to b = new(), ticket 4 to a fork. Tickets 1, 3 and 4 seed a's own roll, b's own roll and the new thread's roll. Ticket 2 is used as a value and seeds nothing. Inserting a ticket early moves every ticket to its right; obj.randomize() never touches P's roll."}</desc>
+    <text x="8" y="14" fontSize="10.5" fontWeight="700" fill="currentColor">{"Process P's roll"}</text>
+    <circle cx="20" cy="42" r="12" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <circle cx="20" cy="42" r="4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="36" y="26" width="72" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="72" y="38" fontSize="10" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#1"}</text>
+    <text x="72" y="52" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"a = new()"}</text>
+    <rect x="108" y="26" width="72" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="144" y="38" fontSize="10" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#2"}</text>
+    <text x="144" y="52" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"$urandom"}</text>
+    <rect x="180" y="26" width="72" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="216" y="38" fontSize="10" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#3"}</text>
+    <text x="216" y="52" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"b = new()"}</text>
+    <rect x="252" y="26" width="72" height="32" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="288" y="38" fontSize="10" textAnchor="middle" fillOpacity="0.75" fill="currentColor">{"#4"}</text>
+    <text x="288" y="52" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"fork"}</text>
+    <defs>
+      <marker id="rm-recap-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </marker>
+    </defs>
+    <line x1="72" y1="58" x2="72" y2="88" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="4 3" markerEnd="url(#rm-recap-arrow)" />
+    <text x="76" y="77" fontSize="10" fill="currentColor">{"seeds"}</text>
+    <text x="144" y="74" fontSize="10" textAnchor="middle" fillOpacity="0.85" fill="currentColor">{"a value only"}</text>
+    <line x1="216" y1="58" x2="216" y2="88" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="4 3" markerEnd="url(#rm-recap-arrow)" />
+    <text x="220" y="77" fontSize="10" fill="currentColor">{"seeds"}</text>
+    <line x1="288" y1="58" x2="288" y2="88" stroke="currentColor" strokeOpacity="0.8" strokeDasharray="4 3" markerEnd="url(#rm-recap-arrow)" />
+    <text x="292" y="77" fontSize="10" fill="currentColor">{"seeds"}</text>
+    <rect x="20" y="90" width="104" height="34" rx="6" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="72" y="104" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"a's own roll"}</text>
+    <text x="72" y="117" fontSize="9" textAnchor="middle" fill="currentColor">{"a.randomize() only"}</text>
+    <rect x="164" y="90" width="104" height="34" rx="6" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+    <text x="216" y="104" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"b's own roll"}</text>
+    <text x="216" y="117" fontSize="9" textAnchor="middle" fill="currentColor">{"b.randomize() only"}</text>
+    <rect x="272" y="90" width="68" height="34" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="306" y="104" fontSize="9.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"thread"}</text>
+    <text x="306" y="117" fontSize="9" textAnchor="middle" fill="currentColor">{"its own roll"}</text>
+    <text x="8" y="146" fontSize="10" fontWeight="700" fill="currentColor">{"Insert a ticket early: every ticket to its right moves."}</text>
+    <text x="8" y="162" fontSize="10" fill="currentColor">{"obj.randomize() never touches P's roll."}</text>
+  </svg>
+</VisualRecap>
 
 - `std::randomize()` randomizes named scope variables for one call; with no arguments it is a checker. Check the result, and remember `int` is signed.
 - `randcase` takes one branch with probability weight/sum; a zero weight is never taken, and all-zero weights take no branch.
@@ -532,6 +972,61 @@ EXTRA_RANDOMIZE: a=DIFF s=MATCH b=MATCH
 PASS=5 FAIL=0
 ```
 
+Read the five result lines as a grid. It is the before/after table from *Random stability*, rows 1, 2, 3, 4 and 6, now produced by the bench itself.
+
+<figure className="my-6">
+<svg viewBox="0 0 352 216" role="img" aria-labelledby="rm-grid-title rm-grid-desc" style={{ width: "100%", maxWidth: 420 }}>
+  <title id="rm-grid-title">{"The bench output as a MATCH and DIFF grid"}</title>
+  <desc id="rm-grid-desc">{"Rows are the five edits, columns the objects a, s and b. REPLAY, before/after row 1: a, s and b all MATCH. EARLY_NEW, row 2: a DIFF, s MATCH, b DIFF. LATE_NEW, row 3: all MATCH. EXTRA_URANDOM, row 4: a MATCH, s MATCH, b DIFF. EXTRA_RANDOMIZE, row 6: a DIFF, s MATCH, b MATCH. The s column is MATCH in every row because s reseeds itself with srandom(42) in its new()."}</desc>
+  <text x="178" y="16" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"a"}</text>
+  <text x="246" y="16" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"s"}</text>
+  <text x="246" y="28" fontSize="9.5" textAnchor="middle" fillOpacity="0.8" fill="currentColor">{"srandom(42)"}</text>
+  <text x="314" y="16" fontSize="11" fontWeight="700" textAnchor="middle" fill="currentColor">{"b"}</text>
+  <text x="8" y="47" fontSize="10" fontWeight="700" fill="currentColor">{"REPLAY"}</text>
+  <text x="8" y="58" fontSize="9.5" fillOpacity="0.8" fill="currentColor">{"row 1: same code"}</text>
+  <rect x="148" y="34" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="178" y="51" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="216" y="34" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="246" y="51" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="284" y="34" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="314" y="51" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <text x="8" y="81" fontSize="10" fontWeight="700" fill="currentColor">{"EARLY_NEW"}</text>
+  <text x="8" y="92" fontSize="9.5" fillOpacity="0.8" fill="currentColor">{"row 2: x = new() first"}</text>
+  <rect x="148" y="68" width="60" height="26" rx="4" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="178" y="85" fontSize="10" textAnchor="middle" fill="currentColor">{"✕ DIFF"}</text>
+  <rect x="216" y="68" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="246" y="85" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="284" y="68" width="60" height="26" rx="4" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="314" y="85" fontSize="10" textAnchor="middle" fill="currentColor">{"✕ DIFF"}</text>
+  <text x="8" y="115" fontSize="10" fontWeight="700" fill="currentColor">{"LATE_NEW"}</text>
+  <text x="8" y="126" fontSize="9.5" fillOpacity="0.8" fill="currentColor">{"row 3: x = new() last"}</text>
+  <rect x="148" y="102" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="178" y="119" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="216" y="102" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="246" y="119" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="284" y="102" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="314" y="119" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <text x="8" y="149" fontSize="10" fontWeight="700" fill="currentColor">{"EXTRA_URANDOM"}</text>
+  <text x="8" y="160" fontSize="9.5" fillOpacity="0.8" fill="currentColor">{"row 4: $urandom after a"}</text>
+  <rect x="148" y="136" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="178" y="153" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="216" y="136" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="246" y="153" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="284" y="136" width="60" height="26" rx="4" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="314" y="153" fontSize="10" textAnchor="middle" fill="currentColor">{"✕ DIFF"}</text>
+  <text x="8" y="183" fontSize="10" fontWeight="700" fill="currentColor">{"EXTRA_RANDOMIZE"}</text>
+  <text x="8" y="194" fontSize="9.5" fillOpacity="0.8" fill="currentColor">{"row 6: extra a.randomize()"}</text>
+  <rect x="148" y="170" width="60" height="26" rx="4" strokeDasharray="4 3" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
+  <text x="178" y="187" fontSize="10" textAnchor="middle" fill="currentColor">{"✕ DIFF"}</text>
+  <rect x="216" y="170" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="246" y="187" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <rect x="284" y="170" width="60" height="26" rx="4" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" />
+  <text x="314" y="187" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ MATCH"}</text>
+  <text x="8" y="212" fontSize="9.5" fillOpacity="0.85" fill="currentColor">{"Column s never moves: srandom(42) in new() fixes its stream."}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Read down a column to see what protects or exposes one object. `a` moves only when something is inserted before it or when its own RNG advances (rows 2 and 6). `b` moves whenever any extra ticket is taken before it (rows 2 and 4). `s` never moves, although its own `new()` received a different draw in rows 2 and 4, because it reseeds itself (§18.15).</figcaption>
+</figure>
+
 Why this output is reliable on any simulator:
 - Every MATCH follows from the standard: same seed, same order of draws, same values.
 - A DIFF compares three 32-bit values from a differently seeded generator. A chance coincidence of all three has a probability of about 2⁻⁹⁶, so in practice DIFF is certain.
@@ -540,6 +1035,32 @@ Why this output is reliable on any simulator:
 **Run it.** Save the code as `tb_top.sv`, compile it with SystemVerilog enabled on any simulator that supports classes and the `process` class (for example on EDA Playground), and simulate `tb_top`. Run it with two different seeds: the output must not change. No open-source simulator has been checked with this example yet.
 
 ### How to keep a failing seed reproducible
+
+<ArchitectureDiagram
+  title="Keeping a failing seed reproducible"
+  caption="The numbers match the steps below. The one decision is whether your debug edit creates an object or thread, or draws a random number, before existing work in the same process. If it does, the streams after it shift (§18.14.1) and the old seed is a new run. Both paths end the same way: after the fix, an old seed that passes proves nothing on its own."
+  legend={false}
+  cellWidth={150}
+  gapX={56}
+  gapY={60}
+  spreadAnchors={true}
+  nodes={[
+    { id: "rec", label: "1–2. record, replay", sublabel: "seed, code, tool, args", kind: "generic", col: 0, row: 0 },
+    { id: "ask", label: "Edit draws early?", sublabel: "creates or draws first", kind: "generic", col: 0, row: 1 },
+    { id: "keep", label: "✓ 3. seed replays", sublabel: "keep debugging on it", kind: "generic", col: 0, row: 2, state: "ok" },
+    { id: "shift", label: "✕ 4. streams shift", sublabel: "find the scenario again", kind: "generic", col: 1, row: 1, state: "error" },
+    { id: "fix", label: "5. fix, then rerun many seeds", sublabel: "an old seed that passes proves nothing alone", kind: "generic", col: 0, row: 3, colSpan: 2 },
+    { id: "guard", label: "6. protect fixed streams", sublabel: "self-seed in new(), or seed the subtree's root", kind: "generic", col: 0, row: 4, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "rec", to: "ask", style: "causal", label: "edit" },
+    { from: "ask", to: "keep", style: "causal", label: "no" },
+    { from: "ask", to: "shift", style: "causal", label: "yes" },
+    { from: "keep", to: "fix", style: "causal", label: "fix" },
+    { from: "shift", to: "fix", style: "causal", label: "fix" },
+    { from: "fix", to: "guard", style: "causal", label: "then" }
+  ]}
+/>
 
 1. **Record everything** with each failure: seed, code version, simulator and version, command line and plusargs.
 2. **Replay before you edit.** Rerun the failing seed on the unchanged code and confirm the failure first.
@@ -568,6 +1089,30 @@ UVM benches add their own reseeding on top of §18.14. The facts below are from 
 - Sequences and sequence items call `reseed()` in `set_item_context`, which `start`, `create_item` and `start_item` call (`uvm_sequence_item.svh`, `uvm_sequence_base.svh`).
 - `uvm_create_random_seed` hashes the type name and the full name with `uvm_global_random_seed`, and adds a counter per name pair (`uvm_misc.svh`). `uvm_global_random_seed` is initialized with `$urandom` in the package, so it still follows the simulator seed.
 
+<ArchitectureDiagram
+  title="Where a UVM seed comes from in uvm-core 2020.3.1"
+  caption="Read it top down. Only the first arrow follows the plain §18.14 rules: uvm_pkg initializes the global seed with $urandom, so it follows the default seed that the simulator's seed option sets (§18.14.1; the option itself is tool-dependent). Every seed below the hash is keyed by a type name and a full name, not by creation order, so adding a component leaves the other components' seeds alone, renaming one changes its own seed, and a second object with the same type and full name gets the next counter value. IEEE 1800.2-2020 only requires that reseed() give each object a unique seed and that UVM seeding be on by default (§5.3.3.3, F.4.1.4.26); the name hash is uvm-core implementation (uvm_misc.svh, uvm_object.svh, uvm_component.svh, uvm_task_phase.svh, uvm_sequence_item.svh)."
+  legend={false}
+  cellWidth={110}
+  gapX={16}
+  spreadAnchors={true}
+  nodes={[
+    { id: "sim", label: "simulator seed", sublabel: "the tool's own option (tool-dependent)", kind: "generic", col: 0, row: 0, colSpan: 3 },
+    { id: "glob", label: "uvm_global_random_seed", sublabel: "set once when uvm_pkg is initialized", kind: "generic", col: 0, row: 1, colSpan: 3 },
+    { id: "hash", label: "uvm_create_random_seed(type, name)", sublabel: "hash of type and full name with the global seed, + a per-pair counter", kind: "generic", col: 0, row: 2, colSpan: 3 },
+    { id: "comp", label: "component", sublabel: "new() calls reseed()", kind: "generic", col: 0, row: 3 },
+    { id: "proc", label: "phase process", sublabel: "task phase srandom()", kind: "generic", col: 1, row: 3 },
+    { id: "item", label: "seq, item", sublabel: "set_item_context()", kind: "generic", col: 2, row: 3 }
+  ]}
+  edges={[
+    { from: "sim", to: "glob", style: "causal", label: "$urandom" },
+    { from: "glob", to: "hash", style: "data", label: "global seed" },
+    { from: "hash", to: "comp", style: "data", label: "seed" },
+    { from: "hash", to: "proc", style: "data", label: "seed" },
+    { from: "hash", to: "item", style: "data", label: "seed" }
+  ]}
+/>
+
 Consequences: adding a component does not shift other components' run-phase streams; renaming a component or a sequence changes its own seed and the seeds of its items, because an item's full name includes the sequence path; a second item with the same type and full name advances the counter. A plain `new` of a non-UVM object, or of a `uvm_object` that is never started as an item, still uses the §18.14 rules: it shifts only objects created after it in the same process.
 
 ### Expert: seeds across simulators, versions and saved states
@@ -577,9 +1122,25 @@ Consequences: adding a component does not shift other components' run-phase stre
 - A new simulator version may change how the solver picks among legal solutions (tool-dependent). Keep the simulator version with the seed, and expect a version upgrade to invalidate stored seeds.
 - Static processes and static initializers are seeded from each scope's initialization RNG (§18.14.1). Exactly how a simulator derives distinct seeds for many instances of one module from the command-line seed is tool-dependent.
 
+What a stored seed or state is worth, by where you replay it:
+
+| What you replay | Same build, simulator version and seed | Another simulator or version |
+|---|---|---|
+| Values from `$urandom`, `randomize()`, `std::randomize()`, `randcase`, `randsequence` | repeat exactly (§18.13.1) | may differ: the default seed is implementation-dependent and no generator algorithm is specified (§18.14.1, §18.13.1) |
+| Values from `$random(seed)` with the same seed variable | repeat | repeat: the algorithm is part of the standard (§20.14, Annex N) |
+| A `get_randstate()` string passed to `set_randstate()` | restores the RNG exactly (§18.13.5) | undefined (§18.13.5) |
+| Which legal solution the solver picks | repeats | may change (tool-dependent) |
+| Seeds of many instances of one module | repeat | derived in a tool-dependent way |
+
 ### Expert: weight arithmetic in `randcase` and `randsequence`
 
 - **`randcase` widths (§18.16).** Each weight expression has its self-determined width, the sum is computed at the largest weight width, and each summand is treated as unsigned. With `bit [7:0] a, b;`, the weight `a + b` is computed in 8 bits, so `a = 200, b = 100` gives a weight of 44, not 300. A signed `byte` holding −1 does not act as zero: as an unsigned 8-bit summand it weighs 255. Cast weights to a wider type (`int'(a) + int'(b)`, or `32'(a) + 32'(b)`) when they come from narrow variables; each summand is still treated as unsigned.
+
+  | Weight expression | Width it is computed in | Weight the `randcase` uses |
+  |---|---|---|
+  | `a + b` with `bit [7:0] a = 200, b = 100` | 8 bits, self-determined | 44 (300 wraps modulo 256) |
+  | `int'(a) + int'(b)`, same values | 32 bits | 300 |
+  | a `byte` variable holding −1 | 8 bits, summed as unsigned | 255, not 0 |
 - **Evaluation order (§18.16).** Each weight expression is evaluated at most once per execution, in an unspecified order, so weight expressions with side effects (a function that increments a counter) are a portability bug. A sum of weights wider than 32 bits may need several `$urandom_range()` draws.
 - **`randsequence` weights (§18.17.1).** They are evaluated each time their production is selected, which makes self-adjusting grammars possible (the kata below uses it). A `repeat` production cannot be cut short; only `break` stops it, and `break` ends the whole `randsequence` (§18.17.4).
 
@@ -589,6 +1150,13 @@ A `randsequence` and a constrained class answer different questions, and large i
 - **A grammar decides one choice at a time.** Each alternative is picked when its production is selected, from weights evaluated at that moment (§18.17.1); nothing looks ahead. A rule that spans several steps (no `LOAD` straight after a `STORE` to the same address) must be built from state variables read by weights and `if` productions (§18.17.2). A constraint over an array of items is solved for all items together (§18.5).
 - **A grammar is a statement, not a class member.** A test cannot switch one production off by name the way it can call `constraint_mode()` on a named constraint block (§18.9) or override a constraint in a derived class (§18.5.2). To make a grammar configurable, drive its weights and conditions from configuration variables, or put the `randsequence` in a virtual method that a derived class can override.
 - **A common split** (design practice, not a rule): the grammar fixes the *shape* of the stream (setup, body, drain; how many of each kind), and each terminal creates and randomizes an item whose class constraints fix the *fields*. Coverage then shows whether the weights reach the corners you need.
+
+| Question | `randsequence` grammar | Class constraints |
+|---|---|---|
+| When is each choice made? | One at a time, when its production is selected, from weights evaluated then (§18.17.1) | All random variables of the call are solved together (§18.5) |
+| How is a rule across several steps written? | State variables read by weights and `if` productions (§18.17.2) | One constraint over the array of items |
+| Can a test switch one rule off by name? | No: the grammar is a statement | Yes: `constraint_mode()` (§18.9) or a derived class (§18.5.2) |
+| What does it fix best? | The shape of the stream | The fields of each item |
 
 ### Expert: shared objects and self-seeding
 
@@ -828,6 +1396,49 @@ T0's RNG hands out draw 1 to A, draw 2 to the new thread T1, and draw 3 to B. C 
 | 6 + 5. T1 randomizes A, and T0 has the `#0` | A's values in T0 change | The `#0` blocks T0, so T1 runs first and takes A's first three values; T0 now gets the 4th to 6th. A is order-sensitive: T0 and T1 take turns on A's single RNG (§18.14.3), so whichever process reaches A first gets its first values |
 | 7. `B.srandom(42)` | B changes (new seed). Edit 1 on top of edit 7 then changes A and C, but not B | B's stream now starts from 42, whatever draw its `new()` received |
 
+The table gives the verdicts; the picture below shows the run order behind edit 6 + 5, the only row where the order in which processes run changes a result.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 194" role="img" aria-labelledby="rm-turn-title rm-turn-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="rm-turn-title">{"Edit 6 and edit 6 + 5 in run order: T0 and T1 take turns on A"}</title>
+  <desc id="rm-turn-desc">{"Each square is one A.randomize() call, numbered by the value it takes from A's single RNG, placed on the lane of the process that makes it, with time running left to right. Edit 6: T0 never blocks, so T0 runs its loop first and takes A's values 1, 2 and 3; T0 ends, then T1 starts and takes values 4, 5 and 6. Edit 6 + 5: T0 blocks on #0, so T1 starts first and takes values 1, 2 and 3; T1 ends, then T0 resumes and takes values 4, 5 and 6, so T0's values from A change."}</desc>
+  <text x="8" y="13" fontSize="10" fontWeight="700" fill="currentColor">{"Edit 6: T0 never blocks, so it runs its loop first"}</text>
+  <line x1="36" y1="35" x2="262" y2="35" stroke="currentColor" strokeOpacity="0.25" />
+  <line x1="36" y1="61" x2="262" y2="61" stroke="currentColor" strokeOpacity="0.25" />
+  <text x="8" y="39" fontSize="10.5" fontWeight="700" fill="currentColor">{"T0"}</text>
+  <text x="8" y="65" fontSize="10.5" fontWeight="700" fill="currentColor">{"T1"}</text>
+  <rect x="44" y="24" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="59" y="39" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <rect x="78" y="24" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="93" y="39" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"2"}</text>
+  <rect x="112" y="24" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="127" y="39" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <rect x="162" y="50" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="177" y="65" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"4"}</text>
+  <rect x="196" y="50" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="211" y="65" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"5"}</text>
+  <rect x="230" y="50" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="245" y="65" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"6"}</text>
+  <line x1="152" y1="20" x2="152" y2="76" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 3" />
+  <text x="156" y="86" fontSize="9" fillOpacity="0.85" fill="currentColor">{"T0 ends, then T1 starts (§9.3.2)"}</text>
+  <text x="272" y="39" fontSize="10" fill="currentColor">{"A's 1–3"}</text>
+  <text x="272" y="65" fontSize="10" fill="currentColor">{"A's 4–6"}</text>
+  <line x1="8" y1="96" x2="352" y2="96" stroke="currentColor" strokeOpacity="0.3" />
+  <text x="8" y="113" fontSize="10" fontWeight="700" fill="currentColor">{"Edit 6 + 5: the #0 blocks T0, so T1 goes first"}</text>
+  <line x1="36" y1="135" x2="262" y2="135" stroke="currentColor" strokeOpacity="0.25" />
+  <line x1="36" y1="161" x2="262" y2="161" stroke="currentColor" strokeOpacity="0.25" />
+  <text x="8" y="139" fontSize="10.5" fontWeight="700" fill="currentColor">{"T0"}</text>
+  <text x="8" y="165" fontSize="10.5" fontWeight="700" fill="currentColor">{"T1"}</text>
+  <rect x="44" y="124" width="98" height="22" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="2 2" />
+  <text x="93" y="139" fontSize="9.5" textAnchor="middle" fill="currentColor">{"#0: T0 blocked"}</text>
+  <rect x="162" y="124" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="177" y="139" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"4"}</text>
+  <rect x="196" y="124" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="211" y="139" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"5"}</text>
+  <rect x="230" y="124" width="30" height="22" rx="3" className="fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-400" /><text x="245" y="139" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"6"}</text>
+  <rect x="44" y="150" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="59" y="165" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"1"}</text>
+  <rect x="78" y="150" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="93" y="165" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"2"}</text>
+  <rect x="112" y="150" width="30" height="22" rx="3" strokeDasharray="4 3" className="fill-violet-500/15 stroke-violet-600 dark:stroke-violet-400" /><text x="127" y="165" fontSize="10.5" fontWeight="700" textAnchor="middle" fill="currentColor">{"3"}</text>
+  <line x1="152" y1="120" x2="152" y2="176" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="3 3" />
+  <text x="156" y="186" fontSize="9" fillOpacity="0.85" fill="currentColor">{"T1 ends, then T0 resumes after #0"}</text>
+  <text x="272" y="139" fontSize="10" fontWeight="700" className="fill-rose-700 dark:fill-rose-300">{"A's 4–6 ✕"}</text>
+  <text x="272" y="165" fontSize="10" fill="currentColor">{"A's 1–3"}</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each square is one `A.randomize()` call, numbered by the value it takes from A's single RNG; T1's calls are dashed, and time runs left to right. A has one RNG, so whichever process reaches A first gets its first values (§18.14.3), and the ✕ marks the values that change. The `#0` is what lets T1 go first: a `join_none` child cannot start until its parent blocks or ends (§9.3.2). B and C are not drawn because their streams do not change: B is randomized only by T0, from its own RNG, and C is seeded by T1, which still receives T0's draw 2.</figcaption>
+</figure>
+
 </details>
 
 ### Kata 2 (write): an instruction-stream grammar
@@ -891,6 +1502,8 @@ The deck for this page, *I-SV-2B: Randomization Methods*, has cards on the three
   - §18.13.1–§18.13.5 (`$urandom` and its seed argument, `$urandom_range`, `srandom`, `get_randstate`, `set_randstate`);
   - §18.14 (random stability), §18.14.1 (properties: initialization RNG, thread and object stability, manual seeding), §18.14.2 (thread stability), §18.14.3 (object stability), §18.15 (manual seeding);
   - §18.16 (`randcase`), §18.17 (`randsequence`), §18.17.1 (weights), §18.17.2 (`if`/`else`), §18.17.3 (`case`), §18.17.4 (`repeat`), §18.17.5 (`rand join`), §18.17.6 (`break` and `return`), §18.17.7 (value passing).
+  - Also cited by this page's diagrams: §12.8 (jump statements: `break` inside a loop), §18.5.9 (a uniform distribution over legal values), §20.14 (the `$random` algorithm is part of the standard, Annex N).
+- IEEE 1800.2-2020: §5.3.3.3 (`reseed()` gives each object a unique seed) and F.4.1.4.26 (UVM seeding is on by default).
 - uvm-core 2020.3.1 (implementation): `src/base/uvm_object.svh` (`reseed`, `use_uvm_seeding`), `src/base/uvm_component.svh`, `src/base/uvm_task_phase.svh`, `src/base/uvm_misc.svh` (`uvm_create_random_seed`, `uvm_global_random_seed`), `src/seq/uvm_sequence_item.svh` and `src/seq/uvm_sequence_base.svh` (`set_item_context`).
 
 **Prerequisites:** [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) for `randomize()`, constraints and checking the result; [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for processes and `fork`.

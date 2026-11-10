@@ -3,6 +3,34 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
+## Current state: the 2026-11-10 local resume
+
+The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The blocks below stay valid where this
+one does not update them.
+
+**How runs work now (the v2 flow):**
+- **Models:** the lead is Fable and only plans and manages. Every workflow agent names its model: Opus for authors,
+  fixers and reviewers, Sonnet for mechanical steps. An agent with no model would inherit Fable, at about five times the cost.
+- **Lessons:** `make-6a-run.py --out run.js --snap <dir outside the repo> <module> ...` writes a ready-to-run copy of
+  `visual-enrichment-v2.js`. The author plans from the saved audit and the saved catalog (`data/visual-catalog.json`),
+  then two full review rounds, a closing round that only verifies the fixes, and a delta accuracy check. A lesson that
+  still fails comes back as `escalate`. `--review-only` and `--embed` are the other two modes.
+- **Components:** `make-finish-held.py` (fresh pass, `--resume` after a review round, `--closing` for a last verify-only round).
+- **Reading a run:** `wf-journal.py status|open|save <runId>`. Workflows return only a compact summary on purpose.
+- **Releasing:** `prep-release.py --label checkpoint-N --list L.txt [--components ids] [--extra files] <lessons>`, then
+  `checkpoint-release.sh L.txt "<message>"`. The release script refuses to run without a tracked `.gitignore`.
+- **Measured cost:** about 0.6M worker tokens per lesson (6 lessons, 29 agents, 20 minutes), against 1.6M on the old flow.
+
+**Releases since the resume** (`progress.json` marks each file with its checkpoint label):
+- checkpoint-17: OperatorExplorer and SignednessVisualizer extensions, PackedLayoutExplorer, SubroutineLab and the
+  scheduler model v2 (registered, not embedded yet); 6a for I-SV-1 polymorphism-pitfalls, I-SV-2A, I-SV-2B, I-SV-3A, I-SV-3B.
+
+**Held:** timescale-lab, on `components/finish-2026-11-10` (a worktree branch from current main; never merge it as is).
+Its accuracy group 1 failed three rounds on a different edge case each time.
+
+**Next order:** the embed pass for the released components, 6a for the rest of T2 (I-SV-4A onward), 6a for T3 and T4,
+the next components batch (`time-slot-trace-presets` is unblocked), `phase6a-extras.js`, a fresh final 6b sweep, closure checks.
+
 ## Start here (state at the 2026-11-05 cloud stop) — resume locally from this list
 
 The cloud credits ran out on 2026-11-05 and the lead stopped every run. Nothing is running.

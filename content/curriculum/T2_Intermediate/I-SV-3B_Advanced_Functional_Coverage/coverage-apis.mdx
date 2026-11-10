@@ -17,6 +17,22 @@ sources:
 - **Why it matters:** These numbers drive decisions: when to stop sending stimulus, when to switch to a stimulus mode that targets the holes, which lane is lagging. Read the wrong number and the decision is wrong. The classic slips are reading the type number as if it were this instance's, trusting a bin ratio that is not the percentage, freezing coverage with a `stop()` that never gets its `start()`, and calling `$finish` the moment coverage reaches 100 % so the checks never finish.
 - **The Analogy:** A chain of shops all use the same stock-count form (the covergroup type). Each shop fills in its own copy (an instance), and each line on the form (a coverpoint or cross) lists the shelves (bins) to tick. A shop manager reads her own copy (`get_inst_coverage()`). Head office reads one figure for the whole chain (`get_coverage()`): by default the *average* of the shops' scores, or, if it chooses, one merged form where a shelf ticked by any shop counts (`merge_instances`). A shop that is closed for a stock-take pauses its counting (`stop()`) and resumes when it reopens (`start()`). *Where it breaks:* the form records only that a shelf was visited, never whether the stock on it was right. That judgement belongs to the checks, so a full form never proves the shop is in order.
 
+<details>
+<summary>The analogy, one row per idea</summary>
+
+| In the shop chain | In the covergroup | Read it with |
+|---|---|---|
+| the stock-count form | the covergroup type | its definition: the `option` and `type_option` settings |
+| one shop's filled-in copy | an instance | `get_inst_coverage()` |
+| one line on the form | an item: a coverpoint or a cross | the item's own `get_inst_coverage()` |
+| one shelf to tick | a bin | counted in the item's `(covered, total)` |
+| head office's figure for the chain | type coverage: an average by default, a merged form with `merge_instances` | `get_coverage()` |
+| every form the company uses | the whole design | `$get_coverage()` |
+| closed for a stock-take | collection paused | `stop()`, then `start()` |
+| is the stock on the shelf right? | not coverage at all: the checks | the assertions and the checker, never a coverage call |
+
+</details>
+
 **You will be able to:**
 1. Predict what `get_inst_coverage()`, `get_coverage()` and `$get_coverage()` return for a set of covergroup instances, both under the default weighted average and with `type_option.merge_instances = 1`.
 2. Choose `per_instance`, `option.get_inst_coverage`, `merge_instances`, goals and weights so that the number you read is the number you need, and calculate how a weight change moves it.
@@ -99,6 +115,23 @@ The type number can be computed two ways, chosen by the type option `type_option
 | 0 (default) | **weighted average** of the instance numbers | (66.67 + 52.38) / 2 = 59.52 |
 | 1 | coverage of the **union** of every instance's bins, as if all instances were merged into one; bins are matched by name and their counts add | `cp_op` 7/7, `cp_a` 2/2, `x_op_a` 6/14, so (100 + 100 + 42.86) / 3 = 80.95 |
 
+Where the union's numbers come from: the bins each lane covered, from the streams the Make It Work bench sends. A bin counts in the union when either lane covered it.
+
+| Operation | `cp_op` lane0 | `cp_op` lane1 | `cp_op` union | `x_op_a` bins, by lane |
+|---|---|---|---|---|
+| `ADD` | hit | hit | hit | `<ADD, zero>` lane0; `<ADD, max>` lane1 |
+| `SUB` | hit | | hit | `<SUB, max>` lane0 |
+| `MUL` | hit | | hit | `<MUL, zero>` lane0 |
+| `DIV` | hit | | hit | `<DIV, max>` lane0 |
+| `AND` | | hit | hit | `<AND, zero>` lane1 |
+| `OR` | | hit | hit | none |
+| `XOR` | hit | | hit | none |
+| **covered** | **5/7** | **3/7** | **7/7** | lane0 4/14, lane1 2/14, union **6/14** |
+
+`OR` and `XOR` cover no cross bin: `OR`'s `a` was `8'h10` and `XOR`'s `a` was `8'h42`, and neither value is in a `cp_a` bin.
+
+Both lanes covered both `cp_a` bins, so `cp_a` is 2/2 in each lane and in the union.
+
 The union is higher here because lane1 hit the operations lane0 missed. A union answers "has the design as a whole seen this?"; an average answers "how far is a typical instance?". Neither answers "is *every* lane done?"; for that you read each instance.
 
 Merging has a trap. With `merge_instances = 1`, `get_inst_coverage()` returns **the merged type number**, the same value from every instance, unless the covergroup definition also sets `option.get_inst_coverage = 1` (Table 19-1). Three options are easy to confuse:
@@ -125,6 +158,16 @@ endgroup
 ```
 
 With those three lines, lane0 and lane1 still return 66.67 and 52.38 from `get_inst_coverage()`, while `get_coverage()` returns 80.95.
+
+The three settings side by side, for the two lanes:
+
+| Covergroup definition | `lane0.cg.get_inst_coverage()` | `lane1.cg.get_inst_coverage()` | `get_coverage()`, from either lane |
+|---|---|---|---|
+| `merge_instances = 0` (default); `option.get_inst_coverage` has no effect here | 66.67 | 52.38 | 59.52: the average |
+| `merge_instances = 1`, `option.get_inst_coverage = 0` | 80.95: the merged number | 80.95: the merged number | 80.95: the union |
+| `merge_instances = 1`, `option.get_inst_coverage = 1` | 66.67 | 52.38 | 80.95: the union |
+
+`option.per_instance` changes none of these numbers; it changes only what is saved and reported (Table 19-1).
 
 ### The methods, and where you may call them
 
@@ -158,6 +201,16 @@ initial begin
   $display("u0    %0.2f", u0.get_inst_coverage());         // an instance, via .
 end
 ```
+
+The two kinds of declaration compared:
+
+| | `cg`, embedded in class `alu_cov` | `op_cg`, declared in a module, interface or package |
+|---|---|---|
+| Type name | none: the type is anonymous (§19.4) | `op_cg` |
+| Instances | one per `alu_cov` object: `lane0.cg`, `lane1.cg` | one per `new()`: `u0`, `u1` |
+| Type number | `lane0.cg.get_coverage()`, the same from `lane1.cg` | `op_cg::get_coverage()`, or `u0.get_coverage()` |
+| Instance number | `lane0.cg.get_inst_coverage()` | `u0.get_inst_coverage()` |
+| Type options set procedurally | impossible: set them in the definition | `op_cg::type_option.merge_instances = 1;` (§19.7.1) |
 
 `set_inst_name()` gives the instance a readable, stable name, such as its place in the testbench hierarchy. Without it the tool generates a unique name (Table 19-1, `option.name`). Nothing requires a generated name to be the same in every test, so rows from different tests may not line up when their databases are merged (tool-dependent). Assigning `option.name` procedurally does the same job; `set_inst_name()` is the method form.
 
@@ -215,6 +268,28 @@ Typical uses are a reset window, an initialization sequence and an error-injecti
 | 7 | `lane0.cg.start()` | 3 |
 | 8–10 | `write` with `DIV`, `ADD`, `XOR` | 5 |
 
+<TimingDiagram
+  title="lane0's eight writes, with collection paused for two of them"
+  caption="The x axis is transaction index, not simulation time, numbered from edge 0: each rising edge of the write(t) row is one call to lane0.write(t), and every value shown is the state right after that call. The a row is the operand in hex; the cp_op bins and cross bins rows count lane0's covered bins of cp_op and x_op_a. stop() runs before edge 3 and start() before edge 5, so DIV and AND at edges 3 and 4 (the 4th and 5th writes) are sampled but not collected, and both counts stay flat. The later DIV covers its bins; the repeated ADD adds none; XOR with a = 8'h42 covers its cp_op bin but no cross bin. ● marks where stop() and start() were called; ▼ marks the XOR write whose a is in no cp_a bin; the shaded band is the stopped window."
+  edges={8}
+  signals={[
+    { name: "write(t)", kind: "clock" },
+    { name: "op", kind: "bus", values: ["ADD", "SUB", "MUL", "DIV", "AND", "DIV", "ADD", "XOR"] },
+    { name: "a (hex)", kind: "bus", values: ["00", "FF", "00", "00", "FF", "FF", "00", "42"] },
+    { name: "collecting", kind: "bit", values: [1, 1, 1, 0, 0, 1, 1, 1] },
+    { name: "cp_op bins", kind: "bus", values: [1, 2, 3, 3, 3, 4, 4, 5] },
+    { name: "cross bins", kind: "bus", values: [1, 2, 3, 3, 3, 4, 4, 4] }
+  ]}
+  highlights={[
+    { from: 3, to: 4, tone: "info", label: "stopped: not collected" }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "lane0.cg.stop() was called before this write" },
+    { edge: 5, tone: "info", label: "lane0.cg.start() was called before this write" },
+    { edge: 7, tone: "sample", label: "8'h42 is in no cp_a bin: cp_op 5 of 7, cross stays 4 of 14" }
+  ]}
+/>
+
 Without the `stop()`/`start()` pair, `AND` would also count, and lane0 would read 76.19 instead of 66.67 (you will check this in Make It Work).
 
 There are three ways to keep samples out of the coverage, and each fits a different owner:
@@ -229,7 +304,7 @@ There are three ways to keep samples out of the coverage, and each fits a differ
 
 ### Ending the stimulus at a goal, and why the checks must finish
 
-The most common reason to query coverage while the test runs is to stop sending stimulus once the goal is reached, or to switch to a mode that targets the holes ([closure-workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) teaches steering). The order of calls matters. The diagram shows one bench that does three things: it pauses lane0's collection during a reset, it polls coverage every 50 items, and when the goal is reached it ends the *stimulus* and waits for the checker before it ends the *simulation*.
+The most common reason to query coverage while the test runs is to stop sending stimulus once the goal is reached, or to switch to a mode that targets the holes ([The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) teaches steering). The order of calls matters. The diagram shows one bench that does three things: it pauses lane0's collection during a reset, it polls coverage every 50 items, and when the goal is reached it ends the *stimulus* and waits for the checker before it ends the *simulation*.
 
 <SequenceDiagram
   title="Reset window, polling and end of stimulus in tb_top"
@@ -290,7 +365,12 @@ Four rules are packed into it:
 3. **Compare with `>=` against the goal**, not `== 100.0`: the goal may be below 100, and a `real` compared for equality is fragile.
 4. **Poll every N items, not every item.** Each query asks the simulator to compute a percentage; its cost is tool-dependent. For a plan with several items, check each planned item rather than one covergroup number: with a goal below 100, a group can pass while one item lags.
 
-Stuck coverage is not a reason to reseed. The **seed** is the starting value of a random-number generator; a new seed (`srandom()`) changes *which* values come out, not their probabilities, so a hole the constraints make rare stays rare ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)). When the polled number stops rising, switch to a stimulus mode that targets the holes; that is the next lesson's subject.
+Stuck coverage is not a reason to reseed. The **seed** is the starting value of a random-number generator ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods)). When the polled number stops rising, switch to a stimulus mode that targets the holes, the next lesson's subject; the table shows why:
+
+| When the polled number stops rising | What it changes | What happens to a hole the constraints make rare |
+|---|---|---|
+| run a new seed (`srandom()`) | *which* values come out, not their probabilities | it stays rare |
+| switch to a stimulus mode that targets the hole ([The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow)) | the stimulus itself, aimed at the empty bins | it becomes a direct target |
 
 ### The coverage system tasks
 
@@ -482,11 +562,43 @@ The tool's own `$finish` message follows. Read the log the way you would debug a
 
 **Change it and predict first.** Each change below edits one or two lines; write down your prediction before you rerun.
 
-1. Delete the `stop()` and `start()` lines. `lane0` gains `AND` (6/7) and the cross bins `<DIV, zero>` and `<AND, max>` (6/14): its number becomes (85.71 + 100 + 42.86) / 3 = **76.19**, with pair 14/23.
-2. Restore them and add `type_option.merge_instances = 1;` to the covergroup. The type line becomes the union, (100 + 100 + 42.86) / 3 = **80.95**, and so do both `get_inst_coverage()` lines (Table 19-1).
-3. Also add `option.get_inst_coverage = 1;`. The instance lines return to 66.67 and 52.38; the type line stays 80.95.
+1. Delete the `stop()` and `start()` lines. What do lane0's `cp_op`, `x_op_a` and `get_inst_coverage()` lines print now?
+2. Restore them and add `type_option.merge_instances = 1;` to the covergroup. What do the type line and the two `get_inst_coverage()` lines print?
+3. Also add `option.get_inst_coverage = 1;`. Which lines change, and to what?
+
+<details>
+<summary>Check change 1</summary>
+
+`lane0` gains `AND` (6/7) and the cross bins `<DIV, zero>` and `<AND, max>` (6/14): its number becomes (85.71 + 100 + 42.86) / 3 = **76.19**, with pair 14/23.
+
+</details>
+
+<details>
+<summary>Check change 2</summary>
+
+The type line becomes the union, (100 + 100 + 42.86) / 3 = **80.95**, and so do both `get_inst_coverage()` lines (Table 19-1).
+
+</details>
+
+<details>
+<summary>Check change 3</summary>
+
+The instance lines return to 66.67 and 52.38; the type line stays 80.95.
+
+</details>
 
 ### How to use the coverage API in your own bench
+
+Each call belongs to one owner in the bench. The steps below give the details.
+
+| Owner | Calls and settings | Steps |
+|---|---|---|
+| the covergroup definition | `option.per_instance`, `option.get_inst_coverage`, `type_option.merge_instances` | 3 |
+| the collector's constructor | `cg = new()`, `cg.set_inst_name()` | 1 |
+| the code that owns a reset, initialization or error-injection window | `stop()`, then `start()` on every path out of the window | 4 |
+| the code that owns the stimulus: `tb_top`, or in UVM the test or top sequence | choose the number to query, poll `get_inst_coverage()` every N items, compare with `>=` against the goal, let the checker drain, then `$finish` from `tb_top` (in UVM, drop the objection) | 2, 5, 6 |
+| the code that reports the numbers, such as `report()` in `tb_top` | item `(covered, total)` pairs and percentages, printed in a fixed format | 7 |
+| `tb_top`, or the run setup | `$set_coverage_db_name()` called from `tb_top`, or the tool's switch in the run setup | 8 |
 
 1. **Name every instance** in the collector's constructor with `set_inst_name()`, from its place in the hierarchy, so report rows are stable across tests.
 2. **Decide which number answers your question** before writing the query: this instance (`get_inst_coverage()`), the type (`get_coverage()`), or one plan item (`cg.<item>.get_inst_coverage(c, t)`).
@@ -565,6 +677,34 @@ endproperty
 c_req_ack: cover property (p_req_ack);  // n = cycles from req to ack
 ```
 
+<TimingDiagram
+  title="One p_req_ack attempt: ack three cycles after req"
+  caption="The x axis is rising edges of clk. Each value is the sampled value the assertion sees at that edge (Preponed). The n row is the attempt's local variable after the edge, not a signal. req is 1 at edge 0, so an attempt starts with n = 1; ack is 0 at edges 1 and 2, so n++ runs twice; ack is 1 at edge 3, so the match calls lat_cov.sample(3), which lands in bin slow ({[3:8]}). At edge 4 the attempt has already matched and ended, so its n row reads done: the local variable no longer exists."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req", kind: "bit", values: [1, 0, 0, 0, 0] },
+    { name: "ack", kind: "bit", values: [0, 0, 0, 1, 0] },
+    { name: "n (local)", kind: "bus", values: [1, 2, 3, 3, "done"] }
+  ]}
+  highlights={[
+    { from: 0, to: 3, tone: "attempt", label: "one attempt" }
+  ]}
+  markers={[
+    { edge: 0, tone: "info", label: "req sampled 1: attempt starts, n = 1" },
+    { edge: 3, tone: "sample", label: "ack sampled 1: lat_cov.sample(3), bin slow" }
+  ]}
+/>
+
+**Predict.** Suppose ack had been sampled 1 at edge 1 instead, one cycle after req. Which value would `lat_cov.sample()` receive, and which bin of `cp_lat` would it land in?
+
+<details>
+<summary>Check your prediction</summary>
+
+`[*0:7]` allows zero repetitions, so `(!ack, n++)` never runs: the match at edge 1 calls `lat_cov.sample(1)`, and 1 lands in bin `fast` (`{[1:2]}`).
+
+</details>
+
 Two limits: §16.11 forbids attaching a match item to a sequence that can match empty, which is why `n++` sits inside the parentheses before the repetition; and the formal arguments of an overridden `sample()` may be used only in coverpoint expressions and `iff` guards (§19.8.1). `cover property` itself counts property matches; the covergroup adds bins over the values. [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) teaches `cover property`.
 
 ### Expert: The cost of querying and collecting
@@ -618,6 +758,34 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
+
+<VisualRecap
+  title="Which number am I reading?"
+  rule="get_inst_coverage() reads the one instance it is called on; get_coverage() reads the type and returns the same value from every instance (a weighted average of the instances by default, the union of their bins, matched by name, with type_option.merge_instances = 1); $get_coverage() reads every covergroup type in the design and returns 100.0 when no instance exists."
+  code={`covergroup cg with function sample(alu_txn t);
+  option.per_instance         = 1; // per-instance rows in the report
+  option.get_inst_coverage    = 1; // own numbers while merging
+  type_option.merge_instances = 1; // type number = union
+  // ... the coverpoints and cross
+endgroup`}
+  mistake="Reading cg.get_coverage() inside a collector as that collector's number. It is the type's number: lane1 returns exactly the same value as lane0."
+  inTestbench="The coverage collector names its instance and samples it; the code that owns the stimulus polls the instance number every N items, compares it with >= against the goal, and lets the checks drain before the run ends."
+>
+  <ArchitectureDiagram
+    title="Each call reads one level"
+    caption="Instances sit inside their type, and every type sits inside the design. Each label names the call that reads that level."
+    cellWidth={150}
+    gapX={24}
+    legend={false}
+    nodes={[
+      { id: "rc-design", label: "design: $get_coverage()", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+      { id: "rc-type", label: "type: get_coverage()", kind: "generic", col: 0, row: 0, colSpan: 2, container: true },
+      { id: "rc-l0", label: "lane0.cg", sublabel: "get_inst_coverage()", kind: "generic", col: 0, row: 0 },
+      { id: "rc-l1", label: "lane1.cg", sublabel: "get_inst_coverage()", kind: "generic", col: 1, row: 0 },
+      { id: "rc-other", label: "other covergroup types", sublabel: "none in this bench", kind: "generic", col: 0, row: 1, colSpan: 2 }
+    ]}
+  />
+</VisualRecap>
 
 ### Retrieval quiz
 

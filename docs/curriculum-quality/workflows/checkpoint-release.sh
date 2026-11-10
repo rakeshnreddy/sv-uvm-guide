@@ -27,6 +27,8 @@ MESSAGE=${2:?commit message}
 WT=$SCR/wt-release
 BRANCH=${BRANCH:-curriculum-quality-program}
 RELEASE_MODE=${RELEASE_MODE:-main}
+# An agent deleted .gitignore in the 2026-11-05 cloud run; without it node_modules and .env files can be staged.
+[ -f "$MAIN/.gitignore" ] && git -C "$MAIN" ls-files --error-unmatch .gitignore >/dev/null 2>&1 || { echo ".gitignore is missing or untracked in $MAIN: restore it (git checkout HEAD -- .gitignore) before releasing"; exit 1; }
 export UVM_HOME=${UVM_HOME:-/Users/Rakesh/Downloads/1800.2-2020.3.1}
 
 cd "$MAIN"

@@ -17,6 +17,16 @@ sources:
 - **Why it matters:** The last few percent of coverage cost more than the rest put together, and they are where bugs escape. The two cheap reactions are both wrong most of the time. Running more seeds cannot fill a bin that the stimulus can never produce, and an `ignore_bins` added "to get the number up" hides a legal scenario that was never tested. Milestone M4 is gated on doing this honestly.
 - **The Analogy:** Filling a sticker album. You buy packs (seeds), and the last few stickers take forever because they are rare. Some stickers were never printed in your packs (a constraint makes them impossible), some are not part of your edition at all (unreachable in this design), some must never appear because they are fakes (forbidden by the spec), and some you got but never stuck in (the scenario happened, but coverage did not record it). Each needs a different fix, and buying more packs only helps with the rare ones. *Where it breaks:* you cannot change how a sticker factory prints, but you can change your stimulus odds with `dist` or simply order the sticker you need with a directed test. And a full album says nothing about whether the stickers are genuine; that is what the checks are for.
 
+The analogy, sticker by sticker. Keep these five names in mind; the next section turns them into four hole classes, with "never printed" and "rare" as the two kinds of under-stimulated hole.
+
+| In the album | The coverage hole | Do more packs (seeds) help? |
+|---|---|---|
+| You got it but never stuck it in | **unobserved**: the scenario happened, coverage did not record it | No: fix how coverage records it |
+| A fake that must never appear | **forbidden** by the spec | No: it must stay empty |
+| Not part of your edition | **unreachable here**: legal, but this design or configuration cannot produce it | No |
+| Never printed in your packs | **never generated**: a constraint gives it probability 0 | No: change the stimulus |
+| Printed, but rare | **rare**: probability above 0 but small | Yes, if the budget is large enough; otherwise steer the odds |
+
 **You will be able to:**
 1. **Classify** a coverage hole as forbidden, unreachable here, under-stimulated (never generated or rare) or unobserved from its evidence, and **choose** the matching action.
 2. **Decide** when a hole may be excluded or waived, and **write** the exclusion and the waiver record so that no legal scenario is hidden.
@@ -32,7 +42,50 @@ Review if needed: the module overview's [closure loop at a glance](/curriculum/T
 
 **How to read this page.** The core path is the first three sections: classify the hole, decide whether it may be excluded, and pick the smallest stimulus change. A junior engineer who stops there can already triage a coverage report correctly. The budget arithmetic, regression merging, code coverage and the debugging table are practitioner depth. Make It Work runs one model under three stimulus policies, so you can see a generator bug, a rare cell and a steered closure in your own log. Push Further holds the expert corner cases.
 
-The examples use the module's running example: an 8-bit ALU as the design under test (DUT), and a **verification plan** (vplan) whose **plan rows** each name a scenario, the coverage item that shows it happened and the check that shows it worked ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage)). The coverage items live in a **collector**, the class that holds the covergroup and samples it once per transaction. The rows and their coverage items are ALU-1 (every operation: `cp_op`), ALU-2 (`a` at 0 and `8'hFF`: `cp_a`), ALU-3 (`b` at its edges: `cp_b`), ALU-4 (every operation with each edge of `a`: the cross `x_op_a`, 7 × 2 = 14 cells), ALU-5 (DIV with `b == 0` is forbidden by the spec) and ALU-6 (every result matches the reference model `alu_model`). A **cell** is one bin of a cross, such as `<ADD, a = 8'h00>`.
+The examples use the module's running example: an 8-bit ALU as the design under test (DUT), and a **verification plan** (vplan) whose **plan rows** each name a scenario, the coverage item that shows it happened and the check that shows it worked ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage)). The coverage items live in a **collector**, the class that holds the covergroup and samples it once per transaction. The rows and their coverage items are:
+
+| Plan row | Scenario | Coverage item |
+|---|---|---|
+| ALU-1 | every operation | `cp_op` |
+| ALU-2 | `a` at 0 and `8'hFF` | `cp_a` |
+| ALU-3 | `b` at its edges | `cp_b` |
+| ALU-4 | every operation with each edge of `a` | the cross `x_op_a`, 7 × 2 = 14 cells |
+| ALU-5 | DIV with `b == 0` is forbidden by the spec | (a scenario that must never happen) |
+| ALU-6 | every result matches the reference model `alu_model` | (a check, not a coverage item) |
+
+A **cell** is one bin of a cross, such as `<ADD, a = 8'h00>`.
+
+<figure className="my-6">
+  <svg viewBox="0 0 340 200" role="img" aria-label="The cross x_op_a drawn as a grid: seven rows, one per operation ADD, SUB, MUL, DIV, AND, OR and XOR, and two columns, a equal to 8'h00 and a equal to 8'hFF. Each of the 14 squares is one cell; the highlighted square is the cell ADD with a equal to 8'h00." style={{ width: "100%", maxWidth: 380 }}>
+    <text x="170" y="14" fontSize="11" textAnchor="middle" fill="currentColor" fontWeight="600">x_op_a = cp_op × cp_a</text>
+    <text x="155" y="34" fontSize="10" textAnchor="middle" fill="currentColor">a = 8'h00</text>
+    <text x="235" y="34" fontSize="10" textAnchor="middle" fill="currentColor">a = 8'hFF</text>
+    <text x="108" y="55" fontSize="10" textAnchor="end" fill="currentColor">ADD</text>
+    <text x="108" y="75" fontSize="10" textAnchor="end" fill="currentColor">SUB</text>
+    <text x="108" y="95" fontSize="10" textAnchor="end" fill="currentColor">MUL</text>
+    <text x="108" y="115" fontSize="10" textAnchor="end" fill="currentColor">DIV</text>
+    <text x="108" y="135" fontSize="10" textAnchor="end" fill="currentColor">AND</text>
+    <text x="108" y="155" fontSize="10" textAnchor="end" fill="currentColor">OR</text>
+    <text x="108" y="175" fontSize="10" textAnchor="end" fill="currentColor">XOR</text>
+    <rect x="117" y="42" width="76" height="18" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeWidth="2" />
+    <rect x="197" y="42" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="62" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="62" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="82" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="82" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="102" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="102" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="122" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="122" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="142" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="142" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="117" y="162" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="197" y="162" width="76" height="18" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="155" y="55" fontSize="10" textAnchor="middle" fill="currentColor">one cell</text>
+    <text x="170" y="193" fontSize="10" textAnchor="middle" fill="currentColor">7 operations × 2 edge values = 14 cells</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">The cross <code>x_op_a</code> as a grid. Rows are the seven <code>cp_op</code> bins, columns the two <code>cp_a</code> bins; each square is one cell, and the outlined one is <code>ADD</code> with <code>a = 8'h00</code>. The same grid comes back in Make It Work, filled from the logs.</figcaption>
+</figure>
 
 ### Classify every hole before you act
 
@@ -91,7 +144,21 @@ In text: a hole first asks "did it happen?"; yes means unobserved. Otherwise "do
 
 <CoverageCrossExplorerVisualizer mode="closure" />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction: the four fixes under both specs</summary>
+
+Each cell answers two questions: does coverage close, and does the fix match the spec?
+
+| Fix | Spec A: BURST to the high region is forbidden | Spec B: it is legal |
+|---|---|---|
+| Run 10× more random samples | ✗ does not close: probability 0 | ✗ does not close: probability 0 |
+| `ignore_bins` for the cell | closes, ✗ unfaithful: a forbidden BURST would pass silently | closes, ✗ unfaithful: a legal scenario is never tested |
+| `illegal_bins` for the cell | closes, ✓ faithful: a forbidden BURST raises a run-time error | closes, ✗ unfaithful: legal traffic is labelled an error |
+| Delete the constraint | closes, ✗ unfaithful: the test now sends forbidden traffic and nothing flags it | closes, ✓ faithful: the generator now produces the legal combination |
+
 **What the challenge showed.** "10× more samples" fails under both specs: the cell has probability 0. Under Spec A, `illegal_bins` is the only faithful fix: the cell leaves the denominator, the constraint keeps the stimulus legal, and a forbidden BURST would still raise a run-time error. `ignore_bins` closes the number too, but then a forbidden BURST would pass silently. Under Spec B the same `illegal_bins` is wrong, because it calls legal traffic an error; the coverage model was right and the constraint was the bug, so you delete the constraint. The model checks one thing the real project needs in addition: under Spec A, a check outside coverage (an assertion or a scoreboard input check) that still catches the forbidden BURST when coverage is not being collected.
+
+</details>
 
 **Pitfalls.**
 - **Treating every hole as rare.** "Run more seeds" is the right answer only for the last class, and only when the budget arithmetic says it will work (misconception: closure means running more seeds).
@@ -128,6 +195,30 @@ revisit when HAS_MUL, the spec section or the coverage model changes
 ```
 
 **`illegal_bins` is not a checker.** It reports a forbidden value only when its covergroup instance exists, collects coverage and samples that value. In a regression that runs with coverage switched off for speed, or after `stop()`, what happens is tool-dependent. A forbidden scenario therefore always gets a real check as well, in the scoreboard or in an assertion, and the constraint that keeps the stimulus legal ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows the ALU-5 row with all three).
+
+<ArchitectureDiagram
+  title="Three guards for the forbidden scenario ALU-5"
+  caption="Guard 1 keeps the stimulus legal. Guard 2 reports a forbidden value only while its covergroup collects coverage and samples it. Guard 3 checks every transaction whether or not coverage is on. The gate must read both the simulator's errors and the check's. Solid arrows carry transactions; dotted arrows carry error reports."
+  legend={false}
+  cellWidth={150}
+  gapX={48}
+  gapY={64}
+  spreadAnchors
+  nodes={[
+    { id: "gen", label: "generator", sublabel: "guard 1: constraint c_spec", kind: "sequence", col: 0, row: 0 },
+    { id: "dut", label: "ALU (DUT)", sublabel: "op, a, b in; y out", kind: "dut", col: 1, row: 0 },
+    { id: "cov", label: "collector", sublabel: "guard 2: illegal_bins", kind: "subscriber", col: 0, row: 1 },
+    { id: "chk", label: "input check", sublabel: "guard 3: flags DIV, b == 0", kind: "scoreboard", col: 1, row: 1 },
+    { id: "gate", label: "regression gate", sublabel: "reads UVM and simulator errors", kind: "generic", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "gen", to: "dut", style: "data" },
+    { from: "dut", to: "cov", style: "data" },
+    { from: "dut", to: "chk", style: "data" },
+    { from: "cov", to: "gate", style: "control", label: "sim error" },
+    { from: "chk", to: "gate", style: "control", label: "check error" }
+  ]}
+/>
 
 **Pitfalls.**
 - **Waivers that never expire.** A waiver is valid only for the spec, the RTL and the configuration it names. Record what would make it invalid, and re-review it when any of those change.
@@ -175,6 +266,40 @@ For p = 10⁻⁴ (a bin hit once in 10,000 transactions):
 | 20,000 | 86.5% | |
 | 29,956 | 95.0% | about 3/p (exactly ln 20 / p for small p) |
 | 46,050 | 99.0% | about 4.6/p (ln 100 / p) |
+
+<figure className="my-6">
+  <svg viewBox="0 0 340 208" role="img" aria-label="Chart of the chance of hitting one bin against N times p. The curve rises steeply, then flattens: 63.2 percent at N equal to 1 over p, 86.5 percent at 2 over p, 95 percent at about 3 over p and 99 percent at about 4.6 over p. A bin with p equal to 0 stays flat at 0 percent for every N." style={{ width: "100%", maxWidth: 400 }}>
+    <line x1="44" y1="30" x2="44" y2="170" stroke="currentColor" strokeOpacity="0.6" />
+    <line x1="44" y1="170" x2="318" y2="170" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="40" y="33" fontSize="10" textAnchor="end" fill="currentColor">100%</text>
+    <text x="40" y="103" fontSize="10" textAnchor="end" fill="currentColor">50%</text>
+    <text x="40" y="173" fontSize="10" textAnchor="end" fill="currentColor">0%</text>
+    <line x1="44" y1="30" x2="318" y2="30" stroke="currentColor" strokeOpacity="0.2" strokeDasharray="2 3" />
+    <path d="M44.0,170.0 L57.5,139.0 L71.0,114.9 L84.5,96.1 L98.0,81.5 L111.5,70.1 L125.0,61.2 L138.5,54.3 L152.0,48.9 L165.5,44.8 L179.0,41.5 L192.5,38.9 L206.0,37.0 L219.5,35.4 L233.0,34.2 L246.5,33.3 L260.0,32.6 L273.5,32.0 L287.0,31.6 L300.5,31.2 L314.0,30.9" fill="none" stroke="currentColor" strokeWidth="2" />
+    <line x1="98" y1="81.5" x2="98" y2="170" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <line x1="152" y1="48.9" x2="152" y2="170" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <line x1="205.8" y1="37" x2="205.8" y2="170" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <line x1="292.7" y1="31.4" x2="292.7" y2="170" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <circle cx="98" cy="81.5" r="3" fill="currentColor" />
+    <circle cx="152" cy="48.9" r="3" fill="currentColor" />
+    <circle cx="205.8" cy="37" r="3" fill="currentColor" />
+    <circle cx="292.7" cy="31.4" r="3" fill="currentColor" />
+    <text x="103" y="95" fontSize="10" fill="currentColor">63.2%</text>
+    <text x="157" y="63" fontSize="10" fill="currentColor">86.5%</text>
+    <text x="211" y="52" fontSize="10" fill="currentColor">95.0%</text>
+    <text x="297" y="46" fontSize="10" fill="currentColor">99%</text>
+    <line x1="44" y1="170" x2="318" y2="170" stroke="currentColor" strokeWidth="3" />
+    <text x="249" y="148" fontSize="10" textAnchor="middle" fill="currentColor">p = 0:</text>
+    <text x="249" y="161" fontSize="10" textAnchor="middle" fill="currentColor">stays at 0%</text>
+    <text x="44" y="184" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+    <text x="98" y="184" fontSize="10" textAnchor="middle" fill="currentColor">1/p</text>
+    <text x="152" y="184" fontSize="10" textAnchor="middle" fill="currentColor">2/p</text>
+    <text x="205.8" y="184" fontSize="10" textAnchor="middle" fill="currentColor">3.0/p</text>
+    <text x="292.7" y="184" fontSize="10" textAnchor="middle" fill="currentColor">4.6/p</text>
+    <text x="181" y="202" fontSize="10" textAnchor="middle" fill="currentColor">N, the number of transactions, in units of 1/p</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">P(hit within N) for one bin; the x-axis is the number of transactions N, measured in units of 1/p. The curve is 1 − e<sup>−Np</sup>, which matches 1 − (1 − p)<sup>N</sup> closely when p is small, as in the table above. Each extra 1/p of budget buys less than the one before, and a probability-0 bin (the thick line on the axis) never leaves 0%.</figcaption>
+</figure>
 
 A probability-0 bin has P = 0 for every N.
 
@@ -263,6 +388,26 @@ Simulator message text for illegal bins, exclusions and merges is tool-dependent
 - **In UVM.** The collector is a `uvm_subscriber` fed by the monitor's analysis port ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)); steering is a test knob passed through the configuration database or a virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)); stopping at the goal means dropping the objection, never `$finish` from a component.
 - **When not to chase a hole.** A bin that no plan row asks for is an orphan: fix the coverage model (give it a row or remove it) instead of spending budget on it.
 - **The interview angle.** "We have been stuck at 96% for two weeks" is the classic staff-level prompt. The expected answer is this page in order: classify each hole from evidence, fix the unobserved and never-generated ones, waive only with evidence, budget the rare ones, and steer when the budget says more seeds will not do it.
+
+<ArchitectureDiagram
+  title="Where the closure pieces sit in a UVM testbench"
+  caption="The monitor broadcasts each transaction to the collector, a uvm_subscriber that holds the covergroup. The test sets the steering knob through the configuration database (or hands it to a virtual sequence), and the sequence reads it. When the goal is met, the test drops its objection so the run phase can end; no component calls $finish. Solid arrows carry transactions, dotted arrows carry configuration, the dashed arrow is the order of events."
+  legend={false}
+  cellWidth={150}
+  gapX={88}
+  gapY={64}
+  nodes={[
+    { id: "test", label: "test", sublabel: "raises, then drops the objection", kind: "test", col: 0, row: 0 },
+    { id: "seq", label: "sequence", sublabel: "reads the steering knob", kind: "sequence", col: 1, row: 0 },
+    { id: "mon", label: "monitor", sublabel: "analysis port", kind: "monitor", col: 0, row: 1 },
+    { id: "cov", label: "collector", sublabel: "uvm_subscriber + covergroup", kind: "subscriber", col: 1, row: 1 }
+  ]}
+  edges={[
+    { from: "test", to: "seq", style: "control", label: "knob" },
+    { from: "mon", to: "cov", style: "data", label: "write(t)" },
+    { from: "cov", to: "test", style: "causal", label: "at goal" }
+  ]}
+/>
 
 ### Recap
 
@@ -489,6 +634,19 @@ module tb_top;
 endmodule
 ```
 
+**Predict before you read the logs.** Use the probabilities from earlier on this page: with DIV allowed and `a` uniform, each `x_op_a` cell has p = 1/1792; `+BUGGY` gives the two DIV cells p = 0; `+STEER` gives every cell p = 1/28. Each policy runs 3 seeds of 500 transactions. For each policy, predict: does `cp_op` reach 7/7 on every seed, and does the merged `x_op_a` reach 14/14?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+| Policy | `cp_op` on every seed | Merged `x_op_a` | Why |
+|---|---|---|---|
+| No plusarg | 7/7 | not closed | Each operation has p = 1/7, so 500 transactions all but surely hit all seven. The cells are rare: P(all 14 closed within 1,500) is 0.035%. |
+| `+BUGGY` | 6/7 | not closed, and never will be | DIV has p = 0, so its `cp_op` bin and both DIV cells stay empty on every seed, whatever the seed count. |
+| `+STEER` | 7/7 | 14/14 | At p = 1/28, one seed of 500 closes all 14 cells with probability 1 − 1.8 × 10⁻⁷. |
+
+</details>
+
 **Expected output.** These logs are illustrative: they were worked out by hand from the probabilities on this page, not captured from a simulator run. The exact counts depend on your simulator's random streams; the shape does not. Your simulator adds its own banner and `$finish` message.
 
 No plusarg (DIV fixed, `a` uniform):
@@ -535,6 +693,119 @@ PASS=1500 FAIL=0
 ```
 
 **Read the three logs like a coverage review.**
+
+<figure className="my-6">
+  <svg viewBox="0 0 340 232" role="img" aria-label="Three x_op_a grids filled from the expected logs, rows ADD to XOR, columns a equal to 00 and FF. No plusarg: 8 of 14 cells hit; empty are ADD 00, MUL FF, DIV 00, AND FF, OR 00 and XOR 00; per-seed x_op_a 4, 3 and 3. Plus BUGGY: 7 of 14 hit; empty are SUB 00, MUL 00, DIV 00, DIV FF, AND FF, OR FF and XOR 00, so the whole DIV row is empty; per-seed 3, 4 and 2. Plus STEER: all 14 hit, and 14 of 14 on every seed." style={{ width: "100%", maxWidth: 400 }}>
+    <text x="40" y="60" fontSize="10" textAnchor="end" fill="currentColor">ADD</text>
+    <text x="40" y="78" fontSize="10" textAnchor="end" fill="currentColor">SUB</text>
+    <text x="40" y="96" fontSize="10" textAnchor="end" fill="currentColor">MUL</text>
+    <text x="40" y="114" fontSize="10" textAnchor="end" fill="currentColor">DIV</text>
+    <text x="40" y="132" fontSize="10" textAnchor="end" fill="currentColor">AND</text>
+    <text x="40" y="150" fontSize="10" textAnchor="end" fill="currentColor">OR</text>
+    <text x="40" y="168" fontSize="10" textAnchor="end" fill="currentColor">XOR</text>
+    <text x="82" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">no plusarg</text>
+    <text x="64" y="34" fontSize="10" textAnchor="middle" fill="currentColor">00</text>
+    <text x="100" y="34" fontSize="10" textAnchor="middle" fill="currentColor">FF</text>
+    <rect x="48" y="46" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="64" y="58" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="84" y="46" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="100" y="58" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="48" y="64" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="64" y="76" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="84" y="64" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="100" y="76" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="48" y="82" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="64" y="94" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="84" y="82" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="100" y="94" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="48" y="100" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="64" y="112" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="84" y="100" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="100" y="112" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="48" y="118" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="64" y="130" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="84" y="118" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="100" y="130" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="48" y="136" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="64" y="148" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="84" y="136" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="100" y="148" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="48" y="154" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="64" y="166" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="84" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="100" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <text x="82" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 8/14</text>
+    <text x="82" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 4, 3, 3</text>
+    <text x="182" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">+BUGGY</text>
+    <text x="164" y="34" fontSize="10" textAnchor="middle" fill="currentColor">00</text>
+    <text x="200" y="34" fontSize="10" textAnchor="middle" fill="currentColor">FF</text>
+    <rect x="148" y="46" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="164" y="58" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="184" y="46" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="200" y="58" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="148" y="64" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="164" y="76" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="184" y="64" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="200" y="76" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="148" y="82" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="164" y="94" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="184" y="82" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="200" y="94" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="148" y="100" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="164" y="112" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="184" y="100" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="200" y="112" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="148" y="118" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="164" y="130" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="184" y="118" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="200" y="130" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="148" y="136" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="164" y="148" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="184" y="136" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="200" y="148" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="148" y="154" width="32" height="16" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+    <text x="164" y="166" fontSize="10" textAnchor="middle" fill="currentColor">–</text>
+    <rect x="184" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="200" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <text x="182" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 7/14</text>
+    <text x="182" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 3, 4, 2</text>
+    <text x="282" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">+STEER</text>
+    <text x="264" y="34" fontSize="10" textAnchor="middle" fill="currentColor">00</text>
+    <text x="300" y="34" fontSize="10" textAnchor="middle" fill="currentColor">FF</text>
+    <rect x="248" y="46" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="58" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="46" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="58" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="64" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="76" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="64" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="76" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="82" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="94" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="82" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="94" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="100" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="112" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="100" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="112" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="118" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="130" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="118" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="130" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="136" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="148" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="136" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="148" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="248" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="264" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <rect x="284" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="300" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
+    <text x="282" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 14/14</text>
+    <text x="282" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 14, 14, 14</text>
+    <text x="170" y="222" fontSize="10" textAnchor="middle" fill="currentColor">✓ hit in the merge; – empty, listed as NEVER GENERATED</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">The merged <code>x_op_a</code> grid of each run, drawn from the illustrative logs above (not a simulator capture). Under <code>+BUGGY</code> the whole DIV row is empty: the probability-0 signature. Under the uniform policy the empty cells are scattered, and each seed alone reached at most 4 of the 14 cells.</figcaption>
+</figure>
 
 - **Every `NEVER GENERATED` cell is a hole, and every hole is a `NEVER GENERATED` cell.** The bench's own count and the coverage agree, so none of these holes is unobserved: the collector saw everything that happened. If a cell were empty in coverage but missing from this list, you would fix the collector, not the stimulus.
 - **Uniform: rare, not impossible.** Each cell has p ≈ 1/1792. One seed of 500 hits about 3.4 of the 14 cells on average and three merged seeds about 7.9; the empty cells change from seed to seed. Closing all 14 with 95% confidence needs about 10,050 transactions, about 20 seeds of 500, so this budget cannot close the cross: steer.
@@ -824,6 +1095,22 @@ The smallest change that meets the target is candidate 5: fix the constraint (th
 The M4 lab gives you the full ALU plan (ALU-1 to ALU-6) and a generator that cannot close it. You read the per-row report, classify every hole, and make the smallest change that closes the plan within the lab's seed budget, with `FAIL=0` and no forbidden input. Do Kata 2 first.
 
 <LabLink labId="coverage-advanced-1" />
+
+### One-glance card: the rules and numbers
+
+Cover the right-hand columns and recite them before you start the flashcards.
+
+| Rule | What to remember | Condition |
+|---|---|---|
+| One bin | P(hit within N) = 1 − (1 − p)^N | N independent transactions, each hitting the bin with probability p |
+| The average wait | N = 1/p gives only 63.2% | not a guarantee |
+| 95% and 99% | about 3/p (ln 20 / p) and 4.6/p (ln 100 / p) | small p |
+| Probability 0 | P = 0 for every N | more seeds never help |
+| A whole cross | N ≈ ln(k / δ) / p for a chance 1 − δ | k cells of probability p; with unequal p, the rarest cell dominates |
+| `:=` and `:/` on a range | `:=` gives every value the weight, `:/` shares it across the range (§18.5.3) | weights hold only absent other constraints |
+| A merged bin | covered when its summed count reaches the largest `at_least` of the merged instances (§19.11.1, §19.11.3) | type coverage with `merge_instances = 1` |
+| `get_coverage()` | the type number; `get_inst_coverage()` the instance number (§19.8) | under merging, `get_inst_coverage()` equals `get_coverage()` unless `option.get_inst_coverage = 1` (Table 19-1) |
+| Closed | coverage at goal **and** the paired checks passed | every exclusion has a waiver with evidence |
 
 ### Flashcards
 
