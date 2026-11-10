@@ -2,7 +2,7 @@ import React from "react";
 import { act, configure, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import SVSchedulerRegionVisualizerDefault, { SVSchedulerRegionVisualizer } from "@/components/visualizers/SVSchedulerRegionVisualizer";
+import SVSchedulerRegionVisualizerDefault, { REGION_MAP_ASSUMPTIONS, REGION_MAP_ASSUMPTIONS_BEFORE_REVEAL, SVSchedulerRegionVisualizer } from "@/components/visualizers/SVSchedulerRegionVisualizer";
 import { DELTA_DEFINITION } from "@/lib/sv-region-map-model";
 import { allRegionMapScenarioPresets, type AnyRegionMapScenarioId } from "@/lib/sv-region-map-scenarios-extra";
 import { simulateTimeSlot } from "@/lib/sv-scheduler-model";
@@ -39,6 +39,14 @@ const jumpToEnd = () => {
 describe("SVSchedulerRegionVisualizer (F3B region map, model-driven)", () => {
   it("keeps the named export the lesson registry loads, and the default export", () => {
     expect(SVSchedulerRegionVisualizerDefault).toBe(SVSchedulerRegionVisualizer);
+  });
+
+  it("the next-region assumption says when the extra pause happens: only after an update applied in the reactive loop (regionDecisions, §4.5)", () => {
+    for (const list of [REGION_MAP_ASSUMPTIONS, REGION_MAP_ASSUMPTIONS_BEFORE_REVEAL]) {
+      const text = list.find((t) => t.startsWith("Next-region mode"));
+      expect(text).toMatch(/and when an update applied in the reactive loop leaves work in both Reactive and Active, and asks where the loop goes/);
+      expect(text).not.toMatch(/when Active and Reactive both hold work/);
+    }
   });
 
   it("shows the code and the region names, but hides the trace, log, map and ladder until a prediction is committed", () => {

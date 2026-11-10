@@ -37,7 +37,7 @@ import { cn } from "@/lib/utils";
 const ASSUMPTION_SLOT = `One time slot at a rising clock edge (t = 10 ns unless the scenario states another slot time), following the region loop of IEEE 1800-2023 §4.5. Steps count scheduler work, not nanoseconds; Δ is the model's own count, defined under the region map (the standard defines no delta count).`;
 const ASSUMPTION_COMB = "Continuous assignments are modelled as processes sensitive to their right-hand side (§4.9.1); always_comb likewise (§9.2.2.2).";
 const ASSUMPTION_PROCESSES = "Processes are small structured programs generated from the code shown, not parsed SystemVerilog.";
-const ASSUMPTION_NEXT_REGION = "Next-region mode pauses whenever the executing region runs dry, and when Active and Reactive both hold work, and asks where the loop goes; the answer is read from the same trace, and the explanation paraphrases §4.5.";
+const ASSUMPTION_NEXT_REGION = "Next-region mode pauses whenever the executing region runs dry, and when an update applied in the reactive loop leaves work in both Reactive and Active, and asks where the loop goes; the answer is read from the same trace, and the explanation paraphrases §4.5.";
 
 export const REGION_MAP_ASSUMPTIONS = [
   ASSUMPTION_SLOT,
@@ -436,7 +436,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
   const lastCommitted = committed[committed.length - 1];
 
   const decisionOptions = pending
-    ? nextRegionOptions(run).map((o) => ({ id: o.id, label: o.label, correct: isDecisionAnswer(pending, o.id), feedback: decisionFeedback(pending, o.id, run) }))
+    ? nextRegionOptions(run, pending).map((o) => ({ id: o.id, label: o.label, correct: isDecisionAnswer(pending, o.id), feedback: decisionFeedback(pending, o.id, run) }))
     : [];
   /** What the gate's feedback says, as the description of the Continue button that takes focus: its live region mounts with its content, so it may not be announced. */
   const gateVerdict = (committedOption: string | null) => {

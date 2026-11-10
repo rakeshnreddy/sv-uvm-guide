@@ -225,11 +225,13 @@ export const NEXT_REGION_OPTIONS: NextRegionOption[] = [
 ];
 
 /**
- * The options for a run. A run ended by $finish can stop with Postponed still
- * holding output, so its 'end' option cannot claim that Postponed is empty.
+ * The options at a decision. At the decision a $finish produced, Postponed may
+ * still hold output, so the 'end' option cannot claim that Postponed is empty.
+ * Every other decision, of a finished run too, shows the fixed list, so the
+ * options never hint early that the run will end by $finish.
  */
-export function nextRegionOptions(result: SimulationResult): NextRegionOption[] {
-  if (!result.finished) return NEXT_REGION_OPTIONS;
+export function nextRegionOptions(result: SimulationResult, decision?: RegionDecision): NextRegionOption[] {
+  if (!result.finished || decision?.answer !== "end") return NEXT_REGION_OPTIONS;
   return NEXT_REGION_OPTIONS.map((o) => (o.id === "end" ? { ...o, label: "No scheduled event runs: the simulation ends" } : o));
 }
 
@@ -374,19 +376,22 @@ export function explainDecision(decision: RegionDecision, result: SimulationResu
       return `Everything from Active to NBA was empty, so the Observed events are next: property evaluations and clocking-block events move into Active and execute there (§4.4.2.5, §14.10, §4.5). ${deltaNote}`;
     case "reactive-set":
       return `The active region set and Observed were all empty. The scheduler turns to the reactive set and keeps iterating Reactive, Re-Inactive and Re-NBA until all three are empty; only then can it look at Active again (§4.5, §4.4.2.6). ${deltaNote}`;
-    case "reInactive":
-      return `Reactive ran dry and Re-Inactive holds the program code that executed #0. It moves into Reactive and resumes there, before any Re-NBA update (§4.4.2.7, §4.5). ${deltaNote}`;
+    case "reInactive": {
+      // Named from the queue, so an assertion action block that executed #0 is never called program code.
+      const resumed = result.trace[Math.max(0, decision.index - 1)].queues.reInactive.map((q) => q.label);
+      return `Reactive ran dry and Re-Inactive holds reactive-set code that executed #0 (${listWithAnd(resumed)}). It moves into Reactive and resumes there, before any Re-NBA update (§4.4.2.7, §4.5). ${deltaNote}`;
+    }
     case "reNba":
       return `Reactive and Re-Inactive were empty, so the Re-NBA updates (program-code <= and clocking-block drives) move into Reactive and are applied there (§4.4.2.8, §14.16, §4.5). ${deltaNote}`;
     case "active": {
       const activeWork = result.trace[Math.max(0, decision.index - 1)].queues.active.map((q) => q.label);
-      return `The reactive set has drained, but Active holds work again (${listWithAnd(activeWork)}): a change made in the reactive set woke design code. The outer loop therefore returns to Active in the same time slot (§4.5). ${deltaNote}`;
+      return `The reactive set has drained, but Active holds work again (${listWithAnd(activeWork)}): a change made in the reactive set woke design code, which wakes in the active region set (§24.3.2). The outer loop therefore returns to Active in the same time slot (§4.5). ${deltaNote}`;
     }
     case "postponed":
-      return `No region from Active to Re-NBA holds anything, so the slot's last region runs once: $strobe and $monitor print the settled values, and nothing may write any more (§4.4.2.9). ${deltaNote}`;
+      return `No region from Active to Re-NBA holds anything, so the slot's last region runs once: $strobe and $monitor print the settled values, and nothing may write any more (§4.4.2.9, §4.5). ${deltaNote}`;
     case "end":
       return finished
-        ? `${capitalized(finishName(result))} ended the run inside the slot: after the final procedures, no remaining event executes, so the regions below never run (§20.2, §24.3, §9.2.3). ${deltaNote}`
+        ? `${capitalized(finishName(result))} ended the run inside the slot: after the final procedures, no remaining scheduled event executes, so no region of this slot runs again, not even one that still holds events (${finished.cause === "implicit-finish" ? "§24.3, " : ""}§20.2, §9.2.3). ${deltaNote}`
         : `Nothing is left in any region, Postponed included, so the time slot is complete and simulation time moves to the next slot that has events (§4.5). ${deltaNote}`;
   }
 }
@@ -414,7 +419,7 @@ export function decisionFeedback(decision: RegionDecision, option: NextRegionAns
     return `${capitalized(name)} ended the run, so the loop looks at no further region (§20.2, §9.2.3).`;
   }
   if (option === "end") {
-    if (decision.answer === "postponed") return "The slot is not over: Postponed still has output to print, and it runs once after every other region is empty (§4.4.2.9).";
+    if (decision.answer === "postponed") return "The slot is not over: Postponed still has output to print, and it runs once after every other region is empty (§4.4.2.9, §4.5).";
     return `The slot cannot end while ${answerHolds}; time only advances once every region is empty (§4.5).`;
   }
   if (option === "postponed") {
@@ -445,6 +450,13 @@ export function decisionFeedback(decision: RegionDecision, option: NextRegionAns
   }
   if (region && REACTIVE_SET.includes(region) && decision.from === "active" && !(answerRegion && REACTIVE_SET.includes(answerRegion))) {
     return `${REGION_LABELS[region]} belongs to the reactive set, which waits until the active set and Observed are empty; ${answerName} comes first (§4.5).`;
+  }
+  if (region && ACTIVE_SET.includes(region) && decision.from === "reactive") {
+    // §4.5 has two inner loops; an active-set region is never part of the reactive one.
+    if (decision.answer === "active") {
+      return `${REGION_LABELS[region]} does hold events, but it is not first: the reactive set has drained, and the outer loop re-enters the active-set loop at Active, which holds work, so Active runs before ${REGION_LABELS[region]} (§4.5).`;
+    }
+    return `${REGION_LABELS[region]} does hold events, but it is outside the reactive loop (Reactive through Re-NBA, §4.5). The outer loop returns to it only once Reactive, Re-Inactive and Re-NBA are all empty, and ${answerName} still holds events.`;
   }
   return `${answerName} comes first: this inner loop (${decision.from === "active" ? "Active through Observed" : "Reactive through Re-NBA"}, §4.5) takes its earliest region that still holds events.`;
 }

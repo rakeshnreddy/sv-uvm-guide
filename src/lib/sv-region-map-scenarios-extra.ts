@@ -36,8 +36,9 @@ export interface AnyRegionMapPreset {
 
 /**
  * programReactiveScenario plus a program thread that waits on cmd. The cmd
- * update (Re-NBA, executed in Reactive) wakes the watcher into Reactive and
- * `assign led` into Active; the reactive loop finishes first (§4.5).
+ * update (Re-NBA, executed in Reactive) wakes the watcher into Reactive
+ * (§24.3.1) and `assign led` into Active, since design processes wake in the
+ * active region set (§24.3.2); the reactive loop finishes first (§4.5).
  */
 export const programWatcherScenario = (): SvScenario => {
   const base = programReactiveScenario();
@@ -78,7 +79,7 @@ function programWatcherPredictions(scenario: SvScenario, result: SimulationResul
           id: "watcher",
           label: "The watcher: the reactive set drains completely before the loop returns to Active",
           correct: deterministic && bothRun && watcher < led,
-          feedback: `The update of cmd executes inside the reactive loop. It wakes the watcher into Reactive and assign led into Active, but the scheduler keeps iterating Reactive, Re-Inactive and Re-NBA until all three are empty, and only then returns to Active (§4.5, §24.3.1).${ledSeen}`,
+          feedback: `The update of cmd executes inside the reactive loop. It wakes the watcher into Reactive (§24.3.1) and assign led into Active, because design processes woken by the reactive set wake in the active region set (§24.3.2). The scheduler keeps iterating Reactive, Re-Inactive and Re-NBA until all three are empty, and only then returns to Active (§4.5).${ledSeen}`,
         },
         {
           id: "design",

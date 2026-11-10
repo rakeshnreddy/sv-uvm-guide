@@ -91,6 +91,8 @@ export const lazyMdxInteractiveNames = [
   "ScenarioSorter",
   "DecisionLab",
   "SelfCheckBenchLab",
+  "PackedLayoutExplorer",
+  "SubroutineLab",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];

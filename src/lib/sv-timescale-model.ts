@@ -230,7 +230,7 @@ export type ParsedDelay =
   /** `#2.1ns`: a time literal, converted to the current unit where it is written (5.8). */
   | { kind: "literal"; text: string; digits: bigint; den: bigint; literalUnit: TimeUnitName }
   /** `#(1'bx)`: a delay expression that evaluates to x or z is zero (9.4.1). */
-  | { kind: "xz"; text: string }
+  | { kind: "xz"; text: string; sizing?: string }
   /** `#(-1)`: a negative delay is a 64-bit two's-complement unsigned integer (9.4.1). */
   | { kind: "negative"; text: string; written: bigint; asUnsigned: bigint }
   | { kind: "invalid"; text: string; reason: string };
@@ -271,6 +271,57 @@ const BASED_UNKNOWN = /^(?:0*[1-9]\d*\s*)?'[sS]?(?:[bBoOhH]\s*[xXzZ?][xXzZ?_]*|[
  * BASED_UNKNOWN allows it. Underscores after a decimal digit were already removed.
  */
 const BASED_ANY = /^(?:0*[1-9]\d*\s*)?'[sS]?(?:[bB]\s*[01xXzZ?][01xXzZ?_]*|[oO]\s*[0-7xXzZ?][0-7xXzZ?_]*|[hH]\s*[\da-fA-FxXzZ?][\da-fA-FxXzZ?_]*|[dD]\s*(?:\d+|[xXzZ?]_*))$/;
+/** One based literal after §5.7.1 sizing. */
+interface SizedLiteral {
+  /** The size written before the apostrophe, or undefined for an unsized literal. */
+  size?: number;
+  signed: boolean;
+  /** b, o and h: the bits that are left (most significant first, each 0, 1, x or z). Left padding is not written out; see sizeBasedLiteral. */
+  bits?: string;
+  /** The unsigned value when every bit is known, before the s designator is read. */
+  value?: bigint;
+  /** The value fills the size exactly, so its leftmost bit is the one the s designator reads as the sign. */
+  fillsSize: boolean;
+  /** The digits gave more bits than the size, so §5.7.1 dropped bits on the left. */
+  truncated: boolean;
+}
+
+const DIGIT_BITS: Record<string, number> = { b: 1, o: 3, h: 4 };
+
+/**
+ * Applies §5.7.1 to a based literal that BASED_ANY accepted. An x or z sets 1, 3 or 4
+ * bits by base. A value longer than the size is truncated from the left. A shorter one
+ * is padded on the left with 0, or with x or z when its leftmost bit is x or z; that
+ * padding changes neither the value nor which bits are known, so it is not written
+ * out (a size can be large). An unsized literal has at least 32 bits and the width its
+ * value needs, so it is never truncated.
+ */
+const sizeBasedLiteral = (t: string): SizedLiteral => {
+  const m = /^(?:(\d+)\s*)?'([sS]?)([bBoOhHdD])\s*(.*)$/.exec(t);
+  const none: SizedLiteral = { signed: false, fillsSize: false, truncated: false };
+  if (!m) return none;
+  const size = m[1] === undefined ? undefined : Number(m[1]);
+  const signed = m[2] !== "";
+  const base = m[3].toLowerCase();
+  const digits = m[4].replace(/_/g, "").toLowerCase().replace(/\?/g, "z");
+  let bits: string;
+  if (base === "d") {
+    // Only a decimal unsigned_number reaches here: a d with an x or z digit is all x or z, which BASED_UNKNOWN takes.
+    bits = BigInt(digits).toString(2);
+  } else {
+    const width = DIGIT_BITS[base];
+    bits = "";
+    for (const d of digits) bits += d === "x" || d === "z" ? d.repeat(width) : parseInt(d, 16).toString(2).padStart(width, "0");
+  }
+  let truncated = false;
+  if (size !== undefined && bits.length > size) {
+    bits = bits.slice(bits.length - size);
+    truncated = true;
+  }
+  const value = /[xz]/.test(bits) ? undefined : BigInt(`0b${bits}`);
+  return { size, signed, bits: base === "d" ? undefined : bits, value, fillsSize: size !== undefined && bits.length === size, truncated };
+};
+
 /** unbased_unsized_literal 'x or 'z (Syntax 5-2). */
 const UNBASED_UNKNOWN = /^'[xXzZ]$/;
 /** unbased_unsized_literal '0 or '1 (Syntax 5-2). */
@@ -361,9 +412,39 @@ export function parseDelay(text: string): ParsedDelay {
       return invalid(`A delay_value cannot be ${what}, so this one needs parentheses (§9.4, A.6.5): write #(${raw}).`);
     }
     if (BASED_UNKNOWN.test(t) || UNBASED_UNKNOWN.test(t)) return { kind: "xz", text };
-    return invalid(
-      `#(${raw}) is a legal delay: an integer literal (A.8.7) in parentheses (A.6.5). This lab computes such a literal only when every digit is x or z, which §9.4.1 makes zero, so this one is outside this lab. Write its value as a plain number instead.`,
-    );
+    if (UNBASED_KNOWN.test(t)) {
+      // §5.7.1: every bit of '0 or '1 is set to that bit, and its width is 1 bit only in a self-determined context. '0 is zero at any width; '1 is not one number.
+      const advice =
+        t === "'0"
+          ? "Its value is 0 at any width, so write #0 instead."
+          : "Every bit of '1 is 1 and its width comes from its context (§5.7.1); this lab does not decide that width for a delay, so it offers no plain number for it.";
+      return invalid(
+        `#(${raw}) is a legal delay: an unbased unsized literal (§5.7.1, A.8.4) in parentheses (A.6.5). This lab computes only the x and z ones, which §9.4.1 makes zero, so this one is outside this lab. ${advice}`,
+      );
+    }
+    // §5.7.1 sizes the digits first: a sized literal is padded or truncated on the left, so the bits that reach the delay decide whether it is known.
+    const sized = sizeBasedLiteral(t);
+    const sizeNote = sized.truncated ? ` Its digits give more than ${sized.size} bit${sized.size === 1 ? "" : "s"}, so §5.7.1 truncates it from the left to ${sized.size}.` : "";
+    if (sized.bits !== undefined && /^[xz]+$/.test(sized.bits)) {
+      // Reached only through truncation: an all-x/z digit string was taken by BASED_UNKNOWN above.
+      return { kind: "xz", text, sizing: `${sizeNote.trim()} Every bit left is x or z.` };
+    }
+    const legal = `#(${raw}) is a legal delay: an integer literal (A.8.7) in parentheses (A.6.5). This lab computes such a literal only when every bit, after §5.7.1 sizing, is x or z, which §9.4.1 makes zero, so this one is outside this lab.${sizeNote}`;
+    if (sized.value === undefined) {
+      return invalid(
+        `${legal} Some of its bits are x or z and some are known, so its value is partly unknown and has no plain-number form. §9.4.1 makes a delay that evaluates to an unknown or high-impedance value zero; this lab does not decide how that applies to a partly unknown value.`,
+      );
+    }
+    const unsignedValue = sized.value;
+    // §5.7.1: the s designator changes only the interpretation, as two's complement. Its sign is the leftmost bit of the sized value; a padded one starts with 0.
+    if (sized.signed && sized.fillsSize && sized.size !== undefined && unsignedValue >> BigInt(sized.size - 1) === ONE) {
+      const value = unsignedValue - (ONE << BigInt(sized.size));
+      return invalid(
+        `${legal} The s marks it signed, and §5.7.1 reads a signed literal as two's complement, so as a ${sized.size}-bit value it is ${value}. A negative delay falls under §9.4.1, but this lab does not decide how a ${sized.size}-bit signed value is widened to the size of a time variable, so it offers no plain number for it; #(${value}) is the nearest form the lab computes.`,
+      );
+    }
+    if (unsignedValue >= TWO_POW_64) return invalid(`${legal} Its value is ${unsignedValue}, 2^64 or more, more than a 64-bit time variable (§6.11) can count, so the lab offers no plain number for it.`);
+    return invalid(`${legal} Its value is ${unsignedValue}, so write #${unsignedValue} instead.`);
   }
   if (/^[xXzZ]+$/.test(t)) {
     // Offer the literal the learner meant: z only gives 1'bz, anything with an x gives 1'bx. Both are zero by §9.4.1.
@@ -491,6 +572,7 @@ export function roundDelay(input: ParsedDelay, unit: TimeScale, precision: TimeS
       wakeFs: ZERO,
       special: "x/z delay",
       steps: [
+        ...(input.sizing ? [input.sizing] : []),
         `The delay expression evaluates to x or z, so it is interpreted as zero delay (§9.4.1).`,
         `The statement runs later in the same time slot, at ${show(ZERO)}.`,
       ],

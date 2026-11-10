@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { exploreOrderings, simulateTimeSlot } from "@/lib/sv-scheduler-model";
+import { exploreOrderings, simulateTimeSlot, withInterleaveNba } from "@/lib/sv-scheduler-model";
 import { regionLandings, regionMapPrediction, regionMapSource } from "@/lib/sv-region-map-model";
 import {
   allRegionMapScenarioPresets,
@@ -48,7 +48,7 @@ describe("program-watcher: the reactive set drains before Active resumes (IEEE 1
     expect(prediction.options.filter((o) => o.correct).map((o) => o.id)).toEqual(["watcher"]);
     expect(prediction.options).toHaveLength(4);
     // The led value the feedback quotes is the one the watcher's print showed in this run.
-    expect(prediction.options.find((o) => o.id === "watcher")?.feedback).toMatch(/\(§4\.5, §24\.3\.1\)\. That is why the watcher prints led = 0\.$/);
+    expect(prediction.options.find((o) => o.id === "watcher")?.feedback).toMatch(/wakes the watcher into Reactive \(§24\.3\.1\) and assign led into Active, because design processes woken by the reactive set wake in the active region set \(§24\.3\.2\)\..*\(§4\.5\)\. That is why the watcher prints led = 0\.$/);
     // §4.7 lists mid-process suspension too, so the race option must not claim same-region readiness is the only source.
     expect(prediction.options.find((o) => o.id === "race")?.feedback).toBe("The watcher sits in Reactive and assign led in Active, so §4.5 fixes the order between them; a pair ready in one region could go either way (§4.7).");
     expect(scenario.title).toBe("A second program thread waits on cmd");
@@ -134,6 +134,10 @@ describe("the merged preset list", () => {
       const scenario = preset.build();
       expect(simulateTimeSlot(scenario).choices).toEqual([]);
       expect(exploreOrderings(scenario)).toMatchObject({ deterministic: true, runCount: 1 });
+      // With the opt-in NBA interleave too (§4.5 'any event'): still one order, and the same outcome.
+      const interleaved = exploreOrderings(withInterleaveNba(scenario, true));
+      expect(interleaved).toMatchObject({ deterministic: true, runCount: 1 });
+      expect(interleaved.outcomes[0].signature).toBe(exploreOrderings(scenario).outcomes[0].signature);
     }
   });
 

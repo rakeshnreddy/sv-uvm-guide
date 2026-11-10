@@ -100,6 +100,8 @@ const loaders = {
   RaceDebugChallenge: () => import("@/components/visuals/RaceDebugChallenge").then(module => asMdxModule(module.default)),
   NetResolutionSimulator: () => import("@/components/visuals/NetResolutionSimulator").then(module => asMdxModule(module.default)),
   OperatorExplorer: () => import("@/components/visuals/OperatorExplorer").then(module => asMdxModule(module.default)),
+  PackedLayoutExplorer: () => import("@/components/visuals/PackedLayoutExplorer").then(module => asMdxModule(module.default)),
+  SubroutineLab: () => import("@/components/visuals/SubroutineLab").then(module => asMdxModule(module.default)),
   ForkJoinVisualizer: () => import("@/components/visuals/ForkJoinVisualizer").then(module => asMdxModule(module.default)),
   ClockingBlockSkewVisualizer: () => import("@/components/visuals/ClockingBlockSkewVisualizer").then(module => asMdxModule(module.default)),
   ObjectHandleVisualizer: () => import("@/components/visuals/ObjectHandleVisualizer").then(module => asMdxModule(module.default)),

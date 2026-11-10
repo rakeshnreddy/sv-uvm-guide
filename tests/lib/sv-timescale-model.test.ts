@@ -1060,10 +1060,74 @@ describe("sv-timescale-model: the delay grammar (§9.4, A.6.5, A.2.2.3, A.8.7, �
 
   it("legal delays the lab does not compute say they are outside this lab, not that the grammar rejects them", () => {
     // A based number with known digits (A.8.7), and '0 or '1, in parentheses (A.6.5).
-    for (const text of ["#(4'b1x0z)", "#(1'bx1)", "#(4'd5)", "#(4'b1x)", "#(8'hA_F)", "#('1)"]) {
+    for (const text of ["#(4'b1x0z)", "#(2'bx1)", "#(1'bx1)", "#(4'd5)", "#(4'b1x)", "#(8'hA_F)", "#(4'sb1111)", "#(8'h?F)", "#(2'd5)"]) {
       expect(parseDelay(text).kind, text).toBe("invalid");
-      expect(reasonOf(text), text).toMatch(/is a legal delay: an integer literal \(A\.8\.7\) in parentheses \(A\.6\.5\).*outside this lab/);
+      expect(reasonOf(text), text).toMatch(/is a legal delay: an integer literal \(A\.8\.7\) in parentheses \(A\.6\.5\)\. This lab computes such a literal only when every bit, after §5\.7\.1 sizing, is x or z, which §9\.4\.1 makes zero, so this one is outside this lab\./);
     }
+    // Only known bits: the value is a number, so the lab names it and offers the plain delay with that value.
+    expect(reasonOf("#(4'd5)")).toMatch(/outside this lab\. Its value is 5, so write #5 instead\.$/);
+    expect(reasonOf("#(8'hA_F)")).toMatch(/outside this lab\. Its value is 175, so write #175 instead\.$/);
+    // A signed literal whose sign bit is 0 is positive (§5.7.1); an unsized one has at least 32 bits, so 'sb1111 is 15.
+    expect(reasonOf("#(4'sb0111)")).toMatch(/Its value is 7, so write #7 instead\.$/);
+    expect(reasonOf("#('sb1111)")).toMatch(/Its value is 15, so write #15 instead\.$/);
+    // Padding with 0 (§5.7.1) keeps a signed literal shorter than its size positive: 8'sb1111 is 0000_1111.
+    expect(reasonOf("#(8'sb1111)")).toMatch(/Its value is 15, so write #15 instead\.$/);
+    // Known digits mixed with x, z or ? that survive sizing: the value is partly unknown, so no numeric rewrite, and the open §9.4.1 question is recorded.
+    for (const text of ["#(4'b1x)", "#(2'bx1)", "#(4'b1x0z)", "#(8'h?F)", "#(4'o7x)", "#('bx1)"]) {
+      expect(reasonOf(text), text).not.toMatch(/write #\d|Its value is/);
+      expect(reasonOf(text), text).toMatch(/Some of its bits are x or z and some are known, so its value is partly unknown and has no plain-number form\. §9\.4\.1 makes a delay that evaluates to an unknown or high-impedance value zero; this lab does not decide how that applies to a partly unknown value\.$/);
+    }
+  });
+
+  it("§5.7.1 sizes a based literal before it is classified: truncation from the left, then padding", () => {
+    // 1'bx1 keeps only its rightmost bit, 1: a known value, not a partly unknown one.
+    expect(reasonOf("#(1'bx1)")).toMatch(/Its digits give more than 1 bit, so §5\.7\.1 truncates it from the left to 1\. Its value is 1, so write #1 instead\.$/);
+    expect(reasonOf("#(1'bx1)")).not.toMatch(/partly unknown/);
+    // 4'hx_1 is xxxx0001 truncated to 0001; 2'd5 is 101 truncated to 01.
+    expect(reasonOf("#(4'hx_1)")).toMatch(/truncates it from the left to 4\. Its value is 1, so write #1 instead\.$/);
+    expect(reasonOf("#(2'd5)")).toMatch(/Its digits give more than 2 bits, so §5\.7\.1 truncates it from the left to 2\. Its value is 1, so write #1 instead\.$/);
+    // 1'b1x keeps only x: every bit is unknown, so §9.4.1 makes it zero, and the steps say why.
+    for (const text of ["#(1'b1x)", "#(4'h1x)", "#(1'b10z)", "#(3'o1x)"]) {
+      const parsed = parseDelay(text);
+      expect(parsed.kind, text).toBe("xz");
+      expect(parsed, text).toMatchObject({ sizing: expect.stringMatching(/^Its digits give more than \d+ bits?, so §5\.7\.1 truncates it from the left to \d+\. Every bit left is x or z\.$/) });
+    }
+    const r = roundDelayText("#(1'b1x)", scale(1, "ns"), scale(100, "ps"));
+    expect(r.wakeFs).toBe(ps(0));
+    expect(r.steps[0]).toBe("Its digits give more than 1 bit, so §5.7.1 truncates it from the left to 1. Every bit left is x or z.");
+    expect(r.steps[1]).toMatch(/evaluates to x or z, so it is interpreted as zero delay \(§9\.4\.1\)/);
+    // Truncation can leave a mix: 3'b1x01 is x01, and 2'b10z is 0z.
+    expect(reasonOf("#(2'b10z)")).toMatch(/truncates it from the left to 2\. Some of its bits are x or z and some are known/);
+    expect(reasonOf("#(3'b1x01)")).toMatch(/truncates it from the left to 3\. Some of its bits are x or z and some are known/);
+    // An unsized literal is never truncated (at least 32 bits, §5.7.1).
+    expect(reasonOf("#('hFFFF_FFFF_F)")).toMatch(/Its value is 68719476735, so write #68719476735 instead\.$/);
+    expect(reasonOf("#('hFFFF_FFFF_F)")).not.toMatch(/truncates/);
+    // A huge size is not written out bit by bit.
+    expect(reasonOf("#(4000000000'b1)")).toMatch(/Its value is 1, so write #1 instead\.$/);
+    // A value of 2^64 or more gets no plain number.
+    expect(reasonOf("#(65'h1_0000_0000_0000_0000)")).toMatch(/Its value is 18446744073709551616, 2\^64 or more.*offers no plain number for it\.$/);
+  });
+
+  it("a signed literal whose sign bit is 1 is negative under §5.7.1, and the lab names the value without widening it", () => {
+    // 4'sb1111 is -1 as a 4-bit two's-complement value (the §5.7.1 example 4 'shf).
+    for (const text of ["#(4'sb1111)", "#(4 'shf)"]) {
+      expect(reasonOf(text), text).toMatch(/The s marks it signed, and §5\.7\.1 reads a signed literal as two's complement, so as a 4-bit value it is -1\. A negative delay falls under §9\.4\.1, but this lab does not decide how a 4-bit signed value is widened to the size of a time variable, so it offers no plain number for it; #\(-1\) is the nearest form the lab computes\.$/);
+      expect(reasonOf(text), text).not.toMatch(/write #/);
+    }
+    // Truncation comes first: 3'sd12 is 1100 truncated to 100, which is -4.
+    expect(reasonOf("#(3'sd12)")).toMatch(/truncates it from the left to 3\. The s marks it signed.*as a 3-bit value it is -4\./);
+  });
+
+  it("'0, '1, scientific notation, 1step and names are legal delays the lab does not compute, and it says so", () => {
+    // '0 and '1 are unbased unsized literals (§5.7.1), a primary_literal alternative of A.8.4, not an integral_number of A.8.7.
+    for (const text of ["#('0)", "#('1)"]) {
+      expect(parseDelay(text).kind, text).toBe("invalid");
+      expect(reasonOf(text), text).toMatch(/^#\('[01]\) is a legal delay: an unbased unsized literal \(§5\.7\.1, A\.8\.4\) in parentheses \(A\.6\.5\)\..*outside this lab\./);
+      expect(reasonOf(text), text).not.toMatch(/integer literal \(A\.8\.7\)|plain number instead/);
+    }
+    expect(reasonOf("#('0)")).toMatch(/Its value is 0 at any width, so write #0 instead\.$/);
+    // '1 sets every bit, and its width depends on context (§5.7.1): no single number to offer.
+    expect(reasonOf("#('1)")).toMatch(/width comes from its context \(§5\.7\.1\).*offers no plain number for it\.$/);
     // A real in scientific notation is a delay_value (A.2.2.3, A.8.7); its plain form is offered when the exponent is small.
     expect(reasonOf("#1e3")).toBe("1e3 is a real number in scientific notation, a legal delay_value (A.2.2.3, A.8.7), but this lab reads only plain decimals, so it is outside this lab. Write it as #1000 instead.");
     expect(reasonOf("#1.5e-3")).toMatch(/legal delay_value.*outside this lab\. Write it as #0\.0015 instead\.$/);

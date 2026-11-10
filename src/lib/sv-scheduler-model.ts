@@ -10,13 +10,16 @@
  * Scope and assumptions (also surfaced to learners in the UI):
  * - One time slot is modelled: the slot that contains a clock edge.
  * - Processes are small structured programs, not parsed SystemVerilog.
- * - The only nondeterminism explored is the relative order of processes that
- *   are ready in the same region (IEEE 1800 permits any order). Update events
- *   are applied in the order they were scheduled, which matches the
- *   standard's guarantee for nonblocking assignments. With the opt-in
- *   `interleaveNba` option, a process woken by one applied NBA update may
- *   also run before the remaining updates are applied (§4.5 takes "any
- *   event"); that is explored as a further choice point.
+ * - The nondeterminism explored is the relative order of processes that are
+ *   ready in the same region (IEEE 1800 permits any order, §4.7), and, with
+ *   the implicit clock, the order between the clock update and the processes
+ *   ready at slot start (`resume`): all of them are Active events, and §4.5
+ *   takes "any event" from the region. Other update events are applied in the
+ *   order they were scheduled, which matches the standard's guarantee for
+ *   nonblocking assignments (§4.6). With the opt-in `interleaveNba` option, a
+ *   process woken by one applied NBA update may also run before the remaining
+ *   updates are applied (§4.5 takes "any event"); that is explored as a
+ *   further choice point.
  * - Clocking-block inputs use the default #1step input skew (value sampled
  *   before anything changes in the slot) and outputs use #0 output skew
  *   (drive scheduled in Re-NBA).
@@ -35,12 +38,21 @@
  *   Reactive.
  * - `$finish` (§20.2) and the implicit `$finish` when the last program
  *   thread ends (§24.3) stop the run at once: no later region of the slot,
- *   Postponed included, executes (§9.2.3). Only a thread that ends can be the
- *   last to end, so `lastThread` is accepted only on a program `initial` that
- *   runs once (no `forever`, no trailing wait); anything else throws.
+ *   Postponed included, executes (§9.2.3). The implicit `$finish` is derived
+ *   from the run: it fires when a program `initial` ends and every program
+ *   `initial` of the scenario has ended (none waiting, queued, suspended on
+ *   #0 or #d, parked at a trailing wait, or `forever`). The `lastThread` flag
+ *   is only an annotation, accepted on a program `initial` that runs once.
+ *   `$finish;` with no argument also prints the simulation time and location
+ *   (§20.2, Table 20-1); the model's log leaves that tool message out.
+ * - A program contains no always procedures (§24.3), so one throws. An
+ *   `initial` header with a loop the model does not run (while, repeat, for,
+ *   do) throws rather than be narrated as ending.
  * - `sourceTail` lines (a trailing `@(posedge clk);`, say) are shown, never
- *   run: a process that reaches them is blocked there, has not ended, and is
- *   not woken again in the slot to re-run its body.
+ *   run: a process that reaches them is blocked there and has not ended. The
+ *   tail's event is taken to be the process's trigger: if that trigger fires
+ *   again in the slot, the real process would resume at the tail, which the
+ *   model cannot show, so the run throws.
  * - A concurrent assertion must be clocked by a posedge trigger, the only
  *   clock the model evaluates; any other trigger throws rather than show a
  *   clock the model never ticks.
@@ -177,8 +189,11 @@ export type Statement =
   | { kind: "finish"; id: string }
   /**
    * Trace-only: a unique/unique0/priority violation check (§12.4.2, §12.5.3)
-   * with the result the scenario author assigns. The scheduler records where
-   * it executed; deferred reporting (§12.4.2.1) is interpreted elsewhere.
+   * with the result the scenario author assigns. 'no-match' means no
+   * condition matched and no explicit else (or default) caught it. The
+   * scheduler records where it executed and narrates whether the result is a
+   * violation (see `isViolation`); deferred reporting (§12.4.2.1) is
+   * interpreted elsewhere.
    */
   | { kind: "check"; id: string; qualifier: ViolationQualifier; construct: "if" | "case"; result: ViolationCheckResult; source: string }
   /** Trace-only: `$assertcontrol(control_type, assertion_type)` (§20.11). Recorded, not applied. */
@@ -195,7 +210,8 @@ export type ProcessTrigger =
    * slot time 0, the start of the procedure. Models `always #5 clk = ~clk`
    * running inside the slot. `note` names the next booking, e.g.
    * "#5 books t = 10". An `initial` that runs once has no next delay; see
-   * `runsOnce`.
+   * `runsOnce`. With the implicit clock, the clock update is an Active event
+   * beside these processes, and which runs first is a scheduler choice.
    */
   | { kind: "resume"; note?: string };
 
@@ -234,15 +250,17 @@ export interface SvProcess {
   kind?: "procedural" | "assertion";
   assertion?: AssertionSpec;
   /**
-   * Program process whose end is the end of the last program thread: implicit
-   * $finish (§24.3). Only a program `initial` that runs once can end, so the
-   * flag on anything else throws (see `validateScenario`).
+   * Annotation only: the author expects this program thread to be the last
+   * to end. The implicit $finish (§24.3) is derived from the run, not from
+   * this flag (see the file header). Only a program `initial` that runs once
+   * can end, so the flag on anything else throws (see `validateScenario`).
    */
   lastThread?: boolean;
   /**
    * Display-only source lines rendered after the body, e.g. a trailing
    * `@(posedge clk);`. None of them runs: a process that reaches them is
-   * blocked there for the rest of the slot, neither ended nor re-armed.
+   * blocked there and has not ended. If its trigger fires again in the slot,
+   * the run throws (see the file header).
    */
   sourceTail?: string[];
 }
@@ -538,14 +556,21 @@ function assertionClock(process: SvProcess): string {
 /**
  * Rejects scenario data the model would otherwise run in a way its own source
  * contradicts: an assertion with no property or with a clock the model never
- * ticks, or a "last thread" that never ends and so cannot trigger the
- * implicit $finish of §24.3.
+ * ticks, an always procedure in a program (§24.3), an initial header loop the
+ * model does not run, or a "last thread" that never ends and so cannot
+ * trigger the implicit $finish of §24.3.
  */
 export function validateScenario(scenario: SvScenario): void {
   for (const process of scenario.processes) {
     if (process.kind === "assertion") {
       if (!process.assertion) throw new Error(`Assertion ${process.id} in ${scenario.id} has no property`);
       assertionClock(process);
+    }
+    if (process.kind !== "assertion" && process.context === "program" && /^always/.test(process.header)) {
+      throw new Error(`${process.id} in ${scenario.id} is an always procedure in program context, but a program shall not contain always procedures (§24.3); use initial forever`);
+    }
+    if (/^initial\b/.test(process.header) && /\b(while|repeat|for|do)\b/.test(process.header)) {
+      throw new Error(`${process.id} in ${scenario.id} has a loop in its initial header (${process.header}) that the model does not run; only forever is modelled`);
     }
     if (!process.lastThread) continue;
     if (process.context !== "program" || process.kind === "assertion") {
@@ -726,6 +751,37 @@ const CHECK_RESULT_TEXT: Record<ViolationCheckResult, string> = {
 };
 
 /**
+ * Whether a check result is a violation (§12.4.2, §12.5.3): unique reports no
+ * match and overlap; unique0 reports only overlap ("no violation if no
+ * condition is matched"); priority reports only no match, since its
+ * conditions may overlap. 'no-match' already means no explicit else or
+ * default caught it.
+ */
+export function isViolation(qualifier: ViolationQualifier, result: ViolationCheckResult): boolean {
+  if (result === "pass") return false;
+  if (qualifier === "unique") return true;
+  if (qualifier === "unique0") return result === "multiple-match";
+  return result === "no-match";
+}
+
+function checkWhy(stmt: Extract<Statement, { kind: "check" }>, region: RegionId): string {
+  const rule = stmt.construct === "if" ? "§12.4.2" : "§12.5.3";
+  const deferral = stmt.construct === "if" ? "§12.4.2.1" : "§12.4.2.1, §12.5.3.1";
+  const recorded = `The model records only that the check executed here, in ${REGION_LABELS[region]}, and its result; what becomes of the report is decided outside this scheduler model.`;
+  if (isViolation(stmt.qualifier, stmt.result)) {
+    const what = stmt.result === "no-match" ? `no condition matched and no explicit ${stmt.construct === "if" ? "else" : "default"} caught it` : "more than one condition matched";
+    return `A violation is detected now: ${what}, which ${stmt.qualifier} reports (${rule}). The check is evaluated when the statement executes, but the report is deferred: a pending violation report is scheduled in the Observed region of this time step (${deferral}). ${recorded}`;
+  }
+  const reason =
+    stmt.result === "pass"
+      ? "exactly one condition matched"
+      : stmt.qualifier === "unique0"
+        ? "unique0 allows no condition to match"
+        : "priority allows more than one condition to match; the first one in order is taken";
+  return `No violation: ${reason} (${rule}), so no violation report is scheduled. The model records only that the check executed here, in ${REGION_LABELS[region]}, and its result.`;
+}
+
+/**
  * Runs one time slot. `choices[i]` selects the option taken at the i-th
  * choice point (index into the ready list in declaration order, or, for an
  * `interleaveNba` point, 0 = apply the next update, k = run the k-th woken
@@ -780,14 +836,29 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
 
   const regionFor = (process: SvProcess): RegionId => (process.context === "program" ? "reactive" : "active");
 
+  /** Processes blocked at their sourceTail, which the model never runs. */
+  const parked = new Set<string>();
+  /** Procedural `initial` threads that have run to their end (§9.2.1). */
+  const endedThreads = new Set<string>();
+  const programInitials = scenario.processes.filter((p) => !isAssertion(p) && p.context === "program" && /^initial\b/.test(p.header));
+
+  /** A real process blocked at its trailing wait would resume there; the model runs no tail line, so it refuses rather than show nothing happening. */
+  const throwIfParked = (process: SvProcess, cause: string) => {
+    if (!parked.has(process.id)) return;
+    throw new Error(
+      `${process.id} in ${scenario.id} is blocked at its trailing ${(process.sourceTail ?? [])[0]?.trim()} and ${cause}, firing that event again in this slot: the process would resume there (§9.4.2), but the model runs no trailing line`,
+    );
+  };
+
   const wakeSensitive = (signal: string, oldValue: SvValue, newValue: SvValue): string[] => {
     const woken: string[] = [];
     for (const process of scenario.processes) {
-      if (!waiting.has(process.id)) continue;
       const t = process.trigger;
       const fires =
         (t.kind === "posedge" && t.signal === signal && isPosedge(oldValue, newValue)) ||
         (t.kind === "change" && t.signals.includes(signal));
+      if (fires) throwIfParked(process, `${signal} changes`);
+      if (!waiting.has(process.id)) continue;
       if (!fires) continue;
       waiting.delete(process.id);
       queues[regionFor(process)].push({
@@ -1002,7 +1073,7 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             stmtId: stmt.id,
             endedBy: "finish",
             what: `$finish ends the simulation at t = ${slotTime} ${timeUnit}.`,
-            why: "$finish makes the simulator exit (§20.2). Final procedures run, and then no remaining scheduled event executes (§9.2.3): the rest of this time slot, Postponed included, never runs.",
+            why: "$finish makes the simulator exit (§20.2). Final procedures run, and then no remaining scheduled event executes (§9.2.3): the rest of this time slot, Postponed included, never runs. With no argument, $finish also prints the simulation time and location (§20.2, Table 20-1); the log here leaves that tool message out.",
           });
           return "ended";
         }
@@ -1014,7 +1085,7 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             stmtId: stmt.id,
             record: { kind: "check", qualifier: stmt.qualifier, construct: stmt.construct, result: stmt.result, processId: process.id, stmtId: stmt.id },
             what: `${stmt.source} performs its ${stmt.qualifier} check: ${CHECK_RESULT_TEXT[stmt.result]}.`,
-            why: `The model records only that the check executed here, in ${REGION_LABELS[region]}, and its result. A ${stmt.qualifier} check is evaluated when the statement executes, but its violation report is deferred (§12.4.2.1, §12.5.3.1); what becomes of it is decided outside this scheduler model.`,
+            why: checkWhy(stmt, region),
           });
           break;
         }
@@ -1048,37 +1119,45 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
     });
     const outcome = runStatements(process, process.body, event.pc, region, (pc) => ({ kind: "evaluate", processId: process.id, pc, reason: "#0 delay expired." }));
     if (outcome !== "done") return;
-    if (process.lastThread && process.context === "program") {
-      ended = { cause: "implicit-finish", processId: process.id, region, stepIndex: trace.length };
-      push({
-        kind: "statement",
-        region,
-        processId: process.id,
-        endedBy: "implicit-finish",
-        what: `${process.label} ends, and with it the last program thread: an implicit $finish ends the simulation at t = ${slotTime} ${timeUnit}.`,
-        why: "When all threads of all program initial procedures have ended, the simulation ends through an implicit call to $finish (§24.3). Final procedures run, and no remaining scheduled event executes (§9.2.3): the rest of this time slot, Postponed included, never runs.",
-      });
-      return;
-    }
     if (runsOnce(process)) {
+      endedThreads.add(process.id);
+      // §24.3: derived from the run, never from the lastThread annotation. Every program initial must have ended: one still waiting, queued, suspended, parked or forever keeps the simulation going.
+      const live = programInitials.filter((p) => !endedThreads.has(p.id));
+      if (process.context === "program" && live.length === 0) {
+        ended = { cause: "implicit-finish", processId: process.id, region, stepIndex: trace.length };
+        push({
+          kind: "statement",
+          region,
+          processId: process.id,
+          endedBy: "implicit-finish",
+          what: `${process.label} ends, and with it the last program thread: an implicit $finish ends the simulation at t = ${slotTime} ${timeUnit}.`,
+          why: "When all threads of all program initial procedures have ended, the simulation ends through an implicit call to $finish (§24.3). Final procedures run, and no remaining scheduled event executes (§9.2.3): the rest of this time slot, Postponed included, never runs.",
+        });
+        return;
+      }
+      const stillLive =
+        process.context === "program"
+          ? ` Another program initial (${joinWithAnd(live.map((p) => p.label))}) has not ended, so there is no implicit $finish yet (§24.3).`
+          : "";
       push({
         kind: "statement",
         region,
         processId: process.id,
         what: `${process.label} finishes: the procedure has ended.`,
-        why: "An initial procedure executes once, and its activity then ceases (§9.2.1). Nothing runs it again.",
+        why: `An initial procedure executes once, and its activity then ceases (§9.2.1). Nothing runs it again.${stillLive}`,
       });
       return;
     }
     const tail = process.sourceTail ?? [];
     if (tail.length > 0) {
-      // Blocked at its trailing lines, not back at its header: it has not ended, and its trigger does not re-run the body.
+      // Blocked at its trailing lines, not back at its header: it has not ended. A second firing of its event in this slot throws (throwIfParked).
+      parked.add(process.id);
       push({
         kind: "statement",
         region,
         processId: process.id,
         what: `${process.label} reaches ${tail[0].trim()} and waits there.`,
-        why: "The procedure has not ended: it is blocked at that statement. The model runs none of the lines after the body, so it does not wake this process again in this slot.",
+        why: "The procedure has not ended: it is blocked at that statement until its event comes again, which does not happen in this slot. The model shows the lines after the body but runs none of them.",
       });
       return;
     }
@@ -1095,7 +1174,10 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
             ? `It is blocked on @(${process.trigger.clocking}) again.`
             : process.trigger.kind === "resume"
               ? `Its next delay${process.trigger.note ? ` (${process.trigger.note})` : ""} expires in a later time slot.`
-              : "It waits for its inputs to change again.",
+              : // Only implicit sensitivity (assign, always_comb, always_latch, @*) waits on "its inputs"; an explicit @(a or b) waits on exactly those signals (§9.4.2).
+                isContinuousAssign(process) || /^always_(comb|latch)\b/.test(process.header) || /@\s*\(?\s*\*/.test(process.header)
+                ? "It waits for its inputs to change again."
+                : `It is blocked on @(${process.trigger.signals.join(" or ")}) again.`,
     });
   };
 
@@ -1206,19 +1288,46 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
         return chosen;
       }
     }
-    if (!isReady(head)) return queue.shift() as SchedulerEvent;
+    // The implicit clock update stands for the clock generator's own Active event (a blocking write in a real generator); §4.5 may take any Active event first, so it competes with the ready processes beside it (§4.7).
+    const isClockUpdate = (event: SchedulerEvent | undefined): event is Extract<SchedulerEvent, { kind: "update" }> =>
+      Boolean(event && event.kind === "update" && event.from === "clock" && !origin.has(event));
+    if (!isReady(head) && !isClockUpdate(head)) return queue.shift() as SchedulerEvent;
     let runEnd = 0;
-    while (runEnd < queue.length && isReady(queue[runEnd])) runEnd += 1;
+    while (runEnd < queue.length && (isReady(queue[runEnd]) || isClockUpdate(queue[runEnd]))) runEnd += 1;
+    const clockPosition = queue.slice(0, runEnd).findIndex((e) => isClockUpdate(e));
+    const clockUpdate = clockPosition >= 0 ? (queue[clockPosition] as Extract<SchedulerEvent, { kind: "update" }>) : undefined;
     const ready = queue
       .slice(0, runEnd)
       .map((event, position) => ({ event: event as Extract<SchedulerEvent, { kind: "evaluate" | "assertAction" }>, position }))
+      .filter((r) => r.position !== clockPosition)
       .sort((a, b) => (declarationIndex.get(a.event.processId) ?? 0) - (declarationIndex.get(b.event.processId) ?? 0));
-    if (ready.length === 1) return queue.shift() as SchedulerEvent;
+    if (ready.length === 0) return queue.shift() as SchedulerEvent;
+    if (ready.length === 1 && !clockUpdate) return queue.shift() as SchedulerEvent;
+    const width = ready.length + (clockUpdate ? 1 : 0);
     const choicePoint = usedChoices.length;
     const requested = choices[choicePoint] ?? 0;
-    const pick = Math.min(Math.max(requested, 0), ready.length - 1);
+    const pick = Math.min(Math.max(requested, 0), width - 1);
     usedChoices.push(pick);
-    choiceWidths.push(ready.length);
+    choiceWidths.push(width);
+    if (clockUpdate) {
+      const options = [...ready.map((r) => `run ${readyLabel(r.event)}`), `apply ${describeEvent(clockUpdate, processes).label}`];
+      const takesClock = pick === ready.length;
+      currentSource = takesClock ? undefined : origin.get(ready[pick].event);
+      push({
+        kind: "choice",
+        region,
+        processId: takesClock ? clockUpdate.from : ready[pick].event.processId,
+        what: `${REGION_LABELS[region]} holds ${ready.length} ready process${ready.length === 1 ? "" : "es"} and the clock update: ${options.join(", ")}. This run picks "${options[pick]}" first.`,
+        why: `The clock generator's update of ${clockUpdate.target} and the ready processes are all Active events, and the scheduler may take any of them first (§4.5, §4.7). A process that reads ${clockUpdate.target} here sees the old or the new value depending on this choice: a race.`,
+        choice: { options, picked: options[pick] },
+      });
+      if (takesClock) {
+        queue.splice(clockPosition, 1);
+        return clockUpdate;
+      }
+      queue.splice(ready[pick].position, 1);
+      return ready[pick].event;
+    }
     const chosen = ready[pick];
     const labels = ready.map((r) => readyLabel(r.event));
     currentSource = origin.get(chosen.event);
@@ -1254,7 +1363,9 @@ export function simulateTimeSlot(scenario: SvScenario, choices: number[] = []): 
         const wokenByContext: Record<SvProcess["context"], string[]> = { module: [], program: [] };
         for (const process of scenario.processes) {
           const t = process.trigger;
-          if (t.kind !== "clocking" || t.clocking !== event.clocking || !waiting.has(process.id)) continue;
+          if (t.kind !== "clocking" || t.clocking !== event.clocking) continue;
+          throwIfParked(process, `@(${event.clocking}) triggers`);
+          if (!waiting.has(process.id)) continue;
           waiting.delete(process.id);
           queues[regionFor(process)].push({ kind: "evaluate", processId: process.id, pc: 0, reason: `@(${event.clocking}) fired in Observed.` });
           woken.push(process.label);

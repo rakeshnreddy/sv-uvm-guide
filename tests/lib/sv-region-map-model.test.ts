@@ -280,7 +280,38 @@ describe("sv-region-map-model: a run ended by $finish (§20.2, §24.3, §9.2.3)"
     expect(decisionFeedback(decision, "nba", run)).toMatch(/^NBA still holds events, but they never execute/);
     expect(decisionFeedback(decision, "inactive", run)).toMatch(/^\$finish ended the run/);
     expect(decisionFeedback(decision, "end", run)).toBe(explainDecision(decision, run));
-    expect(nextRegionOptions(run).find((o) => o.id === "end")?.label).toBe("No scheduled event runs: the simulation ends");
+    // Relabelled only at the decision the $finish produced, so no earlier decision hints that the run will end.
+    expect(nextRegionOptions(run, decision).find((o) => o.id === "end")?.label).toBe("No scheduled event runs: the simulation ends");
+    expect(nextRegionOptions(run)).toBe(NEXT_REGION_OPTIONS);
+    expect(explainDecision(decision, run)).toBe(
+      "$finish ended the run inside the slot: after the final procedures, no remaining scheduled event executes, so no region of this slot runs again, not even one that still holds events (§20.2, §9.2.3). Δ stays at 0: nothing moves.",
+    );
+  });
+
+  it("a program thread that wakes design code and then calls $finish: Active, above Reactive, never runs either, and the earlier decisions keep the fixed options", () => {
+    const scenario: SvScenario = {
+      id: "program-finish",
+      title: "program wakes assign led, then $finish",
+      clock: "clk",
+      initial: { clk: 0, cmd: 0, led: 0 },
+      watch: ["clk", "cmd", "led"],
+      processes: [
+        { id: "LED", label: "assign led", owner: "design", context: "module", header: "assign", trigger: { kind: "change", signals: ["cmd"] }, body: [{ kind: "assign", id: "l1", op: "blocking", target: "led", expr: { kind: "var", name: "cmd" } }] },
+        { id: "TB", label: "program thread", owner: "testbench", context: "program", header: "initial forever @(posedge clk)", trigger: { kind: "posedge", signal: "clk" }, body: [{ kind: "assign", id: "t1", op: "blocking", target: "cmd", expr: { kind: "const", value: 1 } }, { kind: "finish", id: "t2" }] },
+      ],
+    };
+    const run = simulateTimeSlot(scenario);
+    expect(run.finished).toMatchObject({ cause: "finish", region: "reactive" });
+    expect(run.finalValues.led).toBe(0);
+    const decisions = regionDecisions(run);
+    const end = decisions.at(-1)!;
+    expect(end.answer).toBe("end");
+    expect(run.trace[end.index - 1].queues.active.map((q) => q.label)).toEqual(["run assign led"]);
+    const text = explainDecision(end, run);
+    expect(text).toMatch(/no region of this slot runs again, not even one that still holds events \(§20\.2, §9\.2\.3\)/);
+    expect(text).not.toMatch(/regions below|§24\.3/);
+    expect(decisionFeedback(end, "active", run)).toMatch(/^Active still holds events, but they never execute/);
+    for (const d of decisions.slice(0, -1)) expect(nextRegionOptions(run, d)).toBe(NEXT_REGION_OPTIONS);
   });
 
   it("with nothing queued in Postponed, says Postponed does not run", () => {
@@ -304,6 +335,7 @@ describe("sv-region-map-model: a run ended by $finish (§20.2, §24.3, §9.2.3)"
     expect(decision).toMatchObject({ answer: "end", from: "reactive" });
     expect(decisionQuestion(decision, run)).toMatch(/^The implicit \$finish executed in step \d+\. What runs next\?$/);
     expect(decisionFeedback(decision, "postponed", run)).toBe("Postponed does not run: the implicit $finish ends the run before it (§9.2.3).");
+    expect(explainDecision(decision, run)).toMatch(/^The implicit \$finish ended the run inside the slot: .* \(§24\.3, §20\.2, §9\.2\.3\)\./);
   });
 });
 
@@ -336,7 +368,101 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
     const run = simulateTimeSlot(programReactiveScenario());
     const back = regionDecisions(run).find((d) => d.answer === "active")!;
     expect(run.trace[back.index - 1].queues.active.map((q) => q.label)).toEqual(["run assign led"]);
-    expect(explainDecision(back, run)).toMatch(/^The reactive set has drained, but Active holds work again \(run assign led\): a change made in the reactive set woke design code\. /);
+    expect(explainDecision(back, run)).toMatch(/^The reactive set has drained, but Active holds work again \(run assign led\): a change made in the reactive set woke design code, which wakes in the active region set \(§24\.3\.2\)\. The outer loop therefore returns to Active in the same time slot \(§4\.5\)\. /);
+  });
+
+  it("program-watcher: the whole decision sequence, its priority flag and its Δ values are pinned (§4.5, §24.3.1, §24.3.2)", () => {
+    const run = simulateTimeSlot(programWatcherScenario());
+    const decisions = regionDecisions(run);
+    expect(decisions.map((d) => [d.answer, d.from, d.delta, Boolean(d.priority), d.alsoCorrect ?? null])).toEqual([
+      ["nba", "active", 1, false, null],
+      ["reactive-set", "active", 1, false, null],
+      ["reNba", "reactive", 2, false, null],
+      ["reactive-set", "reactive", 2, true, null],
+      ["active", "reactive", 2, false, null],
+      ["end", "active", 2, false, null],
+    ]);
+    const priority = decisions[3];
+    expect(isDecisionAnswer(priority, "reactive-set")).toBe(true);
+    expect(isDecisionAnswer(priority, "active")).toBe(false);
+    expect(explainDecision(priority, run)).toMatch(/ Δ stays at 2: Reactive already holds this work, so nothing moves\.$/);
+    expect(decisionQuestion(priority, run)).toBe(`Active and Reactive both hold work after step ${priority.index}. Which runs next?`);
+    expect(decisionFeedback(priority, "active", run)).toBe("Active does hold work, but the scheduler is still inside the reactive loop. It returns to Active only once Reactive, Re-Inactive and Re-NBA are all empty (§4.5).");
+    expect(explainDecision(decisions[4], run)).toMatch(/\(run assign led\).*§24\.3\.2.* Δ stays at 2: Active already holds this work, so nothing moves\.$/);
+    // The clk update leaves the DUT flop in Active and the program thread in Reactive, but the scheduler is in the active loop then: no decision there.
+    const clkUpdate = run.trace.findIndex((s) => s.kind === "update" && s.changed.includes("clk"));
+    expect(run.trace[clkUpdate].queues.active.length).toBeGreaterThan(0);
+    expect(run.trace[clkUpdate].queues.reactive.length).toBeGreaterThan(0);
+    expect(decisions.some((d) => d.index === clkUpdate + 1)).toBe(false);
+  });
+
+  /** A program drives `clk` (§24.3.2: design processes it wakes run in the active set); an always_ff and an assertion are clocked by it. `delay0` adds `#0;` after the write. */
+  const programDrivesClock = (op: "nba" | "blocking", delay0: boolean): SvScenario => ({
+    id: "program-drives-clock",
+    title: "program drives clk",
+    clock: "tick",
+    initial: { tick: 0, clk: 0, d: 1, q: 0 },
+    watch: ["tick", "clk", "q"],
+    processes: [
+      {
+        id: "TB",
+        label: "program thread",
+        owner: "testbench",
+        context: "program",
+        header: "initial forever @(posedge tick)",
+        trigger: { kind: "posedge", signal: "tick" },
+        body: [{ kind: "assign", id: "tb1", op, target: "clk", expr: { kind: "const", value: 1 } }, ...(delay0 ? [{ kind: "delay0" as const, id: "tb2" }, { kind: "display" as const, id: "tb3", signals: ["clk"] }] : [])],
+      },
+      { id: "FF", label: "always_ff", owner: "design", context: "module", header: "always_ff @(posedge clk)", trigger: { kind: "posedge", signal: "clk" }, body: [{ kind: "assign", id: "f1", op: "nba", target: "q", expr: { kind: "var", name: "d" } }] },
+      { id: "A", label: "a_low", owner: "design", context: "module", kind: "assertion", header: "a_low: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "eq", left: { kind: "var", name: "q" }, right: { kind: "const", value: 0 } } } },
+    ],
+  });
+
+  it("from the reactive loop, an active-set region that holds events is outside that loop: the feedback never puts it inside (§4.5)", () => {
+    // (a) clk <= 1: the Re-NBA update wakes the always_ff into Active and schedules the assertion in Observed.
+    const a = simulateTimeSlot(programDrivesClock("nba", false));
+    const back = regionDecisions(a).find((d) => d.answer === "active")!;
+    expect(back.from).toBe("reactive");
+    expect(a.trace[back.index - 1].queues.observed.length).toBeGreaterThan(0);
+    const observedA = decisionFeedback(back, "observed", a);
+    expect(observedA).toBe("Observed does hold events, but it is not first: the reactive set has drained, and the outer loop re-enters the active-set loop at Active, which holds work, so Active runs before Observed (§4.5).");
+    expect(observedA).not.toMatch(/Reactive through Re-NBA/);
+    // (b) clk = 1; #0;: the #0 sends the program to Re-Inactive while Observed holds the assertion.
+    const b = simulateTimeSlot(programDrivesClock("blocking", true));
+    const reInactive = regionDecisions(b).find((d) => d.answer === "reInactive")!;
+    expect(reInactive.from).toBe("reactive");
+    expect(b.trace[reInactive.index - 1].queues.observed.length).toBeGreaterThan(0);
+    const observedB = decisionFeedback(reInactive, "observed", b);
+    expect(observedB).toBe(
+      "Observed does hold events, but it is outside the reactive loop (Reactive through Re-NBA, §4.5). The outer loop returns to it only once Reactive, Re-Inactive and Re-NBA are all empty, and Re-Inactive still holds events.",
+    );
+    expect(explainDecision(reInactive, b)).toMatch(/^Reactive ran dry and Re-Inactive holds reactive-set code that executed #0 \(resume program thread\)\./);
+  });
+
+  it("Re-Inactive is named from its queue: an assertion action block that executed #0 is not called program code (§4.4.2.7)", () => {
+    const scenario: SvScenario = {
+      id: "action-delay0",
+      title: "assertion action with #0",
+      clock: "clk",
+      initial: { clk: 0, y: 1 },
+      watch: ["clk", "y"],
+      processes: [
+        { id: "A", label: "a_y", owner: "design", context: "module", kind: "assertion", header: "a_y: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "var", name: "y" }, pass: [{ kind: "delay0", id: "a1" }, { kind: "display", id: "a2", signals: ["y"] }] } },
+      ],
+    };
+    const run = simulateTimeSlot(scenario);
+    const decision = regionDecisions(run).find((d) => d.answer === "reInactive")!;
+    expect(run.trace[decision.index - 1].queues.reInactive.map((q) => q.label)).toEqual(["a_y pass action"]);
+    const text = explainDecision(decision, run);
+    expect(text).toMatch(/^Reactive ran dry and Re-Inactive holds reactive-set code that executed #0 \(a_y pass action\)\./);
+    expect(text).not.toMatch(/program code/);
+  });
+
+  it("Postponed's once-per-slot placement is cited to §4.5 as well as §4.4.2.9", () => {
+    const run = simulateTimeSlot(zeroDelayPrintsScenario());
+    const postponed = regionDecisions(run).find((d) => d.answer === "postponed")!;
+    expect(explainDecision(postponed, run)).toMatch(/\(§4\.4\.2\.9, §4\.5\)\./);
+    expect(decisionFeedback(postponed, "end", run)).toBe("The slot is not over: Postponed still has output to print, and it runs once after every other region is empty (§4.4.2.9, §4.5).");
   });
 
   it("program-watcher: the priority decision names what Reactive and Active each hold after the update (§4.5, §24.3.1)", () => {
@@ -373,7 +499,8 @@ describe("sv-region-map-model: next-region decisions read from the trace (IEEE 1
       initial: { tick: 0, clk: 0, q: 0 },
       watch: ["tick", "clk"],
       processes: [
-        { id: "TB", label: "program thread", owner: "testbench", context: "program", header: "initial @(posedge tick)", trigger: { kind: "posedge", signal: "tick" }, body: [{ kind: "assign", id: "tb1", op: "nba", target: "clk", expr: { kind: "const", value: 1 } }] },
+        // forever: a lone program initial that ends would trigger the implicit $finish (§24.3) before the loop returns.
+        { id: "TB", label: "program thread", owner: "testbench", context: "program", header: "initial forever @(posedge tick)", trigger: { kind: "posedge", signal: "tick" }, body: [{ kind: "assign", id: "tb1", op: "nba", target: "clk", expr: { kind: "const", value: 1 } }] },
         { id: "A", label: "a_low", owner: "design", context: "module", kind: "assertion", header: "a_low: assert property", trigger: { kind: "posedge", signal: "clk" }, body: [], assertion: { property: { kind: "eq", left: { kind: "var", name: "q" }, right: { kind: "const", value: 0 } } } },
       ],
     };
