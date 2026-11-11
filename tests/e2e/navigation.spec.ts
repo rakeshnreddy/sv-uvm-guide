@@ -225,8 +225,16 @@ test.describe('Lesson page shell', () => {
     const contentRight = await frame.evaluate((el) => el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight));
     expect(Math.round(slot!.width)).toBe(Math.round(outline!.width));
     expect(Math.round(search!.x)).toBe(Math.round(contentLeft));
-    const theme = await page.getByRole('banner').getByRole('button', { name: 'Theme', exact: true }).boundingBox();
-    expect(Math.round(theme!.x + theme!.width)).toBe(Math.round(contentRight));
+    // The last control in the bar: the theme control on the default site, the account control in accounts mode.
+    const lastControlRight = await page.getByRole('banner').evaluate((banner) =>
+      Math.max(
+        ...Array.from(banner.querySelectorAll('a, button'))
+          .map((control) => control.getBoundingClientRect())
+          .filter((rect) => rect.width > 0 && rect.height > 0)
+          .map((rect) => rect.right),
+      ),
+    );
+    expect(Math.round(lastControlRight)).toBe(Math.round(contentRight));
     expect(Math.round((await page.getByRole('banner').boundingBox())!.height)).toBe(64);
   });
 
