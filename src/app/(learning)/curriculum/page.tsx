@@ -4,6 +4,8 @@ import { ArrowRight } from 'lucide-react';
 
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
 import { tierChip } from '@/components/curriculum/overview-ui';
+import { routeFollowedScript } from '@/components/curriculum/route-followed-script';
+import { returningLearnerScript } from '@/components/home/landing-resume';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Section } from '@/components/layout/Section';
@@ -70,9 +72,11 @@ export default function CurriculumPage() {
 
   return (
     <PageShell width="content">
+      {/* Mark <html> before first paint when this browser holds a lesson visit or follows a route, so "Pick up where you left off" keeps its place. */}
+      <script dangerouslySetInnerHTML={{ __html: returningLearnerScript() + routeFollowedScript() }} />
       <PageHeader
         title={siteLabel(CURRICULUM_HREF)}
-        lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route that matches your experience, or browse every module below."
+        lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route, or browse every module below."
       >
         <TierJumpLinks tiers={tiers} />
       </PageHeader>

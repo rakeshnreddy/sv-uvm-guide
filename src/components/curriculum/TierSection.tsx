@@ -3,12 +3,15 @@
 import React from 'react';
 import { ChevronDown } from 'lucide-react';
 
+import { ProgressTraceView } from '@/components/learner/ProgressTrace';
 import type { OverviewModule, OverviewTier } from '@/lib/curriculum-overview';
+import type { TierTrace, TraceState } from '@/lib/progress-trace';
 import { tierSectionId } from '@/lib/site-links';
 import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { ModuleCard, type ModuleCardPrerequisite } from './ModuleCard';
 import { focusRing } from './overview-ui';
+import { tierProgressText } from './tier-trace';
 
 export interface TierSectionProps {
   tier: OverviewTier;
@@ -21,7 +24,10 @@ export interface TierSectionProps {
   /** Every module by id, to resolve prerequisites in earlier tiers. */
   moduleIndex: ReadonlyMap<string, OverviewModule>;
   milestoneNames: Readonly<Record<string, string>>;
-  visitedModules: ReadonlySet<string>;
+  /** The tier's progress trace in this browser; drawn in miniature beside the counts. */
+  trace?: TierTrace;
+  /** Each module's state in this browser, by module id. */
+  moduleStates: ReadonlyMap<string, TraceState>;
   hereModuleId?: string;
 }
 
@@ -47,7 +53,8 @@ export const TierSection: React.FC<TierSectionProps> = ({
   searching = false,
   moduleIndex,
   milestoneNames,
-  visitedModules,
+  trace,
+  moduleStates,
   hereModuleId,
 }) => {
   // The stable id from site-links ("t3"), which /curriculum#t3, the course
@@ -68,14 +75,17 @@ export const TierSection: React.FC<TierSectionProps> = ({
   // the heading's step mark, the 2 px top edge, every module card's edge and
   // the tinted signal tags inside all take this tier's colour.
   const tierNumber = tierOfTierSlug(tier.id);
+  const progress = trace ? tierProgressText(trace) : null;
 
+  // Unboxed (no cards inside a card): a hairline band whose 2 px top edge is
+  // the tier colour, the heading, one meta line and the module cards.
   // scroll-mt-24 keeps the heading clear of the 64 px sticky header when a link lands here.
   return (
     <section
       id={sectionId}
       aria-labelledby={headingId}
       data-tier={tierDataAttribute(tierNumber)}
-      className={cn('scroll-mt-24 rounded-2xl border border-border', tierNumber && 'tier-edge')}
+      className={cn('scroll-mt-24 border-t border-border pb-6', tierNumber && 'tier-edge')}
     >
       <h3 id={headingId} className="text-h3 text-foreground">
         <button
@@ -83,10 +93,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
           aria-expanded={open}
           aria-controls={panelId}
           onClick={onToggle}
-          className={cn(
-            'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-2xl px-4 pt-4 text-left sm:px-6 sm:pt-5',
-            focusRing,
-          )}
+          className={cn('flex min-h-[44px] w-full items-center justify-between gap-3 rounded-lg pt-4 text-left', focusRing)}
         >
           <span className="flex min-w-0 items-center gap-3">
             {tierNumber ? <span className="tier-step" aria-hidden="true" data-testid="tier-step" /> : null}
@@ -98,15 +105,22 @@ export const TierSection: React.FC<TierSectionProps> = ({
           />
         </button>
       </h3>
-      <div className="px-4 pb-4 sm:px-6 sm:pb-5">
-        {tier.audience && (
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">Who it is for:</span> {tier.audience}
-          </p>
-        )}
-        <p className="mt-1 text-xs text-subtle">{countLine(tier, modules.length, searching)}</p>
-      </div>
-      <div id={panelId} hidden={!open} className="px-4 pb-5 sm:px-6">
+      {/* The miniature trace and the counts share one line; the trace is one line tall with a fixed width, so progress arriving moves nothing. */}
+      <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle" data-testid="tier-meta">
+        {trace ? <ProgressTraceView trace={trace} size="mini" /> : null}
+        <span className="tabular-nums">{countLine(tier, modules.length, searching)}</span>
+        {/* The trace's totals in words, so a sighted learner can read "opened" too. Its width is reserved, so
+            progress arriving moves nothing; hidden from assistive technology, since the trace's name says it. */}
+        <span aria-hidden="true" data-testid="tier-progress" className="min-w-[16ch] font-medium tabular-nums text-muted-foreground">
+          {progress}
+        </span>
+      </p>
+      {tier.audience && (
+        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">Who it is for:</span> {tier.audience}
+        </p>
+      )}
+      <div id={panelId} hidden={!open} className="pt-5">
         {open && (
           <ol className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {modules.map((module) => (
@@ -115,7 +129,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
                   module={module}
                   prerequisites={prerequisitesOf(module)}
                   milestoneNames={milestoneNames}
-                  visited={visitedModules.has(module.id)}
+                  state={moduleStates.get(module.id) ?? 'not-started'}
                   here={hereModuleId === module.id}
                 />
               </li>

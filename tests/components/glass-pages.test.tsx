@@ -78,22 +78,27 @@ describe('/curriculum overview', () => {
     }
   });
 
-  it('makes the route cards quiet glass with the tier edge, and shows their first modules as tinted tags', () => {
+  it('makes the routes one quiet-glass strip with a tier edge per route, and shows their first modules as tinted tags', () => {
     render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />);
+    const strip = document.getElementById('route-junior')!.closest('ul')!;
+    expect(strip).toHaveClass('glass-quiet');
     for (const [id, tier] of [['junior', '1'], ['practitioner', '2'], ['expert', '4']] as const) {
-      const card = document.getElementById(`route-${id}`)!;
-      expect(card, id).toHaveClass('glass-quiet', 'tier-edge');
-      expect(card, id).not.toHaveClass('glass');
-      expect(card, id).toHaveAttribute('data-tier', tier);
-      expect(card.className, id).not.toMatch(/\bbg-card\b/);
-      const tags = within(within(card).getByTestId('route-opening-modules')).getAllByText((_, el) => el?.hasAttribute('data-signal-tag') ?? false);
+      const item = document.getElementById(`route-${id}`)!;
+      expect(item.closest('ul'), id).toBe(strip);
+      // No glass on glass: the strip carries the glass, its routes only the tier edge.
+      expect(item, id).toHaveClass('tier-edge');
+      expect(item, id).not.toHaveClass('glass');
+      expect(item, id).not.toHaveClass('glass-quiet');
+      expect(item, id).toHaveAttribute('data-tier', tier);
+      expect(item.className, id).not.toMatch(/\bbg-card\b/);
+      const tags = within(within(item).getByTestId('route-opening-modules')).getAllByText((_, el) => el?.hasAttribute('data-signal-tag') ?? false);
       expect(tags.length, id).toBeGreaterThan(0);
       tags.forEach((tag) => expect(tag).toHaveAttribute('data-tier'));
     }
-    // Nothing on the page blurs: with the header and a menu the route cards would pass three blurred layers.
+    // Nothing on the page blurs: with the header and a menu the routes would pass three blurred layers.
     expect(document.querySelectorAll('.glass')).toHaveLength(0);
     const ladder = screen.getByRole('heading', { name: 'The milestone ladder' }).closest('section')!;
-    expect(ladder).toHaveClass('glass-quiet');
+    expect(ladder.querySelectorAll('.glass, .glass-quiet')).toHaveLength(0);
     // Milestone ids are signal tags and stay neutral.
     const m0 = within(ladder).getAllByText('M0').find((el) => el.hasAttribute('data-signal-tag'))!;
     expect(m0).not.toHaveAttribute('data-tier');

@@ -6,6 +6,14 @@ import { describe, expect, it } from 'vitest';
 import {
   BANK_FILES,
   INTERVIEW_LEVELS,
+  bankName,
+  bankShortName,
+  bankSlug,
+  interviewBankHref,
+  interviewLevelOptions,
+  questionAnchor,
+  questionPages,
+  totalLevelCounts,
   formatSource,
   getInterviewPracticeItems,
   groupQuestionsByLevel,
@@ -113,20 +121,72 @@ describe('interview bank loading', () => {
     expect(Object.keys(INTERVIEW_BANK_LESSONS).filter((topic) => !topics.has(topic))).toEqual([]);
   });
 
-  it('orders banks by their home lesson and gives every heading a unique anchor', () => {
+  it('orders banks by their home lesson and gives every heading a unique anchor on its page', () => {
     const banks = loadInterviewBanks();
     const orders = banks.map((bank) => bank.order);
     expect(orders).toEqual([...orders].sort((a, b) => a - b));
     expect(banks[0].topic).toBe('sv');
-    const anchors = banks.flatMap((bank) => [bank.anchor, ...bank.levels.map((group) => group.anchor)]);
-    expect(new Set(anchors).size).toBe(anchors.length);
-    for (const bank of banks) expect(bank.anchor).toBe(headingSlug(bank.title));
+    // Bank anchors are the index rows' ids; level anchors are unique on each bank page.
+    const bankAnchors = banks.map((bank) => bank.anchor);
+    expect(new Set(bankAnchors).size).toBe(bankAnchors.length);
+    for (const bank of banks) {
+      expect(bank.anchor).toBe(headingSlug(bank.title));
+      const pageIds = [
+        ...bank.levels.map((group) => group.anchor),
+        ...bank.levels.flatMap((group) => group.questions.map((question) => questionAnchor(question.id))),
+      ];
+      expect(new Set(pageIds).size, bank.slug).toBe(pageIds.length);
+    }
+  });
+
+  it('gives every bank its own page, a sentence-case name and its level counts', () => {
+    const banks = loadInterviewBanks();
+    expect(banks.map((bank) => [bank.slug, bank.href, bank.name, bank.shortName])).toEqual([
+      ['systemverilog', '/interview-prep/systemverilog', 'SystemVerilog', 'SystemVerilog'],
+      ['sva-formal', '/interview-prep/sva-formal', 'SVA & formal verification', 'SVA'],
+      ['uvm', '/interview-prep/uvm', 'UVM', 'UVM'],
+      ['amba-protocols', '/interview-prep/amba-protocols', 'AMBA protocol', 'AMBA'],
+      ['debug', '/interview-prep/debug', 'Debug & triage', 'Debug'],
+      ['soc-system-design', '/interview-prep/soc-system-design', 'SoC & system-design', 'SoC'],
+    ]);
+    for (const bank of banks) {
+      expect(bank.slug).toBe(bankSlug(bank.file));
+      expect(bank.href).toBe(interviewBankHref(bank.slug));
+      const raw = rawBanks[bank.file];
+      for (const level of new Set(raw.questions.map((question) => question.level))) {
+        expect(bank.levelCounts[level]).toBe(raw.questions.filter((question) => question.level === level).length);
+      }
+    }
+    expect(bankName('Debug & Triage Interview Question Bank')).toBe('Debug & triage');
+    expect(bankShortName('SoC & system-design')).toBe('SoC');
+  });
+
+  it('offers the levels the data holds, in order, and totals them', () => {
+    const banks = loadInterviewBanks();
+    expect(interviewLevelOptions(banks)).toEqual([
+      { value: 'junior', label: 'Junior' },
+      { value: 'mid', label: 'Mid-level' },
+      { value: 'senior', label: 'Senior' },
+      { value: 'staff', label: 'Staff' },
+      { value: 'senior-staff', label: 'Senior staff' },
+    ]);
+    const totals = totalLevelCounts(banks);
+    expect(totals.all).toBe(rawQuestions.length);
+    for (const level of INTERVIEW_LEVELS) expect(totals[level]).toBe(rawQuestions.filter((question) => question.level === level).length);
+    expect(rawQuestions.some((question) => question.level === 'all')).toBe(false);
+  });
+
+  it('maps every question anchor to its bank page, for old index links', () => {
+    const banks = loadInterviewBanks();
+    const pages = questionPages(banks);
+    expect(Object.keys(pages)).toHaveLength(rawQuestions.length);
+    expect(pages[questionAnchor('uvm-factory-purpose')]).toBe('/interview-prep/uvm');
   });
 
   it('turns banks into Practice Hub items that link to their section', () => {
     const banks = loadInterviewBanks();
     const items = getInterviewPracticeItems(banks);
-    expect(items.map((item) => item.href)).toEqual(banks.map((bank) => `/interview-prep#${bank.anchor}`));
+    expect(items.map((item) => item.href)).toEqual(banks.map((bank) => bank.href));
     for (const item of items) {
       expect(item.kind).toBe('interview');
       expect(item.status).toBe('available');
@@ -252,6 +312,20 @@ describe('bank rich text', () => {
       { code: false, text: ' first.', bold: true },
       { code: false, text: ' Then' },
     ]);
+  });
+
+  it('keeps a loose list (items separated by blank lines) as one list, so ordered items count on', () => {
+    expect(toRichBlocks('Three parts:\n\n1. first\n\n2. second\n\n3. third\n\nAfter.')).toEqual([
+      { type: 'paragraph', parts: [{ code: false, text: 'Three parts:' }] },
+      {
+        type: 'list',
+        ordered: true,
+        items: [[{ code: false, text: 'first' }], [{ code: false, text: 'second' }], [{ code: false, text: 'third' }]],
+      },
+      { type: 'paragraph', parts: [{ code: false, text: 'After.' }] },
+    ]);
+    // A paragraph between two lists, or a change of kind, still separates them.
+    expect(toRichBlocks('1. a\n\nNote.\n\n1. b\n\n- c').map((block) => block.type)).toEqual(['list', 'paragraph', 'list', 'list']);
   });
 
   it('turns list runs and pipe tables into list and table blocks', () => {

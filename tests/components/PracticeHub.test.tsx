@@ -238,7 +238,7 @@ describe('PracticeHub', () => {
     render(<PracticeHub />);
     const region = screen.getByRole('region', { name: 'Interview prep' });
     for (const bank of loadInterviewBanks()) {
-      expect(within(region).getByRole('link', { name: bank.title })).toHaveAttribute('href', `/interview-prep#${bank.anchor}`);
+      expect(within(region).getByRole('link', { name: bank.title })).toHaveAttribute('href', bank.href);
       expect(itemOf(bank.title, region)).toHaveTextContent(`${bank.questionCount} questions`);
     }
     // The page link's label comes from the navigation config.

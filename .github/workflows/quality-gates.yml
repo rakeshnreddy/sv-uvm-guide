@@ -56,8 +56,16 @@ jobs:
 
       - name: Install dependencies and native gates
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          # The runner image already ships psql. Only reach for apt when it is missing,
+          # and retry: the runners' package mirror is sometimes unreachable.
+          if ! command -v psql >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              if sudo apt-get update && sudo apt-get install -y postgresql-client; then break; fi
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              sleep 20
+            done
+          fi
+          psql --version
           npm ci
           npx playwright install --with-deps chromium
 

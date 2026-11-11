@@ -1,6 +1,7 @@
 /**
  * Loads the interview question banks in content/interview-questions/*.json for
- * the read-only /interview-prep page and the Practice Hub. The JSON is used
+ * the /interview-prep index, the one page per bank (/interview-prep/<slug>,
+ * the bank file's name) and the Practice Hub. The JSON is used
  * as-is; the bank owners edit those files. A new bank file must be added to
  * BANK_FILES below (tests/app/interview-prep-banks.test.ts fails otherwise).
  *
@@ -12,6 +13,7 @@
 import { z } from 'zod';
 
 import { createSlugger } from '@/lib/heading-slug';
+import { interviewBankHref } from '@/lib/site-links';
 import {
   getInterviewBankLessons,
   getInterviewQuestionLessons,
@@ -136,7 +138,7 @@ export interface InterviewQuestion {
 export interface InterviewLevelGroup {
   level: string;
   label: string;
-  /** Heading id of the level heading on /interview-prep. */
+  /** Heading id of the level heading on the bank's page; unique within that page. */
   anchor: string;
   questions: InterviewQuestion[];
 }
@@ -146,9 +148,19 @@ export interface InterviewBank {
   id: string;
   topic: string;
   title: string;
+  /** The bank's subject in sentence case, from its title: "SystemVerilog", "AMBA protocol". */
+  name: string;
+  /** The first word of the name, for the bank tabs: "SVA", "Debug". */
+  shortName: string;
   description: string;
-  /** Heading id of the bank heading on /interview-prep. */
+  /** The bank's row id on /interview-prep (old links to /interview-prep#<anchor> land there). */
   anchor: string;
+  /** The bank page's path segment: the bank file's name without .json. */
+  slug: string;
+  /** The bank's own page, /interview-prep/<slug>. */
+  href: string;
+  /** Question count per level, for the level filter. */
+  levelCounts: Record<string, number>;
   /** Related lessons, teaching lesson first. */
   lessons: LessonLink[];
   questionCount: number;
@@ -186,6 +198,32 @@ export function groupQuestionsByLevel<T extends { level: string }>(questions: re
     .map(({ level, questions: grouped }) => ({ level, questions: grouped }));
 }
 
+/** The bank page's path segment for a bank file: its name without .json. */
+export function bankSlug(file: string): string {
+  return file.replace(/\.json$/, '');
+}
+
+/** The bank's own page (defined with the navigation config). */
+export { interviewBankHref };
+
+/**
+ * The bank's subject in sentence case: the title without "Interview Question
+ * Bank", and every capitalised ordinary word after the first lower-cased.
+ * Acronyms and names with inner capitals (AMBA, SoC, SystemVerilog) stay.
+ */
+export function bankName(title: string): string {
+  const subject = title.replace(/\s+interview\s+question\s+bank\s*$/i, '').trim() || title;
+  return subject
+    .split(/(\s+)/)
+    .map((word, index) => (index > 0 && /^[A-Z][a-z]+(?:-[A-Z][a-z]+)*$/.test(word) ? word.toLowerCase() : word))
+    .join('');
+}
+
+/** The first word of a bank name, without trailing punctuation: "SVA & formal verification" gives "SVA". */
+export function bankShortName(name: string): string {
+  return name.split(/\s+/)[0].replace(/[^\p{L}\p{N}]+$/u, '') || name;
+}
+
 /**
  * All banks, ordered by the curriculum position of their first related lesson,
  * with heading anchors assigned in page order by the shared heading slugger.
@@ -200,12 +238,14 @@ export function loadInterviewBanks(): InterviewBank[] {
   const slug = createSlugger();
   return sortByCurriculumOrder(parsed).map(({ file, bank, lessons, order }) => {
     const anchor = slug(bank.title);
+    // Level headings live on the bank's own page, so their anchors are unique per bank.
+    const levelSlug = createSlugger();
     const levels = groupQuestionsByLevel(bank.questions).map(({ level, questions }) => {
       const label = levelLabel(level);
       return {
         level,
         label,
-        anchor: slug(label),
+        anchor: levelSlug(label),
         questions: questions.map((question) => ({
           id: question.id,
           level: question.level,
@@ -223,19 +263,66 @@ export function loadInterviewBanks(): InterviewBank[] {
         })),
       };
     });
+    const pageSlug = bankSlug(file);
     return {
       file,
       id: bank.id,
       topic: bank.topic,
       title: bank.title,
+      name: bankName(bank.title),
+      shortName: bankShortName(bankName(bank.title)),
       description: bank.description,
       anchor,
+      slug: pageSlug,
+      href: interviewBankHref(pageSlug),
+      levelCounts: Object.fromEntries(levels.map((group) => [group.level, group.questions.length])),
       lessons,
       questionCount: bank.questions.length,
       levels,
       order,
     };
   });
+}
+
+/** A question's anchor on its bank page: the id a deep link names. */
+export function questionAnchor(id: string): string {
+  return `q-${id}`;
+}
+
+/**
+ * Old links named a question on the index (/interview-prep#q-<id>); each
+ * question now lives on its bank's page. Question anchor to bank page.
+ */
+export function questionPages(banks: readonly InterviewBank[]): Record<string, string> {
+  return Object.fromEntries(
+    banks.flatMap((bank) => bank.levels.flatMap((group) => group.questions.map((question) => [questionAnchor(question.id), bank.href]))),
+  );
+}
+
+/** One bank by its page slug, or undefined. */
+export function getInterviewBank(slug: string, banks: readonly InterviewBank[] = loadInterviewBanks()): InterviewBank | undefined {
+  return banks.find((bank) => bank.slug === slug);
+}
+
+export interface InterviewLevelOption {
+  value: string;
+  label: string;
+}
+
+/** The levels the banks really hold, junior first, for the level filter. */
+export function interviewLevelOptions(banks: readonly InterviewBank[]): InterviewLevelOption[] {
+  const seen = new Set(banks.flatMap((bank) => bank.levels.map((group) => group.level)));
+  return groupQuestionsByLevel(Array.from(seen, (level) => ({ level }))).map(({ level }) => ({ value: level, label: levelLabel(level) }));
+}
+
+/** Question counts per level across banks, plus `all`. */
+export function totalLevelCounts(banks: readonly Pick<InterviewBank, 'levelCounts' | 'questionCount'>[]): Record<string, number> {
+  const counts: Record<string, number> = { all: 0 };
+  for (const bank of banks) {
+    counts.all += bank.questionCount;
+    for (const [level, count] of Object.entries(bank.levelCounts)) counts[level] = (counts[level] ?? 0) + count;
+  }
+  return counts;
 }
 
 /** The banks as Practice Hub items, linking to their section of /interview-prep. */
@@ -245,7 +332,7 @@ export function getInterviewPracticeItems(banks: readonly InterviewBank[] = load
     kind: 'interview',
     title: bank.title,
     description: bank.description,
-    href: `/interview-prep#${bank.anchor}`,
+    href: bank.href,
     status: 'available',
     lessons: bank.lessons,
     order: bank.order,
@@ -376,7 +463,16 @@ export function toRichBlocks(text: string): RichBlock[] {
     chunk
       .split(/\n\s*\n/)
       .filter((part) => part.trim())
-      .forEach((part) => blocks.push(...chunkBlocks(part)));
+      .forEach((part) => {
+        const [head, ...rest] = chunkBlocks(part);
+        if (!head) return;
+        // Items separated by blank lines (a loose list, "1. ...\n\n2. ...") stay one list, as in Markdown,
+        // so an ordered list counts 1, 2, 3 rather than restarting at 1 for every item.
+        const previous = blocks[blocks.length - 1];
+        if (previous?.type === 'list' && head.type === 'list' && previous.ordered === head.ordered) previous.items.push(...head.items);
+        else blocks.push(head);
+        blocks.push(...rest);
+      });
   };
   let last = 0;
   for (let match = fence.exec(text); match; match = fence.exec(text)) {

@@ -114,6 +114,11 @@ export const LABS_HREF = PRACTICE_SECTION_HREF.labs;
 /** The interview question banks (G30-PRAC-07). */
 export const INTERVIEW_PREP_HREF = "/interview-prep";
 
+/** One interview bank's own page: `/interview-prep/<slug>`, the slug being the bank file's name. */
+export function interviewBankHref(slug: string): string {
+  return `${INTERVIEW_PREP_HREF}/${slug}`;
+}
+
 /** The placement quiz, "Find your level". */
 export const PLACEMENT_QUIZ_HREF = "/quiz/placement";
 

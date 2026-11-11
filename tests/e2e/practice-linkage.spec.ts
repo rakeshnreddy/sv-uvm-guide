@@ -88,20 +88,21 @@ test.describe('Practice linkage', () => {
     for (const row of await comingSoonRows.all()) await expect(row.locator('a[href^="/practice/lab/"]')).toHaveCount(0);
   });
 
-  test('interview prep keeps answers hidden until revealed', async ({ page }) => {
+  test('interview prep keeps each answer collapsed until its question is opened', async ({ page }) => {
     await page.goto('/interview-prep');
     await expect(page.getByRole('heading', { level: 1, name: 'Interview prep' })).toBeVisible({ timeout: 60000 });
-    const reveal = page.getByRole('button', { name: 'Reveal model answer' }).first();
-    await expect(reveal).toHaveAttribute('aria-expanded', 'false');
-    await reveal.click();
-    const hide = page.getByRole('button', { name: 'Hide model answer' }).first();
-    await expect(hide).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByText('Model answer', { exact: true }).first()).toBeVisible();
+    await page.locator('[data-bank-row] h3 a').first().click();
+    await expect(page).toHaveURL(/\/interview-prep\/[a-z-]+$/);
+    const first = page.locator('details[data-question-level]').first();
+    await expect(first).not.toHaveAttribute('open', '');
+    await first.locator('summary').click();
+    await expect(first).toHaveAttribute('open', '');
+    await expect(first.getByRole('heading', { name: 'Model answer' })).toBeVisible();
   });
 
   test('the hub and interview prep fit a 390 px phone without horizontal scrolling', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    for (const route of ['/practice', '/interview-prep']) {
+    for (const route of ['/practice', '/interview-prep', '/interview-prep/systemverilog']) {
       await page.goto(route);
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible({ timeout: 60000 });
       await expectNoHorizontalScroll(page);

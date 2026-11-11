@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Check, MapPin } from 'lucide-react';
+import { Check, ChevronDown, MapPin } from 'lucide-react';
 
 import { SignalTag } from '@/components/ui/SignalTag';
 import { labelWithCode } from '@/lib/curriculum-overview';
@@ -18,7 +18,7 @@ import {
 import { tierDataAttribute, tierOfModuleCode, type TierNumber } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { CodedLabel, withoutCode } from './CodedLabel';
-import { chip, eyebrow, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from './overview-ui';
+import { chip, focusRing, inlineLink, primaryAction, secondaryAction, tagInLink, tagLink, textLink } from './overview-ui';
 
 export interface RouteChooserProps {
   routes: ResolvedRoute[];
@@ -50,6 +50,34 @@ export function routeOpeningModules(route: ResolvedRoute, count = 3): ResolvedSt
   return routeModules(route).slice(0, count);
 }
 
+/**
+ * Milestone ids as short text, with runs folded: ["M0", "M1", "M2", "M3"] ->
+ * "M0 to M3", ["M0", "M2", "M3", "M4"] -> "M0, M2 to M4". Ids that are not
+ * "M" and a number are listed as they are.
+ */
+export function milestoneSpan(ids: readonly string[]): string {
+  const parts: string[] = [];
+  let run: number[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    parts.push(run.length > 2 ? `M${run[0]} to M${run[run.length - 1]}` : run.map((n) => `M${n}`).join(', '));
+    run = [];
+  };
+  for (const id of ids) {
+    const match = /^M(\d+)$/.exec(id);
+    if (!match) {
+      flush();
+      parts.push(id);
+      continue;
+    }
+    const n = Number(match[1]);
+    if (run.length > 0 && n !== run[run.length - 1] + 1) flush();
+    run.push(n);
+  }
+  flush();
+  return parts.join(', ');
+}
+
 /** A link whose text starts with a module code: the code as a tier-tinted signal tag, then the title. */
 function ModuleLink({ href, code, title }: { href: string; code: string; title: string }) {
   return (
@@ -60,76 +88,114 @@ function ModuleLink({ href, code, title }: { href: string; code: string; title: 
   );
 }
 
-function RouteCard({
+/**
+ * One route in the strip: its name, who it is for, its lesson count and first
+ * modules, its one call to action, and the toggle that follows it. A column of
+ * the strip's one quiet-glass panel, so it carries no glass of its own (no glass
+ * on glass); the 2 px top edge is the tier the route starts in.
+ */
+function RouteStripItem({
   route,
   selected,
   onToggle,
   filled,
+  stepsOpen,
+  onToggleSteps,
 }: {
   route: ResolvedRoute;
   selected: boolean;
   onToggle: () => void;
-  /** This card holds the view's one filled accent action. */
+  /** This route holds the view's one filled accent action. */
   filled: boolean;
+  /** Whether the followed route's steps are showing under the strip. */
+  stepsOpen: boolean;
+  onToggleSteps: () => void;
 }) {
   const anchor = routeAnchor(route.id);
   const tier = routeStartTier(route);
   const opening = routeOpeningModules(route);
+  const lessons = route.sequence.length;
   return (
     <article
       id={anchor}
       aria-labelledby={`${anchor}-title`}
       data-tier={tierDataAttribute(tier)}
+      data-selected={selected ? '' : undefined}
       className={cn(
-        // Quiet glass: three blurred cards plus the header and a menu would pass the limit of three blurred layers (DESIGN.md section 11).
-        'glass-quiet flex min-w-0 scroll-mt-24 flex-col rounded-xl p-5 text-card-foreground',
+        'flex h-full min-w-0 scroll-mt-24 flex-col p-5 transition-colors duration-150 ease-bench motion-reduce:transition-none',
         tier && 'tier-edge',
-        // The followed route: the raised surface with a 2 px accent edge, as for every current item.
-        selected && 'border-l-2 border-l-primary bg-muted',
+        // The followed route: the raised surface with a 2 px accent marker on the leading edge, as for every current item.
+        selected && 'bg-muted shadow-[inset_2px_0_0_hsl(var(--primary))]',
       )}
     >
-      <p className={eyebrow}>{route.name} route</p>
+      {/* Secondary text, never the subtle colour, on glass (DESIGN.md section 11). */}
+      <p className="text-xs font-medium text-muted-foreground">{route.name} route</p>
       <h3 id={`${anchor}-title`} className="mt-1 text-h3 text-foreground">
         {route.tagline}
       </h3>
-      <p className="mt-2 text-sm text-muted-foreground">{route.audience}</p>
-      <p className="mt-2 text-sm text-foreground">{route.layers}</p>
+      <p className="mt-2 text-ui text-muted-foreground">{route.audience}</p>
+      <p className="mt-3 font-mono text-xs tabular-nums text-muted-foreground">
+        {lessons} {lessons === 1 ? 'lesson' : 'lessons'} · {route.steps.length} steps
+        {route.milestones.length > 0 && <> · builds {milestoneSpan(route.milestones.map((m) => m.id))}</>}
+      </p>
       {opening.length > 0 && (
-        <p className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-subtle" data-testid="route-opening-modules">
+        <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="route-opening-modules">
           Starts with
           {opening.map((m) => (
             <SignalTag key={m.id} code={m.code} title={labelWithCode(m.code, m.title)} />
           ))}
         </p>
       )}
-      <p className="mt-2 text-xs text-subtle">
-        {route.steps.length} steps · {route.sequence.length} lessons
-        {route.milestones.length > 0 && <> · builds {route.milestones.map((m) => m.id).join(', ')}</>}
-      </p>
-      <div className="mt-auto flex flex-wrap items-center gap-3 pt-5">
+      <div className="mt-auto flex flex-col items-start gap-1 pt-4">
         <Link href={route.cta.href} className={filled ? primaryAction : secondaryAction}>
           {route.cta.label}
         </Link>
+        {/* A toggle, drawn as a check box so its pressed state reads without colour. */}
         <button
           type="button"
           aria-pressed={selected}
           onClick={onToggle}
-          className={cn(secondaryAction, selected && 'border-primary')}
+          className={cn(
+            'inline-flex min-h-[40px] items-center gap-2 rounded-lg px-1 text-ui font-medium text-foreground transition-colors duration-150 ease-bench hover:text-primary motion-reduce:transition-none',
+            focusRing,
+          )}
         >
-          {selected && <Check className="h-4 w-4" aria-hidden="true" />}
+          <span
+            aria-hidden="true"
+            className={cn(
+              'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+              selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+            )}
+          >
+            {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
           Follow the {route.name} route
         </button>
       </div>
       {selected && (
-        <p className="mt-3 text-sm text-foreground">
-          You are following this route.{' '}
-          <a href={`#${ROUTE_STEPS_ID}`} className={inlineLink}>
-            See its {route.steps.length} steps
-          </a>
-        </p>
+        // Closed by default: the next lesson is in "Pick up where you left off", and the module list stays near.
+        <button
+          type="button"
+          aria-expanded={stepsOpen}
+          aria-controls={ROUTE_STEPS_ID}
+          onClick={onToggleSteps}
+          data-testid="route-steps-toggle"
+          className={cn(
+            'mt-1 inline-flex min-h-[40px] items-center gap-1 self-start rounded-lg px-1 text-ui font-medium text-primary underline-offset-4 hover:underline',
+            focusRing,
+          )}
+        >
+          <ChevronDown className={cn('h-4 w-4 transition-transform motion-reduce:transition-none', stepsOpen && 'rotate-180')} aria-hidden="true" />
+          {routeStepsToggleLabel(route)}
+        </button>
       )}
     </article>
   );
+}
+
+/** The name of the control that shows a followed route's steps: "Steps on this route (6)". */
+export function routeStepsToggleLabel(route: Pick<ResolvedRoute, 'steps'>): string {
+  return `Steps on this route (${route.steps.length})`;
 }
 
 function StepDetails({ step }: { step: ResolvedStep }) {
@@ -207,7 +273,7 @@ function StepDetails({ step }: { step: ResolvedStep }) {
   );
 }
 
-function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: ProgressLike }) {
+function RouteSteps({ route, progress, open }: { route: ResolvedRoute; progress: ProgressLike; open: boolean }) {
   const position = nextOnRoute(route.sequence, progress);
   const nextLesson = position.status === 'complete' ? undefined : route.sequence[position.index];
   const currentStep = nextLesson?.stepIndex;
@@ -217,17 +283,20 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
       id={ROUTE_STEPS_ID}
       role="region"
       aria-labelledby={`${ROUTE_STEPS_ID}-heading`}
-      className="glass-quiet mt-6 scroll-mt-24 rounded-2xl p-5 text-card-foreground sm:p-6"
+      hidden={!open}
+      className="mt-6 scroll-mt-24"
     >
       <h3 id={`${ROUTE_STEPS_ID}-heading`} className="text-h3 text-foreground">
         The {route.name} route: {route.steps.length} steps
       </h3>
+      <p className="mt-1 max-w-3xl text-sm text-foreground">{route.layers}</p>
       {route.assumesSummary && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{route.assumesSummary}</p>}
       {position.status === 'complete' && (
         <p className="mt-2 text-sm text-foreground">You have opened the last lesson on this route.</p>
       )}
 
-      <ol className="mt-5 space-y-4">
+      {/* Hairline-divided rows, not boxes: no cards inside the section. */}
+      <ol className="mt-4 divide-y divide-border border-y border-border">
         {route.steps.map((step, index) => {
           const current = index === currentStep;
           return (
@@ -235,9 +304,9 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
               key={step.id}
               aria-current={current ? 'step' : undefined}
               className={cn(
-                'rounded-xl border border-border p-4',
-                current && 'border-l-2 border-l-primary bg-muted',
-                step.kind === 'elective' && !current && 'border-2 border-dashed',
+                'py-4 sm:px-4',
+                // The current step: the raised surface with a 2 px accent marker on the leading edge, as for every current item.
+                current && 'bg-muted px-4 shadow-[inset_2px_0_0_hsl(var(--primary))]',
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -287,62 +356,144 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
   );
 }
 
-/** The milestone ladder: the testbench each milestone stands for, the routes that build it and its lab. */
+/** The id of a milestone's row in the ladder's description list: "M3" -> "milestone-m3". */
+export function milestoneRowId(id: string): string {
+  return `milestone-${id.toLowerCase()}`;
+}
+
+export const MILESTONE_DETAILS_ID = 'milestone-details';
+
+/**
+ * The milestone ladder as one line of milestone tags (SPEC-phases-2-4.md,
+ * "Other pages"): M0 to M8, each a link whose name is the milestone's name,
+ * shown as a small tip on hover and keyboard focus. "What each milestone
+ * builds" opens the full ladder: every milestone's name, the routes that
+ * build it and its lab. A tag opens the ladder at its own row.
+ */
 export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMilestone[]; routes: ResolvedRoute[] }) {
+  const [open, setOpen] = useState(false);
   const routeName = (id: RouteId) => routes.find((r) => r.id === id)?.name ?? id;
+  const half = Math.ceil(milestones.length / 2);
+
+  const openAt = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setOpen(true);
+    // The row is inside the closed panel until React renders it open: move there on the next frame.
+    window.requestAnimationFrame(() => {
+      const row = document.getElementById(milestoneRowId(id));
+      row?.scrollIntoView?.({ block: 'nearest' });
+      row?.focus({ preventScroll: true });
+    });
+  };
+
   return (
-    <section aria-labelledby="milestone-ladder-heading" className="glass-quiet mt-6 rounded-2xl p-5 sm:p-6">
-      <h3 id="milestone-ladder-heading" className="text-h3 text-foreground">
-        The milestone ladder
-      </h3>
-      <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-        Each route builds real testbenches, one rung at a time. A milestone is a testbench you can run and defend, from
-        a self-checking directed bench (M0) to a subsystem capstone (M8).
-      </p>
-      <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {milestones.map((m) => (
-          <li key={m.id} className="min-w-0 rounded-xl border border-border p-4">
-            <p className="flex items-start gap-2">
-              <SignalTag code={m.id} standalone className="mt-0.5" />
+    <section aria-labelledby="milestone-ladder-heading" className="mt-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <h3 id="milestone-ladder-heading" className="text-ui font-medium text-foreground">
+          The milestone ladder
+        </h3>
+        <ol aria-label="Milestones" className="flex flex-wrap items-center">
+          {milestones.map((m, index) => (
+            <li key={m.id}>
+              <a
+                href={`#${milestoneRowId(m.id)}`}
+                aria-label={`${m.id}: ${m.name}`}
+                onClick={(event) => openAt(event, m.id)}
+                className={cn(tagLink, 'relative')}
+                data-testid="milestone-tag"
+              >
+                <SignalTag code={m.id} className={tagInLink} />
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'pointer-events-none absolute bottom-full z-10 mb-1 hidden w-max max-w-[15rem] rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-card group-hover:block group-focus-visible:block',
+                    index < half ? 'left-0' : 'right-0',
+                  )}
+                >
+                  {m.name}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ol>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={MILESTONE_DETAILS_ID}
+          onClick={() => setOpen((value) => !value)}
+          className={cn(
+            'inline-flex min-h-[40px] items-center gap-1 rounded-lg px-1 text-ui font-medium text-primary underline-offset-4 hover:underline',
+            focusRing,
+          )}
+        >
+          <ChevronDown className={cn('h-4 w-4 transition-transform motion-reduce:transition-none', open && 'rotate-180')} aria-hidden="true" />
+          What each milestone builds
+        </button>
+      </div>
+      <div id={MILESTONE_DETAILS_ID} hidden={!open} className="mt-2">
+        <p className="max-w-3xl text-ui text-muted-foreground">
+          A milestone is a testbench you can run and defend, from a self-checking directed bench (M0) to a subsystem
+          capstone (M8). Each route builds them one rung at a time.
+        </p>
+        <ol aria-label="What each milestone builds" className="mt-3 divide-y divide-border border-y border-border">
+          {milestones.map((m) => (
+            <li
+              key={m.id}
+              id={milestoneRowId(m.id)}
+              tabIndex={-1}
+              className="grid min-w-0 scroll-mt-24 grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,14rem)_minmax(0,18rem)]"
+            >
+              <SignalTag code={m.id} standalone className="self-start justify-self-start" />
               <span className="text-sm font-medium text-foreground">{m.name}</span>
-            </p>
-            <p className="mt-2 text-xs text-subtle">
-              {m.routes.length > 0 ? `Built on: ${m.routes.map(routeName).join(', ')}` : 'Not built on any route yet'}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-              {m.lab ? (
-                m.lab.href ? (
-                  <>
-                    Lab:{' '}
-                    <Link href={m.lab.href} className={textLink}>
-                      {m.lab.title}
-                    </Link>
-                  </>
+              <span className="col-start-2 text-xs text-subtle sm:col-start-auto sm:text-sm">
+                {m.routes.length > 0 ? `Built on: ${m.routes.map(routeName).join(', ')}` : 'Not built on any route yet'}
+              </span>
+              <span className="col-start-2 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:col-start-auto sm:text-sm">
+                {m.lab ? (
+                  m.lab.href ? (
+                    <>
+                      Lab:{' '}
+                      <Link href={m.lab.href} className={textLink}>
+                        {m.lab.title}
+                      </Link>
+                    </>
+                  ) : (
+                    <>Lab coming soon: {m.lab.title}</>
+                  )
                 ) : (
-                  <>Lab coming soon: {m.lab.title}</>
-                )
-              ) : (
-                'No lab yet'
-              )}
-            </p>
-          </li>
-        ))}
-      </ol>
+                  'No lab yet'
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </section>
   );
 }
 
 /**
  * The route chooser on /curriculum: Junior "Start here", Practitioner
- * "Working DV engineer" and Expert "Jump in". Following a route shows its
- * steps with the learner's position, and is remembered in this browser.
- * "/curriculum#route-<id>" follows that route.
+ * "Working DV engineer" and Expert "Jump in". Following a route is remembered
+ * in this browser; its next lesson shows in "Pick up where you left off", and
+ * its steps, with the learner's position, open on request under the strip.
+ * "/curriculum#route-<id>" follows that route with its steps open.
  */
 export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute, progress }: RouteChooserProps) {
+  const [stepsOpen, setStepsOpen] = useState(false);
+
+  // "/curriculum#route-<id>" follows that route and opens its steps; "#route-steps" opens the steps of the followed one.
   useEffect(() => {
     const apply = () => {
-      const id = routeIdFromHash(window.location.hash);
-      if (id && routes.some((r) => r.id === id)) onSelectRoute(id);
+      const { hash } = window.location;
+      const id = routeIdFromHash(hash);
+      if (id && routes.some((r) => r.id === id)) {
+        onSelectRoute(id);
+        setStepsOpen(true);
+      } else if (hash === `#${ROUTE_STEPS_ID}`) {
+        setStepsOpen(true);
+      }
     };
     apply();
     window.addEventListener('hashchange', apply);
@@ -350,6 +501,17 @@ export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute,
   }, [routes, onSelectRoute]);
 
   const selected = routes.find((r) => r.id === selectedRoute) ?? null;
+
+  const toggleSteps = () => {
+    const opening = !stepsOpen;
+    setStepsOpen(opening);
+    if (!opening) return;
+    // Below md the strip stacks, so the steps open under the last route: bring their top into view when it is off screen.
+    window.requestAnimationFrame(() => {
+      const panel = document.getElementById(ROUTE_STEPS_ID);
+      if (panel && panel.getBoundingClientRect().top > window.innerHeight * 0.85) panel.scrollIntoView?.({ block: 'start' });
+    });
+  };
   // One filled accent action per view: the Junior route's call to action, unless
   // "Pick up where you left off" is showing (a followed route or a visited
   // lesson), whose continue action then holds the accent.
@@ -357,35 +519,33 @@ export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute,
 
   return (
     <section id="routes" aria-labelledby="routes-heading" className="mb-12 scroll-mt-24">
-      <div className="max-w-3xl">
-        <h2 id="routes-heading" className="text-h2 text-foreground">
-          Choose your route
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-          Three ordered paths through the same lessons. Each step lists its modules, its practice and the testbench
-          milestone it builds. Follow a route to see your next lesson; every module stays one click away below.
-        </p>
-      </div>
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {routes.map((route) => (
-          <RouteCard
-            key={route.id}
-            route={route}
-            selected={route.id === selectedRoute}
-            onToggle={() => onSelectRoute(route.id === selectedRoute ? null : route.id)}
-            filled={route.id === 'junior' && !resumeShown}
-          />
-        ))}
-      </div>
-      {selected && <RouteSteps route={selected} progress={progress} />}
-      <MilestoneLadder milestones={milestones} routes={routes} />
-      <p className="mt-4 text-sm text-muted-foreground">
-        Not sure where you fit?{' '}
-        <Link href="/quiz/placement" className={inlineLink}>
-          Take the placement quiz
-        </Link>
-        .
+      <h2 id="routes-heading" className="text-h2 text-foreground">
+        Choose your route
+      </h2>
+      <p className="mt-1 max-w-[40em] text-ui text-muted-foreground">
+        Three ordered paths through the same lessons. Follow one to see its steps and your next lesson; every module
+        stays one click away below.
       </p>
+      {/* One compact strip, the landing page's pattern: one quiet-glass panel split by hairlines. */}
+      <ul className="glass-quiet mt-5 grid grid-cols-1 divide-y divide-border overflow-hidden rounded-xl text-card-foreground md:grid-cols-3 md:divide-x md:divide-y-0">
+        {routes.map((route) => (
+          <li key={route.id} className="min-w-0">
+            <RouteStripItem
+              route={route}
+              selected={route.id === selectedRoute}
+              onToggle={() => {
+                setStepsOpen(false);
+                onSelectRoute(route.id === selectedRoute ? null : route.id);
+              }}
+              filled={route.id === 'junior' && !resumeShown}
+              stepsOpen={stepsOpen}
+              onToggleSteps={toggleSteps}
+            />
+          </li>
+        ))}
+      </ul>
+      {selected && <RouteSteps route={selected} progress={progress} open={stepsOpen} />}
+      <MilestoneLadder milestones={milestones} routes={routes} />
     </section>
   );
 }

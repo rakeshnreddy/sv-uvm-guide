@@ -1,21 +1,16 @@
 import React from 'react';
 import type { Metadata } from 'next';
 
+import { BankRows } from '@/components/interview/BankNav';
+import { InterviewPageController } from '@/components/interview/InterviewPageController';
+import { LevelCount, LevelFilter, LevelFilterSetup } from '@/components/interview/LevelFilter';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Section } from '@/components/layout/Section';
-import { LessonLinkList, focusRing } from '@/components/practice/LearnInLesson';
 import { siteLabel } from '@/lib/nav-labels';
 import { INTERVIEW_PREP_HREF } from '@/lib/site-links';
 
-import RevealAnswer from './RevealAnswer';
-import {
-  loadInterviewBanks,
-  splitInlineCode,
-  toRichBlocks,
-  type InlinePart,
-  type InterviewQuestion,
-} from './interview-banks';
+import { interviewLevelOptions, loadInterviewBanks, questionPages, totalLevelCounts } from './interview-banks';
 
 export const metadata: Metadata = {
   title: siteLabel(INTERVIEW_PREP_HREF),
@@ -23,255 +18,45 @@ export const metadata: Metadata = {
     'Interview questions on SystemVerilog, SVA and formal, UVM, AMBA, debug and SoC verification, from junior to senior staff, with model answers and links to the lessons that teach each topic.',
 };
 
-const eyebrow = 'text-xs font-medium text-subtle';
-
-const LANGUAGE_NAMES: Readonly<Record<string, string>> = {
-  systemverilog: 'SystemVerilog',
-  sv: 'SystemVerilog',
-  verilog: 'Verilog',
-  python: 'Python',
-  c: 'C',
-  cpp: 'C++',
-};
-
-function languageName(language: string): string {
-  return LANGUAGE_NAMES[language.toLowerCase()] ?? language;
-}
-
-function InlineText({ text = '', parts = splitInlineCode(text) }: { text?: string; parts?: InlinePart[] }) {
-  return (
-    <>
-      {parts.map((part, index) =>
-        part.code ? (
-          <code
-            key={index}
-            className={`rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground [font-variant-ligatures:none]${part.bold ? ' font-semibold' : ''}`}
-          >
-            {part.text}
-          </code>
-        ) : part.bold ? (
-          <strong key={index} className="font-semibold">
-            {part.text}
-          </strong>
-        ) : (
-          <span key={index}>{part.text}</span>
-        ),
-      )}
-    </>
-  );
-}
-
-function RichText({ text }: { text: string }) {
-  return (
-    <div className="space-y-3 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
-      {toRichBlocks(text).map((block, index) =>
-        block.type === 'code' ? (
-          <pre
-            key={index}
-            // Scrollable code must be reachable from the keyboard; a named region lets screen readers announce it.
-            tabIndex={0}
-            role="region"
-            aria-label={block.language === 'text' ? 'Code example' : `${languageName(block.language)} code example`}
-            className={`overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-code text-code-foreground [font-variant-ligatures:none] ${focusRing}`}
-          >
-            <code>{block.code}</code>
-          </pre>
-        ) : block.type === 'list' ? (
-          block.ordered ? (
-            <ol key={index} className="list-decimal space-y-1 pl-5">
-              {block.items.map((item, itemIndex) => (
-                <li key={itemIndex}>
-                  <InlineText parts={item} />
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <ul key={index} className="list-disc space-y-1 pl-5">
-              {block.items.map((item, itemIndex) => (
-                <li key={itemIndex}>
-                  <InlineText parts={item} />
-                </li>
-              ))}
-            </ul>
-          )
-        ) : block.type === 'table' ? (
-          <div
-            key={index}
-            // Wide tables scroll inside this region, which must be reachable from the keyboard.
-            tabIndex={0}
-            role="region"
-            aria-label="Table"
-            className={`overflow-x-auto rounded-lg border border-border ${focusRing}`}
-          >
-            <table className="w-full min-w-[34rem] border-collapse text-left text-[13px] [overflow-wrap:normal] [&_code]:whitespace-nowrap">
-              <thead className="bg-muted/60">
-                <tr>
-                  {block.header.map((cell, cellIndex) => (
-                    <th key={cellIndex} scope="col" className="border-b border-border px-2.5 py-1.5 font-semibold">
-                      <InlineText parts={cell} />
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {block.rows.map((row, rowIndex) => (
-                  <tr key={rowIndex} className="border-b border-border last:border-b-0">
-                    {row.map((cell, cellIndex) => (
-                      <td key={cellIndex} className="px-2.5 py-1.5 align-top">
-                        <InlineText parts={cell} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p key={index}>
-            <InlineText parts={block.parts} />
-          </p>
-        ),
-      )}
-    </div>
-  );
-}
-
-function TextList({ label, items }: { label: string; items: readonly string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <p className={eyebrow}>{label}</p>
-      <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
-        {items.map((item) => (
-          <li key={item}>
-            <InlineText text={item} />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function QuestionCard({ question }: { question: InterviewQuestion }) {
-  const promptId = `q-${question.id}-prompt`;
-  return (
-    <article
-      id={`q-${question.id}`}
-      aria-labelledby={promptId}
-      className="scroll-mt-24 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-card sm:p-5"
-    >
-      <p className="flex flex-wrap gap-2 text-xs">
-        <span className="rounded border border-border px-2 py-0.5 font-medium text-muted-foreground">
-          {question.categoryLabel}
-        </span>
-      </p>
-      <h4 id={promptId} className="mt-2 text-h4 text-foreground [overflow-wrap:anywhere]">
-        <InlineText text={question.prompt} />
-      </h4>
-      {question.code ? (
-        <div className="mt-3">
-          {/* Plain code is wrapped in an unlabelled fence: the bank does not say which language it is. */}
-          <RichText text={question.code.includes('```') ? question.code : `\`\`\`\n${question.code}\n\`\`\``} />
-        </div>
-      ) : null}
-      <LessonLinkList lessons={question.lessons} label="Learn it in" className="mt-3" />
-      <RevealAnswer>
-        <div className="space-y-4 rounded-lg border border-border bg-muted p-4">
-          <div>
-            <p className={eyebrow}>Model answer</p>
-            <div className="mt-1.5">
-              <RichText text={question.modelAnswer} />
-            </div>
-          </div>
-          {question.rubric ? (
-            <div>
-              <p className={eyebrow}>What a strong answer covers</p>
-              <div className="mt-1.5">
-                <RichText text={question.rubric} />
-              </div>
-            </div>
-          ) : null}
-          <TextList label="Common mistakes" items={question.commonMistakes} />
-          <TextList label="Follow-up questions" items={question.followUps} />
-          {question.sources.length > 0 ? (
-            <div>
-              <p className={eyebrow}>Sources the bank cites</p>
-              <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
-                {question.sources.map((source) => (
-                  <li key={source}>{source}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      </RevealAnswer>
-    </article>
-  );
-}
-
+/**
+ * The interview prep index: the level filter and one row per bank. The
+ * questions themselves are on one static page per bank
+ * (/interview-prep/<bank>), so this page stays small.
+ */
 export default function InterviewPrepPage() {
   const banks = loadInterviewBanks();
-  const questionTotal = banks.reduce((sum, bank) => sum + bank.questionCount, 0);
+  const levels = interviewLevelOptions(banks);
+  const counts = totalLevelCounts(banks);
+  const labels = Object.fromEntries(levels.map((level) => [level.value, level.label]));
 
   return (
     <PageShell width="reading">
+      <LevelFilterSetup levels={levels} />
       <PageHeader
         title={siteLabel(INTERVIEW_PREP_HREF)}
-        lead={`${questionTotal} questions in ${banks.length} banks, from junior to senior staff. Answer each one out loud or on paper first, then reveal the model answer.`}
-      />
-      <p className="max-w-[30em] text-ui text-muted-foreground">
-        The banks are being reviewed against the standards. Where a model answer disagrees with a lesson, follow the lesson
-        and the clause it cites.
-      </p>
+        lead="Questions from junior to senior staff, with model answers and the lessons that teach each topic. Answer each one out loud or on paper first, then open the model answer."
+        meta={
+          <span>
+            <LevelCount counts={counts} levels={levels} /> in {banks.length} banks
+          </span>
+        }
+      >
+        <p className="mt-4 max-w-[30em] text-ui text-muted-foreground">
+          The banks are being reviewed against the standards. Where a model answer disagrees with a lesson, follow the lesson
+          and the clause it cites.
+        </p>
+        <LevelFilter levels={levels} className="mt-6" />
+      </PageHeader>
 
-      <nav aria-label="Interview banks" data-bank-nav="" className="mt-6">
-        <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-2">
-          {banks.map((bank) => (
-            <li key={bank.id}>
-              <a
-                href={`#${bank.anchor}`}
-                className={`glass-quiet flex h-full min-h-[44px] flex-col justify-center rounded-lg px-3 py-2 text-sm transition-colors duration-150 ease-bench hover:bg-muted ${focusRing}`}
-              >
-                <span className="font-medium text-foreground">{bank.title}</span>
-                <span className="text-xs tabular-nums text-subtle">{bank.questionCount} questions</span>
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      <Section
+        id="question-banks"
+        title="Question banks"
+        description="Each bank opens on its own page. The tag names the lesson that teaches it."
+      >
+        <BankRows banks={banks} levels={levels} />
+      </Section>
 
-      {banks.map((bank) => (
-        <Section
-          key={bank.id}
-          id={bank.anchor}
-          title={bank.title}
-          description={bank.description || undefined}
-          className="[[data-bank-nav]+&]:mt-12"
-        >
-          <LessonLinkList lessons={bank.lessons} label="Related lessons" />
-
-          {/* Level groups are unnamed sections: one region landmark per bank is enough. */}
-          {bank.levels.map((group) => (
-            <section key={group.level} className="mt-8 first:mt-0">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h3 id={group.anchor} className="scroll-mt-24 text-h3 text-foreground">
-                  {group.label}
-                </h3>
-                <span className="text-sm text-muted-foreground">
-                  {group.questions.length} {group.questions.length === 1 ? 'question' : 'questions'}
-                </span>
-              </div>
-              <ol role="list" className="mt-3 space-y-4">
-                {group.questions.map((question) => (
-                  <li key={question.id}>
-                    <QuestionCard question={question} />
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ))}
-        </Section>
-      ))}
+      <InterviewPageController counts={counts} labels={labels} elsewhere={questionPages(banks)} />
     </PageShell>
   );
 }

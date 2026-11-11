@@ -198,7 +198,7 @@ describe('search result kinds', () => {
     expect(kindOf('waveform studio', '/practice/waveform-studio')).toBe('tool');
     expect(kindOf('fork join', '/practice/visualizations/concurrency')).toBe('model');
     expect(kindOf('semaphore hangs', '/practice/lab/ipc-deadlock')).toBe('lab');
-    expect(kindOf('uvm interview', '/interview-prep#uvm-interview-question-bank')).toBe('interview');
+    expect(kindOf('uvm interview', '/interview-prep/uvm')).toBe('interview');
     expect(kindOf('learning strategies', '/learning-strategies')).toBe('reference');
   });
 

@@ -7,8 +7,8 @@
  * - 'svuvm.learningRoute': a bare route id string, owned by learning-route-state.
  * - 'sv-uvm-guide:exercise:<id>' and 'sv-uvm-guide:exercise-analytics:<id>':
  *   bare JSON, owned by useExerciseProgress.
- * 'theme' (next-themes) and 'sv-uvm:outline-collapsed' are UI conveniences:
- * never read, exported or reset as learner data.
+ * 'theme' (next-themes), 'sv-uvm:outline-collapsed' and 'sv-uvm:interview-level'
+ * are UI conveniences: never read, exported or reset as learner data.
  */
 import { ROUTE_STORAGE_KEY } from '@/lib/learning-route-state';
 
@@ -44,7 +44,9 @@ export const LEGACY_PREFIXES: readonly string[] = Object.freeze([EXERCISE_PROGRE
 // UI conveniences: never read, exported or reset as learner data.
 export const THEME_KEY = 'theme';
 export const OUTLINE_COLLAPSED_KEY = 'sv-uvm:outline-collapsed';
-export const EXCLUDED_KEYS: readonly string[] = Object.freeze([THEME_KEY, OUTLINE_COLLAPSED_KEY]);
+/** The level chosen on the interview prep pages (src/components/interview/level-filter.ts). */
+export const INTERVIEW_LEVEL_KEY = 'sv-uvm:interview-level';
+export const EXCLUDED_KEYS: readonly string[] = Object.freeze([THEME_KEY, OUTLINE_COLLAPSED_KEY, INTERVIEW_LEVEL_KEY]);
 
 /** Exact learner keys (single records and legacy keys). */
 export const KNOWN_LEARNER_KEYS: readonly string[] = Object.freeze([

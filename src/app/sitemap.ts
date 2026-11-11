@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { loadInterviewBanks } from "@/app/(learning)/interview-prep/interview-banks";
 import { curriculumData } from "@/lib/curriculum-data";
 import { env } from "@/lib/env";
 import { getAllLabs } from "@/lib/lab-registry";
@@ -60,9 +61,14 @@ export function practicePaths(): string[] {
   return getPracticePages().flatMap((page) => (page.status === "available" && page.href ? [page.href] : []));
 }
 
+/** Every interview bank page, as the bank route's generateStaticParams prerenders them. */
+export function interviewBankPaths(): string[] {
+  return loadInterviewBanks().map((bank) => bank.href);
+}
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = env.APP_URL.replace(/\/+$/, "");
-  return [...PUBLIC_PAGES, ...practicePaths(), ...lessonPaths(), ...labPaths()].map((path) => ({
+  return [...PUBLIC_PAGES, ...practicePaths(), ...interviewBankPaths(), ...lessonPaths(), ...labPaths()].map((path) => ({
     url: `${base}${path === "/" ? "" : path}`,
     changeFrequency: path.startsWith("/curriculum/") || path.startsWith("/practice/lab/") ? "monthly" : "weekly",
   }));

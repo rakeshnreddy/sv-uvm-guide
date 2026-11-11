@@ -50,10 +50,33 @@ test.describe('curriculum overview routes', () => {
     const follow = page.getByRole('button', { name: 'Follow the Junior route' });
     await follow.click();
     await expect(follow).toHaveAttribute('aria-pressed', 'true');
-    const steps = page.getByRole('region', { name: 'The Junior route: 6 steps' });
-    await expect(steps).toBeVisible();
-    await page.reload();
+    // The steps stay closed until asked for; the next lesson is in "Pick up where you left off".
+    const toggle = page.getByRole('button', { name: 'Steps on this route (6)' });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByRole('region', { name: 'The Junior route: 6 steps' })).toBeVisible();
+    // The followed route survives a reload, with its steps closed again.
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Follow the Junior route' })).toHaveAttribute('aria-pressed', 'true');
+    const reloaded = page.getByRole('button', { name: 'Steps on this route (6)' });
+    await expect(reloaded).toHaveAttribute('aria-expanded', 'false');
+    await reloaded.click();
+    await expect(page.getByRole('region', { name: 'The Junior route: 6 steps' })).toBeVisible();
+  });
+
+  test('the milestone ladder is one line of tags; a tag opens the full ladder at its row', async ({ page }) => {
+    await page.goto('/curriculum');
+    const ladder = page.getByRole('region', { name: 'The milestone ladder' });
+    const tags = ladder.getByRole('list', { name: 'Milestones' }).getByRole('link');
+    await expect(tags).toHaveCount(9);
+    await expect(tags.first()).toHaveAccessibleName('M0: Self-checking directed testbench');
+    const toggle = ladder.getByRole('button', { name: 'What each milestone builds' });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await tags.nth(3).click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#milestone-m3')).toBeInViewport();
+    await expect(page.locator('#milestone-m3')).toContainText('Reference-model scoreboard');
   });
 
   test('/curriculum#route-practitioner opens the Practitioner route', async ({ page }) => {
@@ -82,6 +105,14 @@ test.describe('curriculum overview modules', () => {
       const response = await page.request.get(href!);
       expect(response.status(), href!).toBeLessThan(400);
     }
+  });
+
+  test('each tier heading carries its miniature progress trace, named with the tier totals', async ({ page }) => {
+    await seedVisit(page, 'F1A_The_Cost_of_Bugs', 'index', true);
+    await page.goto('/curriculum');
+    const tier1 = page.locator('#t1');
+    await expect(tier1.getByTestId('tier-meta').getByRole('img')).toHaveAccessibleName(/^Tier 1: Foundations: 1 of \d+ modules done$/);
+    await expect(page.locator('#t2').getByTestId('tier-meta').getByRole('img')).toHaveAccessibleName(/^Tier 2: Intermediate: 0 of \d+ modules done$/);
   });
 
   test('search opens every tier with a match', async ({ page }) => {
@@ -116,6 +147,10 @@ test.describe('curriculum overview modules', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/curriculum');
     await page.getByRole('button', { name: 'Follow the Expert route' }).click();
+    const steps = page.getByRole('button', { name: /^Steps on this route \(\d+\)$/ });
+    await expect(steps).toHaveAttribute('aria-expanded', 'false');
+    await steps.click();
+    await expect(page.getByRole('region', { name: /^The Expert route: \d+ steps$/ })).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
   });

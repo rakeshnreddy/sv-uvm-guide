@@ -10,6 +10,7 @@ import {
   type OverviewTier,
   type PlannedModule,
 } from '@/lib/curriculum-overview';
+import type { TierTrace, TraceState } from '@/lib/progress-trace';
 import { tierSectionId } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 import CurriculumMap from './LearningPathDiagram';
@@ -20,7 +21,10 @@ export interface CurriculumBrowserProps {
   tiers: OverviewTier[];
   planned: readonly PlannedModule[];
   milestoneNames: Readonly<Record<string, string>>;
-  visitedModules: ReadonlySet<string>;
+  /** Each tier's progress trace in this browser (every module not started until progress loads), in tier order. */
+  traces: readonly TierTrace[];
+  /** Each module's state in this browser, by module id. */
+  moduleStates: ReadonlyMap<string, TraceState>;
   hereModuleId?: string;
 }
 
@@ -49,7 +53,7 @@ export function samePageHash(href: string, location: Pick<Location, 'href' | 'pa
  * Tier 3, whether the page loads with that hash or a link on the page (the
  * course outline, the footer) points there.
  */
-export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModules, hereModuleId }: CurriculumBrowserProps) {
+export function CurriculumBrowser({ tiers, planned, milestoneNames, traces, moduleStates, hereModuleId }: CurriculumBrowserProps) {
   const [view, setView] = useState<View>('list');
   const [query, setQuery] = useState('');
   const [openTiers, setOpenTiers] = useState<ReadonlySet<string>>(() => new Set(tiers.slice(0, 1).map((t) => t.id)));
@@ -60,6 +64,7 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
   const searching = trimmed.length > 0;
 
   const moduleIndex = useMemo(() => indexOverviewModules(tiers), [tiers]);
+  const traceByTier = useMemo(() => new Map(traces.map((trace) => [trace.tierId, trace])), [traces]);
   const searchText = useMemo(
     () => new Map(tiers.flatMap((tier) => tier.modules.map((m) => [m.id, moduleSearchText(m)] as const))),
     [tiers],
@@ -135,9 +140,9 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
           <h2 id="modules-heading" className="text-h2 text-foreground">
             Modules by tier
           </h2>
-          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
-            Every module in learning order. Core modules form the main path. Electives, marked with a dashed border and
-            an Elective label, sit beside it, and the core path&apos;s Next link skips them.
+          <p className="mt-1 text-ui text-muted-foreground">
+            Every module in learning order. Electives carry a dashed border and an Elective label; the core path&apos;s Next
+            link skips them.
           </p>
         </div>
         <div role="group" aria-label="View" className="inline-flex shrink-0 self-start rounded-lg border border-border bg-card p-1 lg:self-auto">
@@ -215,7 +220,7 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
 
       {view === 'list' ? (
         shown.length > 0 ? (
-          <div className="mt-4 space-y-4">
+          <div className="mt-6">
             {shown.map(({ tier, modules }) => (
               <TierSection
                 key={tier.id}
@@ -226,7 +231,8 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
                 searching={searching}
                 moduleIndex={moduleIndex}
                 milestoneNames={milestoneNames}
-                visitedModules={visitedModules}
+                trace={traceByTier.get(tier.id)}
+                moduleStates={moduleStates}
                 hereModuleId={hereModuleId}
               />
             ))}

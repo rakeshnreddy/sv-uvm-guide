@@ -2,10 +2,11 @@
 
 import React, { useId, useState } from 'react';
 import Link from 'next/link';
-import { ChevronDown, Clock, Eye, MapPin } from 'lucide-react';
+import { Check, ChevronDown, Clock, Eye, MapPin } from 'lucide-react';
 
 import { SignalTag } from '@/components/ui/SignalTag';
 import { labelWithCode, moduleDisplayTitle, type OverviewModule } from '@/lib/curriculum-overview';
+import { TRACE_STATE_LABEL, type TraceState } from '@/lib/progress-trace';
 import { tierDataAttribute, tierOfModuleCode } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { chip, focusRing, tagLink, tagInLink, textLink } from './overview-ui';
@@ -23,8 +24,11 @@ export interface ModuleCardProps {
   prerequisites: ModuleCardPrerequisite[];
   /** Milestone names by id ("M2" -> "Reusable UVM agent, active and passive"). */
   milestoneNames: Readonly<Record<string, string>>;
-  /** The learner has opened a lesson in this module (stored in this browser). */
-  visited?: boolean;
+  /**
+   * The module's state in this browser, in the progress trace's words: not
+   * started, opened (a lesson opened or marked done) or done (every lesson done).
+   */
+  state?: TraceState;
   /** The module of the lesson the learner opened last. */
   here?: boolean;
   /** Heading level of the module title inside its section. */
@@ -40,7 +44,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   module,
   prerequisites,
   milestoneNames,
-  visited = false,
+  state = 'not-started',
   here = false,
   headingLevel = 4,
 }) => {
@@ -74,13 +78,16 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
           <span className={cn(chip, 'border-primary bg-card text-foreground')}>
             <MapPin className="h-3.5 w-3.5" aria-hidden="true" /> You are here
           </span>
-        ) : (
-          visited && (
-            <span className={cn(chip, 'border-border text-muted-foreground')}>
-              <Eye className="h-3.5 w-3.5" aria-hidden="true" /> Visited
-            </span>
-          )
-        )}
+        ) : null}
+        {state === 'done' ? (
+          <span className={cn(chip, 'border-success/40 text-success')} data-testid="module-state" data-state={state}>
+            <Check className="h-3.5 w-3.5" aria-hidden="true" /> {TRACE_STATE_LABEL.done}
+          </span>
+        ) : state === 'opened' && !here ? (
+          <span className={cn(chip, 'border-border text-muted-foreground')} data-testid="module-state" data-state={state}>
+            <Eye className="h-3.5 w-3.5" aria-hidden="true" /> {TRACE_STATE_LABEL.opened}
+          </span>
+        ) : null}
       </div>
 
       <Heading id={titleId} className="mt-2 text-h4 text-foreground">

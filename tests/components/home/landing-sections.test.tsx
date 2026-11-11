@@ -13,11 +13,12 @@ import HeroSection, { HERO_HEADLINE } from '@/components/home/HeroSection';
 import { MAIN_STANDARDS, getHomeStats, getLandingFacts, heroParagraph, landingDescription, plural } from '@/components/home/home-stats';
 import type { LandingLesson } from '@/components/home/landing-resume';
 import ProofStrip, { proofFacts } from '@/components/home/ProofStrip';
-import ReturningLearnerStrip, { continueNote } from '@/components/home/ReturningLearnerStrip';
+import ReturningLearnerStrip, { continueNote, tierOfLesson } from '@/components/home/ReturningLearnerStrip';
 import RoutesStrip from '@/components/home/RoutesStrip';
 import { buildSchedulerFrame } from '@/components/home/scheduler-frame';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
+import { buildCurriculumTotals } from '@/lib/learner-stats';
 import { FLASHCARDS_KEY, LESSONS_KEY } from '@/lib/learner-store/keys';
 import { __resetRecordsForTests } from '@/lib/learner-store/record';
 import { __resetStorageForTests } from '@/lib/learner-store/storage';
@@ -232,6 +233,41 @@ describe('returning-learner strip', () => {
     expect(continueNote(f3c, f3c, 'last-opened', Date.UTC(2026, 10, 11, 12))).toMatch(/^Last opened on .*2026$/);
     expect(continueNote(next, f3c, 'next-after-done', null)).toBe('Next after F3C, which you marked done');
     expect(continueNote(null, null, null, null)).toBe('Your saved lesson has moved. Start from lesson 1');
+  });
+
+  it('shows the miniature trace for the tier of the lesson to continue, on one reserved line', () => {
+    const now = Date.now();
+    window.localStorage.setItem(LESSONS_KEY, JSON.stringify({ v: 1, data: { lessons: { [F3C]: { firstVisitedAt: now - 1000, lastVisitedAt: now - 500, visits: 2 } } } }));
+    render(<ReturningLearnerStrip lessons={lessons} />);
+    const line = screen.getByTestId('returning-trace');
+    expect(line).toHaveClass('h-5');
+    const trace = within(line).getByRole('img');
+    expect(trace).toHaveAttribute('data-size', 'mini');
+    expect(trace).toHaveAttribute('data-tier', '1');
+    const tier1Modules = buildCurriculumTotals(curriculumData)[0].modules.length;
+    expect(trace).toHaveAccessibleName(`Tier 1: Foundations: 0 of ${tier1Modules} modules done, 1 more opened`);
+    expect(line).toHaveTextContent('Tier 1: Foundations');
+  });
+
+  it('keeps the trace line empty for a first-time visitor', () => {
+    render(<ReturningLearnerStrip lessons={lessons} />);
+    const line = screen.getByTestId('returning-trace');
+    expect(line).toBeEmptyDOMElement();
+    expect(renderToStaticMarkup(<ReturningLearnerStrip lessons={lessons} />)).toContain('data-testid="returning-trace"');
+  });
+
+  it('builds the tier for the trace with the same modules and lessons as the dashboard totals', () => {
+    for (const tier of buildCurriculumTotals(curriculumData)) {
+      const first = tier.modules[0].lessons[0].href;
+      const built = tierOfLesson(lessons, first)!;
+      expect(built.id).toBe(tier.id);
+      expect(built.number).toBe(tier.number);
+      expect(built.label).toBe(tier.label);
+      expect(built.modules.map((m) => [m.id, m.code, m.lessons.map((l) => `${l.slug} ${l.href}`)])).toEqual(
+        tier.modules.map((m) => [m.id, m.code, m.lessons.map((l) => `${l.slug} ${l.href}`)]),
+      );
+    }
+    expect(tierOfLesson(lessons, '/practice')).toBeNull();
   });
 
   it('keeps fixed card heights, so content arriving after hydration moves nothing', () => {

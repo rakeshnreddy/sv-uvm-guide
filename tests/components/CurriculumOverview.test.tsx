@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { samePageHash } from '@/components/curriculum/CurriculumBrowser';
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
+import { RESUME_BOX_CLASS, RESUME_SUBTITLE_ROUTE } from '@/components/curriculum/Recommendations';
+import { ROUTE_FOLLOWED_ATTRIBUTE, routeFollowedScript } from '@/components/curriculum/route-followed-script';
+import { milestoneSpan } from '@/components/curriculum/RouteChooser';
+import { RETURNING_ATTRIBUTE } from '@/components/home/landing-resume';
 import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
 import { PLANNED_MODULES, buildCurriculumOverview, type LessonPosition } from '@/lib/curriculum-overview';
@@ -92,13 +96,22 @@ describe('route chooser', () => {
     expect(screen.getByRole('link', { name: 'Begin the Junior route' })).toHaveClass('forced-colors:border-[ButtonText]');
   });
 
-  it('shows the ordered steps of a followed route and remembers the choice', () => {
+  it('shows the ordered steps of a followed route on request and remembers the choice', () => {
     renderOverview();
     const follow = screen.getByRole('button', { name: 'Follow the Junior route' });
     expect(follow).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Steps on this route (6)' })).not.toBeInTheDocument();
     fireEvent.click(follow);
     expect(follow).toHaveAttribute('aria-pressed', 'true');
     expect(localStorage.getItem(ROUTE_STORAGE_KEY)).toBe('junior');
+
+    // The steps stay closed, so the module list stays near; a disclosure opens them.
+    expect(screen.queryByRole('region', { name: 'The Junior route: 6 steps' })).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Steps on this route (6)' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'route-steps');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
     const region = screen.getByRole('region', { name: 'The Junior route: 6 steps' });
     const steps = within(region).getAllByRole('heading', { level: 4 }).map((h) => h.textContent);
@@ -130,24 +143,43 @@ describe('route chooser', () => {
     expect(localStorage.getItem(ROUTE_STORAGE_KEY)).toBeNull();
   });
 
-  it('follows the route named in the URL hash', () => {
+  it('follows the route named in the URL hash, with its steps open', () => {
     window.location.hash = '#route-practitioner';
     renderOverview();
     expect(screen.getByRole('region', { name: 'The Practitioner route: 6 steps' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Steps on this route (6)' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('button', { name: 'Follow the Practitioner route' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('shows the milestone ladder from M0 to M8 and does not link labs that are coming soon', () => {
+  it('shows the milestone ladder from M0 to M8 as one line of tags, and does not link labs that are coming soon', () => {
     renderOverview();
     const ladder = screen.getByRole('region', { name: 'The milestone ladder' });
-    const rungs = within(ladder).getAllByRole('listitem');
+    // One line of tags, each named with its milestone for hover, focus and assistive technology.
+    const tags = within(within(ladder).getByRole('list', { name: 'Milestones' })).getAllByRole('link');
+    expect(tags.map((a) => a.querySelector('[data-signal-tag]')!.textContent)).toEqual(milestones.map((m) => m.id));
+    expect(tags.map((a) => a.getAttribute('aria-label'))).toEqual(milestones.map((m) => `${m.id}: ${m.name}`));
+    // The visible tip (hover and keyboard focus) repeats the name; assistive technology reads the link's name.
+    tags.forEach((a, index) => expect(a.querySelector('[aria-hidden="true"]')).toHaveTextContent(milestones[index].name));
+
+    // The full ladder is one disclosure away; a tag opens it.
+    const toggle = within(ladder).getByRole('button', { name: 'What each milestone builds' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(panel).not.toBeVisible();
+    fireEvent.click(tags[3]);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(panel).toBeVisible();
+
+    const rungs = within(within(ladder).getByRole('list', { name: 'What each milestone builds' })).getAllByRole('listitem');
     expect(rungs).toHaveLength(9);
     expect(rungs[0]).toHaveTextContent('M0');
+    expect(rungs[0]).toHaveAttribute('id', 'milestone-m0');
     expect(within(rungs[0]).getByRole('link')).toHaveAttribute('href', '/practice/lab/simple-dut-1');
     expect(rungs[1]).toHaveTextContent('M1');
     expect(within(rungs[3]).getByRole('link')).toHaveAttribute('href', '/practice/lab/scoreboard-reference-model');
     // Each rung links its lab only while the lab is available.
     resolveMilestones(labs).forEach((milestone, index) => {
+      expect(rungs[index]).toHaveTextContent(milestone.name);
       const lab = milestone.lab ? labs.find((entry) => entry.id === milestone.lab!.id) : undefined;
       if (lab?.status === 'available') {
         expect(within(rungs[index]).getByRole('link'), milestone.id).toHaveAttribute('href', `/practice/lab/${lab.id}`);
@@ -156,6 +188,33 @@ describe('route chooser', () => {
         expect(within(rungs[index]).queryByRole('link'), milestone.id).not.toBeInTheDocument();
       }
     });
+  });
+
+  it('lays the routes out as one strip: name, who it is for, lesson count, one call to action and the follow toggle', () => {
+    renderOverview();
+    const region = screen.getByRole('region', { name: 'Choose your route' });
+    const strip = region.querySelector('ul')!;
+    const items = within(strip).getAllByRole('article');
+    expect(items.map((a) => a.id)).toEqual(['route-junior', 'route-practitioner', 'route-expert']);
+    routes.forEach((route, index) => {
+      const item = items[index];
+      expect(item).toHaveAccessibleName(route.tagline);
+      expect(item).toHaveTextContent(`${route.name} route`);
+      expect(item).toHaveTextContent(route.audience);
+      expect(item).toHaveTextContent(`${route.sequence.length} lessons`);
+      expect(within(item).getAllByRole('link').filter((a) => !a.closest('[data-testid="route-opening-modules"]'))).toHaveLength(1);
+      expect(within(item).getByRole('button', { name: `Follow the ${route.name} route` })).toHaveAttribute('aria-pressed', 'false');
+    });
+  });
+});
+
+describe('milestoneSpan', () => {
+  it('folds runs of three or more and keeps the rest as a list', () => {
+    expect(milestoneSpan(['M0', 'M1', 'M2', 'M3'])).toBe('M0 to M3');
+    expect(milestoneSpan(['M8'])).toBe('M8');
+    expect(milestoneSpan(['M0', 'M1'])).toBe('M0, M1');
+    expect(milestoneSpan(['M0', 'M2', 'M3', 'M4'])).toBe('M0, M2 to M4');
+    expect(milestoneSpan(['M2', 'X1', 'M3'])).toBe('M2, X1, M3');
   });
 });
 
@@ -247,6 +306,46 @@ describe('modules by tier', () => {
     expect(tierButton('Tier 2: Intermediate')).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('draws each tier heading with its miniature progress trace beside the counts, named with the tier totals', () => {
+    renderOverview();
+    for (const tier of tiers) {
+      const section = document.getElementById(tierSectionId(tier.id))!;
+      const meta = within(section).getByTestId('tier-meta');
+      const trace = within(meta).getByRole('img');
+      expect(trace).toHaveAttribute('data-size', 'mini');
+      expect(trace).toHaveAccessibleName(new RegExp(`: 0 of ${tier.modules.length} modules? done$`));
+      expect(meta).toHaveTextContent(`${tier.lessonCount} lessons`);
+      // The heading's name stays the tier title alone.
+      expect(screen.getByRole('heading', { level: 3, name: tier.title })).toBeInTheDocument();
+    }
+  });
+
+  it('shows each module card’s state from this browser: done, opened, and where you are', () => {
+    localStorage.setItem(
+      'curriculumProgress',
+      JSON.stringify({
+        F1A_The_Cost_of_Bugs: { completedLessons: ['index'], lastVisitedAt: 500, lastVisitedLesson: 'index' },
+        F2A_Core_Data_Types: { completedLessons: [], lastVisitedAt: 600, lastVisitedLesson: 'index' },
+        F2D_Reusable_Code_and_Parallelism: { completedLessons: [], lastVisitedAt: 1_000, lastVisitedLesson: 'ipc' },
+      }),
+    );
+    renderOverview();
+    const card = (code: string) =>
+      within(document.getElementById('t1-panel')!).getByRole('heading', { level: 4, name: new RegExp(`^${code}:`) }).closest('article')!;
+    expect(within(card('F1A')).getByTestId('module-state')).toHaveTextContent('Done');
+    expect(within(card('F2A')).getByTestId('module-state')).toHaveTextContent('Opened');
+    expect(card('F2D')).toHaveTextContent('You are here');
+    expect(within(card('F2D')).queryByTestId('module-state')).toBeNull();
+    expect(within(card('F1C')).queryByTestId('module-state')).toBeNull();
+    const trace = within(document.getElementById('t1')!).getByRole('img');
+    expect(trace).toHaveAccessibleName(`Tier 1: Foundations: 1 of ${tiers[0].modules.length} modules done, 2 more opened`);
+    // The same totals in words beside the trace, for sighted learners; hidden from assistive technology.
+    const count = within(document.getElementById('t1')!).getByTestId('tier-progress');
+    expect(count).toHaveTextContent('1 done · 2 opened');
+    expect(count).toHaveAttribute('aria-hidden', 'true');
+    expect(within(document.getElementById('t2')!).getByTestId('tier-progress')).toBeEmptyDOMElement();
+  });
+
   it('lists a module’s lessons on request', () => {
     renderOverview();
     const f2d = within(document.getElementById('t1-panel')!)
@@ -282,10 +381,19 @@ describe('modules by tier', () => {
 });
 
 describe('pick up where you left off', () => {
-  it('renders nothing for a first visit', () => {
+  it('renders nothing for a first visit: the reserved box stays hidden', () => {
     renderOverview();
     expect(screen.queryByRole('heading', { name: 'Pick up where you left off' })).not.toBeInTheDocument();
     expect(screen.queryByText(/Recommended For You/i)).not.toBeInTheDocument();
+    const box = screen.getByTestId('curriculum-resume');
+    expect(box).toHaveAttribute('hidden');
+    expect(box).toHaveClass('!hidden');
+    expect(box).not.toHaveAttribute('data-ready');
+  });
+
+  it('reserves its box before hydration from the attribute the inline script sets', () => {
+    expect(RESUME_BOX_CLASS).toContain(`[html[${RETURNING_ATTRIBUTE}]_&]:block`);
+    expect(RESUME_BOX_CLASS.split(' ')).toContain('hidden');
   });
 
   it('continues the lesson opened last while it is not marked done (F2D/ipc)', async () => {
@@ -297,8 +405,10 @@ describe('pick up where you left off', () => {
     expect(action).toHaveAccessibleName(/^Continue F2D: /);
     expect(action).toHaveTextContent(/^Continue F2D: /);
     expect(within(resume).getByText('The lesson you opened last.')).toBeInTheDocument();
-    expect(within(resume).getByRole('heading', { name: 'Recently visited' })).toBeInTheDocument();
-    expect(within(resume).getByRole('link', { name: 'F2D: Interprocess Communication' })).toBeInTheDocument();
+    expect(within(resume).getByText('Based on the lessons you opened in this browser.')).toBeInTheDocument();
+    // The lesson Continue names is not listed again under "Recently visited" (here the only visit, so no list).
+    expect(within(resume).queryByRole('heading', { name: 'Recently visited' })).not.toBeInTheDocument();
+    expect(within(resume).queryByRole('link', { name: 'F2D: Interprocess Communication' })).not.toBeInTheDocument();
     const here = within(document.getElementById('t1-panel')!).getByRole('link', { name: /^F2D:/, current: 'location' });
     expect(here.closest('article')).toHaveTextContent('You are here');
     // The continue action holds the one accent fill; the Junior call to action steps down.
@@ -334,12 +444,56 @@ describe('pick up where you left off', () => {
     expect(within(resume).getByTestId('curriculum-continue')).toHaveClass('bg-primary');
     expect(screen.getAllByRole('link', { name: /^Continue with F2E: / })).toHaveLength(1);
     expect(screen.getByRole('link', { name: /^Continue with F2E: / })).not.toHaveClass('bg-primary');
+    fireEvent.click(screen.getByRole('button', { name: 'Steps on this route (6)' }));
     const steps = screen.getByRole('region', { name: 'The Junior route: 6 steps' });
     const current = within(steps).getAllByRole('listitem').find((li) => li.getAttribute('aria-current') === 'step');
     // F2E closes the language step, so the learner is still in it.
     expect(current).toHaveTextContent('The language');
     expect(current).toHaveTextContent('You are here');
     expect(within(current!).getByRole('link', { name: /^Next lesson: F2E: / })).toBeInTheDocument();
+  });
+});
+
+describe('pick up where you left off: what it lists', () => {
+  it('lists recent lessons without the one Continue names, at most three', async () => {
+    localStorage.setItem(
+      'curriculumProgress',
+      JSON.stringify({
+        F1A_The_Cost_of_Bugs: { completedLessons: [], lastVisitedAt: 100, lastVisitedLesson: 'index' },
+        F1B_The_Verification_Mindset: { completedLessons: [], lastVisitedAt: 200, lastVisitedLesson: 'index' },
+        F2A_Core_Data_Types: { completedLessons: [], lastVisitedAt: 300, lastVisitedLesson: 'index' },
+        F2B_Dynamic_Structures: { completedLessons: [], lastVisitedAt: 400, lastVisitedLesson: 'index' },
+        F2D_Reusable_Code_and_Parallelism: { completedLessons: [], lastVisitedAt: 1_000, lastVisitedLesson: 'ipc' },
+      }),
+    );
+    renderOverview();
+    const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
+    const list = within(resume).getByRole('list', { name: 'Recently visited' });
+    const hrefs = within(list).getAllByRole('link').map((a) => a.getAttribute('href'));
+    expect(hrefs).toHaveLength(3);
+    expect(hrefs).not.toContain(within(resume).getByTestId('curriculum-continue').getAttribute('href'));
+  });
+
+  it('shows only the route row, with a subtitle that says so, for a learner who follows a route and opened no lesson', async () => {
+    localStorage.setItem(ROUTE_STORAGE_KEY, 'junior');
+    renderOverview();
+    const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
+    expect(within(resume).getByText(RESUME_SUBTITLE_ROUTE)).toBeInTheDocument();
+    expect(within(resume).queryByTestId('curriculum-resume-lessons')).not.toBeInTheDocument();
+    expect(within(resume).getByTestId('curriculum-resume-route')).toHaveTextContent('Next on your Junior route');
+    expect(within(resume).getByRole('link', { name: /^Start with F1A: / })).toHaveClass('bg-primary');
+  });
+
+  it('reserves its box before hydration for a followed route too, from the attribute the route script sets', () => {
+    expect(RESUME_BOX_CLASS).toContain(`[html[${ROUTE_FOLLOWED_ATTRIBUTE}]_&]:block`);
+    document.documentElement.removeAttribute(ROUTE_FOLLOWED_ATTRIBUTE);
+    localStorage.setItem(ROUTE_STORAGE_KEY, 'expert');
+    new Function(routeFollowedScript())();
+    expect(document.documentElement).toHaveAttribute(ROUTE_FOLLOWED_ATTRIBUTE);
+    document.documentElement.removeAttribute(ROUTE_FOLLOWED_ATTRIBUTE);
+    localStorage.setItem(ROUTE_STORAGE_KEY, 'not-a-route');
+    new Function(routeFollowedScript())();
+    expect(document.documentElement).not.toHaveAttribute(ROUTE_FOLLOWED_ATTRIBUTE);
   });
 });
 

@@ -3,12 +3,17 @@
 import Link from 'next/link';
 import React, { useMemo } from 'react';
 
+import { tierProgressText } from '@/components/curriculum/tier-trace';
+import { ProgressTraceView, useTierTrace } from '@/components/learner/ProgressTrace';
 import { SECTION_HEADING_CLASS } from '@/components/layout/Section';
 import { Card } from '@/components/ui/Card';
 import { SignalTag } from '@/components/ui/SignalTag';
+import type { StaticModule, StaticTier } from '@/lib/learner-stats';
 import { useHydrated, useRecord } from '@/lib/learner-store/react';
 import { countDueCards, flashcardRecord } from '@/lib/learner-store/repositories/flashcards';
+import { tierName } from '@/lib/progress-trace';
 import { REVIEW_HREF } from '@/lib/site-links';
+import { tierNumber } from '@/lib/curriculum-overview';
 import { cn } from '@/lib/utils';
 
 import type { ContinueReason, LandingLesson } from './landing-resume';
@@ -39,6 +44,44 @@ function formatDay(at: number): string {
   return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(at);
 }
 
+/** "/curriculum/<Tier>/<Module>/<lesson>" -> its three parts, or null for any other path. */
+function lessonParts(href: string): { tierId: string; moduleId: string; slug: string } | null {
+  const [, root, tierId, moduleId, slug] = href.split('/');
+  return root === 'curriculum' && tierId && moduleId && slug ? { tierId, moduleId, slug } : null;
+}
+
+/**
+ * The tier that holds the lesson at `href`, built from the landing page's
+ * lesson list (every lesson in course order, continueLessons()), in the shape
+ * the progress trace reads: the same modules and lessons, in the same order,
+ * as buildCurriculumTotals gives the dashboard (a unit test holds them equal).
+ * A module's title is its index lesson's title (the lesson list names an index
+ * lesson by its module). Null for a path outside the curriculum.
+ */
+export function tierOfLesson(lessons: readonly LandingLesson[], href: string): StaticTier | null {
+  const target = lessonParts(href);
+  if (!target) return null;
+  const modules = new Map<string, StaticModule>();
+  for (const lesson of lessons) {
+    const parts = lessonParts(lesson.href);
+    if (!parts || parts.tierId !== target.tierId) continue;
+    let mod = modules.get(parts.moduleId);
+    if (!mod) {
+      mod = { id: parts.moduleId, code: lesson.code, title: lesson.title, tierId: parts.tierId, lessons: [] };
+      modules.set(parts.moduleId, mod);
+    }
+    if (parts.slug === 'index') mod.title = lesson.title;
+    mod.lessons.push({ slug: parts.slug, title: lesson.title, href: lesson.href });
+  }
+  if (modules.size === 0) return null;
+  return {
+    id: target.tierId,
+    number: tierNumber(target.tierId),
+    label: tierName(target.tierId),
+    modules: [...modules.values()],
+  };
+}
+
 /** The line above the lesson: why it is the one to continue, and when it was last opened. */
 export function continueNote(
   lesson: LandingLesson | null,
@@ -57,6 +100,14 @@ export default function ReturningLearnerStrip({ lessons }: ReturningLearnerStrip
   const flashcards = useRecord(flashcardRecord);
   const due = useMemo(() => (hydrated ? countDueCards(flashcards, Date.now()) : null), [hydrated, flashcards]);
   const target = lesson ?? lessons[0];
+  // The miniature trace for the tier of the lesson to continue (DESIGN.md section 10).
+  const tier = useMemo(
+    () => (hydrated && hasPosition && target ? tierOfLesson(lessons, target.href) : null),
+    [hydrated, hasPosition, target, lessons],
+  );
+  // The same trace the curriculum index draws for this tier, so the miniature and the count in words agree.
+  const trace = useTierTrace(tier, lesson?.href ?? null);
+  const traceText = trace ? tierProgressText(trace) : null;
 
   return (
     <section
@@ -65,9 +116,28 @@ export default function ReturningLearnerStrip({ lessons }: ReturningLearnerStrip
       data-ready={hydrated && hasPosition ? '' : undefined}
       className={cn(STRIP_CLASS, 'mt-16 lg:mt-20', hydrated && !hasPosition && '!hidden')}
     >
-      <h2 id="returning-heading" className={SECTION_HEADING_CLASS}>
-        Pick up where you left off
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <h2 id="returning-heading" className={SECTION_HEADING_CLASS}>
+          Pick up where you left off
+        </h2>
+        {/* One line, always in the box (its own line below 1024 px), so the trace arriving after hydration moves nothing. */}
+        <p data-testid="returning-trace" className="flex h-5 min-w-0 basis-full items-center gap-3 text-ui text-muted-foreground lg:basis-auto">
+          {tier && trace ? (
+            <>
+              <span aria-hidden="true" className="min-w-0 truncate">
+                {tier.label}
+              </span>
+              <ProgressTraceView trace={trace} size="mini" />
+              {/* The trace's totals in words; hidden from assistive technology, since the trace's name says it. */}
+              {traceText ? (
+                <span aria-hidden="true" data-testid="returning-trace-count" className="shrink-0 tabular-nums">
+                  {traceText}
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </p>
+      </div>
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Card variant="glassQuietInteractive" padding="default" className="flex h-32 flex-col gap-3 overflow-hidden">
           {hydrated && target ? (

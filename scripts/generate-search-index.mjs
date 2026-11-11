@@ -182,7 +182,7 @@ function pageMetadataDescription(route) {
 }
 
 /** Labs, exercises, models, tools, interview banks and reference pages. */
-export async function buildSearchItems(headingSlug) {
+export async function buildSearchItems() {
   const practice = await importTsModule("src/lib/practice-links.ts");
   const { GENERATED_LAB_MANIFESTS } = await importTsModule("src/generated/lab-registry.ts");
   const siteLinks = await importTsModule("src/lib/site-links.ts");
@@ -209,7 +209,7 @@ export async function buildSearchItems(headingSlug) {
     const bank = JSON.parse(fs.readFileSync(path.join(bankDir, file), "utf8"));
     const code = codeOfLessonRef(practice.INTERVIEW_BANK_LESSONS[bank.topic]?.[0]);
     items.push(
-      item("interview", bank.title, bank.description, `/interview-prep#${headingSlug(bank.title)}`, keywords("interview", "interview questions", bank.topic), code),
+      item("interview", bank.title, bank.description, `/interview-prep/${file.replace(/\.json$/, "")}`, keywords("interview", "interview questions", bank.topic), code),
     );
   }
 
@@ -339,7 +339,7 @@ export async function buildSearchIndex() {
     tiers.push({ id: tier.id, title: tier.title, modules });
   }
 
-  const items = await buildSearchItems(headingSlug);
+  const items = await buildSearchItems();
   return { index: { version: SEARCH_INDEX_VERSION, tiers, items }, warnings };
 }
 

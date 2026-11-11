@@ -122,9 +122,11 @@ function SegmentDrawing({
 }
 
 /**
- * The cursor: a thin accent line through the module the learner is in, with a
- * 1 px halo in the surface colour so it separates from a level or edge of a
- * similar hue (the tier 2 blue sits close to the accent).
+ * The cursor. Full size: a thin accent line through the module the learner is
+ * in, with a 1 px halo in the surface colour so it separates from a level or
+ * edge of a similar hue (the tier 2 blue sits close to the accent). Miniature:
+ * a small accent tick under the segment, beside the drawing rather than over
+ * it, since an 8 px segment has no room for a line and its level both.
  */
 function Cursor({ size }: { size: ProgressTraceSize }) {
   return (
@@ -133,7 +135,7 @@ function Cursor({ size }: { size: ProgressTraceSize }) {
       data-trace-part="cursor"
       className={cn(
         'pointer-events-none absolute left-1/2 -ml-px border-l-2 border-primary forced-colors:border-[Highlight]',
-        size === 'full' ? 'inset-y-0.5 shadow-[0_0_0_1px_hsl(var(--card))]' : '-inset-y-px',
+        size === 'full' ? 'inset-y-0.5 shadow-[0_0_0_1px_hsl(var(--card))]' : '-bottom-1 h-1',
       )}
     />
   );
@@ -340,15 +342,26 @@ export interface ProgressTraceProps {
  * page). The server render and the hydrating render draw every module not
  * started, in the same box.
  */
-export function ProgressTrace({ tier, continueLessons, size = 'full', className }: ProgressTraceProps) {
+/**
+ * A tier's trace from this browser's progress, with the cursor on the lesson
+ * at `cursorHref`. Before hydration (and on the server) every module is drawn
+ * not started, so the first render matches the server HTML. Null for no tier.
+ */
+export function useTierTrace(tier: StaticTier, cursorHref: string | null): TierTrace;
+export function useTierTrace(tier: StaticTier | null, cursorHref: string | null): TierTrace | null;
+export function useTierTrace(tier: StaticTier | null, cursorHref: string | null): TierTrace | null {
   const hydrated = useHydrated();
   const progress = useRecord(curriculumProgressRecord);
   const lessonLog = useRecord(lessonLogRecord);
+  return useMemo(() => {
+    if (!tier) return null;
+    return hydrated ? progressTraces([tier], progress, lessonLog, cursorHref)[0] : tierTrace(tier, null);
+  }, [hydrated, tier, progress, lessonLog, cursorHref]);
+}
+
+export function ProgressTrace({ tier, continueLessons, size = 'full', className }: ProgressTraceProps) {
   const position = useContinueLesson(continueLessons);
-  const trace = useMemo(
-    () => (hydrated ? progressTraces([tier], progress, lessonLog, position?.lesson.href ?? null)[0] : tierTrace(tier, null)),
-    [hydrated, tier, progress, lessonLog, position],
-  );
+  const trace = useTierTrace(tier, position?.lesson.href ?? null);
   return <ProgressTraceView trace={trace} size={size} className={className} />;
 }
 
