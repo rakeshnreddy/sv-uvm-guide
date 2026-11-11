@@ -8,6 +8,8 @@ import { buildCurriculumTotals, type ExerciseMeta, type LabMeta } from '@/lib/le
 import { resolveRoutes } from '@/lib/learning-paths';
 import { getPracticePage } from '@/lib/practice-links';
 
+import { loadInterviewBanks, totalLevelCounts } from '../interview-prep/interview-banks';
+
 import { siteLabel } from '@/lib/nav-labels';
 import { DASHBOARD_HREF } from '@/lib/site-links';
 
@@ -63,6 +65,7 @@ export default function DashboardPage() {
       exercises={exercises}
       placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
       continueLessons={continueLessons()}
+      interviewQuestionTotal={totalLevelCounts(loadInterviewBanks()).all}
     />
   );
 }

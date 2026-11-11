@@ -102,7 +102,7 @@ export function getPracticeHubData(): PracticeHubData {
     ]),
   );
 
-  const interviewOutcomes = Object.fromEntries(interview.map((item) => [item.id, topicsLine(item.description)]));
+  const interviewOutcomes = Object.fromEntries(interview.map((item) => [item.id, topicsLine(item)]));
 
   const labsSection = practiceSectionLink('labs');
   const interviewSection = practiceSectionLink('interviewPrep');

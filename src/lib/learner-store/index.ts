@@ -16,6 +16,7 @@
 import { activityRecord } from './repositories/activity';
 import { assessmentRecord } from './repositories/assessments';
 import { flashcardRecord } from './repositories/flashcards';
+import { interviewPractisedRecord } from './repositories/interview';
 import { labProgressRecords } from './repositories/labs';
 import { lessonLogRecord } from './repositories/lessons';
 import { metaRecord } from './repositories/meta';
@@ -33,9 +34,10 @@ export * from './repositories/notebook';
 export * from './repositories/assessments';
 export * from './repositories/lessons';
 export * from './repositories/activity';
+export * from './repositories/interview';
 export * from './repositories/legacy';
 
-export type LearnerArea = 'meta' | 'labs' | 'flashcards' | 'notebook' | 'assessments' | 'lessons' | 'activity';
+export type LearnerArea = 'meta' | 'labs' | 'flashcards' | 'notebook' | 'assessments' | 'lessons' | 'activity' | 'interview';
 
 export type LearnerRecordEntry =
   | { area: LearnerArea; kind: 'record'; record: LearnerRecord<unknown> }
@@ -56,4 +58,5 @@ export const learnerRecords: readonly LearnerRecordEntry[] = Object.freeze([
   { area: 'assessments', kind: 'record', record: assessmentRecord as LearnerRecord<unknown> },
   { area: 'lessons', kind: 'record', record: lessonLogRecord as LearnerRecord<unknown> },
   { area: 'activity', kind: 'record', record: activityRecord as LearnerRecord<unknown> },
+  { area: 'interview', kind: 'record', record: interviewPractisedRecord as LearnerRecord<unknown> },
 ] satisfies LearnerRecordEntry[]);

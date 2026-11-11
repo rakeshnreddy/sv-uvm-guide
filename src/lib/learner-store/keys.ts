@@ -7,8 +7,9 @@
  * - 'svuvm.learningRoute': a bare route id string, owned by learning-route-state.
  * - 'sv-uvm-guide:exercise:<id>' and 'sv-uvm-guide:exercise-analytics:<id>':
  *   bare JSON, owned by useExerciseProgress.
- * 'theme' (next-themes), 'sv-uvm:outline-collapsed' and 'sv-uvm:interview-level'
- * are UI conveniences: never read, exported or reset as learner data.
+ * 'theme' (next-themes), 'sv-uvm:outline-collapsed', 'sv-uvm:interview-level' and
+ * 'sv-uvm:interview-hide-practised' are UI conveniences: never read, exported
+ * or reset as learner data.
  */
 import { ROUTE_STORAGE_KEY } from '@/lib/learning-route-state';
 
@@ -23,6 +24,8 @@ export const NOTEBOOK_KEY_PREFIX = `${KEY_PREFIX}notebook:`;
 export const ASSESSMENTS_KEY = `${KEY_PREFIX}assessments`;
 export const LESSONS_KEY = `${KEY_PREFIX}lessons`;
 export const ACTIVITY_KEY = `${KEY_PREFIX}activity`;
+/** The interview questions the learner marked as practised (repositories/interview.ts). */
+export const INTERVIEW_PRACTISED_KEY = `${KEY_PREFIX}interview-practised`;
 /** A side copy of a corrupt raw value, taken before the first write over it: `sv-uvm-guide:recovered:<originalKey>`. */
 export const RECOVERED_KEY_PREFIX = `${KEY_PREFIX}recovered:`;
 
@@ -46,7 +49,14 @@ export const THEME_KEY = 'theme';
 export const OUTLINE_COLLAPSED_KEY = 'sv-uvm:outline-collapsed';
 /** The level chosen on the interview prep pages (src/components/interview/level-filter.ts). */
 export const INTERVIEW_LEVEL_KEY = 'sv-uvm:interview-level';
-export const EXCLUDED_KEYS: readonly string[] = Object.freeze([THEME_KEY, OUTLINE_COLLAPSED_KEY, INTERVIEW_LEVEL_KEY]);
+/** "Hide practised" on the interview bank pages (src/components/interview/practised-marks.ts). */
+export const INTERVIEW_HIDE_PRACTISED_KEY = 'sv-uvm:interview-hide-practised';
+export const EXCLUDED_KEYS: readonly string[] = Object.freeze([
+  THEME_KEY,
+  OUTLINE_COLLAPSED_KEY,
+  INTERVIEW_LEVEL_KEY,
+  INTERVIEW_HIDE_PRACTISED_KEY,
+]);
 
 /** Exact learner keys (single records and legacy keys). */
 export const KNOWN_LEARNER_KEYS: readonly string[] = Object.freeze([
@@ -55,6 +65,7 @@ export const KNOWN_LEARNER_KEYS: readonly string[] = Object.freeze([
   ASSESSMENTS_KEY,
   LESSONS_KEY,
   ACTIVITY_KEY,
+  INTERVIEW_PRACTISED_KEY,
   CURRICULUM_PROGRESS_KEY,
   ROUTE_STORAGE_KEY,
 ]);

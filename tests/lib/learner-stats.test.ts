@@ -336,6 +336,9 @@ describe('hasLearnerData and backupReminder', () => {
     expect(hasLearnerData({ ...empty, curriculum: { F1A: { completedLessons: [], lastVisitedAt: 1 } } })).toBe(true);
     expect(hasLearnerData({ ...empty, activity: { '2026-10-18': { quiz: 1 } } })).toBe(true);
     expect(hasLearnerData({ ...empty, lessonLog: { lessons: { '/curriculum/a/b/c': { firstVisitedAt: 1, lastVisitedAt: 1, visits: 1 } } } })).toBe(true);
+    // A learner whose only data is practised interview marks still sees the dashboard (and its tile).
+    expect(hasLearnerData({ ...empty, interview: true })).toBe(true);
+    expect(hasLearnerData({ ...empty, interview: false })).toBe(false);
   });
 
   it('reminds when there is data and no backup in the last 14 days', () => {

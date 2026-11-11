@@ -130,7 +130,7 @@ describe('PracticeHub', () => {
       const tile = itemOf(exercise.title, region);
       const [lesson] = exercise.lessons;
       expect(within(tile).getByRole('link', { name: `${lesson.code}: learn it in ${lesson.title}` })).toHaveAttribute('href', lesson.href);
-      expect(tile).toHaveTextContent(outcomeLine(exercise.description));
+      expect(tile).toHaveTextContent(outcomeLine(exercise));
     }
   });
 
@@ -165,7 +165,7 @@ describe('PracticeHub', () => {
       expect(tag.querySelector('[data-signal-tag]')).toHaveTextContent(lesson.code);
       expect(within(row).getByRole('link', { name: lab.title })).toHaveAttribute('href', `/practice/lab/${lab.id}`);
       // One line, not the long description, prerequisites or "do this after" notes (those are on the lab page).
-      expect(row).toHaveTextContent(outcomeLine(lab.description));
+      expect(row).toHaveTextContent(outcomeLine(lab));
       expect(row).not.toHaveTextContent('Before you start');
       expect(row).not.toHaveTextContent('Do this lab after');
       expect(row).toHaveTextContent(labRowMeta(lab));
@@ -258,5 +258,12 @@ describe('PracticeHub', () => {
     ]);
     expect(pairSingleItemSections([one('a'), many('b'), one('c')]).map((row) => row.length)).toEqual([1, 1, 1]);
     expect(tierTitle(1)).toBe('Tier 1: Foundations');
+  });
+
+  it('ends no row or tile in an ellipsis', () => {
+    const { container } = render(<PracticeHub />);
+    const lines = [...container.querySelectorAll('[data-practice-row] p.line-clamp-2, [data-practice-tile] p.line-clamp-3')];
+    expect(lines.length).toBeGreaterThan(50);
+    for (const p of lines) expect(p.textContent?.trim()).not.toMatch(/(?:…|\.\.\.)$/);
   });
 });

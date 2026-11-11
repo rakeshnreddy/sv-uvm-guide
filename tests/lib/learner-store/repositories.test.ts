@@ -877,6 +877,7 @@ describe('learnerRecords registry', () => {
       'assessments:record',
       'lessons:record',
       'activity:record',
+      'interview:record',
     ]);
     const keys = learnerRecords.map((entry) => (entry.kind === 'record' ? entry.record.key : entry.record.prefix));
     expect(new Set(keys).size).toBe(keys.length);

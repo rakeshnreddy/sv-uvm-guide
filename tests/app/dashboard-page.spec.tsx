@@ -289,6 +289,12 @@ describe('/dashboard', () => {
     expect(within(notebook).getByText('Clocking blocks <b>')).toBeInTheDocument();
     expect(within(notebook).getByRole('link', { name: 'Open your notebook' })).toHaveAttribute('href', '/dashboard/notebook');
 
+    // The interview tile sits in the same group as the other activity cards, with its total from the bank data.
+    const interview = screen.getByRole('region', { name: 'Interview questions practised' });
+    expect(interview.parentElement).toBe(notebook.parentElement);
+    expect(interview).toHaveTextContent(/^Interview questions practised0 of \d+/);
+    expect(within(interview).getByRole('link', { name: 'Open interview prep' })).toHaveAttribute('href', '/interview-prep');
+
     const placement = screen.getByRole('region', { name: 'Placement' });
     expect(placement).toHaveTextContent('Start in Tier 3 on the Practitioner route, 60%');
     expect(within(placement).getByRole('link', { name: 'See the Practitioner route' })).toHaveAttribute(

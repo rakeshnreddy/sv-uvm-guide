@@ -6,6 +6,7 @@ import { ArrowRight } from 'lucide-react';
 
 import { CodedLabel, withoutCode } from '@/components/curriculum/CodedLabel';
 import { focusRing, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from '@/components/curriculum/overview-ui';
+import { InterviewPractisedTile } from '@/components/learner/InterviewPractisedTile';
 import { LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
 import { ProgressTraceLegend, ProgressTraceView } from '@/components/learner/ProgressTrace';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
@@ -50,6 +51,7 @@ import { subscribeLearnerStore } from '@/lib/learner-store/record';
 import { activityRecord } from '@/lib/learner-store/repositories/activity';
 import { assessmentRecord, latestPlacementAttempt, type PlacementAttempt } from '@/lib/learner-store/repositories/assessments';
 import { countDueCards, flashcardRecord } from '@/lib/learner-store/repositories/flashcards';
+import { interviewPractisedRecord, practisedCount } from '@/lib/learner-store/repositories/interview';
 import { labProgressRecords } from '@/lib/learner-store/repositories/labs';
 import { readExerciseProgress, type StoredExerciseProgress } from '@/lib/learner-store/repositories/legacy';
 import { curriculumProgressRecord, lessonLogRecord } from '@/lib/learner-store/repositories/lessons';
@@ -104,6 +106,8 @@ export interface DashboardPageClientProps {
   placementVersions?: PlacementVersions;
   /** Every lesson in course order (continueLessons()), for the one continue rule. */
   continueLessons: readonly ContinueLessonEntry[];
+  /** Questions in every interview bank, counted on the server from the bank data. */
+  interviewQuestionTotal: number;
 }
 
 const NO_EXERCISES: readonly StoredExerciseProgress[] = Object.freeze([]);
@@ -805,6 +809,7 @@ export default function DashboardPageClient({
   exercises: exerciseMeta,
   placementVersions,
   continueLessons,
+  interviewQuestionTotal,
 }: DashboardPageClientProps) {
   const hydrated = useHydrated();
   const { target, ready: targetReady } = usePersistenceTarget();
@@ -815,6 +820,7 @@ export default function DashboardPageClient({
   const notebookList = useKeyedRecordList(notebookEntries);
   const assessments = useRecord(assessmentRecord);
   const activity = useRecord(activityRecord);
+  const interviewPractised = useRecord(interviewPractisedRecord);
   const meta = useRecord(metaRecord);
   const selectedRoute = useSyncExternalStore(subscribeSelectedRoute, readSelectedRoute, serverRoute);
   const { now, exercises } = useBrowserReads();
@@ -851,6 +857,7 @@ export default function DashboardPageClient({
       assessments,
       activity: activity.days,
       exercises,
+      interview: practisedCount(interviewPractised) > 0,
     });
 
   let top: React.ReactNode;
@@ -889,6 +896,7 @@ export default function DashboardPageClient({
             <PlacementCard attempt={attempt} routeName={attemptRoute?.name ?? null} stale={stale} />
             <NotebookCard entries={notebook} />
             <StreakCard streak={dailyStreak(activity.days, now)} days={last7Days(activity.days, now)} />
+            <InterviewPractisedTile total={interviewQuestionTotal} />
           </div>
         </Section>
         <DataCard meta={meta} remind={backupReminder(meta, true, now)} />

@@ -125,6 +125,7 @@ export const BACKUP_AREAS: readonly BackupArea[] = Object.freeze([
   'notebook',
   'assessments',
   'exercises',
+  'interview',
   'activity',
   'recovered',
   'meta',
@@ -139,6 +140,7 @@ export const BACKUP_AREA_LABELS: Readonly<Record<BackupArea, string>> = Object.f
   notebook: 'Notebook',
   assessments: 'Quiz and placement results',
   exercises: 'Exercise scores',
+  interview: 'Interview questions practised',
   activity: 'Activity log',
   recovered: 'Copies of unreadable data',
   meta: 'Backup details',
@@ -672,6 +674,8 @@ function countItems(entry: PlannedEntry): number {
           return isPlainObject(value.lessons) ? Object.keys(value.lessons).length : 0;
         case 'activity':
           return isPlainObject(value.days) ? Object.keys(value.days).length : 0;
+        case 'interview':
+          return isPlainObject(value.questions) ? Object.keys(value.questions).length : 0;
         case 'assessments':
           return (
             (Array.isArray(value.placement) ? value.placement.length : 0) +
@@ -878,6 +882,7 @@ const APPLY_ORDER: readonly BackupArea[] = [
   'notebook',
   'labs',
   'exercises',
+  'interview',
   'activity',
   'meta',
   'recovered',

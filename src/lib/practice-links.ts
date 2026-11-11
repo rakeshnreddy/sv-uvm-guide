@@ -77,6 +77,12 @@ export interface PracticeItem {
   kind: PracticeKind;
   title: string;
   description: string;
+  /**
+   * The author-written outcome line for the item's Practice hub row, when the
+   * description's first sentence is too long to read as one (a lab's manifest
+   * `outcome`, a page's or a bank's `outcome` below). outcomeLine prefers it.
+   */
+  outcome?: string;
   /** Route of the item. Undefined when the item cannot be opened yet (coming soon): render it as text. */
   href?: string;
   status: 'available' | 'coming_soon';
@@ -94,6 +100,12 @@ export interface PracticePageDefinition {
   title: string;
   /** One sentence on what the learner does there; shown on the hub card and in the page metadata. */
   description: string;
+  /**
+   * Optional short outcome line for the hub card or row, for a description
+   * too long to show whole there: one whole clause of at most 110 characters
+   * (outcomeLineSchema), no ellipsis. The description stays the page's own.
+   */
+  outcome?: string;
   /** Teaching lesson first, then related lessons. */
   lessons: readonly LessonRef[];
 }
@@ -106,6 +118,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'UVM phase sorter',
     description:
       'Place each phase in its lane, with run_phase beside the twelve run-time phases, and mark each function phase top-down or bottom-up.',
+    outcome: 'Place each UVM phase in its lane and mark each function phase top-down or bottom-up.',
     lessons: ['I-UVM-1C_UVM_Phasing/index'],
   },
   {
@@ -122,6 +135,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'Scoreboard connector',
     description:
       "Wire a monitor, predictor, scoreboard FIFOs and coverage in an env's connect_phase, graded by uvm-core's connection rules.",
+    outcome: "Wire a monitor, predictor, scoreboard FIFOs and coverage in an env's connect_phase.",
     lessons: ['I-UVM-2B_TLM_Connections/index', 'A-UVM-6_Scoreboards_and_Reference_Models/index'],
   },
   {
@@ -130,6 +144,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'Sequencer arbitration sandbox',
     description:
       'Predict which sequence the sequencer grants: arbitration modes, priorities, lock() and grab(), checked against a model of uvm-core 2020.3.1.',
+    outcome: 'Predict which sequence the sequencer grants: arbitration modes, priorities, lock() and grab().',
     lessons: [
       'I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration',
       'I-UVM-3B_Advanced_Sequencing_and_Layering/index',
@@ -141,6 +156,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'SystemVerilog data types',
     description:
       'Cycle 2-state and 4-state values, watch X and Z propagate, and run dynamic-array, queue and associative-array operations, including what new[N] really does.',
+    outcome: 'Watch X and Z propagate and run dynamic-array, queue and associative-array operations.',
     lessons: ['F2A_Core_Data_Types/index', 'F2B_Dynamic_Structures/index'],
   },
   {
@@ -149,6 +165,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'SystemVerilog array sandbox',
     description:
       'Run dynamic-array, queue and associative-array operations and see the resulting state in 3D or as text.',
+    outcome: 'Run dynamic-array, queue and associative-array operations and see the state in 3D.',
     lessons: ['F2B_Dynamic_Structures/index'],
   },
   {
@@ -157,6 +174,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'Procedural blocks simulator',
     description:
       'Predict when initial, always and final blocks run, and where <= updates land, on a tested process model.',
+    outcome: 'Predict when initial, always and final blocks run, and where <= updates land.',
     lessons: ['F2C_Procedural_Code_and_Flow_Control/index'],
   },
   {
@@ -177,6 +195,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'State machine designer',
     description:
       'Build a small finite state machine, choose its state encoding and reset style, and step through its transitions.',
+    outcome: 'Build a small state machine, pick its encoding and reset style, and step through it.',
     lessons: [
       'F2C_Procedural_Code_and_Flow_Control/index',
       'F2A_Core_Data_Types/index',
@@ -189,6 +208,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'Interface signal flow',
     description:
       'Follow a signal from a class to the pins through an interface, a modport, a virtual interface and a clocking block, and predict which accesses compile and run.',
+    outcome: 'Follow a signal from a class to the pins and predict which accesses compile and run.',
     lessons: [
       'F4B_Interfaces_and_Modports/index',
       'F4C_Clocking_Blocks/index',
@@ -201,6 +221,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
     title: 'Constraint solution space',
     description:
       'Exact probabilities for dist, soft and solve…before, plus the minimal conflicting set when randomize() fails.',
+    outcome: 'See exact dist, soft and solve…before probabilities, and the minimal conflicting set.',
     lessons: [
       'I-SV-2A_Constrained_Randomization_Fundamentals/index',
       'I-SV-2B_Advanced_Constrained_Randomization/solver-debug',
@@ -561,6 +582,7 @@ function toPageItem(page: PracticePageDefinition): PracticeItem {
     kind: page.kind,
     title: page.title,
     description: page.description,
+    ...(page.outcome ? { outcome: page.outcome } : {}),
     href: page.href,
     status: 'available',
     lessons,
@@ -731,6 +753,7 @@ export function toLabPracticeItem(lab: LabManifest): PracticeItem {
     kind: 'lab',
     title: lab.title,
     description: lab.description,
+    ...(lab.outcome ? { outcome: lab.outcome } : {}),
     href: available ? `/practice/lab/${lab.id}` : undefined,
     status: available ? 'available' : 'coming_soon',
     lessons,
@@ -746,6 +769,25 @@ export function getPracticeLabItems(labs: readonly LabManifest[]): PracticeItem[
 // ---------------------------------------------------------------------------
 // Interview questions
 // ---------------------------------------------------------------------------
+
+/**
+ * The outcome line for each interview bank's Practice hub row, keyed by the
+ * bank's `topic`: the topics it covers in one whole clause of at most 110
+ * characters (outcomeLineSchema), where the bank's own description runs long.
+ */
+export const INTERVIEW_BANK_OUTCOMES: Readonly<Record<string, string>> = {
+  sv: 'Data types, scheduling, races, OOP, randomization, coverage and methodology.',
+  sva: 'Assertion types, sampling, vacuity, liveness, multiclock checks and formal strategy.',
+  uvm: 'The factory, phasing, configuration, TLM, sequences, the register layer and scoreboards.',
+  amba: 'APB, AHB, AXI4, bridges, interconnects, ACE and CHI, with waveform and trace triage.',
+  debug: 'From a failing log to staff-level regression triage: races, hangs and X-propagation.',
+  soc: 'SoC address maps, interrupts, reset and boot, CDC/RDC, coherency, power and sign-off.',
+};
+
+/** The outcome line for an interview bank (by `topic`), or undefined when it has none. */
+export function getInterviewBankOutcome(topic: string): string | undefined {
+  return INTERVIEW_BANK_OUTCOMES[topic];
+}
 
 /** Related lessons for an interview bank (by `topic`), home lesson first. */
 export function getInterviewBankLessons(topic: string): LessonLink[] {

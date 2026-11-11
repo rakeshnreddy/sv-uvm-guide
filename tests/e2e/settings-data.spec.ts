@@ -15,6 +15,10 @@ const PROGRESS = JSON.stringify({
 });
 const EXERCISE_KEY = 'sv-uvm-guide:exercise:scoreboard-connector';
 const EXERCISE = JSON.stringify({ bestScore: 80, attempts: 2 });
+const PRACTISED = JSON.stringify({
+  v: 1,
+  data: { questions: { 'uvm-why-uvm': { at: 1_760_000_000_000, bank: 'uvm', level: 'junior' } } },
+});
 
 /** The layout marks <html data-shortcuts-ready> once its keyboard shortcuts are live (after hydration). */
 async function waitForShell(page: Page) {
@@ -37,6 +41,7 @@ function readLearnerKeys(page: Page) {
       progress: window.localStorage.getItem('curriculumProgress'),
       route: window.localStorage.getItem('svuvm.learningRoute'),
       exercise: window.localStorage.getItem(exerciseKey),
+      practised: window.localStorage.getItem('sv-uvm-guide:interview-practised'),
       theme: window.localStorage.getItem('theme'),
     };
   }, EXERCISE_KEY);
@@ -89,13 +94,14 @@ test.describe('settings: learning data in this browser', () => {
     await page.goto('/settings');
     await waitForShell(page);
     await page.evaluate(
-      ({ progress, exerciseKey, exercise }) => {
+      ({ progress, exerciseKey, exercise, practised }) => {
         window.localStorage.setItem('curriculumProgress', progress);
         window.localStorage.setItem('svuvm.learningRoute', 'practitioner');
         window.localStorage.setItem(exerciseKey, exercise);
+        window.localStorage.setItem('sv-uvm-guide:interview-practised', practised);
         window.localStorage.setItem('theme', 'ocean-dark');
       },
-      { progress: PROGRESS, exerciseKey: EXERCISE_KEY, exercise: EXERCISE },
+      { progress: PROGRESS, exerciseKey: EXERCISE_KEY, exercise: EXERCISE, practised: PRACTISED },
     );
     await page.reload();
     await waitForShell(page);
@@ -113,6 +119,7 @@ test.describe('settings: learning data in this browser', () => {
     const backup = JSON.parse(await readFile(backupPath, 'utf8')) as {
       format: string;
       schemaVersion: number;
+      records: Record<string, unknown>;
       legacy: Record<string, string>;
     };
     expect(backup.format).toBe('sv-uvm-guide/learner-data');
@@ -120,6 +127,7 @@ test.describe('settings: learning data in this browser', () => {
     expect(backup.legacy.curriculumProgress).toBe(PROGRESS);
     expect(backup.legacy['svuvm.learningRoute']).toBe('practitioner');
     expect(backup.legacy[EXERCISE_KEY]).toBe(EXERCISE);
+    expect(backup.records['sv-uvm-guide:interview-practised']).toEqual(JSON.parse(PRACTISED));
     expect(JSON.stringify(backup)).not.toContain('ocean-dark');
     await expect(data.getByTestId('learner-data-export-status')).toContainText('Backup downloaded as');
     await expect(data.getByText(/^Last backup: /)).toBeVisible();
@@ -134,7 +142,7 @@ test.describe('settings: learning data in this browser', () => {
     await expect(data.getByTestId('learner-data-reset-status')).toHaveText(
       'Deleted all learning data in this browser. Your theme choice is kept.',
     );
-    expect(await readLearnerKeys(page)).toEqual({ progress: null, route: null, exercise: null, theme: 'ocean-dark' });
+    expect(await readLearnerKeys(page)).toEqual({ progress: null, route: null, exercise: null, practised: null, theme: 'ocean-dark' });
     await expect(data.getByText('No learning data is saved in this browser yet.')).toBeVisible();
     await expect(data.getByText('No backup downloaded from this browser yet.')).toBeVisible();
 
@@ -144,6 +152,7 @@ test.describe('settings: learning data in this browser', () => {
     await expect(preview).toBeVisible();
     await expect(preview.getByRole('listitem').filter({ hasText: 'Lesson progress' })).toContainText('1 lesson marked done');
     await expect(preview.getByRole('listitem').filter({ hasText: 'Chosen route' })).toBeVisible();
+    await expect(preview.getByRole('listitem').filter({ hasText: 'Interview questions practised' })).toContainText('1 question');
     await preview.getByRole('button', { name: 'Replace my data' }).click();
     await expect(data.getByTestId('learner-data-import-status')).toContainText(
       'Replaced the learning data in this browser with the backup.',
@@ -153,6 +162,7 @@ test.describe('settings: learning data in this browser', () => {
     expect(JSON.parse(restored.progress ?? 'null')).toEqual(JSON.parse(PROGRESS));
     expect(restored.route).toBe('practitioner');
     expect(JSON.parse(restored.exercise ?? 'null')).toEqual(JSON.parse(EXERCISE));
+    expect(JSON.parse(restored.practised ?? 'null')).toEqual(JSON.parse(PRACTISED));
     expect(restored.theme).toBe('ocean-dark');
     await expect(data.getByText(/^Last backup: /)).toBeVisible();
     expect(apiRequests).toEqual([]);

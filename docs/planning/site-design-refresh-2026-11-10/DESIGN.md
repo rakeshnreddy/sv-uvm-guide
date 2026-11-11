@@ -176,7 +176,7 @@ Tokens `--glass-bg`, `--glass-border`, `--glass-highlight`, `--glass-shadow`, `-
 
 - **Real glass (with backdrop blur)** is for layers that float above content: the header bar, menus and popovers (Practice, Reference, theme, Jump to, search results), dialogs and sheets (search, shortcuts help, the lesson contents sheet, the phone menu and the outline drawer), the sticky "On this page" bar, and at most one card that overlaps a colour field at the top of a hub page (as built, only the landing hero card; route cards, landing highlights, learning-path cards and practice cards are quiet glass), so the three-layer limit holds.
 - **Quiet glass (no blur)** is for cards further down hub pages: the translucent fill, the hairline and the top highlight, with no backdrop filter.
-- **Never glass:** lesson running text, code blocks and editors, tables, quiz and exercise controls, form fields, the docked outline and the "On this page" panel. The docked outline has no fill of its own (transparent, with its right hairline), so the colour field continues behind the top of the column. No glass on glass: a glass card never sits inside a glass panel.
+- **Never glass:** lesson running text, code blocks and editors, quiz and exercise controls and form fields. Section 12 says which lesson panels take quiet glass (the contents panel, the docked outline, callouts, figure frames, table wrappers). No glass on glass: a glass card never sits inside a glass panel.
 - At most three blurred layers are visible at once (header, one menu or dialog, one sticky bar). No `will-change`. The field and the glass must not cause layout shift.
 - Fallbacks: without `backdrop-filter` support, with `prefers-reduced-transparency: reduce` and in forced colours, glass becomes the solid card surface with its hairline.
 - The header stays 64 px tall (56 px for the public header on phones) and keeps its alignment with the page columns; the glass bar is a rounded background layer (radius 16) inside that height, not a layout wrapper. Content scrolling under it is what shows the glass.
@@ -190,3 +190,43 @@ Allowed: the reading progress line (tier colour into the accent), progress trace
 ### Light mode
 
 The same structure, paler: field alphas from the light column, white glass at 62% with the softer shadow, tier colours from the light column. Chrome glass that can float over the code surface (header bar, menus, popovers, dialogs, sheets, contents bar) uses white at 82% in light mode instead of 62%, so secondary text holds 4.5:1 over code blocks scrolling under it; hub cards keep 62%. Both modes are checked at every release.
+
+## 12. Lesson text and glass panels in lessons
+
+Owner decision on 2026-11-11. The owner's words: lesson text was "full of white text on black background and the other way round"; they asked for colour that keeps the text reliable and loses no content, "readable first and then introduce colors", with text colour (not only bold) to tell headings and sub-sections from content. They approved the sketch of this section ("ok looks good") and added: "also have glass panels where feasible to have the liquid glass look". This section adds to section 11 and replaces rule 1 of section 2 inside lesson articles.
+
+### Two guards that come before any colour
+
+- **No lesson content changes.** This is styling plus build-time tagging. A check compares the rendered text of every lesson before and after and fails on any difference.
+- **Readable first.** Body text holds at least 10:1 against the page in both modes; every other text colour holds at least 4.5:1 on the surface it sits on, including the quiet glass fill. A unit test enforces both. Colour is never the only cue: size, weight and position still mark the structure.
+
+### The hierarchy
+
+All tier colours below mean the lesson's own tier (`--tier-current`), so a Tier 1 lesson reads teal, Tier 2 blue, Tier 3 violet and Tier 4 amber.
+
+| Element | Treatment |
+|---|---|
+| Body text | neutral and slightly softer than the heading white: the foreground mixed 88% with the secondary colour (`--prose-body`); 17/29, weight 400 |
+| Bold terms | the full foreground at weight 600: they stand out by brightness, not hue |
+| Layer headings (h2) | the tier colour, 28/36 at weight 500, on the existing band rule with its 48 px tier segment |
+| Section headings (h3) | the tier colour mixed 55% into the foreground, 19/28 at weight 600 |
+| Sub-section headings (h4 and below) | the foreground at weight 600, neutral |
+| Lead-in labels | a bold label that opens a list item or paragraph and ends in a colon ("What it is:") takes the tier colour mixed 78% into the foreground; tagged at build time, never by editing the lesson |
+| List markers | bullets and numerals in the tier colour; numerals in the mono face |
+| Inline code | a chip: mono at weight 500 in the foreground colour on a faint fill with a hairline, radius 5; not bold. Code inside a link keeps the link colour. Code blocks are unchanged |
+| Links | the accent, underlined |
+| Tables | header row with a 10% tier fill, tier-mixed text and a tier-tinted rule; first column in the foreground at weight 500 |
+| Callouts | colour-coded by kind with a 2 px leading edge, a label in the role colour and a 10% fill: note or info is the accent, tip is success, pitfall or warning is the warning colour, danger is the danger colour, and standard or reference is the new `--reference` role (violet: `268 85% 78%` dark, `262 55% 46%` light). An unknown kind is a note |
+| "Expert" tag | an outlined tag in the tier 4 colour |
+| Blockquotes | a 2 px tier rule and the body colour |
+| Captions | the subtle colour |
+
+### Glass panels in lessons
+
+Running paragraphs and lists stay directly on the page, and code blocks and editors stay on the solid code surface. Around them, panels take the liquid glass look where it is feasible:
+
+- **Real glass (with blur):** the lesson header block (breadcrumb, tags, title, lead, meta, "Before you start"), because the tier field is behind it. With the header bar and the sticky contents bar that is still at most three blurred layers.
+- **Quiet glass (no blur; translucent fill, bright top edge, a faint sheen, radius 16):** the "On this page" panel, the docked course outline (drawn as a background layer so its box, and the header alignment the tests measure, do not change), callouts (with their role tint), figure and interactive frames, table wrappers, and the "Next" block at the end.
+- **Never:** paragraphs and lists, code blocks and editors, quiz and exercise controls and form fields inside interactives.
+
+Section 11's fallbacks apply: without backdrop-filter support, with reduced transparency and in forced colours, panels become solid.

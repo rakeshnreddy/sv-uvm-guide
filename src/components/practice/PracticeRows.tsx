@@ -67,7 +67,7 @@ export interface PracticeRowProps {
   item: PracticeItem;
   /** The state column: a lab's progress badge and step count, a bank's question count. Never interactive. */
   state?: React.ReactNode;
-  /** The one-line outcome; defaults to outcomeLine(item.description). */
+  /** The one-line outcome; defaults to outcomeLine(item). */
   outcome?: string;
 }
 
@@ -77,7 +77,7 @@ export interface PracticeRowProps {
  * them; from 640 px the three sit in columns. The whole row is the item's link
  * (at least 44 px tall) with a raised surface on hover and a ring on focus.
  */
-export function PracticeRow({ item, state, outcome = outcomeLine(item.description) }: PracticeRowProps) {
+export function PracticeRow({ item, state, outcome = outcomeLine(item) }: PracticeRowProps) {
   const [lesson] = item.lessons;
   return (
     <li
@@ -181,7 +181,7 @@ export function PracticeTile({ item }: { item: PracticeItem }) {
       <h3 className="mt-2 text-h4 [overflow-wrap:anywhere]">
         <ItemTitle item={item} stretchClass="after:rounded-xl" />
       </h3>
-      <p className="mt-1 line-clamp-3 text-ui text-muted-foreground">{outcomeLine(item.description)}</p>
+      <p className="mt-1 line-clamp-3 text-ui text-muted-foreground">{outcomeLine(item)}</p>
     </li>
   );
 }

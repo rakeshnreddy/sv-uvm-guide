@@ -29,14 +29,33 @@ export function firstSentence(text: string): string {
 }
 
 /**
- * One line saying what the item lets you do: the first sentence of its
- * description, whole when it fits in OUTCOME_MAX_CHARS. A longer sentence is
+ * What an outcome line is read from: a bare description, or an item whose
+ * author-written `outcome` (a lab manifest's, a page's or a bank's) wins over
+ * its description.
+ */
+export type OutcomeSource = string | { description: string; outcome?: string };
+
+/** The author-written outcome of a source, when it has one. */
+function authoredOutcome(source: OutcomeSource): string | undefined {
+  return typeof source === 'string' ? undefined : source.outcome?.trim() || undefined;
+}
+
+function descriptionOf(source: OutcomeSource): string {
+  return typeof source === 'string' ? source : source.description;
+}
+
+/**
+ * One line saying what the item lets you do. An item's author-written
+ * `outcome` is used as written. Otherwise it is the first sentence of the
+ * description, whole when it fits in OUTCOME_MAX_CHARS; a longer sentence is
  * cut at the last comma, semicolon or colon that fits (keeping at least
  * MIN_CLAUSE_CHARS), else at the last space, never inside a word, and ends
  * with an ellipsis. The full description is on the item's own page.
  */
-export function outcomeLine(description: string, max: number = OUTCOME_MAX_CHARS): string {
-  const sentence = firstSentence(description);
+export function outcomeLine(source: OutcomeSource, max: number = OUTCOME_MAX_CHARS): string {
+  const authored = authoredOutcome(source);
+  if (authored) return authored;
+  const sentence = firstSentence(descriptionOf(source));
   if (sentence.length <= max) return sentence;
   const head = sentence.slice(0, max + 1);
   const clauseEnd = Math.max(head.lastIndexOf(', '), head.lastIndexOf('; '), head.lastIndexOf(': '));
@@ -58,14 +77,17 @@ export function tierTitle(tier: TierNumber): string {
 const INTERVIEW_LEAD_IN = /^Interview prep(?:aration)? from junior to senior staff(?::|\s+covering)\s+/i;
 
 /**
- * The topics a description lists after its lead-in, as the outcome line:
+ * An interview bank's outcome line: its author-written `outcome` when it has
+ * one, else the topics its description lists after its lead-in:
  * "Interview preparation from junior to senior staff: data types and
  * operators, arrays, …" (or "… staff covering APB, AHB, …") reads "Data types
  * and operators, arrays, …". Any other first sentence loses the text up to
  * its first colon; one with no colon is used whole. Cut like outcomeLine.
  */
-export function topicsLine(description: string, max: number = OUTCOME_MAX_CHARS): string {
-  const sentence = firstSentence(description);
+export function topicsLine(source: OutcomeSource, max: number = OUTCOME_MAX_CHARS): string {
+  const authored = authoredOutcome(source);
+  if (authored) return authored;
+  const sentence = firstSentence(descriptionOf(source));
   const leadIn = INTERVIEW_LEAD_IN.exec(sentence);
   const colon = sentence.indexOf(': ');
   const topics = leadIn ? sentence.slice(leadIn[0].length) : colon >= 0 ? sentence.slice(colon + 2) : sentence;

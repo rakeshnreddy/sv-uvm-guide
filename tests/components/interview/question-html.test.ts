@@ -58,7 +58,12 @@ describe('question rows', () => {
     expect(details.id).toBe('q-x-1');
     expect(details.open).toBe(false);
     expect(details).toHaveAttribute('data-question-level', 'mid');
-    expect(details.querySelector('summary [data-kind]')?.textContent).toBe('Mid-level · , Coding');
+    const kind = details.querySelector('summary [data-kind]') as HTMLElement;
+    // The practised state sits at the end of the kind line; the CSS shows it only once the row is marked.
+    const mark = kind.querySelector('[data-practised-mark]');
+    expect(mark?.textContent).toBe(' · , Practised');
+    mark?.remove();
+    expect(kind.textContent).toBe('Mid-level · , Coding');
     const headings = Array.from(details.querySelectorAll('[data-answer] h3')).map((heading) => heading.textContent);
     expect(headings).toEqual([
       'Read this code first',

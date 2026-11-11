@@ -7,6 +7,7 @@ import { LessonTagLink } from '@/components/practice/PracticeRows';
 import { cn } from '@/lib/utils';
 
 import { LevelCount } from './LevelFilter';
+import { PractisedCount } from './PractisedMarkup';
 import { TabStripScroll } from './TabStripScroll';
 
 /*
@@ -108,8 +109,10 @@ export function BankRows({ banks, levels }: { banks: readonly BankSummary[]; lev
               </h3>
               <p className="mt-1 line-clamp-2 text-ui text-muted-foreground">{bankSummaryLine(bank.description)}</p>
             </div>
-            <div className="col-start-2 row-start-1 flex min-h-6 items-center justify-end text-right text-label text-muted-foreground sm:col-start-3">
+            <div className="col-start-2 row-start-1 flex min-h-6 flex-col items-end justify-center text-right text-label text-muted-foreground sm:col-start-3">
               <LevelCount counts={bankCounts(bank)} levels={levels} />
+              {/* "3 of 48 practised" under the count once this browser holds a mark for the bank; nothing before that. */}
+              <PractisedCount scope={bank.slug} counts={bankCounts(bank)} levels={levels} />
             </div>
           </li>
         );

@@ -61,7 +61,10 @@ describe('/interview-prep index', () => {
   it('renders every count variant, so the filter can show the one for the chosen level without scripts', () => {
     render(<InterviewPrepPage />);
     const row = document.getElementById(banks[0].anchor) as HTMLElement;
-    const variants = Array.from(row.querySelectorAll('[data-level-count]')).map((node) => [node.getAttribute('data-level-count'), node.textContent]);
+    const variants = Array.from(row.querySelectorAll('[data-level-count]:not([data-practised-count])')).map((node) => [
+      node.getAttribute('data-level-count'),
+      node.textContent,
+    ]);
     expect(variants[0]).toEqual(['all', `${banks[0].questionCount} questions`]);
     expect(variants.slice(1).map(([level]) => level)).toEqual(interviewLevelOptions(banks).map((level) => level.value));
     expect(variants[1][1]).toBe(`${banks[0].levelCounts.junior} junior questions`);

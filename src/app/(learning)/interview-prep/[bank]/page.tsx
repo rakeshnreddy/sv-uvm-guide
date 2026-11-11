@@ -5,6 +5,8 @@ import { notFound } from 'next/navigation';
 import { BankTabs, bankCounts, bankSummaryLine } from '@/components/interview/BankNav';
 import { InterviewPageController } from '@/components/interview/InterviewPageController';
 import { DisclosureTools, LevelCount, LevelFilter, LevelFilterSetup } from '@/components/interview/LevelFilter';
+import { HidePractisedToggle, PractisedAllHiddenNote, PractisedCount, PractisedSetup } from '@/components/interview/PractisedMarkup';
+import { PractisedController } from '@/components/interview/PractisedController';
 import { QuestionList } from '@/components/interview/QuestionList';
 import { QUESTION_LIST_CLASS } from '@/components/interview/question-styles';
 import { LEVEL_GROUP_ATTRIBUTE } from '@/components/interview/level-filter';
@@ -54,6 +56,7 @@ export default function InterviewBankPage({ params }: { params: { bank: string }
   return (
     <PageShell width="reading">
       <LevelFilterSetup levels={levels} />
+      <PractisedSetup levels={levels} scope={bank.slug} />
       <PageHeader
         breadcrumbs={[siteLink(INTERVIEW_PREP_HREF), { label: bank.name }]}
         eyebrow={
@@ -66,13 +69,22 @@ export default function InterviewBankPage({ params }: { params: { bank: string }
         }
         title={bankPageTitle(bank.name)}
         lead={bank.description ? bankSummaryLine(bank.description) : undefined}
-        meta={<LevelCount counts={counts} levels={levels} />}
+        meta={
+          <>
+            <LevelCount counts={counts} levels={levels} />
+            <PractisedCount scope={bank.slug} counts={counts} levels={levels} />
+          </>
+        }
         tabs={<BankTabs banks={banks} current={bank.slug} levels={levels} />}
       >
-        <LevelFilter levels={levels} className="mt-6" />
+        <div className="mt-6 flex flex-wrap items-end gap-x-6 gap-y-4">
+          <LevelFilter levels={levels} />
+          <HidePractisedToggle />
+        </div>
       </PageHeader>
 
       <DisclosureTools expandLabel="Expand all in this bank" className="mb-8" />
+      <PractisedAllHiddenNote className="mb-8" />
 
       <div className={cn("flex flex-col gap-12", QUESTION_LIST_CLASS)} data-question-list="">
         {bank.levels.map((group) => (
@@ -105,6 +117,7 @@ export default function InterviewBankPage({ params }: { params: { bank: string }
         </Section>
       ) : null}
 
+      <PractisedController scope={bank.slug} />
       <InterviewPageController counts={counts} labels={labels} />
     </PageShell>
   );

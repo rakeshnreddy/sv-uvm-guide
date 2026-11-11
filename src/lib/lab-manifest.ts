@@ -25,11 +25,34 @@ export const labStepSchema = z.object({
   starterCode: z.string().default(""),
 }).strict();
 
+/**
+ * The longest author-written outcome line: the short "what you will be able to
+ * do" clause a Practice hub row shows in place of the description's first
+ * sentence. scripts/generate-lab-registry.mjs enforces the same limit.
+ */
+export const OUTCOME_LINE_MAX_CHARS = 110;
+
+/** A trailing "…" or "...": an outcome line is written whole, never cut. */
+const TRAILING_ELLIPSIS = /(?:\u2026|\.\.\.)$/;
+
+/**
+ * An outcome line: one complete clause, at most OUTCOME_LINE_MAX_CHARS
+ * characters, no surrounding whitespace and no trailing ellipsis.
+ */
+export const outcomeLineSchema = z
+  .string()
+  .min(1)
+  .max(OUTCOME_LINE_MAX_CHARS)
+  .refine((value) => value === value.trim(), "An outcome line has no leading or trailing whitespace")
+  .refine((value) => !TRAILING_ELLIPSIS.test(value), "An outcome line must not end in an ellipsis");
+
 export const labManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   version: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
+  /** Optional author-written outcome line for the Practice hub row (outcomeLineSchema). */
+  outcome: outcomeLineSchema.optional(),
   owningModule: z.string().min(1),
   routeSlug: z.string().regex(/^[a-z0-9-]+$/),
   moduleHref: z.string().startsWith("/curriculum/").optional(),

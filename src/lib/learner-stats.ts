@@ -464,6 +464,8 @@ export interface LearnerDataSnapshot {
   assessments: AssessmentData;
   activity: ActivityDays;
   exercises: readonly StoredExerciseProgress[];
+  /** True when the learner marked any interview question as practised. */
+  interview?: boolean;
 }
 
 /** True when this browser holds any learner record worth showing (a chosen route alone does not count). */
@@ -480,7 +482,8 @@ export function hasLearnerData(snapshot: LearnerDataSnapshot): boolean {
     snapshot.assessments.placement.length > 0 ||
     Object.keys(snapshot.assessments.quizzes).length > 0 ||
     Object.values(snapshot.activity).some((day) => activityTotal(day) > 0) ||
-    snapshot.exercises.some((entry) => entry.progress.attempts > 0)
+    snapshot.exercises.some((entry) => entry.progress.attempts > 0) ||
+    snapshot.interview === true
   );
 }
 

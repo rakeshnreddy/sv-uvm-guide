@@ -22,11 +22,21 @@ const stepSchema = z.object({
   instructions: z.string().min(1),
   starterCode: z.string(),
 }).strict();
+// The same rule as outcomeLineSchema in src/lib/lab-manifest.ts: one whole
+// clause of at most 110 characters for the Practice hub row, never cut.
+const OUTCOME_LINE_MAX_CHARS = 110;
+const outcomeSchema = z
+  .string()
+  .min(1)
+  .max(OUTCOME_LINE_MAX_CHARS)
+  .refine((value) => value === value.trim(), "outcome has leading or trailing whitespace")
+  .refine((value) => !/(?:\u2026|\.\.\.)$/.test(value), "outcome must not end in an ellipsis");
 const manifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   version: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
+  outcome: outcomeSchema.optional(),
   owningModule: z.string().min(1),
   routeSlug: z.string().regex(/^[a-z0-9-]+$/),
   moduleHref: z.string().startsWith("/curriculum/").optional(),
@@ -55,7 +65,12 @@ const curriculumSlugs = new Set(
 );
 const manifestFiles = walk(labsRoot, "lab.json").sort();
 const records = manifestFiles.map((manifestPath) => {
-  const parsed = manifestSchema.parse(JSON.parse(fs.readFileSync(manifestPath, "utf8")));
+  const result = manifestSchema.safeParse(JSON.parse(fs.readFileSync(manifestPath, "utf8")));
+  if (!result.success) {
+    const issues = result.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`);
+    throw new Error(`${path.relative(repositoryRoot, manifestPath)}: ${issues.join("; ")}`);
+  }
+  const parsed = result.data;
   const labDirectory = path.dirname(manifestPath);
   const relativeDirectory = path.relative(repositoryRoot, labDirectory).split(path.sep).join("/");
 

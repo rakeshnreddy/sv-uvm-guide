@@ -13,7 +13,7 @@ import {
 } from '@/components/practice/practice-hub-data';
 import { getInterviewPracticeItems } from '@/app/(learning)/interview-prep/interview-banks';
 import { getAllLabs, labCheckSummary } from '@/lib/lab-registry';
-import { getPracticeLabItems, getPracticePages, type LessonLink } from '@/lib/practice-links';
+import { getInterviewBankOutcome, getPracticeLabItems, getPracticePages, type LessonLink } from '@/lib/practice-links';
 import { TIER_LINKS } from '@/lib/site-links';
 
 describe('outcomeLine', () => {
@@ -48,6 +48,35 @@ describe('outcomeLine', () => {
         const next = firstSentence(item.description).charAt(kept.length);
         expect(next, item.id).toMatch(/[\s,;:.]/);
       }
+    }
+  });
+
+  it('uses an author-written outcome as written, ahead of the description', () => {
+    const description = `${'A very long first sentence, '.repeat(10)}end.`;
+    expect(outcomeLine({ description, outcome: 'Build the thing.' })).toBe('Build the thing.');
+    expect(outcomeLine({ description: 'Short one. More.' })).toBe('Short one.');
+    // An empty outcome is no outcome: the description's first sentence is used.
+    expect(outcomeLine({ description: 'Short one. More.', outcome: '  ' })).toBe('Short one.');
+    expect(outcomeLine({ description })).toBe(outcomeLine(description));
+    expect(topicsLine({ description: 'Interview preparation from junior to senior staff: arrays.', outcome: 'Arrays and queues.' })).toBe(
+      'Arrays and queues.',
+    );
+    expect(topicsLine({ description: 'Interview preparation from junior to senior staff: arrays.' })).toBe('Arrays.');
+  });
+
+  it('ends no practice hub row in an ellipsis: labs, pages and banks all read whole', () => {
+    const rows = [
+      ...getPracticeLabItems(getAllLabs()).map((item) => [item.id, outcomeLine(item)] as const),
+      ...getPracticePages().map((item) => [item.id, outcomeLine(item)] as const),
+      // The hub reads a bank by topicsLine; its outcome comes from INTERVIEW_BANK_OUTCOMES.
+      ...getInterviewPracticeItems().map(
+        (item) => [item.id, topicsLine({ ...item, outcome: item.outcome ?? getInterviewBankOutcome(item.id.replace(/^interview:/, '')) })] as const,
+      ),
+    ];
+    expect(rows.length).toBeGreaterThan(50);
+    for (const [id, line] of rows) {
+      expect(line, id).not.toMatch(/(?:\u2026|\.\.\.)$/);
+      expect(line.length, id).toBeGreaterThan(0);
     }
   });
 

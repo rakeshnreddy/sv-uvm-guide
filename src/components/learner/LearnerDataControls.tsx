@@ -100,6 +100,8 @@ function describeItems(area: BackupArea, items: number, entries: number): string
       return plural(items, "result", "results");
     case "exercises":
       return plural(items, "exercise", "exercises");
+    case "interview":
+      return plural(items, "question", "questions");
     case "activity":
       return plural(items, "day", "days");
     case "recovered":

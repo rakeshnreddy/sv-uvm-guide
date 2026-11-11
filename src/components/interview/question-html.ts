@@ -10,7 +10,14 @@ import { signalTagClass, signalTagTier } from '@/components/ui/SignalTag';
 import type { LessonLink } from '@/lib/practice-links';
 import { tierDataAttribute } from '@/lib/tier-colors';
 
-import { QUESTION_LEVEL_ATTRIBUTE } from './level-filter';
+import { QUESTION_LEVEL_ATTRIBUTE, REQUIRES_SCRIPT_ATTRIBUTE } from './level-filter';
+import {
+  CHECK_SYMBOL_ID,
+  PRACTISED_LABEL_OFF_ATTRIBUTE,
+  PRACTISED_LABEL_ON_ATTRIBUTE,
+  PRACTISED_MARK_ATTRIBUTE,
+  PRACTISED_TOGGLE_ATTRIBUTE,
+} from './practised-marks';
 import { escapeHtml, inlineTextHtml, richTextHtml, textListHtml } from './rich-text-html';
 
 /** Wraps unfenced bank code in a fence, so it renders as one code block. */
@@ -44,7 +51,27 @@ export function questionLessonsHtml(lessons: readonly LessonLink[]): string {
 const CHEVRON =
   '<svg aria-hidden="true" viewBox="0 0 16 16" data-chevron=""><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
-/** The answer panel: code, model answer, rubric, mistakes, follow-ups, lessons and sources, as the bank holds them. */
+/** The check mark, by reference to the page's one symbol (PractisedSetup), so 48 rows do not repeat the path twice each. */
+const CHECK = `<svg aria-hidden="true" data-check=""><use href="#${CHECK_SYMBOL_ID}"></use></svg>`;
+
+/**
+ * "Mark as practised" / "Practised": a toggle button (aria-pressed) at the end
+ * of the opened question. The learner's click is the only thing that sets or
+ * clears the mark. It needs scripts, so a noscript rule hides it.
+ */
+export function practisedToggleHtml(): string {
+  return [
+    `<div data-practised-tools="" ${REQUIRES_SCRIPT_ATTRIBUTE}="">`,
+    `<button type="button" ${PRACTISED_TOGGLE_ATTRIBUTE}="" aria-pressed="false">`,
+    `${CHECK}<span ${PRACTISED_LABEL_OFF_ATTRIBUTE}="">Mark as practised</span><span ${PRACTISED_LABEL_ON_ATTRIBUTE}="">Practised</span>`,
+    '</button></div>',
+  ].join('');
+}
+
+/** The row's "Practised" state: a check and the word, shown by the CSS once the question is marked. */
+export const PRACTISED_MARK_HTML = `<span ${PRACTISED_MARK_ATTRIBUTE}=""><span aria-hidden="true"> · </span><span class="sr-only">, </span>${CHECK}Practised</span>`;
+
+/** The answer panel: code, model answer, rubric, mistakes, follow-ups, lessons and sources, as the bank holds them, then the practised toggle. */
 export function answerHtml(question: InterviewQuestion): string {
   return [
     question.code ? partHtml('Read this code first', richTextHtml(codeAsRichText(question.code))) : '',
@@ -54,6 +81,7 @@ export function answerHtml(question: InterviewQuestion): string {
     question.followUps.length > 0 ? partHtml('Follow-up questions', textListHtml(question.followUps)) : '',
     questionLessonsHtml(question.lessons),
     question.sources.length > 0 ? `<div data-sources=""><h3>Sources the bank cites</h3>${textListHtml(question.sources)}</div>` : '',
+    practisedToggleHtml(),
   ].join('');
 }
 
@@ -62,7 +90,7 @@ export function questionRowHtml(question: InterviewQuestion): string {
   const kind = `${escapeHtml(question.levelLabel)}<span aria-hidden="true"> · </span><span class="sr-only">, </span>${escapeHtml(question.categoryLabel)}`;
   return [
     `<details id="${escapeHtml(questionAnchor(question.id))}" ${QUESTION_LEVEL_ATTRIBUTE}="${escapeHtml(question.level)}" class="scroll-mt-24">`,
-    `<summary>${CHEVRON}<span class="min-w-0 flex-1"><span data-prompt="">${inlineTextHtml(question.prompt)}</span><span data-kind="">${kind}</span></span></summary>`,
+    `<summary>${CHEVRON}<span class="min-w-0 flex-1"><span data-prompt="">${inlineTextHtml(question.prompt)}</span><span data-kind="">${kind}${PRACTISED_MARK_HTML}</span></span></summary>`,
     `<div data-answer="">${answerHtml(question)}</div>`,
     '</details>',
   ].join('');

@@ -100,6 +100,53 @@ test.describe('Practice linkage', () => {
     await expect(first.getByRole('heading', { name: 'Model answer' })).toBeVisible();
   });
 
+  test('interview prep: only the learner marks a question practised, and the mark survives a reload with no layout shift', async ({ page }) => {
+    await page.goto('/interview-prep/uvm');
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached', timeout: 60000 });
+    const first = page.locator('details[data-question-level]').first();
+    // Opening and expanding never mark a question.
+    await page.getByRole('button', { name: 'Expand all in this bank' }).click();
+    await expect(page.locator('details[data-practised]')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Collapse all' }).click();
+
+    await first.locator('summary').click();
+    const toggle = first.getByRole('button', { name: 'Mark as practised' });
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await toggle.click();
+    await expect(first.getByRole('button', { name: 'Practised' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(first.locator('summary [data-practised-mark]')).toBeVisible();
+    const meta = page.locator('[data-page-header-meta]');
+    await expect(meta).toContainText('1 of 30 practised');
+
+    await page.reload();
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached', timeout: 60000 });
+    const cls = await page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          let total = 0;
+          new PerformanceObserver((list) => {
+            for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) {
+              if (!entry.hadRecentInput) total += entry.value;
+            }
+          }).observe({ type: 'layout-shift', buffered: true });
+          setTimeout(() => resolve(total), 500);
+        }),
+    );
+    expect(cls).toBe(0);
+    await expect(page.locator('details[data-question-level]').first()).toHaveAttribute('data-practised', '');
+    await expect(page.locator('[data-page-header-meta]')).toContainText('1 of 30 practised');
+
+    // Hide practised: the marked row goes; the box is remembered.
+    await page.getByRole('checkbox', { name: 'Hide practised' }).check();
+    await expect(page.locator('details[data-question-level]').first()).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: 'Hide practised' })).toBeChecked();
+    await page.getByRole('checkbox', { name: 'Hide practised' }).uncheck();
+
+    await page.goto('/interview-prep');
+    await expect(page.locator('[data-bank-row="uvm"]')).toContainText('1 of 30 practised');
+  });
+
   test('the hub and interview prep fit a 390 px phone without horizontal scrolling', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     for (const route of ['/practice', '/interview-prep', '/interview-prep/systemverilog']) {

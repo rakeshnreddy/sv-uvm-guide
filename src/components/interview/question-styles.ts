@@ -33,8 +33,8 @@ export const RICH_TEXT_SCOPE_CLASS = [
 /** Styles the question rows (question-html.ts) inside the element that carries it. */
 export const QUESTION_LIST_CLASS = [
   RICH_TEXT_SCOPE_CLASS,
-  // The list: rows divided by hairlines.
-  '[&_[data-question-rows]]:divide-y [&_[data-question-rows]]:divide-border [&_[data-question-rows]]:border-y [&_[data-question-rows]]:border-border',
+  // The list: rows divided by hairlines. Each row draws the line under it, so a row hidden by "Hide practised" takes its line along.
+  '[&_[data-question-rows]]:border-t [&_[data-question-rows]]:border-border [&_[data-question-rows]>li]:border-b [&_[data-question-rows]>li]:border-border',
   // The row: a 44 px or taller target with the raised surface on hover and the focus ring.
   '[&_summary]:flex [&_summary]:min-h-11 [&_summary]:cursor-pointer [&_summary]:list-none [&_summary]:items-start [&_summary]:gap-3',
   '[&_summary]:rounded-lg [&_summary]:px-3 [&_summary]:py-3.5 [&_summary::-webkit-details-marker]:hidden',
@@ -53,4 +53,15 @@ export const QUESTION_LIST_CLASS = [
   '[&_[data-lesson-link]]:font-medium [&_[data-lesson-link]]:text-primary [&_[data-lesson-link]]:underline-offset-4 [&_[data-lesson-link]:hover]:underline',
   '[&_[data-lesson-link]:focus-visible]:outline-none [&_[data-lesson-link]:focus-visible]:ring-2 [&_[data-lesson-link]:focus-visible]:ring-ring',
   '[&_[data-sources]]:text-ui [&_[data-sources]]:text-muted-foreground [&_[data-sources]>h3]:font-medium [&_[data-sources]>h3+*]:mt-1.5',
+  // The row's "Practised" state (shown by practisedCss): a check in the done colour and the word in primary text.
+  '[&_[data-practised-mark]]:font-medium [&_[data-practised-mark]]:text-foreground',
+  '[&_[data-practised-mark]_[data-check]]:mr-1 [&_[data-practised-mark]_[data-check]]:inline-block [&_[data-practised-mark]_[data-check]]:size-3.5 [&_[data-practised-mark]_[data-check]]:align-[-0.125em] [&_[data-practised-mark]_[data-check]]:text-success',
+  // The toggle: the secondary button; pressed, it shows the check and says "Practised".
+  '[&_[data-practised-tools]]:border-t [&_[data-practised-tools]]:border-border [&_[data-practised-tools]]:pt-6',
+  '[&_[data-practised-toggle]]:inline-flex [&_[data-practised-toggle]]:min-h-10 [&_[data-practised-toggle]]:items-center [&_[data-practised-toggle]]:gap-2 [&_[data-practised-toggle]]:rounded-lg',
+  '[&_[data-practised-toggle]]:border [&_[data-practised-toggle]]:border-border [&_[data-practised-toggle]]:bg-muted [&_[data-practised-toggle]]:px-3 [&_[data-practised-toggle]]:text-ui [&_[data-practised-toggle]]:font-medium [&_[data-practised-toggle]]:text-foreground',
+  '[&_[data-practised-toggle]]:transition-colors [&_[data-practised-toggle]]:duration-150 [&_[data-practised-toggle]]:ease-bench motion-reduce:[&_[data-practised-toggle]]:transition-none [&_[data-practised-toggle]:hover]:bg-card',
+  '[&_[data-practised-toggle]:focus-visible]:outline-none [&_[data-practised-toggle]:focus-visible]:ring-2 [&_[data-practised-toggle]:focus-visible]:ring-ring [&_[data-practised-toggle]:focus-visible]:ring-offset-2 [&_[data-practised-toggle]:focus-visible]:ring-offset-background',
+  '[&_[data-practised-toggle]_[data-check]]:hidden [&_[data-practised-toggle]_[data-check]]:size-4 [&_[data-practised-toggle]_[data-check]]:shrink-0 [&_[data-practised-toggle]_[data-check]]:text-success',
+  '[&_[data-practised-toggle][aria-pressed=true]_[data-check]]:block',
 ].join(' ');

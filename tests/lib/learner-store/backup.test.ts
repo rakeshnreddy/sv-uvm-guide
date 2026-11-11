@@ -9,6 +9,9 @@ import {
   EXERCISE_ANALYTICS_PREFIX,
   EXERCISE_PROGRESS_PREFIX,
   FLASHCARDS_KEY,
+  INTERVIEW_HIDE_PRACTISED_KEY,
+  INTERVIEW_LEVEL_KEY,
+  INTERVIEW_PRACTISED_KEY,
   LAB_KEY_PREFIX,
   LEARNER_DATA_CHANGED_EVENT,
   LESSONS_KEY,
@@ -24,6 +27,7 @@ import {
   assessmentRecord,
   curriculumProgressRecord,
   flashcardRecord,
+  interviewPractisedRecord,
   labProgressRecords,
   labRecordId,
   lessonLogRecord,
@@ -33,6 +37,7 @@ import {
   recordActivity,
   recordQuizResult,
   recoveredKeyFor,
+  setQuestionPractised,
   subscribeLearnerStore,
   type CurriculumProgressData,
   type FlashcardData,
@@ -115,6 +120,7 @@ function seedBrowser(variant: 'a' | 'b'): void {
   expect(labProgressRecords.set(labRecordId(`lab-${variant}`, '1'), lab(`lab-${variant}`))).toBe('saved');
   expect(recordQuizResult(isA ? LESSON_A : LESSON_B, isA ? 'aaaaaaaa' : 'bbbbbbbb', 2, 3, NOW)).toBe('saved');
   expect(recordActivity(isA ? 'lesson' : 'quiz', isA ? NOW : NOW - 86_400_000)).toBe('saved');
+  expect(setQuestionPractised(`sv-question-${variant}`, { bank: 'systemverilog', level: isA ? 'junior' : 'senior' }, NOW)).toBe('saved');
   writeSelectedRoute(isA ? 'junior' : 'expert');
   window.localStorage.setItem(
     `${EXERCISE_PROGRESS_PREFIX}scoreboard`,
@@ -170,6 +176,8 @@ describe('exportLearnerData', () => {
     seedBrowser('a');
     window.localStorage.setItem(THEME_KEY, 'ocean-dark');
     window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, 'true');
+    window.localStorage.setItem(INTERVIEW_HIDE_PRACTISED_KEY, '1');
+    window.localStorage.setItem(INTERVIEW_LEVEL_KEY, 'junior');
     window.localStorage.setItem('someone-elses-key', 'leave me alone');
 
     const exported = exportLearnerData({ now: NOW });
@@ -183,6 +191,7 @@ describe('exportLearnerData', () => {
         ACTIVITY_KEY,
         ASSESSMENTS_KEY,
         FLASHCARDS_KEY,
+        INTERVIEW_PRACTISED_KEY,
         `${LAB_KEY_PREFIX}lab-a@1`,
         LESSONS_KEY,
         META_KEY,
@@ -191,6 +200,10 @@ describe('exportLearnerData', () => {
     );
     expect(exported.records[FLASHCARDS_KEY]).toEqual({ v: 1, data: flashcardRecord.read() });
     expect(exported.records[`${NOTEBOOK_KEY_PREFIX}note-a`]).toEqual({ v: 1, data: note('note-a', 'Notes from browser a') });
+    expect(exported.records[INTERVIEW_PRACTISED_KEY]).toEqual({
+      v: 1,
+      data: { questions: { 'sv-question-a': { at: NOW, bank: 'systemverilog', level: 'junior' } } },
+    });
 
     const raw = rawStore();
     expect(exported.legacy).toEqual({
@@ -207,6 +220,8 @@ describe('exportLearnerData', () => {
     expect(text).not.toContain(`"${THEME_KEY}"`);
     expect(text).not.toContain('ocean-dark');
     expect(text).not.toContain(OUTLINE_COLLAPSED_KEY);
+    expect(text).not.toContain(INTERVIEW_HIDE_PRACTISED_KEY);
+    expect(text).not.toContain(INTERVIEW_LEVEL_KEY);
     expect(text).not.toContain('someone-elses-key');
   });
 
@@ -434,6 +449,8 @@ describe('importLearnerData: merge versus replace', () => {
     expect(labProgressRecords.list().map((entry) => entry.id)).toEqual(['lab-a@1', 'lab-b@1']);
     expect(Object.keys(assessmentRecord.read().quizzes).sort()).toEqual([`${LESSON_A}#aaaaaaaa`, `${LESSON_B}#bbbbbbbb`].sort());
     expect(Object.keys(activityRecord.read().days)).toHaveLength(2);
+    expect(Object.keys(interviewPractisedRecord.read().questions).sort()).toEqual(['sv-question-a', 'sv-question-b']);
+    expect(report.areas.interview.imported).toBe(1);
     // Exercise scores: the best score and the most attempts win.
     expect(JSON.parse(window.localStorage.getItem(`${EXERCISE_PROGRESS_PREFIX}scoreboard`) ?? 'null')).toEqual({ bestScore: 90, attempts: 5 });
     expect(JSON.parse(window.localStorage.getItem(`${EXERCISE_PROGRESS_PREFIX}arbiter`) ?? 'null')).toEqual({ bestScore: 40, attempts: 1 });
@@ -649,15 +666,18 @@ describe('resetLearnerData', () => {
     window.localStorage.setItem(`${EXERCISE_ANALYTICS_PREFIX}scoreboard`, '[]');
     window.localStorage.setItem(THEME_KEY, 'ocean-dark');
     window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, 'true');
+    window.localStorage.setItem(INTERVIEW_HIDE_PRACTISED_KEY, '1');
     window.localStorage.setItem('sv-uvm-guide:not-a-learner-key', 'keep');
     window.localStorage.setItem('another-site-key', 'keep');
-    const learnerKeys = Object.keys(rawStore()).length - 4;
+    expect(window.localStorage.getItem(INTERVIEW_PRACTISED_KEY)).not.toBeNull();
+    const learnerKeys = Object.keys(rawStore()).length - 5;
 
     expect(resetLearnerData()).toEqual({ removed: learnerKeys });
 
     expect(rawStore()).toEqual({
       [THEME_KEY]: 'ocean-dark',
       [OUTLINE_COLLAPSED_KEY]: 'true',
+      [INTERVIEW_HIDE_PRACTISED_KEY]: '1',
       'sv-uvm-guide:not-a-learner-key': 'keep',
       'another-site-key': 'keep',
     });

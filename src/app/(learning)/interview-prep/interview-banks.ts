@@ -16,6 +16,7 @@ import { createSlugger } from '@/lib/heading-slug';
 import { interviewBankHref } from '@/lib/site-links';
 import {
   getInterviewBankLessons,
+  getInterviewBankOutcome,
   getInterviewQuestionLessons,
   sortByCurriculumOrder,
   type LessonLink,
@@ -332,6 +333,7 @@ export function getInterviewPracticeItems(banks: readonly InterviewBank[] = load
     kind: 'interview',
     title: bank.title,
     description: bank.description,
+    ...(getInterviewBankOutcome(bank.topic) ? { outcome: getInterviewBankOutcome(bank.topic) } : {}),
     href: bank.href,
     status: 'available',
     lessons: bank.lessons,
