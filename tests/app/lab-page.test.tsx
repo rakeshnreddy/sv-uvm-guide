@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ReactElement } from "react";
+import React, { type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import LabPage, {
@@ -47,7 +47,16 @@ describe("static lab page", () => {
   });
 
   it("passes the basics-1 files and solutions with their contents, the policy and the orientation", async () => {
-    const element = (await LabPage({ params: { labId: "basics-1" } })) as ReactElement<ClientProps>;
+    const page = (await LabPage({ params: { labId: "basics-1" } })) as ReactElement<{ children: ReactElement[] }>;
+    // Breadcrumbs, the client page, then the practice pager.
+    const [trail, element, pager] = React.Children.toArray(page.props.children) as [
+      ReactElement<{ items: { label: string; href?: string }[] }>,
+      ReactElement<ClientProps>,
+      ReactElement<{ pager: { section: { href: string } } }>,
+    ];
+    expect(trail.props.items.map((item) => item.label)).toEqual(["Practice", "Labs", "Refactor Repeated Stimulus into a Task"]);
+    expect(trail.props.items[1].href).toBe("/practice#labs");
+    expect(pager.props.pager.section.href).toBe("/practice#labs");
     expect(element.type).toBe(LabClientPage);
     const { lab, policy, files, solutions, backLink, lessons, prerequisites } = element.props;
 

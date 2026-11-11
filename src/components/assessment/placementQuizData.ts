@@ -291,7 +291,7 @@ const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
         href: '/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index',
       },
       { label: 'I-UVM-3A: Basic UVM Sequences and Items', href: '/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index' },
-      { label: 'Exercise: Sequencer arbitration sandbox', href: '/exercises/sequencer-arbitration' },
+      { label: 'Sequencer arbitration sandbox', href: '/exercises/sequencer-arbitration' },
     ],
   },
   debug: {

@@ -2,8 +2,12 @@ import { BookOpen, Clock } from "lucide-react";
 import Link from "next/link";
 import React from "react";
 
+import { SignalTag } from "@/components/ui/SignalTag";
 import type { LessonContext } from "@/lib/curriculum/lesson-context";
 import { cn } from "@/lib/utils";
+
+import { CodedLabel, withoutCode } from "./CodedLabel";
+import { tagInLink } from "./overview-ui";
 
 export interface LessonOrientationProps {
   context: LessonContext;
@@ -21,7 +25,8 @@ const badgeClass =
  * The lesson header (G30-PAGE-01, G30-PAGE-V01): tier and module, the title,
  * track and tier badges, the milestones the module builds, "Lesson k of N in
  * <module>" in manifest order, and "Before you start" links to the manifest
- * prerequisites. Badges are text, never colour alone.
+ * prerequisites. Badges are text, never colour alone. Module codes and
+ * milestone ids render as signal tags (DESIGN.md section 8).
  */
 export default function LessonOrientation({ context, title, summary, readingMinutes, className }: LessonOrientationProps) {
   const { lesson, tier, module, milestones, prerequisites } = context;
@@ -29,11 +34,11 @@ export default function LessonOrientation({ context, title, summary, readingMinu
 
   return (
     <header className={cn("min-w-0 rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6", className)}>
-      <p className="text-label text-subtle">
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-label text-subtle">
         {tier.title}
-        <span aria-hidden="true"> · </span>
+        <span aria-hidden="true">·</span>
         <span className="sr-only">, </span>
-        {module.label}
+        <CodedLabel code={module.code} title={withoutCode(module.label, module.code)} />
       </p>
       <h1 className="mt-2 break-words text-h1 text-foreground">{title}</h1>
       {summary ? <p className="mt-3 text-lead text-muted-foreground">{summary}</p> : null}
@@ -73,7 +78,7 @@ export default function LessonOrientation({ context, title, summary, readingMinu
           {milestones.map((milestone, index) => (
             <React.Fragment key={milestone.id}>
               {index > 0 ? "; " : null}
-              <span className="font-semibold text-foreground">{milestone.id}</span> ({milestone.label})
+              <SignalTag code={milestone.id} /> ({milestone.label})
             </React.Fragment>
           ))}
         </p>
@@ -89,12 +94,16 @@ export default function LessonOrientation({ context, title, summary, readingMinu
               <li key={item.href} className="min-w-0 max-w-full">
                 <Link
                   href={item.href}
-                  className="inline-flex min-h-[2.5rem] max-w-full items-center rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground underline-offset-2 transition-colors duration-150 ease-bench hover:border-input hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="group inline-flex min-h-[2.5rem] max-w-full items-center rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground underline-offset-2 transition-colors duration-150 ease-bench hover:border-input hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <span className="min-w-0 break-words">
-                    {item.kind === "lesson" ? <span className="text-muted-foreground">Previous lesson: </span> : null}
-                    {item.label}
-                  </span>
+                  {item.kind === "lesson" ? (
+                    <span className="min-w-0 break-words">
+                      <span className="text-muted-foreground">Previous lesson: </span>
+                      {item.label}
+                    </span>
+                  ) : (
+                    <CodedLabel code={item.moduleCode} title={withoutCode(item.label, item.moduleCode)} tagClassName={cn(tagInLink, "group-focus-visible:ring-0")} />
+                  )}
                 </Link>
               </li>
             ))}

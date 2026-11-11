@@ -3,6 +3,9 @@ import * as path from "path";
 import { describe, expect, it } from "vitest";
 
 import robots from "@/app/robots";
+import { curriculumRedirects } from "@/generated/curriculum-redirects.mjs";
+import { canonicalLessonRedirect } from "@/lib/curriculum/canonical-redirect";
+import { PRACTICE_INDEX_REDIRECTS, sectionRedirect } from "@/middleware";
 import sitemap, { PUBLIC_PAGES, labPaths, lessonPaths, practicePaths } from "@/app/sitemap";
 import { normalizeSlug } from "@/lib/curriculum-data";
 import { getAllLabs } from "@/lib/lab-registry";
@@ -131,6 +134,21 @@ describe("sitemap", () => {
       expect(source, `${route} is not hidden`).toMatch(/notFound\(\)/);
       expect(source, `${route} reads the flags module directly`).not.toMatch(/@\/tools\/featureFlags|isFeatureEnabled/);
       expect(source, `${route} forces a dynamic render`).not.toMatch(/export const dynamic\s*=\s*["']force-dynamic["']/);
+    }
+  });
+
+  it("lists no URL that redirects", () => {
+    const legacySources = new Set(curriculumRedirects.map((redirect) => redirect.source));
+    const paths = urls.map((url) => new URL(url).pathname || "/");
+    expect(paths.length).toBeGreaterThan(100);
+    for (const pathname of paths) {
+      expect(sectionRedirect(pathname), `${pathname} redirects to a page section`).toBeNull();
+      expect(canonicalLessonRedirect(pathname), `${pathname} redirects to a canonical lesson`).toBeNull();
+      expect(legacySources.has(pathname), `${pathname} is a legacy redirect`).toBe(false);
+    }
+    for (const moved of [...Object.keys(PRACTICE_INDEX_REDIRECTS), "/curriculum/T1_Foundational"]) {
+      expect(paths, moved).not.toContain(moved);
+      expect(PUBLIC_PAGES as readonly string[]).not.toContain(moved);
     }
   });
 

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import React from "react";
 
+import { siteLink } from "@/lib/nav-labels";
+import { DASHBOARD_HREF, NOTEBOOK_HREF, REVIEW_HREF, SELF_ASSESSMENT_HREF, SETTINGS_HREF } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
 export type LearnerSection = "dashboard" | "review" | "notebook" | "assessment" | "settings";
@@ -11,13 +13,27 @@ export interface LearnerSectionLink {
   href: string;
 }
 
-export const LEARNER_SECTION_LINKS: readonly LearnerSectionLink[] = Object.freeze([
-  { id: "dashboard", label: "Dashboard", href: "/dashboard" },
-  { id: "review", label: "Review", href: "/dashboard/review" },
-  { id: "notebook", label: "Notebook", href: "/dashboard/notebook" },
-  { id: "assessment", label: "Self-assessment", href: "/assessment" },
-  { id: "settings", label: "Settings", href: "/settings" },
-]);
+const LEARNER_SECTION_HREFS: Readonly<Record<LearnerSection, string>> = {
+  dashboard: DASHBOARD_HREF,
+  review: REVIEW_HREF,
+  notebook: NOTEBOOK_HREF,
+  assessment: SELF_ASSESSMENT_HREF,
+  settings: SETTINGS_HREF,
+};
+
+/** The tab strip, in order. Labels and hrefs come from the navigation config (src/lib/site-links.ts). */
+export const LEARNER_SECTION_LINKS: readonly LearnerSectionLink[] = Object.freeze(
+  (Object.keys(LEARNER_SECTION_HREFS) as LearnerSection[]).map((id) => ({ id, ...siteLink(LEARNER_SECTION_HREFS[id]) })),
+);
+
+/**
+ * The breadcrumb trail of a learner page below the dashboard: Dashboard › <page>.
+ * The dashboard itself is top level and has none.
+ */
+export function learnerBreadcrumbs(section: Exclude<LearnerSection, "dashboard">): { label: string; href?: string }[] {
+  const dashboard = siteLink(LEARNER_SECTION_HREFS.dashboard);
+  return [dashboard, { label: siteLink(LEARNER_SECTION_HREFS[section]).label }];
+}
 
 const linkBase =
   "inline-flex min-h-[2.75rem] items-center rounded-lg border px-4 text-sm font-medium text-foreground transition-colors duration-150 ease-bench motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";

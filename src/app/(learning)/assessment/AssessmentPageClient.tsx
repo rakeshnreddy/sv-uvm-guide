@@ -6,6 +6,8 @@ import { ArrowRight } from 'lucide-react';
 
 import { eyebrow, inlineLink, primaryAction, secondaryAction, textLink } from '@/components/curriculum/overview-ui';
 import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { siteLabel } from '@/lib/nav-labels';
+import { SELF_ASSESSMENT_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
 import { labelWithCode } from '@/lib/curriculum-overview';
 import type { StaticTier } from '@/lib/learner-stats';
@@ -517,7 +519,7 @@ export default function AssessmentPageClient({
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-h1 text-foreground">Self-assessment</h1>
+          <h1 className="text-h1 text-foreground">{siteLabel(SELF_ASSESSMENT_HREF)}</h1>
           <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             Where you stand in each track, from what you have done here: lessons, lesson quizzes, labs, flashcards and
             the placement quiz. It is a self-check, not a grade or a certificate.

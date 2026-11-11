@@ -2,13 +2,16 @@ import React from 'react';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import PublicHeader from '@/components/layout/PublicHeader';
+import PublicHeader, { PUBLIC_CONTAINER } from '@/components/layout/PublicHeader';
+import { SITE_NAME } from '@/lib/site-links';
 import PrivacyPolicyPage from '@/app/(public)/privacy-policy/page';
 import TermsOfServicePage from '@/app/(public)/terms-of-service/page';
 
 vi.mock('next-themes', () => ({
   useTheme: () => ({ theme: 'light', resolvedTheme: 'light', systemTheme: 'light', setTheme: vi.fn() }),
 }));
+
+vi.mock('next/navigation', () => ({ usePathname: () => '/privacy-policy' }));
 
 vi.mock('next/link', async () => {
   const ReactModule = await import('react');
@@ -62,8 +65,9 @@ describe.each([
     render(<Page />);
     const footer = screen.getByRole('contentinfo');
     const siteMap = within(footer).getByRole('navigation', { name: 'Site map' });
-    expect(within(siteMap).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
+    expect(within(siteMap).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
     expect(within(siteMap).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
+    expect(within(footer).getByRole('link', { name: title })).toBeInTheDocument();
     expect(footer).toHaveTextContent('MIT licensed');
     expect(within(footer).getByRole('link', { name: 'Source on GitHub' })).toHaveAttribute(
       'href',
@@ -98,6 +102,23 @@ describe.each([
     expect(text).not.toMatch(/community channel/i);
     expect(text).not.toMatch(/verified partners/i);
     expect(text).not.toMatch(/telemetry is retained/i);
+  });
+});
+
+describe('legal page metadata', () => {
+  it('uses the shared labels and never types the site name by hand', async () => {
+    const privacy = await import('@/app/(public)/privacy-policy/page');
+    const terms = await import('@/app/(public)/terms-of-service/page');
+    expect(privacy.metadata.title).toBe('Privacy policy');
+    expect(terms.metadata.title).toBe('Terms of service');
+    expect(privacy.metadata.description).toContain(SITE_NAME);
+    expect(terms.metadata.description).toContain(SITE_NAME);
+  });
+
+  it('starts the page content on the same left edge as the header wordmark', () => {
+    const { container } = render(<PrivacyPolicyPage />);
+    const frame = container.querySelector('[data-testid="info-page"]') as HTMLElement;
+    for (const cls of PUBLIC_CONTAINER.split(' ')) expect(frame).toHaveClass(cls);
   });
 });
 

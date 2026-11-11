@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import manifest from '../../content/curriculum/curriculum.manifest.json';
-import Sidebar, { OUTLINE_QUICK_LINKS } from '@/components/layout/Sidebar';
+import Sidebar, { OUTLINE_OVERVIEW_LINK, outlineRowClass, revealCurrentItem } from '@/components/layout/Sidebar';
 import {
   buildCourseOutline,
   currentLessonSlug,
@@ -13,7 +13,9 @@ import {
   outlineLessonHrefs,
 } from '@/components/search/course-outline';
 import { shellStore } from '@/components/search/shell-store';
+import { focusableWithin } from '@/components/search/useModalDialog';
 import { curriculumData } from '@/lib/curriculum-data';
+import { tierSectionHref } from '@/lib/site-links';
 
 let mockPathname = '/practice';
 
@@ -209,20 +211,45 @@ describe('docked course outline on a lesson page', () => {
     );
   });
 
-  it('ends with the quick links, none of them marked as the current page', () => {
+  it('repeats no site links: only tier sections and lessons (SPEC "Course outline")', () => {
     render(<Sidebar />);
     const nav = screen.getByRole('navigation', { name: 'Course outline' });
-    const list = within(nav).getByRole('list', { name: 'Quick links' });
-    expect(within(list).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(
-      OUTLINE_QUICK_LINKS.map((link) => link.href),
-    );
-    expect(list.querySelector('[aria-current]')).toBeNull();
+    expect(within(nav).queryByRole('list', { name: 'Quick links' })).not.toBeInTheDocument();
+    const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href') ?? '');
+    const tierHrefs = manifest.tiers.map((tier) => tierSectionHref(tier.id));
+    for (const href of hrefs) {
+      expect(tierHrefs.includes(href) || manifestLessonHrefs.includes(href), href).toBe(true);
+    }
+    expect(within(nav).queryByRole('link', { name: OUTLINE_OVERVIEW_LINK.label })).not.toBeInTheDocument();
   });
 
-  it('leaves the quick links to the navbar from xl up in the docked column (layout-15)', () => {
+  it("links each tier heading to its section of /curriculum, beside the tier's disclosure button", () => {
     render(<Sidebar />);
     const nav = screen.getByRole('navigation', { name: 'Course outline' });
-    expect(within(nav).getByRole('list', { name: 'Quick links' })).toHaveClass('xl:hidden');
+    manifest.tiers.forEach((tier) => {
+      const link = within(nav).getByRole('link', { name: new RegExp(`^${tier.title}\\W`) });
+      expect(link).toHaveAttribute('href', tierSectionHref(tier.id));
+      expect(link).not.toHaveAttribute('aria-current');
+      expect(within(nav).getByRole('button', { name: `${tier.title} modules` })).toHaveAttribute('aria-expanded');
+    });
+    expect(within(nav).getByRole('link', { name: /^Tier 2: Intermediate\W/ })).toHaveAttribute('href', '/curriculum#t2');
+  });
+
+  it('renders module codes as signal tags inside the module links', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    const ipc = within(nav).getByRole('link', { name: 'I-SV-5: Synchronization and IPC' });
+    const tag = ipc.querySelector('[data-signal-tag]');
+    expect(tag).toHaveTextContent('I-SV-5');
+    expect(tag).toHaveAttribute('translate', 'no');
+    expect(tag?.tagName).toBe('SPAN');
+  });
+
+  it('gives every control a 40 px target', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    for (const link of within(nav).getAllByRole('link')) expect(link.className).toMatch(/\bmin-h-10\b/);
+    for (const button of within(nav).getAllByRole('button')) expect(button).toHaveClass('h-10', 'w-10');
   });
 
   it('marks the current lesson with a raised row and a 2 px accent edge, not an accent fill', () => {
@@ -302,9 +329,8 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     act(() => shellStore.openOutline());
     const dialog = screen.getByRole('dialog', { name: 'Course outline' });
     const close = within(dialog).getByRole('button', { name: 'Close course outline' });
-    // The last quick link is the dialog's last focusable element.
-    const last = within(within(dialog).getByRole('list', { name: 'Quick links' })).getAllByRole('link').at(-1)!;
-    expect(last).toHaveAccessibleName('Dashboard');
+    const last = focusableWithin(dialog).at(-1)!;
+    expect(last).not.toBe(close);
 
     last.focus();
     await user.tab();
@@ -325,44 +351,38 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('lists quick links: Start here, the overview, the practice hub, Labs, Interview prep and Dashboard (G30-SIDE-04/05)', () => {
+  it('starts with one "Curriculum overview" link, then the outline', () => {
+    renderWithOpener();
+    act(() => shellStore.openOutline());
+    const nav = within(screen.getByRole('dialog', { name: 'Course outline' })).getByRole('navigation', { name: 'Course outline' });
+    const links = within(nav).getAllByRole('link');
+    expect(links[0]).toHaveAccessibleName('Curriculum overview');
+    expect(links[0]).toHaveAttribute('href', '/curriculum');
+    expect(links.filter((link) => link.getAttribute('href') === '/curriculum')).toHaveLength(1);
+    expect(links[0]).not.toHaveAttribute('aria-current');
+    expect(within(nav).queryByRole('list', { name: 'Quick links' })).not.toBeInTheDocument();
+    expect(OUTLINE_OVERVIEW_LINK).toEqual({ label: 'Curriculum overview', href: '/curriculum' });
+  });
+
+  it('marks the overview link as the current page on /curriculum', () => {
+    mockPathname = '/curriculum';
     renderWithOpener();
     act(() => shellStore.openOutline());
     const dialog = screen.getByRole('dialog', { name: 'Course outline' });
-    expect(within(dialog).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
-    expect(within(dialog).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
-    const quickLinks = within(within(dialog).getByRole('list', { name: 'Quick links' })).getAllByRole('link');
-    expect(quickLinks.map((link) => [link.textContent, link.getAttribute('href')])).toEqual(
-      OUTLINE_QUICK_LINKS.map((link) => [link.label, link.href]),
-    );
-    expect(OUTLINE_QUICK_LINKS.map((link) => [link.label, link.href])).toEqual([
-      ['Start here', '/curriculum#routes'],
-      ['Curriculum overview', '/curriculum'],
-      ['Practice hub', '/practice'],
-      ['Labs', '/practice#labs'],
-      ['Interview prep', '/interview-prep'],
-      ['Dashboard', '/dashboard'],
-    ]);
-    expect(quickLinks.some((link) => link.hasAttribute('aria-current'))).toBe(false);
-    // The drawer keeps them at every width.
-    expect(within(dialog).getByRole('list', { name: 'Quick links' })).not.toHaveClass('xl:hidden');
+    const overview = within(dialog).getByRole('link', { name: 'Curriculum overview' });
+    expect(overview).toHaveAttribute('aria-current', 'page');
+    expect(overview).toHaveClass('border-primary', 'bg-muted');
   });
 
-  it('links the dashboard from the quick links without marking it current, even on the dashboard', () => {
-    mockPathname = '/dashboard';
-    renderWithOpener();
-    act(() => shellStore.openOutline());
-    const dialog = screen.getByRole('dialog', { name: 'Course outline' });
-    const list = within(dialog).getByRole('list', { name: 'Quick links' });
-    expect(within(list).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
-    expect(list.querySelector('[aria-current]')).toBeNull();
-  });
-
-  it('closes when a quick link is followed', async () => {
+  it('closes when the overview or a tier section is followed', async () => {
     const user = userEvent.setup();
     renderWithOpener();
     act(() => shellStore.openOutline());
-    await user.click(within(screen.getByRole('dialog', { name: 'Course outline' })).getByRole('link', { name: 'Labs' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Course outline' })).getByRole('link', { name: 'Curriculum overview' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    act(() => shellStore.openOutline());
+    await user.click(within(screen.getByRole('dialog', { name: 'Course outline' })).getByRole('link', { name: /^Tier 3: Advanced\W/ }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(shellStore.getState().outlineOpen).toBe(false);
   });
@@ -374,5 +394,41 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(document.body.style.overflow).toBe('hidden');
     await user.keyboard('{Escape}');
     expect(document.body.style.overflow).toBe('');
+  });
+});
+
+describe('outline helpers', () => {
+  it('draws the current row as the raised surface with a 2 px accent marker, and others plain', () => {
+    expect(outlineRowClass(true)).toMatch(/border-l-2/);
+    expect(outlineRowClass(true)).toMatch(/border-primary/);
+    expect(outlineRowClass(true)).toMatch(/bg-muted/);
+    expect(outlineRowClass(false)).toMatch(/border-transparent/);
+    expect(outlineRowClass(false)).not.toMatch(/(^|\s)bg-muted/);
+  });
+
+  function scrollBox(currentTop: number) {
+    const container = document.createElement('div');
+    const current = document.createElement('a');
+    current.setAttribute('aria-current', 'page');
+    container.appendChild(current);
+    Object.defineProperty(container, 'clientHeight', { value: 300 });
+    Object.defineProperty(current, 'offsetHeight', { value: 40 });
+    container.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    current.getBoundingClientRect = () => ({ top: 100 + currentTop - container.scrollTop }) as DOMRect;
+    return container;
+  }
+
+  it('scrolls the current item into view, a third of the way down', () => {
+    const container = scrollBox(1000);
+    revealCurrentItem(container);
+    expect(container.scrollTop).toBe(900);
+  });
+
+  it('leaves the scroll position alone when the current item is visible, or there is none', () => {
+    const container = scrollBox(120);
+    revealCurrentItem(container);
+    expect(container.scrollTop).toBe(0);
+    expect(() => revealCurrentItem(null)).not.toThrow();
+    expect(() => revealCurrentItem(document.createElement('div'))).not.toThrow();
   });
 });

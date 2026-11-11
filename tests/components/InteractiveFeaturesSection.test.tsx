@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import InteractiveFeaturesSection from '@/components/home/InteractiveFeaturesSection';
-import { LABS_HREF } from '@/lib/site-links';
+import { LABS_HREF, PRACTICE_SECTION_HREF } from '@/lib/site-links';
 import { appRouteExists } from '../fixtures/site-routes';
 
 afterEach(() => {
@@ -23,7 +23,7 @@ describe('home feature cards (landing-18, landing-1)', () => {
       'href',
       '/practice/visualizations/uvm-architecture',
     );
-    expect(screen.getByRole('link', { name: 'Try an exercise' })).toHaveAttribute('href', '/exercises');
+    expect(screen.getByRole('link', { name: 'Try an exercise' })).toHaveAttribute('href', PRACTICE_SECTION_HREF.exercises);
     expect(screen.getByRole('link', { name: 'Browse the labs' })).toHaveAttribute('href', LABS_HREF);
   });
 

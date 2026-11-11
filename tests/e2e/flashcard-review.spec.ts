@@ -47,7 +47,7 @@ test.describe('flashcard review, stored in this browser', () => {
 
     await page.clock.setSystemTime(new Date(start.getTime() + 2 * DAY_MS));
     await page.goto('/dashboard/review');
-    await expect(page.getByRole('heading', { level: 1, name: 'Flashcard review' })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { level: 1, name: 'Review flashcards' })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole('navigation', { name: 'Your learning' }).getByRole('link', { name: 'Review' })).toHaveAttribute(
       'aria-current',
       'page',

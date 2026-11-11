@@ -62,7 +62,7 @@ export default function WaveformStudio() {
     <VisualFrame
       label="Waveform studio"
       eyebrow="Practice tool"
-      title="Waveform Studio"
+      title="Waveform studio"
       summary="Edit a WaveJSON timing diagram and see it redrawn. AXI signals are checked against the handshake and channel-dependency rules as you type."
       fidelity="model"
       assumptions={ASSUMPTIONS}

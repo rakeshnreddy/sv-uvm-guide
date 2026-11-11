@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import dynamic from 'next/dynamic';
 
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const InteractiveUvmArchitectureDiagram = dynamic(
@@ -20,13 +20,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmArchitecturePage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description={practice.description}
       diagrams={[<InteractiveUvmArchitectureDiagram key="uvm-arch" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

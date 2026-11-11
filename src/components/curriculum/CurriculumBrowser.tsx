@@ -10,6 +10,7 @@ import {
   type OverviewTier,
   type PlannedModule,
 } from '@/lib/curriculum-overview';
+import { tierSectionId } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 import CurriculumMap from './LearningPathDiagram';
 import { TierSection } from './TierSection';
@@ -26,10 +27,27 @@ export interface CurriculumBrowserProps {
 type View = 'list' | 'map';
 
 /**
+ * The hash of a link that points at a section of the page it is on ("#t3" for
+ * "/curriculum#t3" clicked on /curriculum), or null for a link anywhere else.
+ */
+export function samePageHash(href: string, location: Pick<Location, 'href' | 'pathname'>): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, location.href);
+  } catch {
+    return null;
+  }
+  if (!url.hash || url.origin !== new URL(location.href).origin) return null;
+  const normalise = (path: string) => (path.length > 1 ? path.replace(/\/+$/, '') : path);
+  return normalise(url.pathname) === normalise(location.pathname) ? url.hash : null;
+}
+
+/**
  * "Modules by tier": every module in manifest order, as tier sections (list)
  * or as the curriculum map. The search filters modules by code, titles and
  * descriptions and opens every tier that has a match. "/curriculum#t3" opens
- * Tier 3.
+ * Tier 3, whether the page loads with that hash or a link on the page (the
+ * course outline, the footer) points there.
  */
 export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModules, hereModuleId }: CurriculumBrowserProps) {
   const [view, setView] = useState<View>('list');
@@ -48,17 +66,30 @@ export function CurriculumBrowser({ tiers, planned, milestoneNames, visitedModul
   );
 
   useEffect(() => {
-    const openFromHash = () => {
-      const tier = tiers.find((t) => `#${t.anchor}` === window.location.hash);
+    const openTier = (hash: string) => {
+      const tier = tiers.find((t) => `#${tierSectionId(t.id)}` === hash);
       if (!tier) return;
       setView('list');
       setQuery('');
       setOpenTiers((current) => new Set(current).add(tier.id));
-      window.requestAnimationFrame(() => document.getElementById(tier.anchor)?.scrollIntoView?.({ block: 'start' }));
+      window.requestAnimationFrame(() => document.getElementById(tierSectionId(tier.id))?.scrollIntoView?.({ block: 'start' }));
+    };
+    const openFromHash = () => openTier(window.location.hash);
+    // A Next.js link to "/curriculum#t3" from this page changes the URL with
+    // history.pushState, which fires no hashchange: catch the click instead.
+    const openFromClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.('a[href]');
+      const hash = anchor ? samePageHash(anchor.getAttribute('href') ?? '', window.location) : null;
+      if (hash) openTier(hash);
     };
     openFromHash();
     window.addEventListener('hashchange', openFromHash);
-    return () => window.removeEventListener('hashchange', openFromHash);
+    document.addEventListener('click', openFromClick);
+    return () => {
+      window.removeEventListener('hashchange', openFromHash);
+      document.removeEventListener('click', openFromClick);
+    };
   }, [tiers]);
 
   useEffect(() => {

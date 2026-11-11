@@ -2,10 +2,18 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
+import { PracticePager } from "@/components/practice/PracticePager";
 import { readLabFilesForBuild } from "@/lib/lab-assets";
 import { toLabPolicyInput } from "@/lib/lab-progress-policy";
 import { getAllLabs, getLabById, toLearnerLabDto } from "@/lib/lab-registry";
-import { getLabBackLink, getLabLessons, getLabPrerequisites } from "@/lib/practice-links";
+import {
+  getLabBackLink,
+  getLabLessons,
+  getLabPrerequisites,
+  practiceBreadcrumbs,
+  requirePracticePager,
+} from "@/lib/practice-links";
 
 import LabClientPage from "./LabClientPage";
 
@@ -51,15 +59,22 @@ export default async function LabPage({ params }: LabPageProps) {
   // the launching lesson for "Back to module", prerequisites, and "do this lab after" for forward ones.
   const { items, doAfter } = getLabPrerequisites(lab);
 
+  const href = `/practice/lab/${lab.id}`;
+
   return (
-    <LabClientPage
-      lab={toLearnerLabDto(lab)}
-      policy={toLabPolicyInput(lab)}
-      files={files}
-      solutions={solutions}
-      backLink={getLabBackLink(lab)}
-      lessons={getLabLessons(lab)}
-      prerequisites={{ items, doAfter }}
-    />
+    <>
+      {/* Practice › Labs › <lab>, and the pager to the labs before and after this one in curriculum order. */}
+      <Breadcrumbs items={practiceBreadcrumbs({ title: lab.title.replace(/\s+/g, " ").trim(), kind: "lab" })} className="-mt-2 mb-4" />
+      <LabClientPage
+        lab={toLearnerLabDto(lab)}
+        policy={toLabPolicyInput(lab)}
+        files={files}
+        solutions={solutions}
+        backLink={getLabBackLink(lab)}
+        lessons={getLabLessons(lab)}
+        prerequisites={{ items, doAfter }}
+      />
+      <PracticePager pager={requirePracticePager(href)} className="mt-12" />
+    </>
   );
 }

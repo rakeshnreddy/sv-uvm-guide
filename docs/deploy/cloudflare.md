@@ -49,6 +49,52 @@ go live. `src/middleware.ts` still runs in the Worker and sends the 308 for
 non-canonical lesson URLs. Search is client-side (`src/generated/search-index.json`
 chunk), so it needs no server.
 
+### Home page cache interception patch
+
+Unpatched, `@opennextjs/aws` 3.9.12 (the version `@opennextjs/cloudflare` 1.15.1
+pulls in) never intercepts the home page. `dist/core/routing/cacheInterceptor.js`
+strips the trailing slash, so `/` becomes `""`. The fallbacks `localizedPath ?? "/"`
+and `localizedPath ?? "/index"` keep `""` because `??` only replaces null, and `""`
+is not in the prerender manifest. Every view of `/` then loads the full 18 MB
+Next.js server instead of the prerendered entry (worker-1102 diagnosis,
+`docs/planning/site-design-refresh-2026-11-10/worker-1102-report.md`).
+
+`scripts/patch-opennext-cache-interceptor.mjs` changes those two `??` to `||`. An
+empty path then falls back to `/` for the manifest lookup and to `/index`, the
+home page's cache key (`.open-next/cache/<BUILD_ID>/index.cache`). The script is
+idempotent and writes to `node_modules`. It exits 1 with a clear message if it
+cannot find either the original or the patched text, for example after an OpenNext
+upgrade. In that case, check whether the new version still needs the fix before
+you edit the script. OpenNext has no configuration option for this. The patch runs
+from three places:
+
+| Where | Why |
+|---|---|
+| `buildCommand` in `open-next.config.ts` (`node scripts/patch-… && npm run build`) | Every `opennextjs-cloudflare build` applies the patch before it bundles the middleware. This includes Workers Builds, whose `npm ci --ignore-scripts` skips `postinstall` and whose build command calls `npx opennextjs-cloudflare build` directly. The dashboard settings do not change. |
+| `npm run cf:build` | Applies the patch before the build. Afterwards, `--check-output` fails the script unless `.open-next/middleware/handler.mjs` contains the patched code. |
+| `postinstall` | Patches right after a local `npm install` or `npm ci`. If the package is missing, it only warns. |
+
+Check it with `npm run cf:check-patch` (node_modules) or
+`node scripts/patch-opennext-cache-interceptor.mjs --check-output` (after a build).
+Unit tests: `tests/unit/patch-opennext-cache-interceptor.spec.ts`. To confirm the
+fix in a local preview (`npx opennextjs-cloudflare preview --port 8799`):
+
+| Check | Expected |
+|---|---|
+| `curl -sI $B/` | `200`, `x-opennext-cache: HIT`, no `x-powered-by: Next.js` |
+| `curl -sI $B/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index` | `200`, `x-opennext-cache: HIT` |
+| `curl -sI $B/this-page-does-not-exist` | `404` |
+
+Without the patch, `/` answers `x-nextjs-cache: HIT`, `x-powered-by: Next.js` and
+no `x-opennext-cache` header. Remove the patch when OpenNext is upgraded with Next
+15.5+, if the new version handles `/`.
+
+Do not build with `node_modules` symlinked from another checkout. The standalone
+output then contains `.next/standalone/node_modules`, a symlink to the shared
+folder, and the next `next build` follows that symlink while it clears `.next`.
+That empties the shared `node_modules`. If you must build that way, delete `.next`
+with `rm -rf` between builds, because `rm -rf` does not follow symlinks.
+
 ## Behaviour without a database
 
 `DATABASE_URL` is **not** set and accounts are off (`ACCOUNTS_ENABLED`, the

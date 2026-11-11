@@ -1,5 +1,6 @@
 import React, { ReactNode } from "react";
 
+import { Breadcrumbs, type BreadcrumbItem } from "@/components/layout/Breadcrumbs";
 import { cn } from "@/lib/utils";
 
 /*
@@ -18,6 +19,11 @@ export const infoPageProseClass =
   "prose max-w-none prose-p:max-w-[68ch] prose-ul:max-w-[68ch] prose-ol:max-w-[68ch] prose-blockquote:max-w-[68ch] prose-headings:max-w-[68ch] prose-code:before:content-none prose-code:after:content-none";
 
 interface InfoPageProps {
+  /**
+   * The trail above the title, for every page below the top level. The last
+   * item is the current page. Build it from src/lib/site-links.ts labels.
+   */
+  breadcrumbs?: readonly BreadcrumbItem[];
   title?: string;
   description?: string;
   children?: ReactNode; // Main content of the page
@@ -30,21 +36,26 @@ interface InfoPageProps {
    * provides the gutter, and doubling it squeezes phones.
    */
   gutter?: boolean;
+  /** The end of the page, after every other slot: the practice pager on practice tool pages. */
+  pager?: ReactNode;
 }
 
 export const InfoPage: React.FC<InfoPageProps> = ({
+  breadcrumbs,
   title,
   description,
   children,
   charts,
   diagrams,
   gutter = true,
+  pager,
 }) => {
   return (
     <div
       data-testid="info-page"
       className={cn("mx-auto w-full max-w-6xl", gutter ? "px-4 py-8 sm:px-6 lg:px-8" : "pb-8")}
     >
+      {breadcrumbs && breadcrumbs.length > 0 ? <Breadcrumbs items={breadcrumbs} className="-mt-2 mb-4" /> : null}
       <article>
         {title && (
           <header className="mb-8 border-b border-border pb-6">
@@ -83,6 +94,7 @@ export const InfoPage: React.FC<InfoPageProps> = ({
           </section>
         )}
       </article>
+      {pager ? <div className="mt-12">{pager}</div> : null}
     </div>
   );
 };

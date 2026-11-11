@@ -1,8 +1,12 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import Breadcrumbs, { crumbItemClass, crumbLinkClass } from '@/components/layout/Breadcrumbs';
-import { lessonBreadcrumbs } from '@/lib/curriculum/lesson-context';
+import {
+  breadcrumbParent,
+  Breadcrumbs as ItemBreadcrumbs,
+  crumbItemClass,
+  crumbLinkClass,
+} from '@/components/layout/Breadcrumbs';
 
 type MockNextLinkProps = React.PropsWithChildren<
   Omit<React.ComponentProps<'a'>, 'href'> & { href: string }
@@ -17,85 +21,91 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-const IUVM3B = 'I-UVM-3B_Advanced_Sequencing_and_Layering';
+describe('Breadcrumbs with items', () => {
+  const items = [
+    { label: 'Dashboard', href: '/dashboard' },
+    { label: 'Review', href: '/dashboard/review' },
+    { label: 'Deck I-UVM-1C', code: 'I-UVM-1C' },
+  ];
 
-describe('Breadcrumbs', () => {
-  it('renders an ordered list of canonical links with aria-current on the last crumb', () => {
-    render(<Breadcrumbs slug={['T2_Intermediate', IUVM3B, 'virtual-sequences']} />);
-
+  it('renders a plain ordered list in nav[aria-label="Breadcrumb"] with no card or background', () => {
+    const { container } = render(<ItemBreadcrumbs items={items} />);
     const navigation = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(navigation).toHaveClass('text-ui');
+    expect(navigation.className).not.toMatch(/\b(bg-|border|rounded-xl|shadow)/);
     const list = within(navigation).getByRole('list');
     expect(list.tagName).toBe('OL');
-    const links = within(list).getAllByRole('link');
-    const expected = lessonBreadcrumbs(['T2_Intermediate', IUVM3B, 'virtual-sequences']);
-
-    expect(links.map((link) => link.textContent)).toEqual(expected.map((crumb) => crumb.label));
-    expect(links.map((link) => link.getAttribute('href'))).toEqual([
-      '/curriculum',
-      '/curriculum#t2',
-      `/curriculum/T2_Intermediate/${IUVM3B}/index`,
-      `/curriculum/T2_Intermediate/${IUVM3B}/virtual-sequences`,
-    ]);
-    expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, null, null, 'page']);
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3);
+    // Chevrons between items only, hidden from assistive technology.
+    expect(list.querySelectorAll('svg.lucide-chevron-right')).toHaveLength(2);
+    expect(list.querySelector('li')!.querySelector('svg')).toBeNull();
+    expect(container.querySelectorAll('svg[aria-hidden="true"]').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('lets the current crumb take the free room on the row and truncate only when the row is full', () => {
-    render(<Breadcrumbs slug={['T2_Intermediate', IUVM3B, 'virtual-sequences']} />);
-    const links = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('link');
-    const current = links[links.length - 1];
-    expect(current).toHaveClass('max-w-full', 'min-w-0');
-    expect(current.className).not.toMatch(/max-w-\[(15|20)rem\]/);
-    expect(current.parentElement).toHaveClass('min-w-0', 'flex-auto');
-    expect(current.querySelector('span')).toHaveClass('truncate');
-    // Ancestors keep their own width, with their caps.
-    for (const link of links.slice(0, -1)) {
-      expect(link).toHaveClass('max-w-[15rem]', 'sm:max-w-[20rem]');
-      expect(link.parentElement).not.toHaveClass('flex-auto');
+  it('links ancestors in the secondary colour and marks the last item as the current page', () => {
+    render(<ItemBreadcrumbs items={items} />);
+    const list = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('list');
+    const links = within(list).getAllByRole('link');
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(['/dashboard', '/dashboard/review']);
+    for (const link of links) {
+      expect(link).toHaveClass('text-muted-foreground', 'hover:text-primary');
+      expect(link).not.toHaveAttribute('aria-current');
     }
-    expect(crumbItemClass(false)).not.toMatch(/flex-auto/);
-    expect(crumbLinkClass(true)).not.toMatch(/max-w-\[/);
+    const current = list.querySelector('[aria-current="page"]')!;
+    expect(current.tagName).toBe('SPAN');
+    expect(current).toHaveClass('text-foreground', 'font-medium');
+    expect(current).toHaveTextContent('Deck I-UVM-1C');
   });
 
-  it('ends on the module crumb on a module page and links canonical URLs from a pretty slug', () => {
-    render(<Breadcrumbs slug={['t1-foundational', 'f2a-core-data-types']} />);
-    const links = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('link');
-    expect(links).toHaveLength(3);
-    expect(links[2]).toHaveAttribute('href', '/curriculum/T1_Foundational/F2A_Core_Data_Types/index');
-    expect(links[2]).toHaveAttribute('aria-current', 'page');
+  it('shows a SignalTag before the label of an item with a code, and a title on truncatable labels', () => {
+    render(<ItemBreadcrumbs items={items} />);
+    const current = document.querySelector('[aria-current="page"]')!;
+    const tag = current.querySelector('[data-signal-tag]')!;
+    expect(tag).toHaveTextContent('I-UVM-1C');
+    // A visually hidden ": " so the crumb reads "I-UVM-1C: Deck I-UVM-1C" (the e2e suites match crumbs by "CODE: title").
+    expect(tag.nextElementSibling).toHaveClass('sr-only');
+    expect(tag.nextElementSibling).toHaveTextContent(':');
+    expect(current.textContent).toBe('I-UVM-1C: Deck I-UVM-1C');
+    const label = tag.nextElementSibling!.nextElementSibling!;
+    expect(label).toHaveClass('min-w-0', 'truncate');
+    expect(label).toHaveAttribute('title', 'Deck I-UVM-1C');
+    // A tag inside a crumb is never a link of its own.
+    expect(tag.tagName).toBe('SPAN');
   });
 
-  it('shows no authoring-status icons or invented time estimates (G30-PAGE-05/06)', () => {
-    const { container } = render(<Breadcrumbs slug={['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'index']} />);
-    expect(container.querySelector('svg.lucide-clock, svg.lucide-circle-check-big, svg.lucide-check-circle')).toBeNull();
-    expect(container).not.toHaveTextContent(/mins left/);
+  it('switches to one back link to the nearest ancestor with an href below 640 px, by CSS alone', () => {
+    render(<ItemBreadcrumbs items={[{ label: 'Curriculum', href: '/curriculum' }, { label: 'Unlinked group' }, { label: 'Expert index' }]} />);
+    const navigation = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    const list = within(navigation).getByRole('list');
+    expect(list).toHaveClass('hidden', 'sm:flex');
+    const back = navigation.querySelector('[data-breadcrumb-back]')!;
+    expect(back).toHaveAttribute('href', '/curriculum');
+    expect(back).toHaveTextContent('Curriculum');
+    expect(back).toHaveClass('sm:hidden', 'min-h-[2.5rem]');
+    // A long module name wraps onto a second line instead of being cut off.
+    const label = back.querySelector('[data-breadcrumb-back-label]')!;
+    expect(label).toHaveClass('break-words');
+    expect(label).not.toHaveClass('truncate');
+    // After the list in the DOM, so "first matching link" finds the visible trail on desktop.
+    expect(list.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('opens "Jump to" as a disclosure listing the module lessons in order, with the current one marked', () => {
-    render(<Breadcrumbs slug={['t2-intermediate', 'i-uvm-3b-advanced-sequencing-and-layering', 'sequence-arbitration']} />);
-
-    const jumpToButton = screen.getByRole('button', { name: 'Jump to' });
-    expect(jumpToButton).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(jumpToButton);
-    expect(jumpToButton).toHaveAttribute('aria-expanded', 'true');
-
-    const panel = document.getElementById(jumpToButton.getAttribute('aria-controls')!)!;
-    expect(panel).toBeInTheDocument();
-    const list = within(panel).getByRole('list');
-    expect(list.tagName).toBe('OL');
-    const links = within(list).getAllByRole('link');
-    expect(links[0]).toHaveAttribute('href', `/curriculum/T2_Intermediate/${IUVM3B}/index`);
-    const current = links.filter((link) => link.getAttribute('aria-current') === 'page');
-    expect(current).toHaveLength(1);
-    expect(current[0]).toHaveAttribute('href', `/curriculum/T2_Intermediate/${IUVM3B}/sequence-arbitration`);
-    expect(screen.queryByRole('menu')).toBeNull();
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(jumpToButton).toHaveAttribute('aria-expanded', 'false');
-    expect(jumpToButton).toHaveFocus();
+  it('keeps the full trail at every width when no ancestor has an href', () => {
+    render(<ItemBreadcrumbs items={[{ label: 'Only page' }]} />);
+    const navigation = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(navigation).getByRole('list')).toHaveClass('flex');
+    expect(within(navigation).getByRole('list')).not.toHaveClass('hidden');
+    expect(navigation.querySelector('[data-breadcrumb-back]')).toBeNull();
   });
 
-  it('leaves out "Jump to" for a one-lesson module', () => {
-    render(<Breadcrumbs slug={['T1_Foundational', 'F2B_Dynamic_Structures', 'index']} />);
-    expect(screen.queryByRole('button', { name: 'Jump to' })).toBeNull();
+  it('finds the nearest linked ancestor', () => {
+    expect(breadcrumbParent(items)).toEqual({ label: 'Review', href: '/dashboard/review' });
+    expect(breadcrumbParent([{ label: 'A', href: '/a' }, { label: 'B' }, { label: 'C' }])).toEqual({ label: 'A', href: '/a' });
+    expect(breadcrumbParent([{ label: 'A', href: '/a' }])).toBeUndefined();
+  });
+
+  it('renders nothing for an empty trail', () => {
+    const { container } = render(<ItemBreadcrumbs items={[]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

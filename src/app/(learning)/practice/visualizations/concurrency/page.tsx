@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import ForkJoinVisualizer from '@/components/visuals/ForkJoinVisualizer';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const HREF = '/practice/visualizations/concurrency';
@@ -14,13 +14,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 // ConcurrencyVisualizer is no longer routed: it modelled process priorities, which SystemVerilog does not have.
 const ConcurrencyVisualizerPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description="Predict when each process starts, waits and ends, then step through simulation time."
       diagrams={[<ForkJoinVisualizer key="fork-join" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

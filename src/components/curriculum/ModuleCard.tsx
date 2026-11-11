@@ -4,9 +4,10 @@ import React, { useId, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, Clock, Eye, MapPin } from 'lucide-react';
 
+import { SignalTag } from '@/components/ui/SignalTag';
 import { labelWithCode, moduleDisplayTitle, type OverviewModule } from '@/lib/curriculum-overview';
 import { cn } from '@/lib/utils';
-import { chip, focusRing, textLink } from './overview-ui';
+import { chip, focusRing, tagLink, tagInLink, textLink } from './overview-ui';
 
 export interface ModuleCardPrerequisite {
   id: string;
@@ -61,7 +62,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
       )}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="font-mono text-label text-subtle">{module.code}</span>
+        <SignalTag code={module.code} />
         {elective && <span className={cn(chip, 'border-dashed border-border text-muted-foreground')}>Elective</span>}
         {here ? (
           <span className={cn(chip, 'border-primary bg-card text-foreground')}>
@@ -99,19 +100,19 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
           </dd>
         </div>
         {prerequisites.length > 0 && (
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-2">
             <dt className="font-semibold text-foreground">Before you start:</dt>
             <dd>
-              <ul className="flex flex-wrap gap-x-2 gap-y-1">
+              <ul className="flex flex-wrap gap-x-1">
                 {prerequisites.map((p) => (
                   <li key={p.id}>
                     <Link
                       href={p.href}
                       aria-label={labelWithCode(p.code, p.title)}
                       title={labelWithCode(p.code, p.title)}
-                      className={cn(textLink, 'inline-flex min-h-[24px] items-center px-0.5 font-mono')}
+                      className={tagLink}
                     >
-                      {p.code}
+                      <SignalTag code={p.code} className={tagInLink} />
                     </Link>
                   </li>
                 ))}
@@ -120,13 +121,13 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
           </div>
         )}
         {module.milestones.length > 0 && (
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <dt className="font-semibold text-foreground">Builds toward:</dt>
             <dd>
               <ul className="flex flex-wrap gap-1.5">
                 {module.milestones.map((id) => (
-                  <li key={id} className={cn(chip, 'border-border font-mono text-muted-foreground')} title={milestoneNames[id]}>
-                    {id}
+                  <li key={id}>
+                    <SignalTag code={id} title={milestoneNames[id]} />
                     {milestoneNames[id] && <span className="sr-only">: {milestoneNames[id]}</span>}
                   </li>
                 ))}

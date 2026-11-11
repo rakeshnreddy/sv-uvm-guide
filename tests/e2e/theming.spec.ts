@@ -157,15 +157,23 @@ test.describe('Theme and Styling Verification', () => {
       await page.unroute('**/_next/static/chunks/**');
       await page.goto(path);
       const header = page.getByTestId('public-header');
-      const button = header.getByRole('button', { name: 'Theme', exact: true });
-      await expect(button).toBeVisible();
+      // Below 768 px the theme choices are in the phone menu (hidden controls measure 0 in both renders).
+      const phone = width < 768;
+      const control = phone
+        ? header.getByRole('button', { name: 'Open main menu' })
+        : header.getByRole('button', { name: 'Theme', exact: true });
+      await expect(control).toBeVisible();
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
       expect(await boxes()).toEqual(before);
-      // 64 px tall from 640 px, 56 px on phones.
-      expect((await header.boundingBox())!.height).toBeCloseTo(width < 640 ? 57 : 65, 0);
+      // 64 px tall from 640 px, 56 px on phones, hairline included (border-box).
+      expect((await header.boundingBox())!.height).toBeCloseTo(width < 640 ? 56 : 64, 0);
 
-      await button.click();
-      await page.getByRole('menu', { name: 'Theme' }).getByRole('menuitemradio', { name: 'Light', exact: true }).click();
+      await control.click();
+      if (phone) {
+        await page.getByTestId('public-menu').getByRole('radiogroup', { name: 'Theme' }).getByText('Light', { exact: true }).click();
+      } else {
+        await page.getByRole('menu', { name: 'Theme' }).getByRole('menuitemradio', { name: 'Light', exact: true }).click();
+      }
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
       await context.close();
     }

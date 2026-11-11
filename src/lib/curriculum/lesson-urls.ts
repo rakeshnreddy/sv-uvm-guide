@@ -4,8 +4,11 @@
  * Every lesson has exactly one URL: `/curriculum/<TierFolder>/<ModuleFolder>/<lesson>`,
  * with exact folder case and `index` for a module's first page. The lesson route
  * permanently redirects every other form that resolves to a lesson: lowercase
- * "pretty" slugs, two-segment module URLs, one-segment tier URLs and URLs with
- * extra trailing segments.
+ * "pretty" slugs, two-segment module URLs and URLs with extra trailing
+ * segments. A one-segment tier URL is not a lesson: it answers with a 307 to
+ * the tier's section of /curriculum (sectionRedirect in src/middleware.ts, and
+ * tierRedirectHref in the lesson route as the fallback), so this classifier
+ * calls it not-found.
  *
  * Pure and small: it reads only the generated curriculum data, so the
  * not-found page can use the suggestions on the client.
@@ -32,6 +35,12 @@ function safeDecode(segment: string): string {
   }
 }
 
+/** True for a tier folder name in any accepted spelling ("T1_Foundational", "t1-foundational"). */
+function isTierSegment(segment: string): boolean {
+  const pretty = toPrettyCurriculumSlug(segment);
+  return curriculumData.some((tier) => tier.slug === segment || toPrettyCurriculumSlug(tier.slug) === pretty);
+}
+
 export type CurriculumRequest =
   /** The request already uses the canonical URL: render the lesson. */
   | { kind: "lesson"; slug: LessonSlug; path: string }
@@ -50,6 +59,8 @@ export type CurriculumRequest =
 export function resolveCurriculumRequest(rawSegments: readonly string[] | undefined): CurriculumRequest {
   const segments = (rawSegments ?? []).map(safeDecode).filter((segment) => segment.length > 0);
   if (segments.length === 0) return { kind: "not-found" };
+
+  if (segments.length === 1 && isTierSegment(segments[0])) return { kind: "not-found" };
 
   const normalized = normalizeSlug([...segments]);
   if (normalized.length !== 3) return { kind: "not-found" };

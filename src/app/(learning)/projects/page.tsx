@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { InfoPage } from '@/components/templates/InfoPage';
+import { siteLabel } from '@/lib/nav-labels';
 import { LABS_HREF } from '@/lib/site-links';
 
 import { resolveProjects, type ResolvedProject } from './resolve-projects';
@@ -16,7 +17,7 @@ import { resolveProjects, type ResolvedProject } from './resolve-projects';
  */
 
 export const metadata: Metadata = {
-  title: 'Projects',
+  title: siteLabel('/projects'),
   description:
     'Nine testbench projects, one for each milestone from a self-checking directed testbench to a subsystem capstone: the design under test, required features, acceptance criteria, preparing lessons and labs, and an honest effort estimate.',
 };

@@ -2,13 +2,16 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { PlacementQuiz } from '@/components/assessment/PlacementQuiz';
+import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
 import { placementTierRecommendations } from '@/components/assessment/placementQuizData';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { resolvePlacementPlan, resolveRoutes, type PlacementPlan } from '@/lib/learning-paths';
+import { siteLabel, siteLink } from '@/lib/nav-labels';
+import { CURRICULUM_HREF, EXPERT_INDEX_HREF, PLACEMENT_QUIZ_HREF, START_HERE_HREF } from '@/lib/site-links';
 
 export const metadata: Metadata = {
-  title: 'Find your level',
+  title: siteLabel(PLACEMENT_QUIZ_HREF),
   description:
     'Ten questions on SystemVerilog, UVM and debug habits that recommend a starting lesson on the Junior, Practitioner or Expert route.',
 };
@@ -46,17 +49,21 @@ export default function PlacementQuizPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-10 pb-16">
-      <header>
-        <p className="text-xs font-medium text-subtle">Skill placement</p>
-        <h1 className="mt-2 text-h1 text-foreground">Find your level</h1>
-        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
-          Answer ten questions to find where to start. Your result is a starting lesson on one of the three{' '}
-          <Link href="/curriculum#routes" className={inlineLink}>
-            learning routes
-          </Link>
-          , a short list of lessons to skim first, and lessons for any area that scored under 75%.
-        </p>
-      </header>
+      {/* Curriculum › Find your level: the quiz is listed under Learn, beside the curriculum. */}
+      <div>
+        <Breadcrumbs items={[siteLink(CURRICULUM_HREF), { label: siteLabel(PLACEMENT_QUIZ_HREF) }]} className="-mt-2 mb-4" />
+        <header>
+          <p className="text-xs font-medium text-subtle">Skill placement</p>
+          <h1 className="mt-2 text-h1 text-foreground">{siteLabel(PLACEMENT_QUIZ_HREF)}</h1>
+          <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
+            Answer ten questions to find where to start. Your result is a starting lesson on one of the three{' '}
+            <Link href={START_HERE_HREF} className={inlineLink}>
+              learning routes
+            </Link>
+            , a short list of lessons to skim first, and lessons for any area that scored under 75%.
+          </p>
+        </header>
+      </div>
 
       <PlacementQuiz plans={plans} />
 
@@ -106,7 +113,7 @@ export default function PlacementQuizPage() {
             Expert
           </Link>{' '}
           routes on the curriculum page, or jump to the{' '}
-          <Link href="/curriculum/expert-index" className={inlineLink}>
+          <Link href={EXPERT_INDEX_HREF} className={inlineLink}>
             expert index
           </Link>
           .

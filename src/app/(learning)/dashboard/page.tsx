@@ -7,10 +7,13 @@ import { buildCurriculumTotals, type ExerciseMeta, type LabMeta } from '@/lib/le
 import { resolveRoutes } from '@/lib/learning-paths';
 import { getPracticePage } from '@/lib/practice-links';
 
+import { siteLabel } from '@/lib/nav-labels';
+import { DASHBOARD_HREF } from '@/lib/site-links';
+
 import DashboardPageClient, { type DashboardRoute } from './DashboardPageClient';
 
 export const metadata: Metadata = {
-  title: 'Your learning',
+  title: siteLabel(DASHBOARD_HREF),
   description:
     'Lessons, labs, flashcard reviews, notes and quiz results recorded in this browser, with what to do next.',
 };

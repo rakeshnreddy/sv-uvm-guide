@@ -1,14 +1,15 @@
 import React from 'react';
 import ScoreboardConnectorExercise from '@/components/exercises/ScoreboardConnectorExercise';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import { requirePracticePage } from '@/lib/practice-links';
 
 // The back link and lesson list come from the practice map (src/lib/practice-links.ts).
-const practice = requirePracticePage('/exercises/scoreboard-connector');
+const HREF = '/exercises/scoreboard-connector';
+const practice = requirePracticePage(HREF);
 
 const ScoreboardConnectorPage: React.FC = () => {
-  const pageTitle = `Exercise: ${practice.title}`;
+  const pageTitle = practice.title;
 
   const content = (
     <>
@@ -42,9 +43,9 @@ const ScoreboardConnectorPage: React.FC = () => {
   );
 
   return (
-    <InfoPage gutter={false} title={pageTitle}>
+    <PracticeInfoPage href={HREF} title={pageTitle}>
       {content}
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 
@@ -52,7 +53,7 @@ export default ScoreboardConnectorPage;
 
 export async function generateMetadata() {
   return {
-    title: `Exercise: ${practice.title}`,
+    title: practice.title,
     description: "Wire a monitor, predictor, scoreboard FIFOs and coverage in a UVM env's connect_phase, graded by a model of uvm-core's connection rules.",
   };
 }

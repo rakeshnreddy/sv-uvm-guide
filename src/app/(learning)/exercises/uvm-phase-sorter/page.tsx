@@ -1,14 +1,15 @@
 import React from 'react';
 import UvmPhaseSorterExercise from '@/components/exercises/UvmPhaseSorterExercise';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import { requirePracticePage } from '@/lib/practice-links';
 
 // The back link and lesson list come from the practice map (src/lib/practice-links.ts).
-const practice = requirePracticePage('/exercises/uvm-phase-sorter');
+const HREF = '/exercises/uvm-phase-sorter';
+const practice = requirePracticePage(HREF);
 
 const UvmPhaseSorterPage: React.FC = () => {
-  const pageTitle = `Exercise: ${practice.title}`;
+  const pageTitle = practice.title;
 
   const content = (
     <>
@@ -41,9 +42,9 @@ const UvmPhaseSorterPage: React.FC = () => {
   );
 
   return (
-    <InfoPage gutter={false} title={pageTitle}>
+    <PracticeInfoPage href={HREF} title={pageTitle}>
       {content}
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 
@@ -51,7 +52,7 @@ export default UvmPhaseSorterPage;
 
 export async function generateMetadata() {
   return {
-    title: `Exercise: ${practice.title}`,
+    title: practice.title,
     description: practice.description,
   };
 }

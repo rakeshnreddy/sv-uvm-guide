@@ -1,13 +1,14 @@
 import React from 'react';
 import type { Metadata } from 'next';
 
+import { siteLabel } from '@/lib/nav-labels';
 import { RESOURCE_GROUPS, VERIFIED_ON } from '@/lib/resources';
 import { resolveResources } from '@/lib/resources-lessons';
 
 import ResourceLibrary from './ResourceLibrary';
 
 export const metadata: Metadata = {
-  title: 'Resources',
+  title: siteLabel('/resources'),
   description:
     'A checked reference library for SystemVerilog, UVM and AMBA: IEEE 1800-2023 and IEEE 1800.2-2020 (free through the IEEE GET Program), Accellera uvm-core, the Arm AMBA specifications by document number, and free tools such as Verilator, Icarus Verilog, EDA Playground, cocotb, pyuvm and riscv-dv, with the lessons that use each one.',
 };

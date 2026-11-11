@@ -1,12 +1,22 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { EXPERT_INDEX_HREF, PLACEMENT_QUIZ_HREF } from '@/lib/learning-paths';
-import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from '@/lib/site-links';
+import {
+  CURRICULUM_HREF,
+  DASHBOARD_HREF,
+  INTERVIEW_PREP_HREF,
+  LABS_HREF,
+  START_HERE_HREF,
+  tierSectionHref,
+  tierSectionId,
+} from '@/lib/site-links';
 
 /**
  * Lead integration after the navigation foundations
- * (docs/curriculum-quality/reviews/lead-integration.build.md): the navbar and
- * course-outline entry points (G30-SIDE-04/05, G30-PATH-07), the home route
+ * (docs/curriculum-quality/reviews/lead-integration.build.md), brought up to
+ * the phase 2 navigation (SPEC-phases-2-4.md): the navbar's five top items,
+ * the course outline with no repeated site links and tier headings that open
+ * their sections of /curriculum, the lesson breadcrumb, the home route
  * cards (NB2 request 3), the lab callout's progress note (labs open without
  * an account and keep progress in this browser) and a single theme toggle on
  * Alt/Option+T (NB3 request 4).
@@ -26,29 +36,28 @@ const mainNav = (page: Page) => page.getByRole('banner').getByRole('navigation',
 test.describe('navbar entry points at 1280 px', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test('links Start here, Labs, Interview prep and Dashboard', async ({ page }) => {
+  test('shows the five top items; Labs sits in the Practice menu, and "Start here" is gone', async ({ page }) => {
     await page.goto('/practice');
     await waitForShell(page);
     const nav = mainNav(page);
-    await expect(nav.getByRole('link', { name: 'Start here', exact: true })).toHaveAttribute('href', START_HERE_HREF);
-    await expect(nav.getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
+    await expect(nav.getByRole('link', { name: 'Curriculum', exact: true })).toHaveAttribute('href', CURRICULUM_HREF);
     await expect(nav.getByRole('link', { name: 'Interview prep', exact: true })).toHaveAttribute('href', INTERVIEW_PREP_HREF);
-    await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toHaveAttribute('href', '/dashboard');
+    await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toHaveAttribute('href', DASHBOARD_HREF);
+    await expect(nav.getByRole('link', { name: 'Start here', exact: true })).toHaveCount(0);
+
+    const practice = nav.getByRole('button', { name: 'Practice', exact: true });
+    await practice.click();
+    await expect(practice).toHaveAttribute('aria-expanded', 'true');
+    const labs = nav.getByRole('link', { name: 'Labs', exact: true });
+    await expect(labs).toHaveAttribute('href', LABS_HREF);
     // A link to part of a page never claims to be the current page.
-    await expect(nav.getByRole('link', { name: 'Labs', exact: true })).not.toHaveAttribute('aria-current');
+    await expect(labs).not.toHaveAttribute('aria-current');
   });
 
-  test('"Start here" opens the route chooser on the overview', async ({ page }) => {
-    await page.goto('/practice');
-    await waitForShell(page);
-    await mainNav(page).getByRole('link', { name: 'Start here', exact: true }).click();
-    await expect(page).toHaveURL(/\/curriculum#routes$/);
-    await expect(page.getByRole('region', { name: 'Choose your route' })).toBeInViewport();
-  });
-
-  test('"Labs" lands on the labs section of the Practice Hub', async ({ page }) => {
+  test('"Labs" in the Practice menu lands on the labs section of the Practice hub', async ({ page }) => {
     await page.goto('/curriculum');
     await waitForShell(page);
+    await mainNav(page).getByRole('button', { name: 'Practice', exact: true }).click();
     await mainNav(page).getByRole('link', { name: 'Labs', exact: true }).click();
     await expect(page).toHaveURL(/\/practice#labs$/);
     await expect(page.getByRole('heading', { level: 2, name: 'Labs', exact: true })).toBeInViewport();
@@ -63,50 +72,71 @@ test.describe('navbar entry points at 1280 px', () => {
     await expect(mainNav(page).getByRole('link', { name: 'Interview prep', exact: true })).toHaveAttribute('aria-current', 'page');
   });
 
-  test('the course outline lists the same quick links; a lesson page docks them below xl and leaves them to the navbar from xl up', async ({ page }) => {
-    await page.goto('/practice');
-    await waitForShell(page);
-    await page.getByRole('button', { name: 'Course outline', exact: true }).click();
-    const quickLinks = page.getByRole('dialog', { name: 'Course outline' }).getByRole('list', { name: 'Quick links' });
-    await expect(quickLinks.getByRole('link')).toHaveText([
-      'Start here',
-      'Curriculum overview',
-      'Practice hub',
-      'Labs',
-      'Interview prep',
-      'Dashboard',
-    ]);
-    await page.keyboard.press('Escape');
-
+  test('the docked course outline repeats no site links, and its tier headings open their sections of /curriculum', async ({ page }) => {
     await page.goto(MAILBOXES);
     await waitForShell(page);
     const outline = page.getByRole('navigation', { name: 'Course outline' });
-    // From xl (1280) up the navbar carries these links, so the docked outline hides its copy.
-    await expect(outline.locator('ul[aria-label="Quick links"]')).toBeHidden();
-    await expect(mainNav(page).getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
+    await expect(outline.getByRole('link', { name: 'Mailboxes', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(outline.getByRole('list', { name: 'Quick links' })).toHaveCount(0);
+    for (const href of [CURRICULUM_HREF, LABS_HREF, INTERVIEW_PREP_HREF, DASHBOARD_HREF, START_HERE_HREF]) {
+      await expect(outline.locator(`a[href="${href}"]`)).toHaveCount(0);
+    }
 
-    // Below xl the docked outline still lists them.
-    await page.setViewportSize({ width: 1024, height: 800 });
-    const docked = outline.getByRole('list', { name: 'Quick links' });
-    await expect(docked.getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', LABS_HREF);
+    await outline.getByRole('link', { name: /^Tier 3: Advanced\W/ }).click();
+    await expect(page).toHaveURL(new RegExp(`${tierSectionHref('T3_Advanced')}$`));
+    const heading = page.locator(`#${tierSectionId('T3_Advanced')}`).getByRole('heading', { level: 3 });
+    await expect(heading).toBeInViewport();
+    // The sticky 64 px header does not cover the heading.
+    expect((await heading.boundingBox())!.y).toBeGreaterThanOrEqual(64);
+  });
+
+  test('the lesson breadcrumb links the tier to its section and shows the module code as a signal tag', async ({ page }) => {
+    await page.goto(MAILBOXES);
+    await waitForShell(page);
+    const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
+    await expect(trail.getByRole('link', { name: 'Tier 2: Intermediate', exact: true })).toHaveAttribute('href', '/curriculum#t2');
+    await expect(trail.locator('[data-signal-tag]')).toHaveText('I-SV-5');
+    await expect(trail.locator('a[aria-current="page"]')).toHaveAttribute('href', MAILBOXES);
   });
 });
 
 test.describe('navbar entry points on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('the menu lists every entry point and the header still fits', async ({ page }) => {
+  test('the menu lists every top item and the header still fits', async ({ page }) => {
     await page.goto('/curriculum');
     await waitForShell(page);
     const header = page.getByRole('banner');
     expect(await header.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.getByRole('button', { name: 'Open main menu' }).click();
     const menu = page.getByTestId('mobile-menu');
-    for (const name of ['Start here', 'Curriculum', 'Practice', 'Labs', 'Interview prep', 'Dashboard']) {
+    for (const name of ['Curriculum', 'Practice hub', 'Labs', 'Interview prep', 'Dashboard']) {
       await expect(menu.getByRole('link', { name, exact: true })).toBeVisible();
     }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
+  });
+
+  test('the outline drawer starts with "Curriculum overview" and shows the current lesson', async ({ page }) => {
+    await page.goto('/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index');
+    await waitForShell(page);
+    await page.getByRole('button', { name: 'Course outline', exact: true }).click();
+    const drawer = page.getByRole('dialog', { name: 'Course outline' });
+    await expect(drawer.getByRole('link').first()).toHaveText('Curriculum overview');
+    await expect(drawer.getByRole('link').first()).toHaveAttribute('href', CURRICULUM_HREF);
+    const current = drawer.locator('a[aria-current="page"]');
+    await expect(current).toBeFocused();
+    await expect(current).toBeInViewport();
+  });
+
+  test('the lesson breadcrumb is one back link to the module', async ({ page }) => {
+    await page.goto(MAILBOXES);
+    await waitForShell(page);
+    const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
+    await expect(trail.locator('ol')).toBeHidden();
+    const back = trail.getByRole('link');
+    await expect(back).toHaveCount(1);
+    await expect(back).toHaveAttribute('href', '/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index');
   });
 });
 

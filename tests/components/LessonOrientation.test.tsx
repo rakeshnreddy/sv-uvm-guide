@@ -51,6 +51,26 @@ describe("<LessonOrientation />", () => {
     expect(within(list).getAllByRole("link")[0]).toHaveAttribute("href", "/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index");
   });
 
+  it("renders the module code, the milestones and the prerequisite codes as signal tags", () => {
+    const context = renderHeader(["T4_Expert", "E-PWR-1_Power_Aware_Verification", "index"]);
+    const header = document.querySelector("header")!;
+    const eyebrow = header.querySelector("p")!;
+    expect(eyebrow.querySelector("[data-signal-tag]")).toHaveTextContent(context.module.code);
+    expect(eyebrow).toHaveTextContent(`${context.module.code}: `);
+
+    const prerequisite = within(screen.getByRole("list", { name: "Before you start" })).getAllByRole("link")[0];
+    expect(prerequisite.querySelector("[data-signal-tag]")).toHaveTextContent("I-SV-8");
+    expect(prerequisite).toHaveAccessibleName(/^I-SV-8 ?: /);
+    // The linked-tag style ModuleCard uses: the tag takes the accent on hover and keyboard focus.
+    expect(prerequisite).toHaveClass("group");
+    expect(prerequisite.querySelector("[data-signal-tag]")).toHaveClass("group-hover:text-primary", "group-focus-visible:border-primary");
+
+    for (const milestone of context.milestones) {
+      const tag = Array.from(header.querySelectorAll("[data-signal-tag]")).find((el) => el.textContent === milestone.id);
+      expect(tag, milestone.id).toBeDefined();
+    }
+  });
+
   it("says when there is nothing to read first", () => {
     renderHeader(["T1_Foundational", "F1A_The_Cost_of_Bugs", "index"]);
     expect(screen.getByText("No prerequisites: this lesson is a starting point.")).toBeInTheDocument();

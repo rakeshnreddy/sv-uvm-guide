@@ -22,7 +22,17 @@
  */
 import { curriculumData } from '@/lib/curriculum-data';
 import type { LabManifest } from '@/lib/lab-manifest';
-import { getLabById } from '@/lib/lab-registry';
+import { getAllLabs, getLabById } from '@/lib/lab-registry';
+import {
+  FOOTER_NAV,
+  PRACTICE_HREF,
+  PRACTICE_SECTION_HREF,
+  PRACTICE_SECTION_ID,
+  PRIMARY_NAV,
+  isNavGroup,
+  type NavLink,
+  type PracticeSection,
+} from '@/lib/site-links';
 
 /** `<ModuleFolder>/<lesson>`, for example `I-SV-2B_Advanced_Constrained_Randomization/solver-debug`. */
 export type LessonRef = string;
@@ -621,7 +631,7 @@ export interface LabBackLink {
 export function getLabBackLink(lab: LabLike): LabBackLink {
   const [lesson] = getLabLessons(lab);
   if (lesson) return { href: lesson.href, label: lesson.isModuleIndex ? 'Back to module' : 'Back to lesson', lesson };
-  return { href: '/practice#labs', label: 'Back to the Practice hub' };
+  return { href: PRACTICE_SECTION_HREF.labs, label: 'Back to the Practice hub' };
 }
 
 export interface LabPrerequisite {
@@ -807,4 +817,143 @@ function practiceEntriesFor(
         after: teacher && teacher.order > lesson.order ? teacher : undefined,
       };
     });
+}
+
+// ---------------------------------------------------------------------------
+// Sections of /practice, breadcrumbs and the practice pager
+// ---------------------------------------------------------------------------
+
+/** The section of /practice that lists each kind of item. */
+export const PRACTICE_KIND_SECTION: Readonly<Record<PracticeKind, PracticeSection>> = {
+  lab: 'labs',
+  exercise: 'exercises',
+  interactive: 'interactiveModels',
+  diagram: 'diagrams',
+  chart: 'charts',
+  tool: 'tools',
+  interview: 'interviewPrep',
+};
+
+/**
+ * Section titles for the sections the navigation config does not list. Labs,
+ * Exercises and Interactive models take their label from the Practice menu in
+ * src/lib/site-links.ts, so they are not repeated here.
+ */
+export const SECTION_TITLES_OUTSIDE_NAV: Readonly<Partial<Record<PracticeSection, string>>> = {
+  diagrams: 'Diagrams',
+  charts: 'Charts',
+  tools: 'Tools',
+  interviewPrep: 'Interview prep',
+};
+
+const NAV_LINKS: readonly NavLink[] = [
+  ...PRIMARY_NAV.flatMap((item) => (isNavGroup(item) ? item.children : [item])),
+  ...FOOTER_NAV.flatMap((group) => group.children),
+];
+
+export interface PracticeSectionLink {
+  section: PracticeSection;
+  /** The section's id on /practice (PRACTICE_SECTION_ID). */
+  id: string;
+  /** The section's title: its nav label when the navigation lists it. */
+  label: string;
+  /** `/practice#<id>`. */
+  href: string;
+}
+
+/**
+ * One section of /practice: its id, its label (from the nav config where
+ * listed, else SECTION_TITLES_OUTSIDE_NAV) and its link. Throws when neither
+ * names the section, so a section cannot ship without a title.
+ */
+export function practiceSectionLink(
+  section: PracticeSection,
+  navLinks: readonly NavLink[] = NAV_LINKS,
+  fallbacks: Readonly<Partial<Record<PracticeSection, string>>> = SECTION_TITLES_OUTSIDE_NAV,
+): PracticeSectionLink {
+  const href = PRACTICE_SECTION_HREF[section];
+  const label = navLinks.find((link) => link.href === href)?.label ?? fallbacks[section];
+  if (!label) throw new Error(`The practice section ${section} (${href}) has no label: add it to the nav config in src/lib/site-links.ts or to SECTION_TITLES_OUTSIDE_NAV`);
+  return { section, id: PRACTICE_SECTION_ID[section], label, href };
+}
+
+/** The first crumb of every practice trail: the "Practice" menu, linking to /practice. */
+export function practiceRootLink(): NavLink {
+  const group = PRIMARY_NAV.find((item) => isNavGroup(item) && item.children.some((child) => child.href === PRACTICE_HREF));
+  if (!group) throw new Error('The Practice menu is missing from PRIMARY_NAV in src/lib/site-links.ts');
+  return { label: group.label, href: PRACTICE_HREF };
+}
+
+/** Practice › <section> › <item>: the item is the current page and carries no link. */
+export function practiceBreadcrumbs(item: Pick<PracticeItem, 'title' | 'kind'>): { label: string; href?: string }[] {
+  const section = practiceSectionLink(PRACTICE_KIND_SECTION[item.kind]);
+  return [practiceRootLink(), { label: section.label, href: section.href }, { label: item.title }];
+}
+
+/** A neighbour in the pager: plain data, safe to pass to any component. */
+export interface PracticePagerLink {
+  title: string;
+  href: string;
+  /** The teaching lesson's module code and title, for the card's second line. */
+  lesson?: { code: string; title: string };
+}
+
+export interface PracticePagerData {
+  kind: PracticeKind;
+  section: PracticeSectionLink;
+  prev?: PracticePagerLink;
+  next?: PracticePagerLink;
+}
+
+function toPagerLink(item: PracticeItem): PracticePagerLink | undefined {
+  if (!item.href) return undefined;
+  const [lesson] = item.lessons;
+  return { title: item.title, href: item.href, lesson: lesson ? { code: lesson.code, title: lesson.title } : undefined };
+}
+
+/**
+ * The previous and next items around `id` in `items` (already in curriculum
+ * order), skipping items that cannot be opened. Undefined ends at the first
+ * and last item; both undefined when `id` is not in the list.
+ */
+export function pagerNeighbours(
+  items: readonly PracticeItem[],
+  id: string,
+): { prev?: PracticePagerLink; next?: PracticePagerLink } {
+  const openable = items.filter((item) => item.href);
+  const index = openable.findIndex((item) => item.id === id);
+  if (index < 0) return {};
+  return { prev: openable[index - 1] && toPagerLink(openable[index - 1]), next: openable[index + 1] && toPagerLink(openable[index + 1]) };
+}
+
+/**
+ * The pager for the practice page or lab at `href`: back to its section of
+ * /practice, and the previous and next item of the same kind in curriculum
+ * order. Undefined for an href that is not a practice page or an available lab.
+ */
+export function getPracticePager(href: string, labs: readonly LabManifest[] = getAllLabs()): PracticePagerData | undefined {
+  const labMatch = /^\/practice\/lab\/([^/?#]+)$/.exec(href);
+  let kind: PracticeKind;
+  let items: PracticeItem[];
+  let id: string;
+  if (labMatch) {
+    kind = 'lab';
+    items = getPracticeLabItems(labs);
+    id = `lab:${decodeURIComponent(labMatch[1])}`;
+  } else {
+    const page = getPracticePage(href);
+    if (!page) return undefined;
+    kind = page.kind;
+    items = getPracticePages().filter((item) => item.kind === page.kind);
+    id = page.id;
+  }
+  if (!items.some((item) => item.id === id && item.href)) return undefined;
+  return { kind, section: practiceSectionLink(PRACTICE_KIND_SECTION[kind]), ...pagerNeighbours(items, id) };
+}
+
+/** Like getPracticePager, but throws for an unmapped route. */
+export function requirePracticePager(href: string): PracticePagerData {
+  const pager = getPracticePager(href);
+  if (!pager) throw new Error(`No practice pager for ${href}: add it to PRACTICE_PAGES or the lab registry`);
+  return pager;
 }

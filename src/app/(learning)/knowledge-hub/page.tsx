@@ -1,5 +1,7 @@
 import React from 'react';
 import type { Metadata } from 'next';
+import { siteLabel } from '@/lib/nav-labels';
+
 import KnowledgeHubClient from './KnowledgeHubClient';
 
 /*
@@ -9,7 +11,7 @@ import KnowledgeHubClient from './KnowledgeHubClient';
  * is in the sitemap and the footer's site map.
  */
 export const metadata: Metadata = {
-  title: 'Knowledge hub',
+  title: siteLabel('/knowledge-hub'),
   description:
     'A map of every module in the SystemVerilog, UVM and AMBA curriculum with its prerequisites, and a searchable list of modules, lessons and key terms linked to the lessons that teach them.',
 };

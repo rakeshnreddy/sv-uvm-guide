@@ -15,15 +15,18 @@ import React, {
 } from "react";
 import { Search } from "lucide-react";
 
+import { SignalTag } from "@/components/ui/SignalTag";
+import { CURRICULUM_HREF, PRACTICE_HUB_LINK } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
 import { focusAfterNavigation } from "./focus-target";
 import { loadSearchDocuments } from "./load-search-index";
 import { useIsApplePlatform } from "./platform";
 import {
-  describeResult,
   MIN_QUERY_LENGTH,
+  resultContext,
   resultKindLabel,
+  resultTitle,
   searchCurriculum,
   type SearchDocument,
   type SearchResult,
@@ -46,9 +49,33 @@ export interface SearchComboboxProps {
   className?: string;
 }
 
-type LoadState = "idle" | "loading" | "ready" | "error";
+export type LoadState = "idle" | "loading" | "ready" | "error";
 
 const EXAMPLE_QUERIES = ["mailbox", "WSTRB", "uvm_config_db"];
+
+/** The field's placeholder and accessible name, in the navbar and in the dialog. */
+export const SEARCH_PLACEHOLDER = "Search lessons, labs and practice";
+
+/**
+ * The keyboard hint inside the navbar field. Hidden on phones (the field is
+ * not there) and between lg and xl, where the field is too narrow for both
+ * the hint and the placeholder.
+ */
+export const SHORTCUT_HINT_VISIBILITY = "hidden sm:inline-block lg:hidden xl:inline-block";
+
+/** Right padding that keeps typed text clear of the hint, dropped wherever the hint is hidden. */
+export const SHORTCUT_FIELD_PADDING = "pr-3 sm:pr-16 lg:pr-3 xl:pr-16";
+
+/** What the index covers, for the empty and no-result states. */
+export const SEARCH_SCOPE = "lessons and their sections, labs, exercises, interactive models, tools, interview questions and reference pages";
+
+/** The status line under the field for a query of at least MIN_QUERY_LENGTH characters. */
+export function searchStatus(query: string, loadState: LoadState, resultCount: number | null): string {
+  if (loadState === "error") return "Search is unavailable right now.";
+  if (resultCount === null) return "Loading the search index…";
+  if (resultCount === 0) return `Nothing matches “${query}”. Search covers ${SEARCH_SCOPE}.`;
+  return `${resultCount} ${resultCount === 1 ? "result" : "results"}.`;
+}
 
 function isModifiedClick(event: MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
@@ -58,8 +85,10 @@ function isModifiedClick(event: MouseEvent): boolean {
  * Search field with a list of results (ARIA 1.2 combobox with list
  * autocomplete and automatic selection): the first result is highlighted,
  * ↑/↓ move, Enter opens, Escape closes the list. Each result is a real link
- * to the lesson or to the heading's anchor, so it also works with a mouse,
- * a middle-click or "open in new tab".
+ * to the lesson, the heading's anchor, or the lab, exercise, model, tool,
+ * interview bank or reference page, so it also works with a mouse, a
+ * middle-click or "open in new tab". Each result names its kind in text and
+ * shows its module code as a signal tag.
  */
 export default function SearchCombobox({
   variant,
@@ -187,15 +216,8 @@ export default function SearchCombobox({
     focusAfterNavigation(result.doc.href);
   };
 
-  let status = "";
-  if (queryReady) {
-    if (loadState === "error") status = "Search is unavailable right now.";
-    else if (!docs) status = "Loading the search index…";
-    else if (results.length === 0) status = `No lessons or sections match “${trimmed}”.`;
-    else status = `${results.length} ${results.length === 1 ? "result" : "results"}.`;
-  }
-
-  const placeholder = commandTarget ? `Search lessons… (${apple ? "⌘K" : "Ctrl K"})` : "Search lessons and sections";
+  const status = queryReady ? searchStatus(trimmed, loadState, docs ? results.length : null) : "";
+  const shortcut = commandTarget ? (apple ? "⌘K" : "Ctrl K") : null;
 
   return (
     <div className={cn("relative w-full", className)} onBlur={onBlur}>
@@ -207,7 +229,7 @@ export default function SearchCombobox({
         <input
           type="text"
           role="combobox"
-          aria-label="Search lessons and sections"
+          aria-label={SEARCH_PLACEHOLDER}
           aria-autocomplete="list"
           aria-expanded={listVisible}
           aria-controls={listboxId}
@@ -221,7 +243,7 @@ export default function SearchCombobox({
           autoCapitalize="none"
           spellCheck={false}
           enterKeyHint="go"
-          placeholder={placeholder}
+          placeholder={SEARCH_PLACEHOLDER}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -233,12 +255,27 @@ export default function SearchCombobox({
             setPopupOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className={cn(
+            "h-10 w-full rounded-lg border border-input bg-background pl-9 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            shortcut ? SHORTCUT_FIELD_PADDING : "pr-3",
+          )}
         />
+        {shortcut && (
+          <kbd
+            aria-hidden="true"
+            data-search-shortcut=""
+            className={cn(
+              "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border px-1.5 py-0.5 font-mono text-label text-muted-foreground",
+              SHORTCUT_HINT_VISIBILITY,
+            )}
+          >
+            {shortcut}
+          </kbd>
+        )}
       </div>
 
       <p id={hintId} className={variant === "inline" && !queryReady ? "mt-3 text-sm text-muted-foreground" : "sr-only"}>
-        {`Type at least ${MIN_QUERY_LENGTH} characters. Try ${EXAMPLE_QUERIES.map((example) => `“${example}”`).join(", ")}.`}
+        {`Search ${SEARCH_SCOPE}. Type at least ${MIN_QUERY_LENGTH} characters, for example ${EXAMPLE_QUERIES.map((example) => `“${example}”`).join(", ")}.`}
         <span className="sr-only"> Use the up and down arrow keys to choose a result, then Enter to open it.</span>
       </p>
 
@@ -258,9 +295,14 @@ export default function SearchCombobox({
           {loadState === "error" ? (
             <p className="px-3 py-3 text-sm text-muted-foreground">
               Search is unavailable right now.{" "}
-              <Link href="/curriculum" className="font-medium text-foreground underline underline-offset-2">
+              <Link href={CURRICULUM_HREF} className="font-medium text-foreground underline underline-offset-2">
                 Browse the curriculum
+              </Link>{" "}
+              or the{" "}
+              <Link href={PRACTICE_HUB_LINK.href} className="font-medium text-foreground underline underline-offset-2">
+                {PRACTICE_HUB_LINK.label}
               </Link>
+              .
             </p>
           ) : (
             results.length === 0 && (
@@ -282,6 +324,7 @@ export default function SearchCombobox({
           >
             {results.map((result, index) => {
               const selected = index === active;
+              const context = resultContext(result.doc);
               return (
                 <li key={result.doc.id} role="none">
                   <Link
@@ -292,6 +335,7 @@ export default function SearchCombobox({
                     prefetch={false}
                     tabIndex={-1}
                     data-href={result.doc.href}
+                    data-kind={result.doc.kind}
                     onClick={(event) => onResultClick(event, result)}
                     onMouseMove={() => {
                       if (!selected) setActiveIndex(index);
@@ -302,12 +346,19 @@ export default function SearchCombobox({
                     )}
                   >
                     <span className="flex items-start justify-between gap-3">
-                      <span className="min-w-0 break-words text-sm font-medium text-foreground">{result.doc.title}</span>
-                      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-label text-muted-foreground">
+                      <span data-search-title="" className="min-w-0 break-words text-sm font-normal text-foreground">
+                        {resultTitle(result.doc)}
+                      </span>
+                      <span data-search-kind="" className="shrink-0 text-label font-medium text-muted-foreground">
                         {resultKindLabel(result.doc)}
                       </span>
                     </span>
-                    <span className="mt-0.5 block break-words text-xs text-muted-foreground">{describeResult(result.doc)}</span>
+                    {(context.code || context.text) && (
+                      <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        {context.code && <SignalTag code={context.code} />}
+                        {context.text && <span className="min-w-0 truncate">{context.text}</span>}
+                      </span>
+                    )}
                   </Link>
                 </li>
               );

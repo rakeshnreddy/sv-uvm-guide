@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 import { UvmPhaseTimelineVisualizer } from '@/components/visualizers/UvmPhaseTimelineVisualizer';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const HREF = '/practice/visualizations/uvm-phasing';
@@ -13,13 +13,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmPhasingDiagramPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description={practice.description}
       diagrams={[<UvmPhaseTimelineVisualizer key="uvm-phase-map" />, <UvmPhasingDiagram key="uvm-phasing" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

@@ -85,7 +85,6 @@ async function expectNotFound(page: PageModule, props?: unknown) {
 describe('community pages (community also needs accounts)', () => {
   const communityRoutes = [
     { name: 'community', module: '@/app/(learning)/community/page' },
-    { name: 'community test page', module: '@/app/(learning)/community/test-page/page' },
     { name: 'community post', module: '@/app/(learning)/community/post/[postId]/page' },
   ];
   const postProps = { params: { postId: 'post-1' } };
@@ -104,15 +103,6 @@ describe('community pages (community also needs accounts)', () => {
 
   it('community renders when community and accountUI are both on', async () => {
     const page = await loadRoute<PageModule>('@/app/(learning)/community/page', {
-      flags: { community: true, accountUI: true },
-    });
-    const element = await page.default();
-    expect(element).toBeDefined();
-    expect(notFound).not.toHaveBeenCalled();
-  });
-
-  it('community test page renders when community and accountUI are both on', async () => {
-    const page = await loadRoute<PageModule>('@/app/(learning)/community/test-page/page', {
       flags: { community: true, accountUI: true },
     });
     const element = await page.default();

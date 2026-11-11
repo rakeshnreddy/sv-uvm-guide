@@ -155,7 +155,7 @@ export function shortcutHelp({ apple, flags }: { apple: boolean; flags: Shortcut
   const mod = apple ? "Cmd" : "Ctrl";
   const alt = apple ? "Option" : "Alt";
   const anywhere: ShortcutHelpItem[] = [
-    { id: "search", keys: [[mod, "K"], ["/"]], description: "Search lessons and sections" },
+    { id: "search", keys: [[mod, "K"], ["/"]], description: "Search lessons, labs and practice" },
     { id: "outline", keys: [[mod, "B"]], description: "Show or hide the course outline" },
     { id: "go-curriculum", keys: [[alt, "1"]], description: "Go to the curriculum" },
     { id: "go-practice", keys: [[alt, "2"]], description: "Go to practice" },

@@ -1,11 +1,12 @@
 import React from 'react';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import { requirePracticePage } from '@/lib/practice-links';
 import SequencerArbitrationSandbox from '@/components/exercises/SequencerArbitrationSandbox';
 
 // The back link and lesson list come from the practice map (src/lib/practice-links.ts).
-const practice = requirePracticePage('/exercises/sequencer-arbitration');
+const HREF = '/exercises/sequencer-arbitration';
+const practice = requirePracticePage(HREF);
 
 export const metadata = {
   title: practice.title,
@@ -15,7 +16,7 @@ export const metadata = {
 
 const SequencerArbitrationPage: React.FC = () => {
   return (
-    <InfoPage gutter={false} title={practice.title}>
+    <PracticeInfoPage href={HREF} title={practice.title}>
       <LearnInLesson item={practice} />
       <p className="mb-6 text-muted-foreground">
         Three sequences share one driver. Choose a scenario or edit the sequences, predict which one the sequencer grants, then read the
@@ -26,7 +27,7 @@ const SequencerArbitrationPage: React.FC = () => {
       <div className="not-prose">
         <SequencerArbitrationSandbox />
       </div>
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

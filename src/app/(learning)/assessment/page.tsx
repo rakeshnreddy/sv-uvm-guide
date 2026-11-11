@@ -13,11 +13,16 @@ import { buildCurriculumTotals } from '@/lib/learner-stats';
 import { resolvePlacementPlan, resolveRoutes } from '@/lib/learning-paths';
 import { SITE_FEATURES } from '@/lib/site-features';
 
+import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
+import { learnerBreadcrumbs } from '@/components/learner/LearnerSectionNav';
+import { siteLabel } from '@/lib/nav-labels';
+import { SELF_ASSESSMENT_HREF } from '@/lib/site-links';
+
 import AssessmentPageClient from './AssessmentPageClient';
 import type { AssessmentLab, AssessmentPlacementPlan, PlacementAreaId } from './assessment-model';
 
 export const metadata: Metadata = {
-  title: 'Self-assessment',
+  title: siteLabel(SELF_ASSESSMENT_HREF),
   description:
     'Lessons done, quiz results, labs, flashcard reviews and your placement result per track, read from this browser, with the lessons and labs to do next.',
 };
@@ -68,12 +73,17 @@ export default function AssessmentPage() {
   ) as Record<PlacementAreaId, string>;
 
   return (
-    <AssessmentPageClient
-      curriculum={buildCurriculumTotals(curriculumData)}
-      labs={labs}
-      placementPlans={placementPlans}
-      placementAreaTitles={placementAreaTitles}
-      placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
-    />
+    <>
+      <div className="mx-auto w-full max-w-6xl">
+        <Breadcrumbs items={learnerBreadcrumbs('assessment')} className="-mt-2 mb-4" />
+      </div>
+      <AssessmentPageClient
+        curriculum={buildCurriculumTotals(curriculumData)}
+        labs={labs}
+        placementPlans={placementPlans}
+        placementAreaTitles={placementAreaTitles}
+        placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
+      />
+    </>
   );
 }

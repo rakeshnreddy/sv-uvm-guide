@@ -171,3 +171,17 @@ Estimated cost, from the per-agent costs measured in the curriculum programme (t
 - Switching theme while an interactive is mounted.
 - Real screen-reader testing.
 - The `/community` and `/notifications` routes, which are not in the sitemap.
+
+## Release log
+
+| Phase | Commit | Released | What shipped |
+|---|---|---|---|
+| 0 | `0e68e9ef` | 2026-11-10 | Lab editor on phones, landing claims, error text, shell accessibility |
+| 1 | `f215d1be` | 2026-11-10 | IBM Plex Sans, Light/Dark/System on new colour roles, chrome on tokens, slim public header, unboxed info pages |
+| 2 | the commit that adds this row | 2026-11-10 | One navigation config and the name SV/UVM Hub, five-item top navigation with the current item marked, header aligned with the page, public header with search and Start learning or Continue, outline without repeated links, one breadcrumb component, 307 redirects for tier and old index URLs, search across labs, exercises, models and reference pages, four-group footer, practice pager, home page served from the prerendered cache |
+
+Carried into later phases:
+
+- Phase 3: one set of page widths (page titles sit 32 px inside the header's frame, and header items move between lesson pages and other pages); the lesson header's eyebrow repeats the breadcrumb above it; signal tags on module cards; the knowledge hub tier switcher; the shared Textarea primitive; interactives that swap in late and move the page (E-PSS-1); the outline's scroll position cutting a row at 1024 px; one shared "latest lesson" function for the public header and the dashboard.
+- Phase 4: the landing hero card, its two filled actions and its alignment with the header.
+- Phase 5: tool names in lesson prose; SVG label overflow in eight lesson figures; coverage-bin chips on phones; topic keywords for practice items in search (the lab registry has no topic field yet); `getBreadcrumbs` in the generated curriculum data still links tier pages; the expert index takes 30 to 50 s to render in development, so confirm it is prerendered in production.

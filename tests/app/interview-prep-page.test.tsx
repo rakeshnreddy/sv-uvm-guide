@@ -53,6 +53,11 @@ describe('/interview-prep page', () => {
       .filter((href) => href.startsWith('/curriculum/'));
     expect(lessonLinks.length).toBeGreaterThan(banks.length);
     for (const href of lessonLinks) expect(href).toMatch(/^\/curriculum\/T[1-4]_[A-Za-z]+\/[^/]+\/[^/]+$/);
-    expect(screen.getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
+  });
+
+  it('is a top-level page, so it has no breadcrumb', () => {
+    render(<InterviewPrepPage />);
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Practice hub' })).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const HREF = '/practice/visualizations/uvm-component-relationships';
@@ -12,13 +12,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const UvmComponentRelationshipVisualizerPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description={practice.description}
       diagrams={[<AnimatedUvmTestbenchDiagram key="uvm-agent-topology" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

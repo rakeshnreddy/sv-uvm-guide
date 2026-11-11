@@ -2,6 +2,8 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { siteLabel } from "@/lib/nav-labels";
+
 import { HistoryLineage, HistoryTimeline } from "./HistoryTimeline";
 import { HISTORY_SOURCES, KEYWORD_EDITIONS } from "./history-timeline";
 
@@ -12,7 +14,7 @@ import { HISTORY_SOURCES, KEYWORD_EDITIONS } from "./history-timeline";
  */
 
 export const metadata: Metadata = {
-  title: "History of SystemVerilog and UVM",
+  title: siteLabel("/history"),
   description:
     "A sourced timeline of hardware verification languages and methodologies: Verilog (IEEE 1364), the Accellera SystemVerilog releases, IEEE 1800 from 2005 to 2023, e, and the path from VMM, AVM and OVM to UVM and IEEE 1800.2, with why each step happened.",
 };

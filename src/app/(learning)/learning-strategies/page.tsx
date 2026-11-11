@@ -3,18 +3,27 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { InfoPage } from "@/components/templates/InfoPage";
-import { LABS_HREF, PLACEMENT_QUIZ_HREF } from "@/lib/site-links";
+import {
+  LABS_HREF,
+  NOTEBOOK_HREF,
+  PLACEMENT_QUIZ_HREF,
+  PRACTICE_SECTION_HREF,
+  REVIEW_HREF,
+  SETTINGS_HREF,
+} from "@/lib/site-links";
+
+import { siteLabel } from "@/lib/nav-labels";
+
+const LEARNING_STRATEGIES_HREF = "/learning-strategies";
 
 export const metadata: Metadata = {
-  title: "Learning strategies",
+  title: siteLabel(LEARNING_STRATEGIES_HREF),
   description:
     "How to study SystemVerilog and UVM so it sticks: retrieval practice and spaced review with the lesson flashcards, Teach it back and the notebook, lesson quizzes, and deliberate practice in labs and exercises.",
 };
 
-const REVIEW_HREF = "/dashboard/review";
-const NOTEBOOK_HREF = "/dashboard/notebook";
-const EXERCISES_HREF = "/exercises";
-const BACKUP_HREF = "/settings#data";
+const EXERCISES_HREF = PRACTICE_SECTION_HREF.exercises;
+const BACKUP_HREF = `${SETTINGS_HREF}#data`;
 
 const linkClass =
   "rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background";
@@ -32,7 +41,7 @@ const sectionHeading = "mt-10 mb-3 text-h2 text-foreground";
 const LearningStrategiesPage = () => {
   return (
     <InfoPage gutter={false}
-      title="Learning strategies"
+      title={siteLabel(LEARNING_STRATEGIES_HREF)}
       description="A short guide to studying SystemVerilog and UVM so it stays with you, and to the study tools on this site."
     >
       <p className="lead text-lead text-muted-foreground">

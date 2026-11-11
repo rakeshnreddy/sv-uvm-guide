@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { samePageHash } from '@/components/curriculum/CurriculumBrowser';
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
 import { PLANNED_MODULES, buildCurriculumOverview, type LessonPosition } from '@/lib/curriculum-overview';
@@ -9,6 +10,7 @@ import { readLessonMinutes, readManifestTiers } from '@/lib/curriculum-scan';
 import { getAllLabs } from '@/lib/lab-registry';
 import { resolveMilestones, resolveRoutes } from '@/lib/learning-paths';
 import { ROUTE_STORAGE_KEY } from '@/lib/learning-route-state';
+import { tierSectionHref, tierSectionId } from '@/lib/site-links';
 
 type MockNextLinkProps = React.PropsWithChildren<Omit<React.ComponentProps<'a'>, 'href'> & { href: string }>;
 
@@ -192,6 +194,45 @@ describe('modules by tier', () => {
     expect(tierButton('Tier 3: Advanced')).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('gives each tier section the stable id from site-links, with a scroll margin for the sticky header', () => {
+    renderOverview();
+    for (const tier of manifestTiers) {
+      const section = document.getElementById(tierSectionId(tier.id))!;
+      expect(section.tagName).toBe('SECTION');
+      expect(section).toHaveClass('scroll-mt-24');
+      expect(section).toHaveAccessibleName(tier.title);
+    }
+  });
+
+  it('opens a tier when a link on the page points at its section (no hashchange fires for a client navigation)', () => {
+    window.history.pushState({}, '', '/curriculum');
+    renderOverview();
+    const link = document.createElement('a');
+    link.href = tierSectionHref('T4_Expert');
+    link.addEventListener('click', (event) => event.preventDefault());
+    document.body.appendChild(link);
+    expect(tierButton('Tier 4: Expert')).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(link);
+    expect(tierButton('Tier 4: Expert')).toHaveAttribute('aria-expanded', 'true');
+    link.remove();
+    window.history.pushState({}, '', '/');
+  });
+
+  it('renders module codes, prerequisites and milestones as signal tags', () => {
+    renderOverview();
+    fireEvent.click(tierButton('Tier 2: Intermediate'));
+    const oop = within(document.getElementById('t2-panel')!).getByRole('heading', { level: 4, name: /^I-SV-1:/ }).closest('article')!;
+    const tags = Array.from(oop.querySelectorAll('[data-signal-tag]')).map((tag) => tag.textContent);
+    expect(tags[0]).toBe('I-SV-1');
+    const prerequisite = within(oop).getByRole('link', { name: 'F4B: Bundling Signals with Interfaces and Modports' });
+    expect(prerequisite.querySelector('[data-signal-tag]')).toHaveTextContent('F4B');
+    // A 40 px target around the small tag.
+    expect(prerequisite).toHaveClass('min-h-[40px]');
+    const milestones = oop.querySelectorAll('dd ul li [data-signal-tag]');
+    for (const tag of Array.from(milestones)) expect(tag.textContent).toMatch(/^(M\d+|[A-Z][\w-]*)$/);
+    expect(oop.querySelector('.font-mono:not([data-signal-tag])')).toBeNull();
+  });
+
   it('opens every tier with a search match and says how many modules match', () => {
     renderOverview();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search modules and lessons' }), {
@@ -286,4 +327,20 @@ it('adds no main landmark or h1 of its own', () => {
   const { container } = renderOverview();
   expect(container.querySelector('main')).toBeNull();
   expect(container.querySelector('h1')).toBeNull();
+});
+
+describe('samePageHash', () => {
+  const here = { href: 'https://example.test/curriculum', pathname: '/curriculum' };
+
+  it('returns the hash of a link to a section of this page', () => {
+    expect(samePageHash('/curriculum#t3', here)).toBe('#t3');
+    expect(samePageHash('#t2', here)).toBe('#t2');
+    expect(samePageHash('/curriculum/#t1', here)).toBe('#t1');
+  });
+
+  it('returns null for other pages, other sites and links without a hash', () => {
+    expect(samePageHash('/practice#labs', here)).toBeNull();
+    expect(samePageHash('https://elsewhere.test/curriculum#t3', here)).toBeNull();
+    expect(samePageHash('/curriculum', here)).toBeNull();
+  });
 });

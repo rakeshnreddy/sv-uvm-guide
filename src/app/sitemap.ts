@@ -14,7 +14,10 @@ import { getPracticePages } from "@/lib/practice-links";
  *   /assessment): they show data kept in the visitor's browser, and robots.txt
  *   disallows /dashboard, /settings and /assessment;
  * - hidden pages, which answer 404 unless a switch turns them on
- *   (/notifications; /community).
+ *   (/notifications; /community);
+ * - URLs that redirect: the index pages that became sections of /practice
+ *   (/exercises and the rest, PRACTICE_INDEX_REDIRECTS in src/middleware.ts)
+ *   and the tier URLs, which became sections of /curriculum.
  */
 export const PUBLIC_PAGES = [
   "/",
@@ -23,7 +26,6 @@ export const PUBLIC_PAGES = [
   "/quiz/placement",
   "/practice",
   "/interview-prep",
-  "/exercises",
   "/learning-strategies",
   "/knowledge-hub",
   "/resources",

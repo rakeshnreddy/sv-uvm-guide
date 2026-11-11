@@ -3,7 +3,13 @@ import { renderToString } from 'react-dom/server';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LearnerSectionNav, LEARNER_SECTION_LINKS, type LearnerSection } from '@/components/learner/LearnerSectionNav';
+import {
+  LearnerSectionNav,
+  LEARNER_SECTION_LINKS,
+  learnerBreadcrumbs,
+  type LearnerSection,
+} from '@/components/learner/LearnerSectionNav';
+import { FOOTER_NAV } from '@/lib/site-links';
 
 const EXPECTED = [
   { name: 'Dashboard', href: '/dashboard', section: 'dashboard' },
@@ -67,5 +73,19 @@ describe('LearnerSectionNav', () => {
     expect(html).toContain('aria-label="Your learning"');
     expect(html).toContain('href="/settings"');
     expect(html).toContain('aria-current="page"');
+  });
+
+  it('takes every label and href from the navigation config', () => {
+    const configured = FOOTER_NAV.flatMap((group) => group.children);
+    for (const link of LEARNER_SECTION_LINKS) {
+      expect(configured).toContainEqual({ label: link.label, href: link.href });
+    }
+  });
+
+  it('gives the pages below the dashboard the trail Dashboard › <page>', () => {
+    expect(learnerBreadcrumbs('review')).toEqual([{ label: 'Dashboard', href: '/dashboard' }, { label: 'Review' }]);
+    expect(learnerBreadcrumbs('assessment')).toEqual([{ label: 'Dashboard', href: '/dashboard' }, { label: 'Self-assessment' }]);
+    expect(learnerBreadcrumbs('settings')[1]).toEqual({ label: 'Settings' });
+    expect(learnerBreadcrumbs('notebook')[1]).toEqual({ label: 'Notebook' });
   });
 });

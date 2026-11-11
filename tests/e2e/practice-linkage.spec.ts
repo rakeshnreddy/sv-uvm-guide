@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { PRACTICE_PAGES, requirePracticePage } from '@/lib/practice-links';
+import { getAllLabs } from '@/lib/lab-registry';
+import { PRACTICE_PAGES, practiceBreadcrumbs, requirePracticePage, requirePracticePager } from '@/lib/practice-links';
+import { PRACTICE_SECTION_ID } from '@/lib/site-links';
 
 // Every practice page renders its "Learn this in" back link (tests/lib/practice-links.test.ts checks the source).
 const practicePages = PRACTICE_PAGES.map((definition) => ({
@@ -27,6 +29,47 @@ test.describe('Practice linkage', () => {
       expect(response.status()).toBeLessThan(400);
     });
   }
+
+  for (const practice of practicePages) {
+    test(`${practice.href} shows Practice › section › item and the practice pager`, async ({ page }) => {
+      const item = requirePracticePage(practice.href);
+      const [root, section] = practiceBreadcrumbs(item);
+      const pager = requirePracticePager(practice.href);
+      await page.goto(practice.href);
+      const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
+      await expect(trail.getByRole('link', { name: root.label, exact: true })).toHaveAttribute('href', root.href!);
+      await expect(trail.getByRole('link', { name: section.label, exact: true })).toHaveAttribute('href', section.href!);
+      await expect(trail.locator('[aria-current="page"]')).toHaveText(item.title);
+      const nav = page.getByRole('navigation', { name: `More in ${pager.section.label}` });
+      await expect(nav.getByRole('link', { name: `Back to Practice: ${pager.section.label}` })).toHaveAttribute(
+        'href',
+        pager.section.href,
+      );
+      if (pager.next) await expect(nav.locator('a[rel="next"]')).toHaveAttribute('href', pager.next.href);
+      if (pager.prev) await expect(nav.locator('a[rel="prev"]')).toHaveAttribute('href', pager.prev.href);
+    });
+  }
+
+  test('a lab page shows Practice › Labs › lab and the lab pager', async ({ page }) => {
+    const lab = getAllLabs().find((entry) => entry.status === 'available')!;
+    const href = `/practice/lab/${lab.id}`;
+    const pager = requirePracticePager(href);
+    await page.goto(href);
+    const trail = page.getByRole('navigation', { name: 'Breadcrumb' });
+    await expect(trail.getByRole('link', { name: 'Labs', exact: true })).toHaveAttribute('href', '/practice#labs');
+    const nav = page.getByRole('navigation', { name: 'More in Labs' });
+    await expect(nav.getByRole('link', { name: 'Back to Practice: Labs' })).toBeVisible({ timeout: 60000 });
+    if (pager.next) await expect(nav.locator('a[rel="next"]')).toHaveAttribute('href', pager.next.href);
+  });
+
+  test('every section of /practice has its id and clears the sticky header', async ({ page }) => {
+    await page.goto('/practice#exercises');
+    for (const id of Object.values(PRACTICE_SECTION_ID)) await expect(page.locator(`#${id}`)).toHaveCount(1);
+    const heading = page.locator('#exercises');
+    await expect(heading).toBeInViewport({ timeout: 60000 });
+    const top = await heading.evaluate((element) => element.getBoundingClientRect().top);
+    expect(top).toBeGreaterThanOrEqual(64);
+  });
 
   test('the Practice Hub names a lesson for each item and never links a coming-soon lab', async ({ page }) => {
     await page.goto('/practice');

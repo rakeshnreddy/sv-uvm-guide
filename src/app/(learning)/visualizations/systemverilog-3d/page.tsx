@@ -2,8 +2,10 @@ import React, { Suspense } from "react";
 import type { Metadata } from "next";
 
 import SystemVerilog3DVisualizer from "@/components/curriculum/f2/SystemVerilog3DVisualizer";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
 import LearnInLesson from "@/components/practice/LearnInLesson";
-import { requirePracticePage } from "@/lib/practice-links";
+import { PracticePager } from "@/components/practice/PracticePager";
+import { practiceBreadcrumbs, requirePracticePage, requirePracticePager } from "@/lib/practice-links";
 
 const HREF = "/visualizations/systemverilog-3d";
 const practice = requirePracticePage(HREF);
@@ -18,6 +20,7 @@ export default function SystemVerilog3DVisualizationPage() {
   return (
     // One container for the header and the sandbox, so their edges line up.
     <div className="mx-auto w-full max-w-6xl pb-8">
+      <Breadcrumbs items={practiceBreadcrumbs(practice)} className="-mt-2 mb-4" />
       {/* Rendered on the server: only the sandbox reads the ?scene= parameter, so only it waits for the client. */}
       <header data-testid="sv3d-header">
         <h1 className="text-h1 text-foreground">{practice.title}</h1>
@@ -36,6 +39,7 @@ export default function SystemVerilog3DVisualizationPage() {
       >
         <SystemVerilog3DVisualizer height="calc(100vh - 10rem)" />
       </Suspense>
+      <PracticePager pager={requirePracticePager(HREF)} className="mt-12" />
     </div>
   );
 }

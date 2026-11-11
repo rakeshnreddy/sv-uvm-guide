@@ -1,8 +1,9 @@
 import React from 'react';
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { LessonLinkList, focusRing } from '@/components/practice/LearnInLesson';
+import { siteLabel } from '@/lib/nav-labels';
+import { INTERVIEW_PREP_HREF } from '@/lib/site-links';
 
 import RevealAnswer from './RevealAnswer';
 import {
@@ -14,7 +15,7 @@ import {
 } from './interview-banks';
 
 export const metadata: Metadata = {
-  title: 'Interview prep',
+  title: siteLabel(INTERVIEW_PREP_HREF),
   description:
     'Interview questions on SystemVerilog, SVA and formal, UVM, AMBA, debug and SoC verification, from junior to senior staff, with model answers and links to the lessons that teach each topic.',
 };
@@ -211,21 +212,7 @@ export default function InterviewPrepPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl pb-16">
-      <nav aria-label="Breadcrumb" className="text-sm">
-        <ol className="flex flex-wrap items-center gap-2 text-muted-foreground">
-          <li>
-            <Link href="/practice" className={`rounded-sm font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline ${focusRing}`}>
-              Practice hub
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li aria-current="page" className="text-foreground">
-            Interview prep
-          </li>
-        </ol>
-      </nav>
-
-      <header className="mt-4 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6">
+      <header className="rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6">
         <h1 className="text-h1 text-foreground">Interview prep</h1>
         <p className="mt-3 text-lead text-muted-foreground">
           {questionTotal} questions in {banks.length} banks, from junior to senior staff. Answer each one out loud or on paper

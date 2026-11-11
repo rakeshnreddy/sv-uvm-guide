@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/Button';
 import { Code, Share2, Gamepad2, FlaskConical, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
-import { LABS_HREF } from '@/lib/site-links';
+import { LABS_HREF, PRACTICE_SECTION_HREF } from '@/lib/site-links';
 
 const features = [
   {
@@ -24,7 +24,7 @@ const features = [
     title: 'Hands-on Exercises',
     description: 'Order the UVM phases, assemble an agent, connect a scoreboard and experiment with sequencer arbitration, all with keyboard-accessible drag and drop.',
     icon: Gamepad2,
-    href: '/exercises',
+    href: PRACTICE_SECTION_HREF.exercises,
     linkLabel: 'Try an exercise',
   },
   {

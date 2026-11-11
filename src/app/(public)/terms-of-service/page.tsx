@@ -4,6 +4,10 @@ import Link from 'next/link';
 
 import Footer from '@/components/Footer';
 import InfoPage from '@/components/templates/InfoPage';
+import { LEGAL_LINKS, SITE_NAME, TERMS_OF_SERVICE_HREF } from '@/lib/site-links';
+
+/** The page's one label, from the shared navigation config. */
+const PAGE_LABEL = LEGAL_LINKS.find((link) => link.href === TERMS_OF_SERVICE_HREF)?.label ?? '';
 
 /*
  * OWNER SIGN-OFF NEEDED (GD23): this wording was rewritten in October 2026 for
@@ -107,8 +111,8 @@ const commitments: { heading: string; points: { id: string; content: React.React
 ];
 
 export const metadata: Metadata = {
-  title: 'Terms of Service',
-  description: 'Guidelines for using the SystemVerilog & UVM learning site.',
+  title: PAGE_LABEL,
+  description: `Guidelines for using ${SITE_NAME}.`,
 };
 
 export default function TermsOfServicePage() {
@@ -116,8 +120,8 @@ export default function TermsOfServicePage() {
     <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
-          title="Terms of service"
-          description="Guidelines for using the SystemVerilog &amp; UVM learning site."
+          title={PAGE_LABEL}
+          description={`Guidelines for using ${SITE_NAME}.`}
         >
           <div className="space-y-10">
             <p className="text-xs font-medium text-subtle">Last updated: October 2026</p>

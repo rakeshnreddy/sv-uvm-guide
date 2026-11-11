@@ -324,7 +324,7 @@ describe('keyboard shortcuts help', () => {
       'In search',
     ]);
     for (const action of [
-      'Search lessons and sections',
+      'Search lessons, labs and practice',
       'Show or hide the course outline',
       'Go to the curriculum',
       'Go to practice',

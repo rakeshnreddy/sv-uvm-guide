@@ -1,68 +1,79 @@
 import Link from "next/link";
 import React from "react";
 
+import manifest from "../../../content/curriculum/curriculum.manifest.json";
 import SkipLink from "@/components/search/SkipLink";
 import { headerFocusRing } from "@/components/ui/icon-button-class";
 import Logo from "@/components/ui/Logo";
-import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
-import { INTERVIEW_PREP_HREF } from "@/lib/site-links";
+import { PUBLIC_NAV, SITE_NAME } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
-interface PublicHeaderLink {
-  label: string;
-  href: string;
-  /** Shown from 640 px only; below it the row keeps the wordmark, Curriculum and the theme control. */
-  wideOnly?: boolean;
-}
-
-/** The public header's links, in order. */
-export const PUBLIC_HEADER_LINKS: readonly PublicHeaderLink[] = [
-  { label: "Curriculum", href: "/curriculum" },
-  { label: "Practice", href: "/practice", wideOnly: true },
-  { label: "Interview prep", href: INTERVIEW_PREP_HREF, wideOnly: true },
-];
+import PublicHeaderControls from "./PublicHeaderControls";
+import { lessonPathsFromManifest } from "./public-header-resume";
 
 /**
- * The container the landing sections use (HeroSection: max-w-6xl, 24 px
- * gutters from 640 px), so the wordmark lines up with the hero's left edge.
+ * The public pages' container: the content width (1152 px) with the page
+ * gutters, 16 px on phones, 24 on tablets and 32 on desktop (DESIGN.md
+ * section 5). InfoPage, which the privacy and terms pages use, has the same
+ * box, so the wordmark lines up with the page heading below it.
  */
-export const PUBLIC_HEADER_CONTAINER = "mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4 sm:h-16 sm:gap-4 sm:px-6";
+export const PUBLIC_CONTAINER = "mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8";
+
+/**
+ * The header itself: 56 px on phones, 64 px from 640 px, hairline included
+ * (border-box), as the learning header's 64 px includes its hairline, so
+ * moving between the two never shifts the page.
+ */
+export const PUBLIC_HEADER_CLASS = "h-14 w-full border-b border-border bg-background text-foreground sm:h-16 print:hidden";
+
+/** The row inside the header: the container, filling the header's height above the hairline. */
+export const PUBLIC_HEADER_CONTAINER = cn(PUBLIC_CONTAINER, "flex h-full items-center gap-2 sm:gap-4");
+
+/** The wordmark link: a 40 px target, like the learning header's. */
+export const PUBLIC_WORDMARK_CLASS = cn("inline-flex h-10 shrink-0 items-center rounded-lg", headerFocusRing);
+
+/** Every lesson in course order, for the accent action; the first is where "Start learning" goes. */
+const LESSON_PATHS = lessonPathsFromManifest(manifest);
+export const FIRST_LESSON_HREF = LESSON_PATHS[0] ?? "/curriculum";
 
 const linkClass = cn(
-  "h-10 shrink-0 items-center whitespace-nowrap rounded-lg px-2 text-ui font-medium text-muted-foreground transition-colors duration-150 ease-bench hover:text-foreground motion-reduce:transition-none",
+  "inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-lg px-2 text-ui font-medium text-muted-foreground transition-colors duration-150 ease-bench hover:text-foreground motion-reduce:transition-none",
   headerFocusRing,
 );
 
 /**
- * The slim header for the landing, privacy and terms pages (route group
- * (public)): skip link, wordmark home, three plain links and the theme menu
- * button. One opaque row, 64 px tall (56 px on phones), with a hairline below.
- * A server component; the theme button server-renders at its final 40 px
- * size, so nothing shifts on hydration.
+ * The header for the landing, privacy and terms pages (route group (public)):
+ * skip link, wordmark home, the three public links, a search button that
+ * opens the site search, the theme menu button and one accent action, "Start
+ * learning", which reads "Continue" once this browser holds a lesson position.
+ * Below 768 px the row keeps the wordmark, search and a menu button; the menu
+ * lists the same links, the accent action and the theme choices.
+ *
+ * One opaque row with a hairline below. A server component: the controls are
+ * one small client island that server-renders at its final size.
  */
 export default function PublicHeader() {
   return (
     <>
       <SkipLink />
-      <header data-testid="public-header" className="w-full border-b border-border bg-background text-foreground print:hidden">
+      <header data-testid="public-header" className={PUBLIC_HEADER_CLASS}>
         <div className={PUBLIC_HEADER_CONTAINER}>
-          <Link href="/" aria-label="SV/UVM Hub home" className={cn("block shrink-0 rounded-lg", headerFocusRing)}>
+          <Link href="/" aria-label={`${SITE_NAME} home`} className={PUBLIC_WORDMARK_CLASS}>
             <Logo />
           </Link>
-          <nav aria-label="Main" className="ml-auto">
+          <nav aria-label="Main" className="ml-auto hidden md:block">
             <ul className="flex items-center gap-1">
-              {PUBLIC_HEADER_LINKS.map((link) => (
-                <li key={link.href} className={link.wideOnly ? "hidden sm:block" : undefined}>
-                  <Link href={link.href} className={cn("inline-flex", linkClass)}>
+              {PUBLIC_NAV.map((link) => (
+                <li key={link.href}>
+                  <Link href={link.href} className={linkClass}>
                     {link.label}
                   </Link>
                 </li>
               ))}
             </ul>
           </nav>
-          {/* The 40 px box is reserved on the server render, so the row does not move when the control hydrates. */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center">
-            <ThemeSwitcher />
+          <div className="ml-auto md:ml-0">
+            <PublicHeaderControls links={PUBLIC_NAV} firstLessonHref={FIRST_LESSON_HREF} lessonPaths={LESSON_PATHS} />
           </div>
         </div>
       </header>

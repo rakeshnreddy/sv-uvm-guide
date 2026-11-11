@@ -3,11 +3,13 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import SearchCombobox from '@/components/search/SearchCombobox';
+import SearchCombobox, { SHORTCUT_FIELD_PADDING, SHORTCUT_HINT_VISIBILITY } from '@/components/search/SearchCombobox';
+import * as searchIndexLoader from '@/components/search/load-search-index';
 import SearchDialog from '@/components/search/SearchDialog';
 import { focusAfterNavigation } from '@/components/search/focus-target';
 import { shellStore } from '@/components/search/shell-store';
 import { focusableWithin } from '@/components/search/useModalDialog';
+import { PRACTICE_HUB_LINK } from '@/lib/site-links';
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 
@@ -51,7 +53,7 @@ afterEach(() => {
 
 async function typeQuery(query: string) {
   const user = userEvent.setup();
-  const input = screen.getByRole('combobox', { name: 'Search lessons and sections' });
+  const input = screen.getByRole('combobox', { name: 'Search lessons, labs and practice' });
   await user.click(input);
   await user.type(input, query);
   return { user, input };
@@ -125,7 +127,9 @@ describe('SearchCombobox in the navbar (popup)', () => {
   it('says when nothing matches', async () => {
     render(<SearchCombobox variant="popup" />);
     const { input } = await typeQuery('zzqqxx');
-    expect(await screen.findByRole('status')).toHaveTextContent('No lessons or sections match “zzqqxx”.');
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Nothing matches “zzqqxx”. Search covers lessons and their sections, labs, exercises, interactive models, tools, interview questions and reference pages.',
+    );
     expect(input).toHaveAttribute('aria-expanded', 'false');
     expect(input).not.toHaveAttribute('aria-activedescendant');
   });
@@ -156,6 +160,102 @@ describe('SearchCombobox in the navbar (popup)', () => {
   });
 });
 
+describe('SearchCombobox results across kinds', () => {
+  it('uses the same placeholder in the navbar field and in the dialog field', () => {
+    render(
+      <>
+        <SearchCombobox variant="popup" commandTarget />
+        <SearchCombobox variant="inline" />
+      </>,
+    );
+    const fields = screen.getAllByRole('combobox');
+    for (const field of fields) expect(field).toHaveAttribute('placeholder', 'Search lessons, labs and practice');
+  });
+
+  it('labels each result with its kind and shows module codes as signal tags', async () => {
+    render(<SearchCombobox variant="popup" />);
+    await typeQuery('phase sorter');
+    const options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    const sorter = options.find((option) => option.getAttribute('href') === '/exercises/uvm-phase-sorter');
+    expect(sorter).toBeDefined();
+    expect(sorter).toHaveAttribute('data-kind', 'exercise');
+    expect(sorter?.querySelector('[data-search-kind]')).toHaveTextContent('Exercise');
+    const tag = sorter?.querySelector('[data-signal-tag]');
+    expect(tag).toHaveTextContent('I-UVM-1C');
+    // The tag sits inside the result link, so it is not a link of its own.
+    expect(tag?.tagName).toBe('SPAN');
+  });
+
+  it('ranks the lesson first and shows its tag, kind and tier', async () => {
+    render(<SearchCombobox variant="popup" />);
+    await typeQuery('mailbox');
+    const first = within(await screen.findByRole('listbox')).getAllByRole('option')[0];
+    expect(first).toHaveAttribute('data-kind', 'lesson');
+    expect(first.querySelector('[data-search-kind]')).toHaveTextContent('Lesson');
+    expect(first.querySelector('[data-signal-tag]')).toHaveTextContent('I-SV-5');
+    expect(first).toHaveTextContent('Tier 2: Intermediate');
+  });
+
+  it('marks only the highlighted result as the current one', async () => {
+    render(<SearchCombobox variant="popup" />);
+    const { user } = await typeQuery('mailbox');
+    const options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    expect(options[0].className).toMatch(/border-primary/);
+    expect(options[1].className).not.toMatch(/border-primary/);
+    await user.keyboard('{ArrowDown}');
+    expect(options[1].className).toMatch(/border-primary/);
+    expect(options[0].className).not.toMatch(/border-primary/);
+  });
+
+  it('shows lesson titles without the module code the tag beside them shows', async () => {
+    render(<SearchCombobox variant="popup" />);
+    await typeQuery('I-SV-3A');
+    const first = within(await screen.findByRole('listbox')).getAllByRole('option')[0];
+    expect(first.querySelector('[data-search-title]')).toHaveTextContent(/^Functional Coverage Fundamentals$/);
+    expect(first.querySelector('[data-signal-tag]')).toHaveTextContent('I-SV-3A');
+    expect(first.textContent?.match(/I-SV-3A/g)).toHaveLength(1);
+  });
+
+  it('keeps one title weight as the highlight moves, so the text does not reflow', async () => {
+    render(<SearchCombobox variant="popup" />);
+    const { user } = await typeQuery('mailbox');
+    const options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    const titleClass = (index: number) => options[index].querySelector('[data-search-title]')?.className;
+    expect(titleClass(0)).toBe(titleClass(1));
+    await user.keyboard('{ArrowDown}');
+    expect(titleClass(0)).toBe(titleClass(1));
+    expect(titleClass(0)).not.toMatch(/font-medium/);
+  });
+
+  it('hides the keyboard hint and its padding between lg and xl, where the field is narrow', () => {
+    render(<SearchCombobox variant="popup" commandTarget />);
+    const hint = document.querySelector('[data-search-shortcut]') as HTMLElement;
+    expect(SHORTCUT_HINT_VISIBILITY.split(' ')).toEqual(['hidden', 'sm:inline-block', 'lg:hidden', 'xl:inline-block']);
+    for (const name of SHORTCUT_HINT_VISIBILITY.split(' ')) expect(hint).toHaveClass(name);
+    const field = screen.getByRole('combobox');
+    expect(SHORTCUT_FIELD_PADDING.split(' ')).toEqual(['pr-3', 'sm:pr-16', 'lg:pr-3', 'xl:pr-16']);
+    for (const name of SHORTCUT_FIELD_PADDING.split(' ')) expect(field).toHaveClass(name);
+  });
+
+  it('links to the curriculum and the practice hub when the index cannot load', async () => {
+    const spy = vi.spyOn(searchIndexLoader, 'loadSearchDocuments').mockRejectedValue(new Error('offline'));
+    try {
+      render(<SearchCombobox variant="popup" />);
+      await typeQuery('mailbox');
+      expect(await screen.findByRole('status')).toHaveTextContent('Search is unavailable right now.');
+      expect(screen.getByRole('link', { name: 'Browse the curriculum' })).toHaveAttribute('href', '/curriculum');
+      expect(screen.getByRole('link', { name: PRACTICE_HUB_LINK.label })).toHaveAttribute('href', PRACTICE_HUB_LINK.href);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('says what can be searched before a query is typed in the dialog', () => {
+    render(<SearchCombobox variant="inline" />);
+    expect(screen.getByText(/Search lessons and their sections, labs, exercises, interactive models, tools/)).toBeVisible();
+  });
+});
+
 describe('SearchDialog (phones, and Ctrl/Cmd+K when the navbar field is hidden)', () => {
   it('is a labelled modal dialog that focuses the field, searches, and closes with Escape', async () => {
     const user = userEvent.setup();
@@ -170,9 +270,9 @@ describe('SearchDialog (phones, and Ctrl/Cmd+K when the navbar field is hidden)'
     const opener = screen.getByRole('button', { name: 'Search' });
     await user.click(opener);
 
-    const dialog = screen.getByRole('dialog', { name: 'Search the curriculum' });
+    const dialog = screen.getByRole('dialog', { name: 'Search SV/UVM Hub' });
     expect(dialog).toHaveAttribute('aria-modal', 'true');
-    const input = within(dialog).getByRole('combobox', { name: 'Search lessons and sections' });
+    const input = within(dialog).getByRole('combobox', { name: 'Search lessons, labs and practice' });
     expect(document.activeElement).toBe(input);
     expect(within(dialog).getByText(/Type at least 2 characters/)).toBeVisible();
 
@@ -194,7 +294,7 @@ describe('SearchDialog (phones, and Ctrl/Cmd+K when the navbar field is hidden)'
       </>,
     );
     act(() => shellStore.openSearch());
-    const dialog = screen.getByRole('dialog', { name: 'Search the curriculum' });
+    const dialog = screen.getByRole('dialog', { name: 'Search SV/UVM Hub' });
     const input = within(dialog).getByRole('combobox');
     await user.type(input, 'phasing');
     await within(dialog).findByRole('listbox');

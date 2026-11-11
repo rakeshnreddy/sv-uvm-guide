@@ -4,14 +4,24 @@ import manifest from '../../content/curriculum/curriculum.manifest.json';
 import index from '@/generated/search-index.json';
 import {
   DEFAULT_RESULT_LIMIT,
+  SEARCH_ITEM_KINDS,
+  SEARCH_KIND_LABELS,
   describeResult,
+  resultContext,
   headingAnchor,
   lessonHref,
   prepareSearchDocuments,
   resultKindLabel,
+  resultTitle,
   searchCurriculum,
+  stems,
+  type SearchDocument,
   type SearchIndexData,
 } from '@/components/search/search-engine';
+import { getInterviewPracticeItems } from '@/app/(learning)/interview-prep/interview-banks';
+import { getAllLabs } from '@/lib/lab-registry';
+import { PRACTICE_PAGES } from '@/lib/practice-links';
+import { REFERENCE_LINKS } from '@/lib/site-links';
 import { curriculumData, normalizeSlug } from '@/lib/curriculum-data';
 import { createSlugger, headingSlug } from '@/lib/heading-slug';
 
@@ -119,6 +129,157 @@ describe('generated search index', () => {
   });
 });
 
+describe('generated search index: labs, practice, interview banks and reference pages', () => {
+  const items = data.items ?? [];
+  const hrefsOf = (kind: string) => items.filter((item) => item.kind === kind).map((item) => item.href);
+
+  it('gives every item a known kind, a title, one line of description, keywords and a unique href', () => {
+    expect(items.length).toBeGreaterThan(40);
+    for (const item of items) {
+      expect(SEARCH_ITEM_KINDS as readonly string[]).toContain(item.kind);
+      expect(item.title.trim(), item.href).not.toBe('');
+      expect(item.description.trim(), item.href).not.toBe('');
+      expect(item.description.length, item.href).toBeLessThanOrEqual(120);
+      expect(item.description, item.href).not.toMatch(/\n/);
+      expect(item.keywords.length, item.href).toBeGreaterThan(0);
+    }
+    expect(new Set(items.map((item) => item.href)).size).toBe(items.length);
+  });
+
+  it('stores no body text: only kind, title, description, href, keywords and code', () => {
+    const fields = new Set(items.flatMap((item) => Object.keys(item)));
+    expect([...fields].sort()).toEqual(['code', 'description', 'href', 'keywords', 'kind', 'title']);
+  });
+
+  it('lists every available lab at its prerendered URL', () => {
+    const available = getAllLabs().filter((lab) => lab.status === 'available');
+    expect(hrefsOf('lab').sort()).toEqual(available.map((lab) => `/practice/lab/${lab.id}`).sort());
+  });
+
+  it('lists every exercise, interactive model and tool page from the practice map', () => {
+    expect([...hrefsOf('exercise'), ...hrefsOf('model'), ...hrefsOf('tool')].sort()).toEqual(
+      PRACTICE_PAGES.map((page) => page.href).sort(),
+    );
+    expect(hrefsOf('exercise').sort()).toEqual(PRACTICE_PAGES.filter((page) => page.kind === 'exercise').map((page) => page.href).sort());
+    expect(hrefsOf('tool')).toContain('/practice/waveform-studio');
+    for (const page of PRACTICE_PAGES) {
+      expect(items.find((item) => item.href === page.href)?.title).toBe(page.title);
+    }
+  });
+
+  it('links every interview bank to the anchor its section of /interview-prep renders', () => {
+    expect(hrefsOf('interview').sort()).toEqual(getInterviewPracticeItems().map((item) => item.href).sort());
+  });
+
+  it('lists the reference pages under their navigation labels', () => {
+    const references = items.filter((item) => item.kind === 'reference');
+    expect(references.map((item) => [item.title, item.href])).toEqual(REFERENCE_LINKS.map((link) => [link.label, link.href]));
+  });
+
+  it('gives each item with a code a real module code', () => {
+    const codes = new Set(lessonDocs.map((doc) => doc.code));
+    for (const item of items) if (item.code) expect(codes, `${item.href}: ${item.code}`).toContain(item.code);
+  });
+});
+
+describe('search result kinds', () => {
+  const itemDocs = docs.filter((doc) => doc.kind !== 'lesson' && doc.kind !== 'section');
+
+  it('labels every kind in text', () => {
+    expect(Object.values(SEARCH_KIND_LABELS)).toEqual(['Lesson', 'Section', 'Lab', 'Exercise', 'Model', 'Tool', 'Interview', 'Reference']);
+    for (const doc of docs) expect(resultKindLabel(doc)).toBe(SEARCH_KIND_LABELS[doc.kind]);
+    const expert = docs.find((doc) => doc.kind === 'section' && doc.expert);
+    expect(expert && resultKindLabel(expert)).toBe('Section');
+  });
+
+  it('finds labs, exercises, models, tools, interview banks and reference pages', () => {
+    const kindOf = (query: string, href: string) => searchCurriculum(docs, query, 50).find((result) => result.doc.href === href)?.doc.kind;
+    expect(kindOf('phase sorter', '/exercises/uvm-phase-sorter')).toBe('exercise');
+    expect(kindOf('waveform studio', '/practice/waveform-studio')).toBe('tool');
+    expect(kindOf('fork join', '/practice/visualizations/concurrency')).toBe('model');
+    expect(kindOf('semaphore hangs', '/practice/lab/ipc-deadlock')).toBe('lab');
+    expect(kindOf('uvm interview', '/interview-prep#uvm-interview-question-bank')).toBe('interview');
+    expect(kindOf('learning strategies', '/learning-strategies')).toBe('reference');
+  });
+
+  it('shows an item\'s module code beside its one-line description', () => {
+    const sorter = itemDocs.find((doc) => doc.href === '/exercises/uvm-phase-sorter') as SearchDocument;
+    expect(resultContext(sorter)).toEqual({ code: 'I-UVM-1C', text: sorter.description });
+    expect(describeResult(sorter)).toBe(`I-UVM-1C · ${sorter.description}`);
+    const history = itemDocs.find((doc) => doc.href === '/history') as SearchDocument;
+    expect(resultContext(history).code).toBe('');
+    expect(describeResult(history)).toBe(history.description);
+  });
+
+  it('splits a lesson or section context into its code and the text after it', () => {
+    const lesson = searchCurriculum(docs, 'mailbox')[0].doc;
+    expect(resultContext(lesson)).toEqual({ code: 'I-SV-5', text: 'Synchronization and IPC · Tier 2: Intermediate' });
+    const section = docs.find((doc) => doc.kind === 'section' && doc.code === 'I-SV-5') as SearchDocument;
+    expect(section.lessonTitle).toBe('I-SV-5: Synchronization and IPC');
+    expect(resultContext(section)).toEqual({ code: 'I-SV-5', text: 'Synchronization and IPC' });
+  });
+
+  it('shows titles without the module code the signal tag already shows, and keeps the code searchable', () => {
+    const lesson = docs.find((doc) => doc.href === '/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index') as SearchDocument;
+    expect(lesson.title).toBe('I-SV-3A: Functional Coverage Fundamentals');
+    expect(resultTitle(lesson)).toBe('Functional Coverage Fundamentals');
+    expect(resultContext(lesson).code).toBe('I-SV-3A');
+    expect(searchCurriculum(docs, 'I-SV-3A')[0].doc.href).toBe(lesson.href);
+    const plainLesson = docs.find((doc) => doc.href.endsWith('/I-SV-5_Synchronization_and_IPC/mailboxes')) as SearchDocument;
+    expect(resultTitle(plainLesson)).toBe(plainLesson.title);
+    const sorter = itemDocs.find((doc) => doc.href === '/exercises/uvm-phase-sorter') as SearchDocument;
+    expect(resultTitle(sorter)).toBe('UVM phase sorter');
+    for (const doc of docs) {
+      if (doc.code) expect(resultTitle(doc).startsWith(`${doc.code}:`), doc.href).toBe(false);
+      if (doc.kind === 'section') expect(resultContext(doc).text.startsWith(`${doc.code}:`), doc.href).toBe(false);
+    }
+  });
+});
+
+describe('ranking across kinds', () => {
+  /** A minimal index: one lesson and one item with the same title and description. */
+  const tie: SearchIndexData = {
+    version: 3,
+    tiers: [
+      {
+        id: 'T1_Foundational',
+        title: 'Tier 1: Foundations',
+        modules: [
+          {
+            id: 'F9Z_Widgets',
+            title: 'F9Z: Widgets',
+            track: 'core',
+            lessons: [{ slug: 'index', title: 'Widget tuning', description: 'Tune a widget.', headings: [['Widget tuning tips', 3]] }],
+          },
+        ],
+      },
+    ],
+    items: [
+      { kind: 'lab', title: 'Widget tuning', description: 'Tune a widget.', href: '/practice/lab/widget', keywords: ['lab'] },
+      { kind: 'reference', title: 'Widget tuning', description: 'Tune a widget.', href: '/widgets', keywords: ['reference'] },
+    ],
+  };
+
+  it('ranks the lesson first for an equal match, then items, then sections', () => {
+    const results = searchCurriculum(prepareSearchDocuments(tie), 'widget tuning');
+    expect(results.map((result) => result.doc.kind)).toEqual(['lesson', 'lab', 'reference', 'section']);
+  });
+
+  it('still lets a clearly better item outrank a weaker lesson match', () => {
+    const results = searchCurriculum(docs, 'waveform studio');
+    expect(results[0].doc.href).toBe('/practice/waveform-studio');
+  });
+
+  it('keeps the module index first for its code, ahead of items that cite the module', () => {
+    expect(searchCurriculum(docs, 'I-UVM-1C')[0].doc.href).toBe('/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index');
+  });
+
+  it('reads an index written before items existed', () => {
+    const { items: _items, ...old } = tie;
+    expect(prepareSearchDocuments(old).map((doc) => doc.kind)).toEqual(['lesson', 'section']);
+  });
+});
+
 describe('searchCurriculum ranking (G30-SRCH acceptance)', () => {
   it('ranks I-SV-5 Mailboxes in the top 3 for "mailbox"', () => {
     expect(topLessons('mailbox')).toContain(
@@ -142,6 +303,33 @@ describe('searchCurriculum ranking (G30-SRCH acceptance)', () => {
       '/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index',
     );
     expect(searchCurriculum(docs, 'b-axi-2')[0].doc.href).toBe('/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index');
+  });
+
+  it('ranks the phasing lesson near the top for "phase" and first for "phasing"', () => {
+    const phasing = '/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index';
+    const phase = searchCurriculum(docs, 'phase');
+    expect(phase.slice(0, 3).map((result) => result.doc.href)).toContain(phasing);
+    expect(phase.find((result) => result.doc.kind === 'lesson')?.doc.href).toBe(phasing);
+    expect(searchCurriculum(docs, 'phasing')[0].doc.href).toBe(phasing);
+    expect(searchCurriculum(docs, 'phases').slice(0, 3).map((result) => result.doc.href)).toContain(phasing);
+  });
+
+  it('keeps sensible first results for "axi", "coverage" and "factory"', () => {
+    const axi = searchCurriculum(docs, 'axi');
+    expect(axi[0].doc.kind).toBe('lesson');
+    expect(axi[0].doc.title).toMatch(/AXI/);
+    const coverage = searchCurriculum(docs, 'coverage');
+    expect(coverage[0].doc.kind).toBe('lesson');
+    expect(coverage[0].doc.title).toMatch(/Coverage/);
+    expect(coverage.slice(0, 8).map((result) => result.doc.href)).toContain(
+      '/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index',
+    );
+    expect(searchCurriculum(docs, 'factory')[0].doc.href).toBe('/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index');
+  });
+
+  it('returns nothing for a nonsense query', () => {
+    expect(searchCurriculum(docs, 'zzzz')).toEqual([]);
+    expect(searchCurriculum(docs, 'qqxqz')).toEqual([]);
   });
 
   it('matches plural and singular forms', () => {
@@ -181,6 +369,22 @@ describe('searchCurriculum ranking (G30-SRCH acceptance)', () => {
   });
 });
 
+describe('stems', () => {
+  it('tries the form without a final "e" and without "-ing"', () => {
+    expect(stems('phase')).toEqual(['phase', 'phas']);
+    expect(stems('phasing')).toEqual(['phasing', 'phase', 'phas']);
+    expect(stems('mailboxes')).toEqual(['mailboxes', 'mailboxe', 'mailbox']);
+    expect(stems('entries')).toEqual(['entries', 'entrie', 'entri', 'entry']);
+  });
+
+  it('leaves short words alone so they do not match half the index', () => {
+    expect(stems('case')).toEqual(['case']);
+    expect(stems('string')).toEqual(['string']);
+    expect(stems('ring')).toEqual(['ring']);
+    expect(stems('bits')).toEqual(['bits', 'bit']);
+  });
+});
+
 describe('search result deep links', () => {
   it('links sections to the canonical lesson URL plus the heading anchor', () => {
     const heading = 'WSTRB: any subset of the active lanes';
@@ -191,9 +395,10 @@ describe('search result deep links', () => {
     expect(section?.doc.href).toBe(`/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index#${headingSlug(heading)}`);
   });
 
-  it('resolves every result to a real lesson', () => {
+  it('resolves every lesson and section result to a real lesson', () => {
     for (const query of ['mailbox', 'factory', 'covergroup', 'objection', 'scoreboard', 'expert']) {
       for (const { doc } of searchCurriculum(docs, query)) {
+        if (doc.kind !== 'lesson' && doc.kind !== 'section') continue;
         const segments = lessonOf(doc.href).replace(/^\/curriculum\//, '').split('/');
         expect(normalizeSlug(segments), doc.href).toEqual(segments);
       }

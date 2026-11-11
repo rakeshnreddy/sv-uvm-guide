@@ -44,7 +44,7 @@ describe('/learning-strategies', () => {
   it('links the review queue, the notebook, placement, the labs, the exercises and the backup controls', () => {
     const html = renderPage();
 
-    for (const href of ['/dashboard/review', '/dashboard/notebook', '/quiz/placement', '/practice#labs', '/exercises', '/settings#data']) {
+    for (const href of ['/dashboard/review', '/dashboard/notebook', '/quiz/placement', '/practice#labs', '/practice#exercises', '/settings#data']) {
       expect(html, href).toContain(`href="${href}"`);
     }
   });

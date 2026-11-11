@@ -1,12 +1,15 @@
 import type { Metadata } from 'next';
 import React from 'react';
 
-import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
+import { LearnerSectionNav, learnerBreadcrumbs } from '@/components/learner/LearnerSectionNav';
+import { siteLabel } from '@/lib/nav-labels';
+import { REVIEW_HREF } from '@/lib/site-links';
 
 import ReviewPageClient from './ReviewPageClient';
 
 export const metadata: Metadata = {
-  title: 'Flashcard review',
+  title: siteLabel(REVIEW_HREF),
   description:
     'Review the lesson flashcards that are due today, oldest first, plus a few new cards from decks you have opened. Your review queue is stored only in this browser.',
 };
@@ -19,9 +22,10 @@ export const metadata: Metadata = {
 export default function FlashcardReviewPage() {
   return (
     <div className="mx-auto w-full max-w-6xl pb-16">
+      <Breadcrumbs items={learnerBreadcrumbs('review')} className="-mt-2 mb-4" />
       <header className="space-y-4">
         <div>
-          <h1 className="text-h1 text-foreground">Flashcard review</h1>
+          <h1 className="text-h1 text-foreground">{siteLabel(REVIEW_HREF)} flashcards</h1>
           <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             Cards you rate in a lesson come back here when they are due, oldest first, followed by a few new cards from
             decks you have opened. Flip a card, then rate it: each button shows when the card would come back. Again

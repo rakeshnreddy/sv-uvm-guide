@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import InterfaceSignalFlow from '@/components/animations/InterfaceSignalFlow';
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const HREF = '/practice/visualizations/interface-signal-flow';
@@ -12,9 +12,9 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const InterfaceSignalFlowPage = () => {
   return (
-    <InfoPage gutter={false} title={practice.title} description={practice.description} diagrams={[<InterfaceSignalFlow key="if-flow" />]}>
+    <PracticeInfoPage href={HREF} title={practice.title} description={practice.description} diagrams={[<InterfaceSignalFlow key="if-flow" />]}>
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

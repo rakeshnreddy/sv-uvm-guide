@@ -4,6 +4,7 @@ import React from 'react';
 import { ChevronDown } from 'lucide-react';
 
 import type { OverviewModule, OverviewTier } from '@/lib/curriculum-overview';
+import { tierSectionId } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 import { ModuleCard, type ModuleCardPrerequisite } from './ModuleCard';
 import { focusRing } from './overview-ui';
@@ -34,8 +35,8 @@ function countLine(tier: OverviewTier, shown: number, searching: boolean): strin
 /**
  * One tier of the overview: a heading that holds the disclosure button (so
  * heading navigation still finds the tier), who the tier is for, its counts,
- * and its modules in manifest order. The section id ("t1"…"t4") is the anchor
- * that /curriculum#t3 opens.
+ * and its modules in manifest order. The section id ("t1"…"t4") comes from
+ * tierSectionId in site-links and is the anchor that /curriculum#t3 opens.
  */
 export const TierSection: React.FC<TierSectionProps> = ({
   tier,
@@ -48,8 +49,11 @@ export const TierSection: React.FC<TierSectionProps> = ({
   visitedModules,
   hereModuleId,
 }) => {
-  const headingId = `${tier.anchor}-heading`;
-  const panelId = `${tier.anchor}-panel`;
+  // The stable id from site-links ("t3"), which /curriculum#t3, the course
+  // outline, the breadcrumbs and the footer link to.
+  const sectionId = tierSectionId(tier.id);
+  const headingId = `${sectionId}-heading`;
+  const panelId = `${sectionId}-panel`;
 
   const prerequisitesOf = (module: OverviewModule): ModuleCardPrerequisite[] =>
     module.prerequisites.flatMap((id) => {
@@ -59,8 +63,9 @@ export const TierSection: React.FC<TierSectionProps> = ({
         : [];
     });
 
+  // scroll-mt-24 keeps the heading clear of the 64 px sticky header when a link lands here.
   return (
-    <section id={tier.anchor} aria-labelledby={headingId} className="scroll-mt-24 rounded-2xl border border-border">
+    <section id={sectionId} aria-labelledby={headingId} className="scroll-mt-24 rounded-2xl border border-border">
       <h3 id={headingId} className="text-h3 text-foreground">
         <button
           type="button"

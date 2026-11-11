@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { SvaSequenceWaveformVisualizer } from '@/components/visualizers/SvaSequenceWaveformVisualizer';
 import { requirePracticePage } from '@/lib/practice-links';
 
@@ -12,13 +12,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const AssertionBuilderPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description="Predict what every attempt of a concurrent assertion reports, then check it against a tested model of IEEE 1800-2023 clause 16."
     >
       <LearnInLesson item={practice} />
       <SvaSequenceWaveformVisualizer />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

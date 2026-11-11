@@ -18,6 +18,8 @@ import {
   type Section,
 } from "@/lib/curriculum-data";
 
+import { CURRICULUM_HREF, PRIMARY_NAV, isNavGroup } from "@/lib/site-links";
+
 import { lessonPath, type LessonSlug } from "./lesson-urls";
 
 interface ManifestTier {
@@ -312,6 +314,9 @@ export interface Crumb {
   current: boolean;
 }
 
+/** The curriculum's label from the one navigation config ("Curriculum"). */
+const CURRICULUM_LABEL = PRIMARY_NAV.find((item) => !isNavGroup(item) && item.href === CURRICULUM_HREF)?.label ?? "Curriculum";
+
 /**
  * Curriculum › Tier › Module › Lesson, with canonical links (G30-PAGE-03/07/08):
  * the tier links to its section of the overview, the module to its first page,
@@ -324,7 +329,7 @@ export function lessonBreadcrumbs(rawSlug: readonly string[]): Crumb[] {
   const moduleInfo = getModuleInfo(lesson.moduleId);
   if (!tier || !moduleInfo) return [];
   const crumbs: Crumb[] = [
-    { label: "Curriculum", href: "/curriculum", current: false },
+    { label: CURRICULUM_LABEL, href: CURRICULUM_HREF, current: false },
     { label: tier.title, href: tier.href, current: false },
     { label: moduleInfo.label, href: moduleInfo.href, current: lesson.isModulePage },
   ];

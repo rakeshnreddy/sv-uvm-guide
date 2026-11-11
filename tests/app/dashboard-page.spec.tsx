@@ -168,12 +168,12 @@ describe('/dashboard', () => {
   it('renders a static shell with every flag off, never calling notFound or reading this browser on the server', () => {
     seedStore();
     expect(dashboardModule.dynamic).toBe('error');
-    expect(dashboardModule.metadata.title).toBe('Your learning');
+    expect(dashboardModule.metadata.title).toBe('Dashboard');
 
     const html = renderToStaticMarkup(<DashboardPage />);
 
     expect(navigation.notFound).not.toHaveBeenCalled();
-    expect(html).toMatch(/<h1[^>]*>Your learning<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>Dashboard<\/h1>/);
     expect(html).toContain('aria-label="Your learning"');
     expect(html).toContain('Stored only in this browser');
     expect(html).toContain('Reading what this browser has saved');
@@ -188,7 +188,7 @@ describe('/dashboard', () => {
   it('shows the empty state when nothing is recorded in this browser', () => {
     render(<DashboardPage />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Your learning' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Your learning' });
     expect(within(nav).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
     const empty = screen.getByRole('region', { name: 'Nothing recorded in this browser yet' });

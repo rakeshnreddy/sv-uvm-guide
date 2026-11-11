@@ -6,6 +6,8 @@ import { ArrowRight } from 'lucide-react';
 
 import { eyebrow, focusRing, inlineLink, primaryAction, secondaryAction, textLink } from '@/components/curriculum/overview-ui';
 import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { siteLabel } from '@/lib/nav-labels';
+import { DASHBOARD_HREF, LABS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
 import { labelWithCode } from '@/lib/curriculum-overview';
 import {
@@ -306,7 +308,7 @@ function LabsCard({ summaries }: { summaries: LabSummaries }) {
       {inProgress.length + completed.length === 0 ? (
         <>
           <p className={muted}>No lab started in this browser yet.</p>
-          <Link href="/practice#labs" className={cn(textLink, 'mt-2 inline-block text-sm')}>
+          <Link href={LABS_HREF} className={cn(textLink, 'mt-2 inline-block text-sm')}>
             Browse the labs
           </Link>
         </>
@@ -745,7 +747,7 @@ export default function DashboardPageClient({
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-h1 text-foreground">Your learning</h1>
+          <h1 className="text-h1 text-foreground">{siteLabel(DASHBOARD_HREF)}</h1>
           <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             The lessons, labs, reviews, notes and quiz results recorded in this browser, and what to do next.
           </p>

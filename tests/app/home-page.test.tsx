@@ -63,8 +63,8 @@ describe('home page', () => {
     const footer = screen.getByRole('contentinfo');
     expect(screen.getByRole('main')).not.toContainElement(footer);
     const siteMap = within(footer).getByRole('navigation', { name: 'Site map' });
-    expect(within(siteMap).getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', '/privacy-policy');
-    expect(within(siteMap).getByRole('link', { name: 'Terms of service' })).toHaveAttribute('href', '/terms-of-service');
+    expect(within(footer).getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', '/privacy-policy');
+    expect(within(footer).getByRole('link', { name: 'Terms of service' })).toHaveAttribute('href', '/terms-of-service');
     expect(within(siteMap).getByRole('link', { name: 'Labs' })).toHaveAttribute('href', '/practice#labs');
     // The project is MIT licensed, so the footer says so and links the source (landing-2).
     expect(footer).toHaveTextContent('MIT licensed');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Builds the client-side search index for the curriculum.
+ * Builds the client-side search index: the curriculum plus practice and reference pages.
  *
  *   node scripts/generate-search-index.mjs           write src/generated/search-index.json
  *   node scripts/generate-search-index.mjs --check   exit 1 when the committed index is stale
@@ -11,6 +11,19 @@
  * - per lesson: its slug, title, description and every H2/H3 heading.
  * Search results link to `/curriculum/<tier>/<module>/<lesson>` and, for
  * headings, `#<anchor>`.
+ *
+ * Beside the curriculum, `items` lists the other places a learner can open,
+ * each with a kind, a title, a one-line description, keywords, an href and an
+ * optional module code (no body text):
+ * - labs (available ones) from the lab registry (src/generated/lab-registry.ts);
+ * - exercises, interactive models (interactives, diagrams and charts) and tools
+ *   from PRACTICE_PAGES in src/lib/practice-links.ts;
+ * - the interview question banks in content/interview-questions/*.json,
+ *   linking to their section of /interview-prep;
+ * - the reference pages from REFERENCE_LINKS in src/lib/site-links.ts, with the
+ *   description from each page's metadata.
+ * The TypeScript sources are transpiled on the fly with their runtime imports
+ * replaced by small stubs, so the script needs no TypeScript loader.
  *
  * Order and membership come from content/curriculum/curriculum.manifest.json,
  * the same source scripts/generate-curriculum-data.ts reads; titles and
@@ -38,7 +51,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const curriculumRoot = path.join(root, "content", "curriculum");
 const outputPath = path.join(root, "src", "generated", "search-index.json");
 const INDEXED_DEPTHS = new Set([2, 3]);
-export const SEARCH_INDEX_VERSION = 2;
+export const SEARCH_INDEX_VERSION = 3;
+/** Descriptions of the non-lesson items keep their first sentence, cut to at most this many characters. */
+export const ITEM_DESCRIPTION_MAX = 120;
+/** The order kinds are listed in the index. */
+export const ITEM_KINDS = ["lab", "exercise", "model", "tool", "interview", "reference"];
 
 /** Loads src/lib/heading-slug.ts, the one anchor algorithm the lesson page also uses. */
 export async function loadHeadingSlug() {
@@ -47,6 +64,160 @@ export async function loadHeadingSlug() {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
   });
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+}
+
+/**
+ * Runtime imports of the TypeScript sources this script reads, and what each
+ * resolves to here: module source text, a JSON file, or another TypeScript
+ * module transpiled the same way. Type-only imports vanish in the transpile.
+ * An import that is not listed fails loudly instead of loading half the app.
+ */
+const MANIFEST_JSON = { json: "content/curriculum/curriculum.manifest.json" };
+export const TS_IMPORT_STUBS = {
+  "@/lib/curriculum-data": { source: "export const curriculumData = [];" },
+  "@/lib/lab-registry": { source: "export const getLabById = () => undefined; export const getAllLabs = () => [];" },
+  "@/lib/site-links": { ts: "src/lib/site-links.ts" },
+  "../../content/curriculum/curriculum.manifest.json": MANIFEST_JSON,
+  "@/content/curriculum/curriculum.manifest.json": MANIFEST_JSON,
+};
+
+function dataUrl(source) {
+  return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+}
+
+/** A TypeScript module from the repo as a data: URL, its imports resolved through TS_IMPORT_STUBS. */
+function tsModuleUrl(relativePath, seen = new Set()) {
+  if (seen.has(relativePath)) throw new Error(`Import cycle through ${relativePath}`);
+  const source = fs.readFileSync(path.join(root, relativePath), "utf8");
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  });
+  return dataUrl(
+    outputText.replace(/(\bfrom\s*|\bimport\s*)(["'])([^"']+)\2/g, (match, keyword, quote, specifier) => {
+      const stub = TS_IMPORT_STUBS[specifier];
+      if (!stub) throw new Error(`${relativePath} imports ${specifier}; add it to TS_IMPORT_STUBS in scripts/generate-search-index.mjs`);
+      let url;
+      if (stub.source) url = dataUrl(stub.source);
+      else if (stub.json) url = dataUrl(`export default ${fs.readFileSync(path.join(root, stub.json), "utf8")};`);
+      else url = tsModuleUrl(stub.ts, new Set([...seen, relativePath]));
+      return `${keyword}${quote}${url}${quote}`;
+    }),
+  );
+}
+
+/** Imports a TypeScript module from the repo (see TS_IMPORT_STUBS). */
+export function importTsModule(relativePath) {
+  return import(tsModuleUrl(relativePath));
+}
+
+/**
+ * The first sentence: up to the first ".", "!" or "?" that is followed by a
+ * capital letter or the end of the text, so "e.g. a" or "v1.2" do not end it.
+ */
+export function firstSentence(text) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  const end = /[.!?](?=\s+["“(]?[A-Z0-9]|$)/.exec(flat);
+  return end ? flat.slice(0, end.index + 1) : flat;
+}
+
+/**
+ * One line for a search result: the first sentence when it fits in `max`
+ * characters, otherwise cut at the last word boundary that leaves room for an
+ * ellipsis, so the line, ellipsis included, is at most `max` characters.
+ */
+export function oneLine(text, max = ITEM_DESCRIPTION_MAX) {
+  const sentence = firstSentence(text);
+  if (sentence.length <= max) return sentence;
+  const cut = sentence.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  const words = space > max / 2 ? cut.slice(0, space) : cut.slice(0, max - 1);
+  return `${words.replace(/[\s,;:.\-–—(]+$/, "")}…`;
+}
+
+/** "I-SV-2B_Advanced_Constrained_Randomization/solver-debug" → "I-SV-2B". */
+function codeOfLessonRef(ref) {
+  return ref ? ref.split("/")[0].split("_")[0] : undefined;
+}
+
+/** Unique, lowercase keywords in first-seen order. */
+function keywords(...values) {
+  const seen = new Set();
+  for (const value of values.flat()) {
+    const word = String(value ?? "").trim().toLowerCase();
+    if (word) seen.add(word);
+  }
+  return [...seen];
+}
+
+/** One index item; `code` only when there is one. */
+function item(kind, title, description, href, words, code) {
+  const entry = { kind, title: title.replace(/\s+/g, " ").trim(), description: oneLine(description), href, keywords: words };
+  if (code) entry.code = code;
+  return entry;
+}
+
+/** Practice pages (from src/lib/practice-links.ts), whose kinds map to search kinds. */
+const PRACTICE_KIND_TO_SEARCH_KIND = { exercise: "exercise", interactive: "model", diagram: "model", chart: "model", tool: "tool" };
+const PRACTICE_KIND_WORDS = {
+  exercise: ["exercise"],
+  interactive: ["interactive model", "visualization"],
+  diagram: ["interactive model", "diagram", "visualization"],
+  chart: ["interactive model", "chart", "visualization"],
+  tool: ["tool"],
+};
+
+/** The `description` in a page's `export const metadata`, read from its source. */
+function pageMetadataDescription(route) {
+  const candidates = [
+    path.join(root, "src", "app", "(learning)", ...route.split("/").filter(Boolean), "page.tsx"),
+    path.join(root, "src", "app", "(public)", ...route.split("/").filter(Boolean), "page.tsx"),
+  ];
+  const file = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!file) throw new Error(`No page.tsx for reference page ${route}`);
+  const source = fs.readFileSync(file, "utf8");
+  const metadata = source.slice(source.indexOf("export const metadata"));
+  const match = /description:\s*(["'`])((?:\\.|(?!\1)[\s\S])*)\1/.exec(metadata);
+  if (!match) throw new Error(`${path.relative(root, file)} has no metadata description`);
+  return match[2].replace(/\\(.)/g, "$1");
+}
+
+/** Labs, exercises, models, tools, interview banks and reference pages. */
+export async function buildSearchItems(headingSlug) {
+  const practice = await importTsModule("src/lib/practice-links.ts");
+  const { GENERATED_LAB_MANIFESTS } = await importTsModule("src/generated/lab-registry.ts");
+  const siteLinks = await importTsModule("src/lib/site-links.ts");
+
+  const items = [];
+
+  for (const lab of GENERATED_LAB_MANIFESTS) {
+    if (lab.status !== "available") continue;
+    const override = practice.LAB_LESSON_OVERRIDES[lab.id]?.[0];
+    const fromHref = lab.moduleHref ? lab.moduleHref.split("/")[3] : undefined;
+    const code = codeOfLessonRef(override) ?? codeOfLessonRef(fromHref) ?? lab.owningModule;
+    items.push(item("lab", lab.title, lab.description, `/practice/lab/${lab.id}`, keywords("lab", lab.owningModule, code), code));
+  }
+
+  for (const page of practice.PRACTICE_PAGES) {
+    const kind = PRACTICE_KIND_TO_SEARCH_KIND[page.kind];
+    if (!kind) throw new Error(`Practice page ${page.href} has kind ${page.kind}, which search does not map`);
+    const codes = page.lessons.map(codeOfLessonRef);
+    items.push(item(kind, page.title, page.description, page.href, keywords(PRACTICE_KIND_WORDS[page.kind], codes), codes[0]));
+  }
+
+  const bankDir = path.join(root, "content", "interview-questions");
+  for (const file of fs.readdirSync(bankDir).filter((name) => name.endsWith(".json")).sort()) {
+    const bank = JSON.parse(fs.readFileSync(path.join(bankDir, file), "utf8"));
+    const code = codeOfLessonRef(practice.INTERVIEW_BANK_LESSONS[bank.topic]?.[0]);
+    items.push(
+      item("interview", bank.title, bank.description, `/interview-prep#${headingSlug(bank.title)}`, keywords("interview", "interview questions", bank.topic), code),
+    );
+  }
+
+  for (const link of siteLinks.REFERENCE_LINKS) {
+    items.push(item("reference", link.label, pageMetadataDescription(link.href), link.href, keywords("reference")));
+  }
+
+  return items.sort((a, b) => ITEM_KINDS.indexOf(a.kind) - ITEM_KINDS.indexOf(b.kind));
 }
 
 /** Title and description, read exactly as scripts/generate-curriculum-data.ts reads them. */
@@ -168,7 +339,8 @@ export async function buildSearchIndex() {
     tiers.push({ id: tier.id, title: tier.title, modules });
   }
 
-  return { index: { version: SEARCH_INDEX_VERSION, tiers }, warnings };
+  const items = await buildSearchItems(headingSlug);
+  return { index: { version: SEARCH_INDEX_VERSION, tiers, items }, warnings };
 }
 
 /** One lesson per line keeps diffs readable without pretty-printing every heading. */
@@ -180,7 +352,8 @@ export function serializeSearchIndex(index) {
     });
     return `{"id":${JSON.stringify(tier.id)},"title":${JSON.stringify(tier.title)},"modules":[\n${moduleBlocks.join(",\n")}\n]}`;
   });
-  return `{"version":${index.version},"tiers":[\n${tierBlocks.join(",\n")}\n]}\n`;
+  const itemLines = (index.items ?? []).map((entry) => JSON.stringify(entry));
+  return `{"version":${index.version},"tiers":[\n${tierBlocks.join(",\n")}\n],"items":[\n${itemLines.join(",\n")}\n]}\n`;
 }
 
 function summarize(index) {
@@ -192,7 +365,13 @@ function summarize(index) {
       for (const lesson of mod.lessons) headings += lesson.headings.length;
     }
   }
-  return { lessons, headings };
+  const items = {};
+  for (const entry of index.items ?? []) items[entry.kind] = (items[entry.kind] ?? 0) + 1;
+  return { lessons, headings, items };
+}
+
+function describeItems(items) {
+  return Object.entries(items).map(([kind, count]) => `${count} ${kind}`).join(", ");
 }
 
 const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
@@ -201,7 +380,7 @@ if (isMain) {
   const { index, warnings } = await buildSearchIndex();
   for (const warning of warnings) console.warn(`warn  ${warning}`);
   const serialized = serializeSearchIndex(index);
-  const { lessons, headings } = summarize(index);
+  const { lessons, headings, items } = summarize(index);
 
   if (process.argv.includes("--check")) {
     const current = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "";
@@ -209,12 +388,12 @@ if (isMain) {
       console.error("src/generated/search-index.json is stale. Run: node scripts/generate-search-index.mjs");
       process.exit(1);
     }
-    console.log(`Search index is up to date (${lessons} lessons, ${headings} headings).`);
+    console.log(`Search index is up to date (${lessons} lessons, ${headings} headings; ${describeItems(items)}).`);
   } else {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, serialized);
     console.log(
-      `Wrote ${path.relative(root, outputPath)}: ${lessons} lessons, ${headings} headings, ${(serialized.length / 1024).toFixed(1)} KB.`,
+      `Wrote ${path.relative(root, outputPath)}: ${lessons} lessons, ${headings} headings; ${describeItems(items)}; ${(serialized.length / 1024).toFixed(1)} KB.`,
     );
   }
 }

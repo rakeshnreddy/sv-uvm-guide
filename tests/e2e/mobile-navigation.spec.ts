@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { test, expect, devices, webkit } from '@playwright/test';
 
+import { SITE_NAME } from '@/lib/site-links';
+
 // Use iPhone 13 device for all tests in this file
 test.use({ ...devices['iPhone 13'] });
 
@@ -27,10 +29,17 @@ test.describe('Mobile Navigation', () => {
     const mobileMenu = page.getByTestId('mobile-menu');
     await expect(mobileMenu).toBeVisible();
     await expect(mobileMenu.getByRole('link', { name: 'Curriculum', exact: true })).toBeVisible();
+    // Practice and Reference list their pages under a group label.
+    await expect(mobileMenu.getByRole('list', { name: 'Practice' }).getByRole('link', { name: 'Labs', exact: true })).toBeVisible();
+    await mobileMenu.getByRole('list', { name: 'Reference' }).getByRole('link', { name: 'History', exact: true }).scrollIntoViewIfNeeded();
+    await expect(mobileMenu.getByRole('list', { name: 'Reference' }).getByRole('link', { name: 'History', exact: true })).toBeVisible();
     await mobileMenu.getByRole('button').first().click();
     await expect(mobileMenu).not.toBeVisible();
 
-    // Test the course outline drawer (it replaced the "Quick Access" sidebar)
+    // The navbar's course outline button is on lesson pages, where the outline exists.
+    await expect(page.getByRole('banner').getByRole('button', { name: 'Course outline', exact: true })).toHaveCount(0);
+    await page.goto(MAILBOXES);
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached' });
     const outlineButton = page.getByRole('button', { name: 'Course outline', exact: true });
     await outlineButton.click();
     const outlineHeading = page.getByRole('heading', { name: 'Course outline' });
@@ -60,9 +69,9 @@ test.describe('Mobile Navigation', () => {
 
   test('should open search from the search button (G30-SRCH-02)', async ({ page }) => {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Search the curriculum' });
+    const dialog = page.getByRole('dialog', { name: `Search ${SITE_NAME}` });
     await expect(dialog).toBeVisible();
-    const field = dialog.getByRole('combobox', { name: 'Search lessons and sections' });
+    const field = dialog.getByRole('combobox', { name: 'Search lessons, labs and practice' });
     await expect(field).toBeFocused();
     await field.fill('mailbox');
     await expect(dialog.getByRole('option').first()).toBeVisible();
@@ -83,12 +92,13 @@ test.describe('Mobile Navigation', () => {
     expect(await fits('header')).toBe(true);
     expect(await fits('footer')).toBe(true);
 
+    // The drawer slides in, so measure once it has settled.
     await page.getByRole('button', { name: 'Course outline', exact: true }).click();
-    expect(await fits('[role="dialog"]')).toBe(true);
+    await expect.poll(() => fits('[role="dialog"]')).toBe(true);
     await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: 'Search', exact: true }).click();
-    expect(await fits('[role="dialog"]')).toBe(true);
+    await expect.poll(() => fits('[role="dialog"]')).toBe(true);
   });
 
   test('should open the course outline from the menu (responsive-a11y-14)', async ({ page }) => {
@@ -131,7 +141,7 @@ test.describe('Mobile Navigation', () => {
     }
     await page.setViewportSize({ width: 390, height: 844 });
     const learning = mobileMenu.getByRole('navigation', { name: 'Your learning' });
-    for (const name of ['Settings', 'Self-assessment', 'Find your level']) {
+    for (const name of ['Review', 'Notebook', 'Self-assessment', 'Settings']) {
       await expect(learning.getByRole('link', { name, exact: true })).toBeVisible();
     }
 

@@ -25,8 +25,10 @@ const REDIRECT_METHODS = new Set(["GET", "HEAD"]);
 /**
  * The canonical lesson URL to redirect a request to, or `null` to let it through.
  *
- * Redirects pretty slugs, wrong letter case, two-segment module URLs,
- * one-segment tier URLs and extra trailing segments, exactly as the page does.
+ * Redirects pretty slugs, wrong letter case, two-segment module URLs and
+ * extra trailing segments, exactly as the page does. One-segment tier URLs are
+ * not lessons: sectionRedirect in src/middleware.ts sends them to their
+ * section of /curriculum first, so this returns `null` for them.
  * Returns `null` for canonical lesson URLs; for paths that are not lessons (the
  * overview, static pages such as `/curriculum/expert-index`, and URLs that match
  * no lesson, which the page answers with its 404); and for methods other than

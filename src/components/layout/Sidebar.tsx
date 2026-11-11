@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
-import { ChevronDown, PanelLeftClose, X } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import { ChevronDown, LayoutList, PanelLeftClose, X } from "lucide-react";
 import React, { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import {
@@ -25,45 +25,47 @@ import {
   viewportAtLeast,
 } from "@/components/search/shell-store";
 import { useModalDialog } from "@/components/search/useModalDialog";
+import { SignalTag } from "@/components/ui/SignalTag";
 import { curriculumData } from "@/lib/curriculum-data";
-import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from "@/lib/site-links";
+import { CURRICULUM_HREF, tierSectionHref, type NavLink } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
 /** The id the navbar's outline button points at (aria-controls) while the drawer is open. */
 export const OUTLINE_DRAWER_ID = "course-outline-drawer";
 /** The id of the docked outline column on lesson pages. */
 export const DOCKED_OUTLINE_ID = "course-outline-docked";
+/**
+ * The docked column's width. The header's left slot uses the same classes, so
+ * the wordmark sits over the outline and the search field starts at the main
+ * column's edge (SPEC-phases-2-4.md, "Header layout").
+ */
+export const DOCKED_OUTLINE_WIDTH = "w-64 xl:w-72";
 
 /**
- * Quick links under the outline, in the drawer and in the docked column
- * (G30-SIDE-04, G30-SIDE-05, G30-PATH-07): the route chooser, the overview,
- * the practice hub, its labs, the interview banks and the learner dashboard
- * (progress kept in this browser). The navbar shows Labs, Interview prep and
- * Dashboard only from xl, so on narrower windows these are their links in the
- * shell.
+ * The one site link in the outline, at the top of the phone drawer only
+ * (SPEC-phases-2-4.md, "Course outline"). The docked column repeats no site
+ * links: the navbar carries them.
  */
-export const OUTLINE_QUICK_LINKS: readonly { label: string; href: string }[] = [
-  { label: "Start here", href: START_HERE_HREF },
-  { label: "Curriculum overview", href: "/curriculum" },
-  { label: "Practice hub", href: "/practice" },
-  { label: "Labs", href: LABS_HREF },
-  { label: "Interview prep", href: INTERVIEW_PREP_HREF },
-  { label: "Dashboard", href: "/dashboard" },
-];
-
-type Density = "compact" | "comfortable";
+export const OUTLINE_OVERVIEW_LINK: NavLink = { label: "Curriculum overview", href: CURRICULUM_HREF };
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+const transition = "transition-colors duration-150 ease-bench motion-reduce:transition-none";
 
 function isModifiedClick(event: MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
 
-function linkClass(current: boolean, density: Density): string {
+/**
+ * A row in the outline: 40 px tall at least. The current row is the raised
+ * surface with a 2 px accent marker on its leading edge and primary text
+ * (DESIGN.md section 2, rule 3).
+ */
+export function outlineRowClass(current: boolean): string {
   return cn(
-    "flex w-full min-w-0 items-start gap-2 rounded-lg border-l-2 px-2 text-left text-sm transition-colors duration-150 ease-bench motion-reduce:transition-none",
-    density === "compact" ? "min-h-8 py-1.5" : "min-h-10 py-2",
+    "flex min-h-10 w-full min-w-0 items-start gap-2 rounded-lg border-l-2 px-2 py-2 text-left text-sm",
+    transition,
     current
       ? "border-primary bg-muted font-medium text-foreground"
       : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -71,10 +73,30 @@ function linkClass(current: boolean, density: Density): string {
   );
 }
 
+const toggleClass = cn(
+  "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+  transition,
+  focusRing,
+);
+
+/**
+ * Scrolls `container` so its current item (aria-current="page") is in view,
+ * a third of the way down, without scrolling the page. Does nothing when the
+ * item is already visible.
+ */
+export function revealCurrentItem(container: HTMLElement | null): void {
+  const current = container?.querySelector<HTMLElement>('[aria-current="page"]');
+  if (!container || !current) return;
+  const top = current.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+  const bottom = top + current.offsetHeight;
+  if (top < container.scrollTop || bottom > container.scrollTop + container.clientHeight) {
+    container.scrollTop = Math.max(0, top - container.clientHeight / 3);
+  }
+}
+
 interface TreeProps {
   outline: OutlineTier[];
-  density: Density;
-  /** Runs when a lesson link is followed (the drawer closes itself). */
+  /** Runs when a link is followed (the drawer closes itself). */
   onNavigate?: (href: string) => void;
 }
 
@@ -107,14 +129,12 @@ function useExpansion(outline: OutlineTier[]) {
 
 function ModuleItem({
   mod,
-  density,
   open,
   onToggle,
   idPrefix,
   onNavigate,
 }: {
   mod: OutlineModule;
-  density: Density;
   open: boolean;
   onToggle: () => void;
   idPrefix: string;
@@ -135,25 +155,15 @@ function ModuleItem({
           // One name in every browser ("F1A: The Cost of Bugs"); the visible code and title, in order.
           aria-label={`${mod.code}: ${mod.title}`}
           onClick={(event) => follow(event, first.href)}
-          className={linkClass(first.current, density)}
+          className={outlineRowClass(first.current)}
         >
-          <span className="mt-0.5 shrink-0 font-mono text-label text-subtle">{mod.code}</span>
+          <SignalTag code={mod.code} className="-my-px" />
           <span className={cn("min-w-0 break-words", mod.current && !first.current && "font-medium text-foreground")}>
             {mod.title}
           </span>
         </Link>
         {rest.length > 0 && (
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls={lessonsId}
-            onClick={onToggle}
-            className={cn(
-              "inline-flex shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground motion-reduce:transition-none",
-              density === "compact" ? "h-8 w-8" : "h-10 w-10",
-              focusRing,
-            )}
-          >
+          <button type="button" aria-expanded={open} aria-controls={lessonsId} onClick={onToggle} className={toggleClass}>
             <ChevronDown
               aria-hidden="true"
               className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", open && "rotate-180")}
@@ -170,7 +180,7 @@ function ModuleItem({
                 href={lesson.href}
                 aria-current={lesson.current ? "page" : undefined}
                 onClick={(event) => follow(event, lesson.href)}
-                className={linkClass(lesson.current, density)}
+                className={outlineRowClass(lesson.current)}
               >
                 <span className="min-w-0 break-words">{lesson.title}</span>
               </Link>
@@ -182,8 +192,12 @@ function ModuleItem({
   );
 }
 
-/** Tiers → modules → lessons, each tier and multi-lesson module a disclosure. */
-export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
+/**
+ * Tiers → modules → lessons. Each tier heading is a link to that tier's
+ * section of /curriculum, with a disclosure button beside it; each
+ * multi-lesson module is a disclosure too.
+ */
+export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
   const idPrefix = useId().replace(/:/g, "");
   const { tierOpen, moduleOpen, toggleTier, toggleModule } = useExpansion(outline);
 
@@ -192,44 +206,51 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
       {outline.map((tier) => {
         const open = tierOpen(tier.id);
         const panelId = `${idPrefix}-${tier.code}`;
+        const tierHref = tierSectionHref(tier.id);
         return (
           <li key={tier.id}>
-            <button
-              type="button"
-              aria-expanded={open}
-              aria-controls={panelId}
-              onClick={() => toggleTier(tier.id)}
-              className={cn(
-                "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none",
-                density === "compact" ? "min-h-9" : "min-h-11",
-                focusRing,
-              )}
-            >
-              <ChevronDown
-                aria-hidden="true"
+            <div className="flex items-start gap-1">
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={panelId}
+                onClick={() => toggleTier(tier.id)}
+                className={toggleClass}
+              >
+                <ChevronDown
+                  aria-hidden="true"
+                  className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", !open && "-rotate-90")}
+                />
+                <span className="sr-only">{`${tier.title} modules`}</span>
+              </button>
+              <Link
+                href={tierHref}
+                data-outline-tier={tier.code}
+                onClick={(event) => {
+                  if (!isModifiedClick(event)) onNavigate?.(tierHref);
+                }}
                 className={cn(
-                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
-                  !open && "-rotate-90",
+                  "flex min-h-10 min-w-0 flex-1 flex-col justify-center rounded-lg px-2 py-1.5 hover:bg-muted",
+                  transition,
+                  focusRing,
                 )}
-              />
-              <span className="min-w-0">
-                <span className={cn("block text-sm text-foreground", tier.current ? "font-semibold" : "font-medium")}>
+              >
+                <span className={cn("text-sm text-foreground", tier.current ? "font-semibold" : "font-medium")}>
                   {tier.title}
                 </span>
                 <span className="sr-only">, </span>
-                <span className="block text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {tier.moduleCount} modules · {tier.lessonCount} lessons
                 </span>
-              </span>
-            </button>
+              </Link>
+            </div>
             <div id={panelId} hidden={!open}>
-              {tier.audience && <p className="px-2 pb-2 pl-8 text-xs text-muted-foreground">{tier.audience}</p>}
+              {tier.audience && <p className="px-2 pb-2 pl-12 text-xs text-muted-foreground">{tier.audience}</p>}
               {tier.groups.map((group, groupIndex) => {
                 const items = group.modules.map((mod) => (
                   <ModuleItem
                     key={mod.id}
                     mod={mod}
-                    density={density}
                     open={moduleOpen(mod.id)}
                     onToggle={() => toggleModule(mod.id)}
                     idPrefix={idPrefix}
@@ -267,51 +288,11 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
   );
 }
 
-/** OUTLINE_QUICK_LINKS as a labelled list. `onNavigate` runs when a link is followed (the drawer closes itself). */
-function OutlineQuickLinks({
-  density,
-  onNavigate,
-  className,
-}: {
-  density: Density;
-  onNavigate?: (href: string) => void;
-  className?: string;
-}) {
-  return (
-    <ul
-      aria-label="Quick links"
-      className={cn(
-        "flex shrink-0 flex-wrap gap-x-4 border-t border-border text-sm",
-        density === "compact" ? "px-3 py-1.5" : "gap-y-1 px-4 py-2",
-        className,
-      )}
-    >
-      {OUTLINE_QUICK_LINKS.map((link) => (
-        <li key={link.href}>
-          <Link
-            href={link.href}
-            onClick={(event) => {
-              if (!isModifiedClick(event)) onNavigate?.(link.href);
-            }}
-            className={cn(
-              "inline-flex items-center whitespace-nowrap rounded font-medium text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 ease-bench hover:decoration-current motion-reduce:transition-none",
-              density === "compact" ? "min-h-8" : "min-h-10",
-              focusRing,
-            )}
-          >
-            {link.label}
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function useCourseOutline() {
   const pathname = usePathname();
   const current = useMemo(() => currentLessonSlug(pathname), [pathname]);
   const outline = useMemo(() => buildCourseOutline(curriculumData, manifestTierMeta, current), [current]);
-  return { outline, isLessonPage: current !== null };
+  return { outline, isLessonPage: current !== null, pathname };
 }
 
 /** The outline docked beside the lesson at lg and wider; hidden below lg, where the drawer takes over. */
@@ -319,15 +300,8 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Keep the current lesson in view inside the column, without scrolling the page.
-  // The container is `relative`, so offsetTop is measured from its top edge.
   useEffect(() => {
-    const container = scrollRef.current;
-    const currentLink = container?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!container || !currentLink) return;
-    const top = currentLink.offsetTop;
-    if (top < container.scrollTop || top > container.scrollTop + container.clientHeight - currentLink.offsetHeight) {
-      container.scrollTop = Math.max(0, top - container.clientHeight / 3);
-    }
+    revealCurrentItem(scrollRef.current);
   }, [outline]);
 
   const hide = () => {
@@ -336,37 +310,39 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   };
 
   return (
-    <div id={DOCKED_OUTLINE_ID} className="hidden w-64 shrink-0 border-r border-border lg:block xl:w-72">
+    <div id={DOCKED_OUTLINE_ID} className={cn("hidden shrink-0 border-r border-border lg:block", DOCKED_OUTLINE_WIDTH)}>
       <nav aria-label="Course outline" className="sticky top-16 flex max-h-[calc(100vh-4rem)] flex-col">
-        <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
+        <div className="flex items-center justify-between gap-2 pb-1 pl-3 pr-2 pt-2">
           <p className="text-label text-subtle">Course outline</p>
           <button
             type="button"
             onClick={hide}
             aria-label="Hide course outline"
             title="Hide course outline"
-            className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 ease-bench hover:bg-muted hover:text-foreground motion-reduce:transition-none",
-              focusRing,
-            )}
+            className={toggleClass}
           >
             <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-6">
-          <CourseOutlineTree outline={outline} density="compact" />
+          <CourseOutlineTree outline={outline} />
         </div>
-        {/* From xl the navbar shows these links itself, so the docked column leaves them to it. */}
-        <OutlineQuickLinks density="compact" className="xl:hidden" />
       </nav>
     </div>
   );
 }
 
-/** The outline as a modal drawer (G30-SIDE-V08): below lg, and on pages without the docked column. */
-function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
+/**
+ * The outline as a modal drawer (G30-SIDE-V08): below lg, and on pages
+ * without the docked column. One site link at the top, "Curriculum
+ * overview", then the outline; the current lesson is scrolled into view and
+ * takes focus.
+ */
+function OutlineDrawer({ outline, pathname }: { outline: OutlineTier[]; pathname: string | null }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLElement>(null);
   const titleId = useId();
+  const reduceMotion = useReducedMotion();
   useModalDialog(panelRef, {
     onClose: shellStore.closeOutline,
     initialFocus: () =>
@@ -374,10 +350,16 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
       panelRef.current?.querySelector<HTMLElement>("[data-outline-close]"),
   });
 
+  // After focus moves in: centre the current lesson inside the drawer's scroll area.
+  useEffect(() => {
+    revealCurrentItem(scrollRef.current);
+  }, []);
+
   const onNavigate = (href: string) => {
     shellStore.closeOutline();
     focusAfterNavigation(href);
   };
+  const overviewCurrent = pathname === OUTLINE_OVERVIEW_LINK.href;
 
   return (
     <div className={cn("fixed inset-0", MODAL_LAYER)}>
@@ -394,9 +376,9 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        initial={{ x: "-100%" }}
+        initial={reduceMotion ? false : { x: "-100%" }}
         animate={{ x: 0 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
         className="absolute inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col border-r border-border bg-card text-foreground shadow-card focus:outline-none"
       >
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -409,17 +391,33 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
             onClick={shellStore.closeOutline}
             aria-label="Close course outline"
             className={cn(
-              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-foreground transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none",
+              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-foreground hover:bg-muted",
+              transition,
               focusRing,
             )}
           >
             <X aria-hidden="true" className="h-5 w-5" />
           </button>
         </div>
-        <nav aria-label="Course outline" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-3">
-          <CourseOutlineTree outline={outline} density="comfortable" onNavigate={onNavigate} />
+        <nav
+          ref={scrollRef}
+          aria-label="Course outline"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-3"
+        >
+          <Link
+            href={OUTLINE_OVERVIEW_LINK.href}
+            data-outline-overview=""
+            aria-current={overviewCurrent ? "page" : undefined}
+            onClick={(event) => {
+              if (!isModifiedClick(event)) onNavigate(OUTLINE_OVERVIEW_LINK.href);
+            }}
+            className={cn(outlineRowClass(overviewCurrent), "mb-2 items-center font-medium text-foreground")}
+          >
+            <LayoutList aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {OUTLINE_OVERVIEW_LINK.label}
+          </Link>
+          <CourseOutlineTree outline={outline} onNavigate={onNavigate} />
         </nav>
-        <OutlineQuickLinks density="comfortable" onNavigate={onNavigate} />
       </motion.div>
     </div>
   );
@@ -451,14 +449,15 @@ export function useOutlineToggle() {
 
 /**
  * The course outline (G30-SIDE-01): tiers → modules → lessons in manifest
- * order, the current lesson marked with aria-current="page", electives
- * grouped and labelled, each tier collapsible. On lesson pages at lg and
+ * order, module codes as signal tags, the current lesson marked with
+ * aria-current="page", electives grouped and labelled, each tier collapsible
+ * and linked to its section of /curriculum. On lesson pages at lg and
  * wider it is docked beside the lesson (hideable, remembered per browser);
  * below lg, and on other pages, the navbar button and Ctrl/Cmd+B open it as a
  * modal drawer.
  */
 export default function Sidebar() {
-  const { outline, isLessonPage } = useCourseOutline();
+  const { outline, isLessonPage, pathname } = useCourseOutline();
   const drawerOpen = useShellState((state) => state.outlineOpen);
   const collapsed = useShellState((state) => state.outlineCollapsed);
   const wide = useMinWidth(LG_MIN_WIDTH);
@@ -471,7 +470,7 @@ export default function Sidebar() {
   return (
     <>
       {isLessonPage && !collapsed && <DockedOutline outline={outline} />}
-      {drawerOpen && <OutlineDrawer outline={outline} />}
+      {drawerOpen && <OutlineDrawer outline={outline} pathname={pathname} />}
     </>
   );
 }

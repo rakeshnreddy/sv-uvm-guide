@@ -3,8 +3,12 @@ import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import Navbar, { LEARNER_MENU_LINKS, MOBILE_GROUP_HEADING_CLASS, mainNavLinks, navLinkCurrent, signInHref } from '@/components/Navbar';
-import Sidebar, { OUTLINE_DRAWER_ID } from '@/components/layout/Sidebar';
+import Navbar, { HOME_LINK_LABEL, searchVisibility, signInHref } from '@/components/Navbar';
+import Sidebar, { DOCKED_OUTLINE_WIDTH, OUTLINE_DRAWER_ID } from '@/components/layout/Sidebar';
+import { MOBILE_GROUP_HEADING_CLASS, OUTLINE_SLOT_CLASS, PAGE_FRAME_CLASS } from '@/components/layout/nav-styles';
+import { SEARCH_PLACEHOLDER } from '@/components/search/SearchCombobox';
+import { SEARCH_DIALOG_TITLE } from '@/components/search/SearchDialog';
+import { PRIMARY_NAV, SITE_NAME, isNavGroup } from '@/lib/site-links';
 import { shellStore } from '@/components/search/shell-store';
 
 type SessionStatus = 'disabled' | 'loading' | 'authenticated' | 'unauthenticated';
@@ -58,8 +62,15 @@ vi.mock('@/components/ui/ThemeSwitcher', () => ({
     ),
 }));
 
-const MAIN_HREFS = ['/curriculum#routes', '/curriculum', '/practice', '/practice#labs', '/interview-prep', '/dashboard'];
-const LEARNING_HREFS = ['/settings', '/assessment', '/quiz/placement'];
+/** Every main destination in PRIMARY_NAV order, with each group's children in place of the group. */
+const MAIN_HREFS = PRIMARY_NAV.flatMap((item) => (isNavGroup(item) ? item.children.map((link) => link.href) : [item.href]));
+/** The phone menu's "Your learning" rows: the footer's group less Dashboard. */
+const LEARNING_HREFS = ['/dashboard/review', '/dashboard/notebook', '/assessment', '/settings'];
+const LESSON = '/curriculum/T1_Foundational/F2A_Core_Data_Types/index';
+
+function barNav() {
+  return within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' });
+}
 
 vi.mock('next/navigation', () => ({
   usePathname: () => nav.pathname,
@@ -124,60 +135,88 @@ afterEach(() => {
 });
 
 describe('Navbar landmarks and links', () => {
-  it('is a banner with a named main navigation and a search landmark', () => {
+  it('is a banner with a named main navigation, a search landmark and the wordmark', () => {
     render(<Navbar />);
     const banner = screen.getByRole('banner');
-    const main = within(banner).getAllByRole('navigation', { name: 'Main' })[0];
+    const main = barNav();
     expect(within(main).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
-    expect(within(main).getByRole('link', { name: 'Practice' })).toHaveAttribute('href', '/practice');
     const search = within(banner).getByRole('search', { name: 'Curriculum' });
-    expect(within(search).getByRole('combobox', { name: 'Search lessons and sections' })).toHaveAttribute(
-      'data-testid',
-      'main-search-input',
-    );
-    expect(within(banner).getByRole('link', { name: 'SV/UVM Hub home' })).toHaveAttribute('href', '/');
+    expect(within(search).getByRole('combobox', { name: SEARCH_PLACEHOLDER })).toHaveAttribute('data-testid', 'main-search-input');
+    expect(HOME_LINK_LABEL).toBe(`${SITE_NAME} home`);
+    expect(within(banner).getByRole('link', { name: HOME_LINK_LABEL })).toHaveAttribute('href', '/');
   });
 
-  it('marks the current section for assistive technology, not just by colour', () => {
-    nav.pathname = '/curriculum/T1_Foundational/F2A_Core_Data_Types/index';
+  it('shows the five PRIMARY_NAV items in order: links for Curriculum, Interview prep and Dashboard, disclosures for Practice and Reference', () => {
     render(<Navbar />);
-    const main = screen.getAllByRole('navigation', { name: 'Main' })[0];
-    expect(within(main).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('aria-current', 'true');
-    expect(within(main).getByRole('link', { name: 'Practice' })).not.toHaveAttribute('aria-current');
-    expect(navLinkCurrent('/practice', '/practice')).toBe('page');
-    expect(navLinkCurrent('/practice/lab/x', '/practice')).toBe('true');
-    expect(navLinkCurrent('/practices', '/practice')).toBeUndefined();
+    const main = barNav();
+    const items = Array.from(main.children).map((child) => {
+      const control = child.matches('a, button') ? child : child.querySelector('button')!;
+      return [control.tagName.toLowerCase(), control.textContent];
+    });
+    expect(items).toEqual([
+      ['a', 'Curriculum'],
+      ['button', 'Practice'],
+      ['a', 'Interview prep'],
+      ['button', 'Reference'],
+      ['a', 'Dashboard'],
+    ]);
+    expect(within(main).getByRole('link', { name: 'Interview prep' })).toHaveAttribute('href', '/interview-prep');
+    expect(within(main).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
+    // The old entries are gone: no "Start here", no "Labs" as a top item, no "More".
+    expect(within(main).queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Start here')).not.toBeInTheDocument();
+    expect(main).toHaveClass('hidden', 'lg:flex');
   });
 
-  it('marks the current link with weight 500 and a 2 px accent underline, never an accent fill (R5, R8)', () => {
+  it('marks the current item with aria-current, weight 500 and a 2 px accent underline (activeNavLabel)', () => {
     nav.pathname = '/curriculum';
-    render(<Navbar />);
-    const main = screen.getAllByRole('navigation', { name: 'Main' })[0];
-    const current = within(main).getByRole('link', { name: 'Curriculum' });
+    const { unmount } = render(<Navbar />);
+    let current = within(barNav()).getByRole('link', { name: 'Curriculum' });
+    expect(current).toHaveAttribute('aria-current', 'page');
     expect(current).toHaveClass('border-b-2', 'border-primary', 'font-medium', 'text-foreground', 'duration-150', 'ease-bench');
     expect(current).not.toHaveClass('font-semibold', 'bg-primary', 'text-primary');
-    const other = within(main).getByRole('link', { name: 'Practice' });
+    const other = within(barNav()).getByRole('link', { name: 'Dashboard' });
     expect(other).toHaveClass('border-transparent', 'font-medium', 'text-muted-foreground', 'hover:text-foreground');
-    // Every link is set at weight 500, so moving between pages never shifts the row.
-    for (const link of within(main).getAllByRole('link')) {
-      expect(link).toHaveClass('font-medium');
-      expect(link).not.toHaveClass('font-semibold', 'font-normal');
+    expect(other).not.toHaveAttribute('aria-current');
+    // Every item, link or button, is set at weight 500, so nothing shifts between pages.
+    for (const control of barNav().querySelectorAll(':scope > a, :scope > div > button')) {
+      expect(control).toHaveClass('font-medium');
+      expect(control).not.toHaveClass('font-semibold', 'font-normal');
     }
-    expect(within(main).getByRole('button', { name: 'More' })).toHaveClass('font-medium');
+    unmount();
+
+    nav.pathname = LESSON;
+    const second = render(<Navbar />);
+    current = within(barNav()).getByRole('link', { name: 'Curriculum' });
+    expect(current).toHaveAttribute('aria-current', 'true');
+    second.unmount();
+
+    // Dashboard covers /settings and /assessment; Practice covers /exercises/**.
+    nav.pathname = '/settings';
+    const third = render(<Navbar />);
+    expect(within(barNav()).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'true');
+    third.unmount();
+
+    nav.pathname = '/exercises/uvm-phase-sorter';
+    render(<Navbar />);
+    const practice = within(barNav()).getByRole('button', { name: 'Practice' });
+    expect(practice).toHaveAttribute('aria-current', 'true');
+    expect(practice).toHaveClass('border-primary', 'text-foreground');
+    expect(within(barNav()).getByRole('link', { name: 'Curriculum' })).not.toHaveAttribute('aria-current');
   });
 
-  it('is an opaque sticky bar with a hairline: no blur and no translucent background', () => {
+  it('is one opaque sticky 64 px row with a hairline: no blur and no translucent background', () => {
     render(<Navbar />);
     const banner = screen.getByRole('banner');
-    expect(banner).toHaveClass('sticky', 'top-0', 'border-b', 'border-border', 'bg-background');
+    expect(banner).toHaveClass('sticky', 'top-0', 'h-16', 'border-b', 'border-border', 'bg-background');
     expect(banner.className).not.toMatch(/backdrop-blur|bg-background\/|supports-\[backdrop-filter\]/);
   });
 
   it('gives every header icon button one style: 40 px, rounded-lg, bordered card surface, hover raised', () => {
+    nav.pathname = LESSON;
     render(<Navbar />);
     const banner = screen.getByRole('banner');
-    const names = ['Course outline', 'Search', 'Open main menu'];
-    for (const name of names) {
+    for (const name of ['Course outline', 'Search', 'Open main menu']) {
       for (const button of within(banner).getAllByRole('button', { name })) {
         expect(button).toHaveClass('h-10', 'w-10', 'rounded-lg', 'border', 'border-border', 'bg-card', 'hover:bg-muted', 'duration-150', 'ease-bench');
         expect(button).not.toHaveClass('rounded-xl', 'bg-background', 'transition-all');
@@ -186,27 +225,22 @@ describe('Navbar landmarks and links', () => {
     }
   });
 
-  it('links Start here, Labs, Interview prep and Dashboard in order (G30-SIDE-05, G30-PATH-07)', () => {
+  it('caps the search field at 420 px and shows the menu button only below lg', () => {
     render(<Navbar />);
-    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
-    const links = within(main).getAllByRole('link');
-    expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['Start here', '/curriculum#routes'],
-      ['Curriculum', '/curriculum'],
-      ['Practice', '/practice'],
-      ['Labs', '/practice#labs'],
-      ['Interview prep', '/interview-prep'],
-      ['Dashboard', '/dashboard'],
-    ]);
+    const search = within(screen.getByRole('banner')).getByRole('search', { name: 'Curriculum' });
+    expect(search).toHaveClass('max-w-[420px]', 'hidden', 'md:flex');
+    expect(screen.getByRole('button', { name: 'Open main menu' })).toHaveClass('lg:hidden');
+    expect(searchVisibility(false)).toEqual({ field: 'hidden md:flex', button: 'md:hidden' });
+    // While the outline is docked the field gives way to the button from lg to xl.
+    expect(searchVisibility(true)).toEqual({ field: 'hidden md:flex lg:hidden xl:flex', button: 'md:hidden lg:inline-flex xl:hidden' });
   });
 
-  it('links the dashboard and no hidden page while every switch is off', () => {
+  it('links no hidden page while every switch is off', () => {
     for (const key of Object.keys(features) as Array<keyof typeof features>) features[key] = false;
     try {
       render(<Navbar />);
       const banner = screen.getByRole('banner');
       expect(within(banner).getAllByRole('link', { name: 'Dashboard' })[0]).toHaveAttribute('href', '/dashboard');
-      expect(within(banner).queryByRole('link', { name: 'Community' })).not.toBeInTheDocument();
       const hrefs = within(banner)
         .getAllByRole('link', { hidden: true })
         .map((link) => link.getAttribute('href'));
@@ -218,86 +252,130 @@ describe('Navbar landmarks and links', () => {
       Object.assign(features, { dashboard: true, review: true, notebook: true, settings: true });
     }
   });
+});
 
-  it('lists Community only while community is on (it also needs accounts)', async () => {
-    expect(mainNavLinks({ community: false }).map((link) => link.label)).not.toContain('Community');
-    expect(mainNavLinks({ community: true }).at(-1)).toEqual({ label: 'Community', href: '/community', wideOnly: true });
+describe('header alignment', () => {
+  it('uses the page frame on pages without the outline, with no outline button', () => {
+    nav.pathname = '/practice';
+    render(<Navbar />);
+    const frame = screen.getByRole('banner').querySelector('[data-header-frame]')!;
+    for (const name of PAGE_FRAME_CLASS.split(' ')) expect(frame).toHaveClass(name);
+    expect(screen.getByRole('banner').querySelector('[data-header-slot]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Course outline' })).not.toBeInTheDocument();
+  });
 
+  it('puts the outline button and wordmark in a left slot as wide as the docked outline on lesson pages', () => {
+    nav.pathname = LESSON;
+    render(<Navbar />);
+    const slot = screen.getByRole('banner').querySelector('[data-header-slot="outline"]')!;
+    expect(within(slot as HTMLElement).getByRole('button', { name: 'Course outline' })).toBeInTheDocument();
+    expect(within(slot as HTMLElement).getByRole('link', { name: HOME_LINK_LABEL })).toBeInTheDocument();
+    // The slot takes the docked column's widths from lg ("w-64 xl:w-72" becomes "lg:w-64 xl:w-72").
+    const widths = DOCKED_OUTLINE_WIDTH.split(' ').map((name) => (name.includes(':') ? name : `lg:${name}`));
+    for (const name of widths) expect(slot).toHaveClass(name);
+    expect(OUTLINE_SLOT_CLASS).toContain('lg:w-64');
+  });
+
+  it('drops the slot when the learner has hidden the docked outline', () => {
+    nav.pathname = LESSON;
+    act(() => shellStore.setOutlineCollapsed(true));
+    render(<Navbar />);
+    expect(screen.getByRole('banner').querySelector('[data-header-slot]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Course outline' })).toBeInTheDocument();
+  });
+});
+
+describe('Practice and Reference disclosures', () => {
+  it('opens a panel of links with aria-expanded and aria-controls, and Escape closes it and returns focus', async () => {
     const user = userEvent.setup();
-    features.community = true;
     render(<Navbar />);
-    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
-    expect(within(main).getByRole('link', { name: 'Community' })).toHaveAttribute('href', '/community');
-    await user.click(within(main).getByRole('button', { name: 'More' }));
-    expect(within(main).getAllByRole('link', { name: 'Community' })).toHaveLength(2);
-  });
+    const practice = within(barNav()).getByRole('button', { name: 'Practice' });
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+    const panel = document.getElementById(practice.getAttribute('aria-controls')!)!;
+    expect(panel).toHaveAttribute('data-state', 'closed');
+    expect(panel).toHaveClass('invisible');
 
-  it('keeps the bar narrow: Labs, Interview prep and Dashboard join it from xl, the rest from md', () => {
-    render(<Navbar />);
-    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
-    for (const name of ['Labs', 'Interview prep', 'Dashboard']) {
-      expect(within(main).getByRole('link', { name })).toHaveClass('hidden', 'xl:inline-flex');
-    }
-    for (const name of ['Start here', 'Curriculum', 'Practice']) {
-      const link = within(main).getByRole('link', { name });
-      expect(link).toHaveClass('inline-flex');
-      expect(link).not.toHaveClass('hidden');
-    }
-  });
-
-  it('spaces the md bar tightly until lg, so it fits the 720 px of room at 768 px', () => {
-    render(<Navbar />);
-    const banner = screen.getByRole('banner');
-    const main = within(banner).getAllByRole('navigation', { name: 'Main' })[0];
-    for (const name of ['Start here', 'Curriculum', 'Practice']) {
-      expect(within(main).getByRole('link', { name })).toHaveClass('px-2', 'lg:px-3');
-    }
-    expect(within(main).getByRole('button', { name: 'More' })).toHaveClass('px-2', 'lg:px-3');
-    const controls = within(banner).getByRole('button', { name: 'Theme' }).parentElement!;
-    expect(controls).toHaveClass('gap-1', 'lg:gap-2');
-    const divider = controls.querySelector('span[aria-hidden="true"]');
-    expect(divider).toHaveClass('hidden', 'lg:block');
-  });
-
-  it('lists Labs, Interview prep and Dashboard under "More" from md to xl, as a disclosure', async () => {
-    const user = userEvent.setup();
-    nav.pathname = '/curriculum';
-    render(<Navbar />);
-    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
-    const more = within(main).getByRole('button', { name: 'More' });
-    expect(more.parentElement).toHaveClass('xl:hidden');
-    expect(more).toHaveAttribute('aria-expanded', 'false');
-    const panel = document.getElementById(more.getAttribute('aria-controls')!)!;
-    expect(panel).not.toBeVisible();
-
-    await user.click(more);
-    expect(more).toHaveAttribute('aria-expanded', 'true');
-    expect(within(panel).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['Labs', '/practice#labs'],
-      ['Interview prep', '/interview-prep'],
-      ['Dashboard', '/dashboard'],
-    ]);
+    await user.click(practice);
+    expect(practice).toHaveAttribute('aria-expanded', 'true');
+    expect(panel).toHaveAttribute('data-state', 'open');
+    expect(panel).toHaveClass('visible', 'bg-popover', 'border', 'border-border', 'rounded-xl', 'shadow-card', 'duration-200', 'ease-bench');
+    const group = PRIMARY_NAV.find((item) => item.label === 'Practice')!;
+    expect(isNavGroup(group)).toBe(true);
+    expect(within(panel).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual(
+      isNavGroup(group) ? group.children.map((link) => [link.label, link.href]) : [],
+    );
 
     await user.keyboard('{Escape}');
-    expect(more).toHaveAttribute('aria-expanded', 'false');
-    expect(more).toHaveFocus();
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+    expect(practice).toHaveFocus();
   });
 
-  it('marks pages, never a link to part of a page', () => {
-    nav.pathname = '/curriculum';
-    const { unmount } = render(<Navbar />);
-    let main = screen.getAllByRole('navigation', { name: 'Main' })[0];
-    expect(within(main).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('aria-current', 'page');
-    expect(within(main).getByRole('link', { name: 'Start here' })).not.toHaveAttribute('aria-current');
-    unmount();
-
-    nav.pathname = '/interview-prep';
+  it('lists the five Reference pages', async () => {
+    const user = userEvent.setup();
     render(<Navbar />);
-    main = screen.getAllByRole('navigation', { name: 'Main' })[0];
-    expect(within(main).getByRole('link', { name: 'Interview prep' })).toHaveAttribute('aria-current', 'page');
-    expect(within(main).getByRole('link', { name: 'Practice' })).not.toHaveAttribute('aria-current');
-    expect(navLinkCurrent('/curriculum', '/curriculum#routes')).toBeUndefined();
-    expect(navLinkCurrent('/practice', '/practice#labs')).toBeUndefined();
+    const reference = within(barNav()).getByRole('button', { name: 'Reference' });
+    await user.click(reference);
+    const panel = document.getElementById(reference.getAttribute('aria-controls')!)!;
+    expect(within(panel).getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Knowledge hub',
+      'Resources',
+      'Projects',
+      'Learning strategies',
+      'History',
+    ]);
+  });
+
+  it('closes when focus leaves it, on a press outside, and when a link is followed', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const practice = within(barNav()).getByRole('button', { name: 'Practice' });
+    const panel = document.getElementById(practice.getAttribute('aria-controls')!)!;
+
+    await user.click(practice);
+    const links = within(panel).getAllByRole('link');
+    // Tabbing through the panel keeps it open; tabbing past the last link closes it.
+    await user.tab();
+    expect(links[0]).toHaveFocus();
+    for (let i = 1; i < links.length; i += 1) await user.tab();
+    expect(practice).toHaveAttribute('aria-expanded', 'true');
+    await user.tab();
+    expect(within(barNav()).getByRole('link', { name: 'Interview prep' })).toHaveFocus();
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(practice);
+    await user.click(screen.getByRole('banner').querySelector('[data-header-frame]') as HTMLElement);
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(practice);
+    await user.click(within(panel).getByRole('link', { name: 'Labs' }));
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('opening one disclosure closes the other', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const practice = within(barNav()).getByRole('button', { name: 'Practice' });
+    const reference = within(barNav()).getByRole('button', { name: 'Reference' });
+    await user.click(practice);
+    await user.click(reference);
+    expect(practice).toHaveAttribute('aria-expanded', 'false');
+    expect(reference).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('marks one current child with the raised surface and the 2 px accent marker', async () => {
+    nav.pathname = '/practice/waveform-studio';
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const practice = within(barNav()).getByRole('button', { name: 'Practice' });
+    expect(practice).toHaveAttribute('aria-current', 'true');
+    await user.click(practice);
+    const panel = document.getElementById(practice.getAttribute('aria-controls')!)!;
+    const marked = panel.querySelectorAll('[aria-current]');
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toHaveTextContent('Waveform studio');
+    expect(marked[0]).toHaveAttribute('aria-current', 'page');
+    expect(marked[0]).toHaveClass('border-l-2', 'border-primary', 'bg-muted', 'font-medium');
+    expect(within(panel).getByRole('link', { name: 'Practice hub' })).toHaveClass('border-transparent', 'font-medium');
   });
 });
 
@@ -416,7 +494,8 @@ describe('account-only UI (G30-SIDE-V07)', () => {
 });
 
 describe('course outline button', () => {
-  it('has one name for every width and reports the drawer state (G30-SIDE-08)', async () => {
+  it('has one name for every width and reports the drawer state on a lesson (G30-SIDE-08)', async () => {
+    nav.pathname = LESSON;
     const user = userEvent.setup();
     render(
       <>
@@ -424,7 +503,7 @@ describe('course outline button', () => {
         <Sidebar />
       </>,
     );
-    const toggles = screen.getAllByRole('button', { name: 'Course outline' });
+    const toggles = within(screen.getByRole('banner')).getAllByRole('button', { name: 'Course outline' });
     expect(toggles).toHaveLength(1);
     const toggle = toggles[0];
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -441,6 +520,15 @@ describe('course outline button', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(document.activeElement).toBe(toggle);
   });
+
+  it('is shown only where the outline exists (lesson pages)', () => {
+    for (const pathname of ['/curriculum', '/practice', '/dashboard', '/interview-prep']) {
+      nav.pathname = pathname;
+      const { unmount } = render(<Navbar />);
+      expect(within(screen.getByRole('banner')).queryByRole('button', { name: 'Course outline' })).not.toBeInTheDocument();
+      unmount();
+    }
+  });
 });
 
 describe('search on phones (G30-SRCH-02)', () => {
@@ -450,31 +538,31 @@ describe('search on phones (G30-SRCH-02)', () => {
     const [searchButton] = screen.getAllByRole('button', { name: 'Search' });
     expect(searchButton).toHaveAttribute('aria-haspopup', 'dialog');
     await user.click(searchButton);
-    const dialog = screen.getByRole('dialog', { name: 'Search the curriculum' });
+    const dialog = screen.getByRole('dialog', { name: SEARCH_DIALOG_TITLE });
     expect(document.activeElement).toBe(within(dialog).getByRole('combobox'));
     expect(searchButton).toHaveAttribute('aria-expanded', 'true');
   });
 });
 
-describe('mobile menu', () => {
-  it('is a modal dialog with the close button first and the main links', async () => {
-    const user = userEvent.setup();
-    render(<Navbar />);
+describe('phone menu', () => {
+  async function openPhoneMenu(user: ReturnType<typeof userEvent.setup>) {
     const menuButton = screen.getByRole('button', { name: 'Open main menu' });
     await user.click(menuButton);
+    return { menuButton, menu: screen.getByTestId('mobile-menu') };
+  }
 
-    const menu = screen.getByTestId('mobile-menu');
+  it('is a modal dialog with the close button first, every main destination, then Your learning', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu, menuButton } = await openPhoneMenu(user);
     expect(menu).toHaveAttribute('role', 'dialog');
     expect(menu).toHaveAttribute('aria-modal', 'true');
+    expect(menu.parentElement).toHaveClass('lg:hidden');
     expect(within(menu).getAllByRole('button')[0]).toHaveAccessibleName('Close menu');
-    expect(within(menu).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
-    // Every main link, including the ones the desktop bar shows only from xl, then the learner's own pages.
     const mainNav = within(menu).getByRole('navigation', { name: 'Main' });
     expect(within(mainNav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(MAIN_HREFS);
     expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([...MAIN_HREFS, ...LEARNING_HREFS]);
-    for (const link of within(menu).getAllByRole('link')) expect(link).not.toHaveClass('hidden');
-    // The Dashboard link is a full-width, 44 px row with a visible keyboard focus ring.
-    expect(within(menu).getByRole('link', { name: 'Dashboard' })).toHaveClass('min-h-11', 'focus-visible:ring-2');
+    for (const link of within(menu).getAllByRole('link')) expect(link).toHaveClass('min-h-11', 'focus-visible:ring-2');
     expect(menuButton).toHaveAttribute('aria-expanded', 'true');
 
     await user.keyboard('{Escape}');
@@ -482,23 +570,31 @@ describe('mobile menu', () => {
     expect(document.activeElement).toBe(menuButton);
   });
 
+  it('lists each disclosure\'s children under its group label', async () => {
+    const user = userEvent.setup();
+    render(<Navbar />);
+    const { menu } = await openPhoneMenu(user);
+    const mainNav = within(menu).getByRole('navigation', { name: 'Main' });
+    for (const item of PRIMARY_NAV) {
+      if (!isNavGroup(item)) continue;
+      const heading = within(mainNav).getByRole('heading', { name: item.label, level: 3 });
+      expect(heading).toHaveClass('text-label', 'text-muted-foreground');
+      const list = within(mainNav).getByRole('list', { name: item.label });
+      expect(within(list).getAllByRole('link').map((link) => link.textContent)).toEqual(item.children.map((link) => link.label));
+    }
+    // The bar's group buttons are not repeated in the menu.
+    expect(within(mainNav).queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('closes when a link is followed', async () => {
     const user = userEvent.setup();
     render(<Navbar />);
-    await user.click(screen.getByRole('button', { name: 'Open main menu' }));
-    await user.click(within(screen.getByTestId('mobile-menu')).getByRole('link', { name: 'Practice' }));
+    await openPhoneMenu(user);
+    await user.click(within(screen.getByTestId('mobile-menu')).getByRole('link', { name: 'Practice hub' }));
     expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
     act(() => shellStore.openMenu());
     expect(screen.getByTestId('mobile-menu')).toBeInTheDocument();
   });
-});
-
-describe('phone menu: course outline, appearance and your learning (navigation-6, responsive-a11y-3, responsive-a11y-14)', () => {
-  async function openPhoneMenu(user: ReturnType<typeof userEvent.setup>) {
-    const menuButton = screen.getByRole('button', { name: 'Open main menu' });
-    await user.click(menuButton);
-    return { menuButton, menu: screen.getByTestId('mobile-menu') };
-  }
 
   it('starts with a Course outline row that closes the menu and opens the outline drawer', async () => {
     const user = userEvent.setup();
@@ -512,7 +608,6 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
     const row = within(menu).getByRole('button', { name: 'Course outline' });
     expect(row).toHaveAttribute('aria-haspopup', 'dialog');
     expect(row).toHaveClass('min-h-11', 'w-full', 'focus-visible:ring-2');
-    // It is the first control after the close button, above the main links.
     const buttons = within(menu).getAllByRole('button');
     expect(buttons[0]).toHaveAccessibleName('Close menu');
     expect(buttons[1]).toBe(row);
@@ -521,10 +616,8 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
 
     await user.click(row);
     expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
-    const drawer = screen.getByRole('dialog', { name: 'Course outline' });
-    expect(drawer).toHaveAttribute('id', OUTLINE_DRAWER_ID);
+    expect(screen.getByRole('dialog', { name: 'Course outline' })).toHaveAttribute('id', OUTLINE_DRAWER_ID);
 
-    // Closing the drawer returns focus to the menu button, where the learner started.
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(menuButton);
@@ -538,7 +631,6 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
       const { menu } = await openPhoneMenu(user);
       const appearance = within(menu).getByRole('region', { name: 'Appearance' });
       expect(within(appearance).getByRole('heading', { name: 'Appearance', level: 3 })).toBeInTheDocument();
-      // The same three choices as a segmented radio group, not a nested popup.
       expect(within(appearance).getByRole('radiogroup', { name: 'Theme' })).toHaveAttribute('data-layout', 'menu');
       expect(within(appearance).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
       unmount();
@@ -557,13 +649,13 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
     expect(menu.className).not.toMatch(/shadow-(lg|xl|2xl)/);
   });
 
-  it('sets the phone menu group headings in the label style (12/16, weight 500, sentence case)', async () => {
+  it('sets every group heading in the label style (12/16, weight 500, sentence case), in order', async () => {
     accountsOnSignedOut();
     const user = userEvent.setup();
     render(<Navbar />);
     const { menu } = await openPhoneMenu(user);
     const headings = within(menu).getAllByRole('heading', { level: 3 });
-    expect(headings.map((heading) => heading.textContent)).toEqual(['Appearance', 'Your learning', 'Account']);
+    expect(headings.map((heading) => heading.textContent)).toEqual(['Practice', 'Reference', 'Appearance', 'Your learning', 'Account']);
     for (const heading of headings) {
       expect(heading).toHaveClass('text-label', 'text-muted-foreground');
       expect(heading).not.toHaveClass('text-sm', 'font-semibold', 'uppercase');
@@ -571,20 +663,21 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
     expect(MOBILE_GROUP_HEADING_CLASS).toContain('text-label');
   });
 
-  it('marks the current phone menu row with the raised surface and a 2 px leading accent, at the same weight as the others', async () => {
+  it('marks the current row with the raised surface and a 2 px leading accent, at the same weight as the others', async () => {
     nav.pathname = '/practice';
     const user = userEvent.setup();
     render(<Navbar />);
     const { menu } = await openPhoneMenu(user);
     const main = within(menu).getByRole('navigation', { name: 'Main' });
-    const current = within(main).getByRole('link', { name: 'Practice' });
+    const current = within(main).getByRole('link', { name: 'Practice hub' });
+    expect(current).toHaveAttribute('aria-current', 'page');
     expect(current).toHaveClass('border-l-2', 'border-primary', 'bg-muted', 'font-medium');
     const other = within(main).getByRole('link', { name: 'Curriculum' });
     expect(other).toHaveClass('border-l-2', 'border-transparent', 'font-medium');
+    expect(main.querySelectorAll('[aria-current]')).toHaveLength(1);
   });
 
-  it('lists Settings, Self-assessment and Find your level under Your learning as 44 px rows, marking the current page', async () => {
-    expect(LEARNER_MENU_LINKS.map((link) => link.label)).toEqual(['Settings', 'Self-assessment', 'Find your level']);
+  it('lists Review, Notebook, Self-assessment and Settings under Your learning, marking the current page', async () => {
     nav.pathname = '/assessment';
     const user = userEvent.setup();
     render(<Navbar />);
@@ -592,34 +685,34 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
     const learning = within(menu).getByRole('navigation', { name: 'Your learning' });
     const links = within(learning).getAllByRole('link');
     expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['Settings', '/settings'],
+      ['Review', '/dashboard/review'],
+      ['Notebook', '/dashboard/notebook'],
       ['Self-assessment', '/assessment'],
-      ['Find your level', '/quiz/placement'],
+      ['Settings', '/settings'],
     ]);
-    for (const link of links) expect(link).toHaveClass('min-h-11', 'focus-visible:ring-2');
     expect(within(learning).getByRole('link', { name: 'Self-assessment' })).toHaveAttribute('aria-current', 'page');
+    // Dashboard is the current main item on /assessment, as in the bar.
+    expect(within(menu).getByRole('navigation', { name: 'Main' }).querySelector('a[href="/dashboard"]')).toHaveAttribute('aria-current', 'true');
 
-    await user.click(within(learning).getByRole('link', { name: 'Find your level' }));
+    await user.click(within(learning).getByRole('link', { name: 'Notebook' }));
     expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
   });
 
-  it('keeps every new control inside the focus loop, in reading order', async () => {
+  it('keeps every control inside the focus loop, in reading order', async () => {
     const user = userEvent.setup();
     render(<Navbar />);
     const { menu, menuButton } = await openPhoneMenu(user);
+    const labelOf = (href: string) =>
+      PRIMARY_NAV.flatMap((item) => (isNavGroup(item) ? item.children : [item])).find((link) => link.href === href)!.label;
     const expected = [
       'Close menu',
       'Course outline',
-      'Start here',
-      'Curriculum',
-      'Practice',
-      'Labs',
-      'Interview prep',
-      'Dashboard',
+      ...MAIN_HREFS.map(labelOf),
       'Dark',
-      'Settings',
+      'Review',
+      'Notebook',
       'Self-assessment',
-      'Find your level',
+      'Settings',
     ];
     const seen: string[] = [];
     for (let i = 0; i < expected.length; i += 1) {
@@ -629,7 +722,6 @@ describe('phone menu: course outline, appearance and your learning (navigation-6
       await user.keyboard('{Tab}');
     }
     expect(seen).toEqual(expected);
-    // Tab from the last item wraps to the close button.
     expect(document.activeElement).toHaveAccessibleName('Close menu');
     await user.keyboard('{Escape}');
     expect(document.activeElement).toBe(menuButton);

@@ -11,7 +11,8 @@ import { curriculumRedirects } from "@/generated/curriculum-redirects.mjs";
 import { curriculumData, toPrettyCurriculumSlug } from "@/lib/curriculum-data";
 import { canonicalLessonRedirect } from "@/lib/curriculum/canonical-redirect";
 import { resolveCurriculumRequest } from "@/lib/curriculum/lesson-urls";
-import { config, middleware } from "@/middleware";
+import { PRACTICE_SECTION_HREF, PRACTICE_SECTION_ID, tierSectionHref } from "@/lib/site-links";
+import { PRACTICE_INDEX_REDIRECTS, config, middleware, sectionRedirect } from "@/middleware";
 
 /**
  * The middleware's header-level 308s for non-canonical lesson URLs (NB1 lead
@@ -80,9 +81,10 @@ describe("canonicalLessonRedirect (the middleware decision)", () => {
     }
   });
 
-  it("covers the acceptance URL forms: module, tier, pretty slug and extra segments", () => {
+  it("covers the acceptance URL forms: module, pretty slug and extra segments", () => {
     expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1B_The_Verification_Mindset")).toBe(F1B);
-    expect(canonicalLessonRedirect("/curriculum/T1_Foundational")).toBe(F1A);
+    // A tier URL is not a lesson: sectionRedirect sends it to its section of /curriculum first.
+    expect(canonicalLessonRedirect("/curriculum/T1_Foundational")).toBeNull();
     expect(canonicalLessonRedirect("/curriculum/t1-foundational/f1b-the-verification-mindset/index")).toBe(F1B);
     expect(canonicalLessonRedirect(`${F1A}/x/y`)).toBe(F1A);
     expect(canonicalLessonRedirect("/curriculum/t2-intermediate/i-sv-5-synchronization-and-ipc/mailboxes")).toBe(MAILBOXES);
@@ -90,7 +92,8 @@ describe("canonicalLessonRedirect (the middleware decision)", () => {
 
   it("decodes percent-encoded segments the way the page decodes its params", () => {
     expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/ind%65x")).toBeNull();
-    expect(canonicalLessonRedirect("/curriculum/t1%2Dfoundational")).toBe(F1A);
+    expect(canonicalLessonRedirect("/curriculum/t1-foundational/f1a%2Dthe-cost-of-bugs/index")).toBe(F1A);
+    expect(sectionRedirect("/curriculum/t1%2Dfoundational")).toBe(tierSectionHref("T1_Foundational"));
     expect(canonicalLessonRedirect("/curriculum/T1_Foundational/%E0%A4%A")).toBeNull();
   });
 
@@ -125,10 +128,10 @@ describe("canonicalLessonRedirect (the middleware decision)", () => {
   });
 
   it("redirects GET and HEAD only", () => {
-    expect(canonicalLessonRedirect("/curriculum/T1_Foundational", "HEAD")).toBe(F1A);
-    expect(canonicalLessonRedirect("/curriculum/T1_Foundational", "get")).toBe(F1A);
-    expect(canonicalLessonRedirect("/curriculum/T1_Foundational", "POST")).toBeNull();
-    expect(canonicalLessonRedirect("/curriculum/T1_Foundational", "OPTIONS")).toBeNull();
+    expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1B_The_Verification_Mindset", "HEAD")).toBe(F1B);
+    expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1B_The_Verification_Mindset", "get")).toBe(F1B);
+    expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1B_The_Verification_Mindset", "POST")).toBeNull();
+    expect(canonicalLessonRedirect("/curriculum/T1_Foundational/F1B_The_Verification_Mindset", "OPTIONS")).toBeNull();
   });
 
   it("is never a second hop after a legacy redirect: every destination is already canonical", () => {
@@ -140,7 +143,73 @@ describe("canonicalLessonRedirect (the middleware decision)", () => {
   });
 });
 
+describe("sectionRedirect (index URLs that became page sections)", () => {
+  it("sends every tier URL, in any case or pretty form, to its section of /curriculum", () => {
+    expect(curriculumData.length).toBe(4);
+    for (const tier of curriculumData) {
+      const target = tierSectionHref(tier.slug);
+      expect(target).toMatch(/^\/curriculum#t[1-4]$/);
+      for (const form of [tier.slug, tier.slug.toLowerCase(), tier.slug.toUpperCase(), toPrettyCurriculumSlug(tier.slug), `${tier.slug}/`]) {
+        expect(sectionRedirect(`/curriculum/${form}`), form).toBe(target);
+      }
+    }
+    expect(sectionRedirect("/curriculum/t1%2Dfoundational")).toBe("/curriculum#t1");
+  });
+
+  it("sends the five practice index URLs to their section of /practice", () => {
+    expect(sectionRedirect("/exercises")).toBe("/practice#exercises");
+    expect(sectionRedirect("/labs")).toBe("/practice#labs");
+    expect(sectionRedirect("/practice/lab")).toBe("/practice#labs");
+    expect(sectionRedirect("/practice/visualizations")).toBe("/practice#interactive-models");
+    expect(sectionRedirect("/visualizations/")).toBe("/practice#interactive-models");
+    // Every target is a section the Practice hub renders.
+    const hrefs = Object.values(PRACTICE_SECTION_HREF) as string[];
+    for (const target of Object.values(PRACTICE_INDEX_REDIRECTS)) {
+      expect(hrefs, target).toContain(target);
+      expect(Object.values(PRACTICE_SECTION_ID)).toContain(target.split("#")[1]);
+    }
+  });
+
+  it("leaves item URLs, lessons, modules and everything else alone", () => {
+    for (const pathname of [
+      "/curriculum",
+      "/curriculum/expert-index",
+      "/curriculum/does-not-exist",
+      "/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs",
+      F1A,
+      "/exercises/uvm-phase-sorter",
+      "/practice/lab/basics-1",
+      "/practice/visualizations/uvm-phasing",
+      "/visualizations/systemverilog-3d",
+      "/practice",
+      "/labsx",
+    ]) {
+      expect(sectionRedirect(pathname), pathname).toBeNull();
+    }
+  });
+
+  it("redirects GET and HEAD only", () => {
+    expect(sectionRedirect("/exercises", "HEAD")).toBe("/practice#exercises");
+    expect(sectionRedirect("/exercises", "POST")).toBeNull();
+    expect(sectionRedirect("/curriculum/T1_Foundational", "POST")).toBeNull();
+  });
+});
+
 describe("middleware response", () => {
+  it("answers a tier URL with a temporary 307 to its section, fragment in the Location header", () => {
+    const response = run("/curriculum/T3_Advanced");
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/curriculum#t3`);
+  });
+
+  it("answers each practice index URL with a 307 to its section of /practice", () => {
+    for (const [pathname, target] of Object.entries(PRACTICE_INDEX_REDIRECTS)) {
+      const response = run(pathname);
+      expect(response.status, pathname).toBe(307);
+      expect(response.headers.get("location"), pathname).toBe(`${ORIGIN}${target}`);
+    }
+  });
+
   it("answers a non-canonical lesson URL with a 308 and a Location header", () => {
     const response = run("/curriculum/t1-foundational/f1b-the-verification-mindset/index");
     expect(response.status).toBe(308);
@@ -148,11 +217,14 @@ describe("middleware response", () => {
   });
 
   it("keeps the query string", () => {
-    const response = run("/curriculum/T1_Foundational?from=newsletter&step=2");
+    const response = run("/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs?from=newsletter&step=2");
     expect(response.status).toBe(308);
     const location = new URL(response.headers.get("location") ?? "");
     expect(location.pathname).toBe(F1A);
     expect(location.search).toBe("?from=newsletter&step=2");
+
+    const tier = new URL(run("/curriculum/T1_Foundational?from=newsletter").headers.get("location") ?? "");
+    expect(`${tier.pathname}${tier.search}${tier.hash}`).toBe("/curriculum?from=newsletter#t1");
   });
 
   it("passes canonical lessons, unknown URLs, static pages and other methods through unchanged", () => {
@@ -161,9 +233,11 @@ describe("middleware response", () => {
       expect(response.headers.get("x-middleware-next"), pathname).toBe("1");
       expect(response.headers.get("location"), pathname).toBeNull();
     }
-    const post = run("/curriculum/T1_Foundational", { method: "POST" });
-    expect(post.headers.get("x-middleware-next")).toBe("1");
-    expect(post.headers.get("location")).toBeNull();
+    for (const pathname of ["/curriculum/T1_Foundational", "/exercises"]) {
+      const post = run(pathname, { method: "POST" });
+      expect(post.headers.get("x-middleware-next"), pathname).toBe("1");
+      expect(post.headers.get("location"), pathname).toBeNull();
+    }
   });
 });
 
@@ -178,8 +252,22 @@ describe("middleware matcher, compiled the way next build compiles it", () => {
     expect(runsOn("/curriculum/expert-index")).toBe(true);
   });
 
-  it("never runs on the overview or anywhere else", () => {
-    for (const pathname of ["/curriculum", "/", "/practice", "/practice/lab/basics-1", "/curriculumx/T1_Foundational", "/api/feature-flags"]) {
+  it("runs on the five moved index URLs", () => {
+    for (const pathname of Object.keys(PRACTICE_INDEX_REDIRECTS)) expect(runsOn(pathname), pathname).toBe(true);
+  });
+
+  it("never runs on the overview, item pages or anywhere else", () => {
+    for (const pathname of [
+      "/curriculum",
+      "/",
+      "/practice",
+      "/practice/lab/basics-1",
+      "/exercises/uvm-phase-sorter",
+      "/practice/visualizations/uvm-phasing",
+      "/visualizations/systemverilog-3d",
+      "/curriculumx/T1_Foundational",
+      "/api/feature-flags",
+    ]) {
       expect(runsOn(pathname), pathname).toBe(false);
     }
   });

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { compileMDX } from "next-mdx-remote/rsc";
-import { notFound, permanentRedirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 import React from "react";
 
 import { LessonCompletionToggle } from "@/components/curriculum/LessonCompletionToggle";
@@ -8,9 +8,9 @@ import LessonOrientation from "@/components/curriculum/LessonOrientation";
 import LessonPager from "@/components/curriculum/LessonPager";
 import { LessonPractice, type LessonPracticeProps } from "@/components/curriculum/LessonPractice";
 import LessonToc from "@/components/curriculum/LessonToc";
+import LessonTrail from "@/components/curriculum/LessonTrail";
 import LessonVisitTracker from "@/components/curriculum/LessonVisitTracker";
 import { lessonScrollRegionComponents } from "@/components/curriculum/ScrollRegion";
-import Breadcrumbs from "@/components/layout/Breadcrumbs";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
 import { lessonHref } from "@/lib/curriculum-overview";
 import { getLessonContext } from "@/lib/curriculum/lesson-context";
@@ -28,6 +28,8 @@ import { getAllLabs } from "@/lib/lab-registry";
 import { getPracticeForModule } from "@/lib/practice-links";
 import { cn } from "@/lib/utils";
 
+import { tierRedirectHref } from "./tier-redirect";
+
 type CurriculumTopicPageProps = {
   params: { slug: string[] };
 };
@@ -37,6 +39,7 @@ export function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: CurriculumTopicPageProps): Promise<Metadata> {
+  if (tierRedirectHref(params.slug)) return {};
   const request = resolveCurriculumRequest(params.slug);
   if (request.kind === "not-found") return {};
   const lesson = await loadCurriculumLesson(request.slug);
@@ -45,10 +48,14 @@ export async function generateMetadata({ params }: CurriculumTopicPageProps): Pr
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
   // One URL per lesson (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11): pretty slugs,
-  // two-segment module URLs, one-segment tier URLs and extra trailing segments
-  // all redirect permanently to /curriculum/<Tier>/<Module>/<lesson>.
-  // src/middleware.ts sends the same 308 with a Location header before the ISR
-  // cache (which drops Location on a cache hit); this is the fallback.
+  // two-segment module URLs and extra trailing segments all redirect
+  // permanently to /curriculum/<Tier>/<Module>/<lesson>. A one-segment tier URL
+  // goes to the tier's section of /curriculum (SPEC-phases-2-4.md, "URLs"); this
+  // page never renders a tier (307, so the tier URL can come back later).
+  // src/middleware.ts sends the same redirects with a Location header before
+  // the ISR cache (which drops Location on a cache hit); this is the fallback.
+  const tierHref = tierRedirectHref(params.slug);
+  if (tierHref) redirect(tierHref);
   const request = resolveCurriculumRequest(params.slug);
   if (request.kind === "not-found") notFound();
   if (request.kind === "redirect") permanentRedirect(request.location);
@@ -108,7 +115,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   return (
     <div className="mx-auto w-full max-w-6xl pb-16">
       <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} lessonPath={lessonPath} />
-      <Breadcrumbs slug={normalizedSlug} />
+      <LessonTrail slug={normalizedSlug} />
       {/*
         One column below xl, with "On this page" as a disclosure above the lesson
         (the course outline docks beside lessons from lg). From xl, "On this

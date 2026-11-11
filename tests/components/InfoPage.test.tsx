@@ -51,4 +51,32 @@ describe("InfoPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Diagrams and illustrations" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Charts and visualizations" })).toBeInTheDocument();
   });
+
+  it("renders the breadcrumb trail above the title and the pager after every slot", () => {
+    render(
+      <InfoPage
+        title="UVM phase sorter"
+        breadcrumbs={[
+          { label: "Practice", href: "/practice" },
+          { label: "Exercises", href: "/practice#exercises" },
+          { label: "UVM phase sorter" },
+        ]}
+        diagrams={[<div key="d" data-testid="diagram" />]}
+        pager={<nav aria-label="Pager" data-testid="pager" />}
+      >
+        <p>Body.</p>
+      </InfoPage>,
+    );
+    const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
+    const heading = screen.getByRole("heading", { level: 1, name: "UVM phase sorter" });
+    expect(trail.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(trail.querySelector('[aria-current="page"]')).toHaveTextContent("UVM phase sorter");
+    const pager = screen.getByTestId("pager");
+    expect(screen.getByTestId("diagram").compareDocumentPosition(pager) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders no trail and no pager slot when none is given", () => {
+    render(<InfoPage title="Projects" />);
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
+  });
 });

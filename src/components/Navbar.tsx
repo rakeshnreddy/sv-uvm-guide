@@ -2,13 +2,25 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import React, { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
-import { Bell, ChevronDown, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Bell, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
 
+import NavDisclosure from "@/components/layout/NavDisclosure";
+import { currentChild, navLinkCurrent, topItemCurrent, yourLearningLinks } from "@/components/layout/nav-current";
+import {
+  FRAME_BESIDE_SLOT_CLASS,
+  MOBILE_GROUP_HEADING_CLASS,
+  OUTLINE_SLOT_CLASS,
+  PAGE_FRAME_CLASS,
+  barLinkClass,
+  mobileRowClass,
+} from "@/components/layout/nav-styles";
+import { useDismiss } from "@/components/layout/use-dismiss";
 import { useOutlineToggle } from "@/components/layout/Sidebar";
+import { isLessonPath } from "@/components/search/course-outline";
 import SearchCombobox from "@/components/search/SearchCombobox";
 import SearchDialog from "@/components/search/SearchDialog";
-import { MODAL_LAYER, shellStore, useMinWidth, useShellState } from "@/components/search/shell-store";
+import { LG_MIN_WIDTH, MODAL_LAYER, shellStore, useMinWidth, useShellState } from "@/components/search/shell-store";
 import { useModalDialog } from "@/components/search/useModalDialog";
 import { headerFocusRing, iconButtonClass, iconButtonIconClass } from "@/components/ui/icon-button-class";
 import Logo from "@/components/ui/Logo";
@@ -16,40 +28,9 @@ import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatTimestamp, NOTIFICATION_CATEGORY_META, type NotificationItem } from "@/lib/notifications";
 import { useAccountSession, useServerFeature, type AccountSessionStatus } from "@/lib/persistence/target";
-import { SITE_FEATURES, type SiteFeatureSwitches } from "@/lib/site-features";
-import { INTERVIEW_PREP_HREF, LABS_HREF, PLACEMENT_QUIZ_HREF, START_HERE_HREF } from "@/lib/site-links";
+import { SITE_FEATURES } from "@/lib/site-features";
+import { DASHBOARD_HREF, PRIMARY_NAV, SETTINGS_HREF, SITE_NAME, isNavGroup, type NavLink } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
-
-interface NavLink {
-  label: string;
-  href: string;
-  /**
-   * In the desktop bar only from xl (1280 px), where it fits beside the search
-   * field. From md to xl the bar's "More" disclosure lists it and on phones the
-   * phone menu does. Labs, Interview prep and Dashboard are also always in the
-   * course outline's quick links.
-   */
-  wideOnly?: boolean;
-}
-
-/**
- * The main navigation, in order (G30-SIDE-05, G30-PATH-07). Dashboard is
- * always listed: it shows the progress kept in this browser, so it needs no
- * account. Community is listed only while SITE_FEATURES.community is on, which
- * also needs accounts. The switches are fixed at build time, so the server
- * render and hydration list the same links.
- */
-export function mainNavLinks(features: Pick<SiteFeatureSwitches, "community"> = SITE_FEATURES): readonly NavLink[] {
-  return [
-    { label: "Start here", href: START_HERE_HREF },
-    { label: "Curriculum", href: "/curriculum" },
-    { label: "Practice", href: "/practice" },
-    { label: "Labs", href: LABS_HREF, wideOnly: true },
-    { label: "Interview prep", href: INTERVIEW_PREP_HREF, wideOnly: true },
-    { label: "Dashboard", href: "/dashboard", wideOnly: true },
-    ...(features.community ? [{ label: "Community", href: "/community", wideOnly: true }] : []),
-  ];
-}
 
 /**
  * NextAuth's sign-in page, returning to `pathname` afterwards. Offered only while
@@ -62,131 +43,28 @@ export function signInHref(pathname: string | null): string {
   return `/api/auth/signin?callbackUrl=${encodeURIComponent(pathname || "/")}`;
 }
 
-/**
- * The learner's own pages, listed in the phone menu under "Your learning"
- * whatever the accounts switch says: settings (theme, and export, import or
- * reset of the progress kept in this browser), the self-assessment and the
- * placement quiz. On wider windows the footer and the dashboard link to them.
- */
-export const LEARNER_MENU_LINKS: readonly NavLink[] = [
-  { label: "Settings", href: "/settings" },
-  { label: "Self-assessment", href: "/assessment" },
-  { label: "Find your level", href: PLACEMENT_QUIZ_HREF },
-];
-
-const MD_MIN_WIDTH = 768;
-
 const focusRing = headerFocusRing;
 
 /** Every header icon button (and the theme control) shares this style. */
 const iconButton = iconButtonClass;
 
-/** Phone-menu group headings (Appearance, Your learning, Account): the label style, 12/16 at weight 500. */
-export const MOBILE_GROUP_HEADING_CLASS = "px-3 text-label text-muted-foreground";
-
-/**
- * A main-nav link in the bar (and the "More" button). Every link is set at
- * weight 500, so the row never moves between pages; the current one is marked
- * only by the primary text colour and the 2 px accent underline.
- */
-export function barLinkClass(current: boolean): string {
-  return cn(
-    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-2 text-sm font-medium transition-colors duration-150 ease-bench motion-reduce:transition-none lg:px-3",
-    current ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-    focusRing,
-  );
-}
-
+/** The account menu's and the notification feed's panels. */
 const popoverPanel =
-  "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-card";
+  "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-card";
+
+/** The accessible name of the wordmark link. */
+export const HOME_LINK_LABEL = `${SITE_NAME} home`;
 
 /**
- * aria-current for a navbar link: "page" on the page itself, "true" inside its
- * section. A link to a part of a page (/curriculum#routes) never marks the
- * page; that page's own link does.
+ * Where the search field and its dialog button show. The field shows from md;
+ * while the outline is docked (lesson pages, lg and wider) the main column is
+ * too narrow for it beside the five items until xl, so the button stands in
+ * for it from lg to xl.
  */
-export function navLinkCurrent(pathname: string | null, href: string): "page" | "true" | undefined {
-  if (!pathname || href.includes("#")) return undefined;
-  if (pathname === href) return "page";
-  if (pathname.startsWith(`${href}/`)) return "true";
-  return undefined;
-}
-
-/** Closes a popover on Escape (returning focus to its button) or on a pointer press outside it. */
-function useDismiss(open: boolean, containerRef: RefObject<HTMLElement>, buttonRef: RefObject<HTMLElement>, close: () => void) {
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      event.preventDefault();
-      close();
-      buttonRef.current?.focus();
-    };
-    const onPointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) close();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [open, containerRef, buttonRef, close]);
-}
-
-/**
- * "More" for the links that join the desktop bar only from xl. Between md and
- * xl there is no room for them beside the search field, so this disclosure
- * lists them (WAI-ARIA disclosure navigation, not a menu).
- */
-function MoreLinks({ pathname, links }: { pathname: string | null; links: readonly NavLink[] }) {
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useDismiss(open, containerRef, buttonRef, close);
-  useEffect(() => close(), [pathname, close]);
-  const active = links.some((link) => navLinkCurrent(pathname, link.href));
-
-  return (
-    <div ref={containerRef} className="relative xl:hidden">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-controls={panelId}
-        className={cn("inline-flex gap-1", barLinkClass(active))}
-      >
-        More
-        <ChevronDown aria-hidden="true" className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", open && "rotate-180")} />
-      </button>
-      <div id={panelId} hidden={!open} className={cn(popoverPanel, "w-52 p-2")}>
-        <ul className="space-y-0.5">
-          {links.map((link) => {
-            const current = navLinkCurrent(pathname, link.href);
-            return (
-              <li key={link.href}>
-                <Link
-                  href={link.href}
-                  aria-current={current}
-                  onClick={close}
-                  className={cn(
-                    "block rounded-lg border-l-2 px-3 py-2 text-sm text-foreground",
-                    current ? "border-primary bg-muted font-medium" : "border-transparent hover:bg-muted",
-                    focusRing,
-                  )}
-                >
-                  {link.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
-  );
+export function searchVisibility(docked: boolean): { field: string; button: string } {
+  return docked
+    ? { field: "hidden md:flex lg:hidden xl:flex", button: "md:hidden lg:inline-flex xl:hidden" }
+    : { field: "hidden md:flex", button: "md:hidden" };
 }
 
 /**
@@ -228,12 +106,12 @@ function UserMenu({ pathname }: { pathname: string | null }) {
           </p>
           <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
             <li>
-              <Link href="/dashboard" className={itemClass} onClick={() => setOpen(false)}>
+              <Link href={DASHBOARD_HREF} className={itemClass} onClick={() => setOpen(false)}>
                 Dashboard
               </Link>
             </li>
             <li>
-              <Link href="/settings" className={itemClass} onClick={() => setOpen(false)}>
+              <Link href={SETTINGS_HREF} className={itemClass} onClick={() => setOpen(false)}>
                 Settings
               </Link>
             </li>
@@ -383,15 +261,6 @@ function NotificationCenter() {
   );
 }
 
-/** A full-width, 44 px row in the phone menu, marked while it is the current page. */
-function mobileRowClass(current?: "page" | "true") {
-  return cn(
-    "flex min-h-11 items-center rounded-lg border-l-2 px-3 text-lg font-medium text-foreground",
-    current ? "border-primary bg-muted" : "border-transparent hover:bg-muted",
-    focusRing,
-  );
-}
-
 /** What the phone menu says about the session: the same states as UserMenu, in a sentence. */
 function mobileAccountStatus(user: { displayName?: string | null } | null, status: AccountSessionStatus): string {
   if (user) return user.displayName ? `Signed in as ${user.displayName}` : "Signed in";
@@ -458,8 +327,55 @@ function MobileAccountItems({ pathname }: { pathname: string | null }) {
     </div>
   );
 }
+/** One link row in the phone menu, closing the menu when followed. */
+function MobileLinkRow({ link, current }: { link: NavLink; current: "page" | "true" | undefined }) {
+  return (
+    <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
+      {link.label}
+    </Link>
+  );
+}
 
-function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: readonly NavLink[] }) {
+/**
+ * The phone menu's main items, from PRIMARY_NAV: plain items as rows, and each
+ * disclosure's children listed under its group label.
+ */
+function MobileMainNav({ pathname }: { pathname: string | null }) {
+  const groupId = useId();
+  return (
+    <nav aria-label="Main">
+      <ul className="space-y-1">
+        {PRIMARY_NAV.map((item, index) => {
+          if (!isNavGroup(item)) {
+            return (
+              <li key={item.href}>
+                <MobileLinkRow link={item} current={topItemCurrent(pathname, item)} />
+              </li>
+            );
+          }
+          const headingId = `${groupId}-${index}`;
+          const marked = currentChild(pathname, item.children);
+          return (
+            <li key={item.label} className="pb-1 pt-3">
+              <h3 id={headingId} className={MOBILE_GROUP_HEADING_CLASS}>
+                {item.label}
+              </h3>
+              <ul aria-labelledby={headingId} className="mt-1 space-y-1">
+                {item.children.map((link) => (
+                  <li key={link.href}>
+                    <MobileLinkRow link={link} current={marked?.href === link.href ? marked.current : undefined} />
+                  </li>
+                ))}
+              </ul>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+function MobileMenuPanel({ pathname }: { pathname: string | null }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const appearanceId = useId();
@@ -467,7 +383,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
   useModalDialog(panelRef, { onClose: shellStore.closeMenu });
 
   return (
-    <div className={cn("fixed inset-0 md:hidden", MODAL_LAYER)}>
+    <div className={cn("fixed inset-0 lg:hidden", MODAL_LAYER)}>
       <div aria-hidden="true" data-testid="mobile-menu-backdrop" className="absolute inset-0 bg-background/80" onClick={shellStore.closeMenu} />
       <div
         ref={panelRef}
@@ -488,7 +404,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          {/* Below md the outline is always a drawer; opening it closes this menu (one modal at a time). */}
+          {/* Below lg the outline is always a drawer; opening it closes this menu (one modal at a time). */}
           <button
             type="button"
             onClick={shellStore.openOutline}
@@ -499,20 +415,7 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
             <PanelLeft aria-hidden="true" className="h-5 w-5 shrink-0" />
             Course outline
           </button>
-          <nav aria-label="Main">
-            <ul className="space-y-1">
-              {links.map((link) => {
-                const current = navLinkCurrent(pathname, link.href);
-                return (
-                  <li key={link.href}>
-                    <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
-                      {link.label}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
+          <MobileMainNav pathname={pathname} />
           <section aria-labelledby={appearanceId} data-testid="mobile-appearance" className="mt-4 border-t border-border pt-4">
             <h3 id={appearanceId} className={MOBILE_GROUP_HEADING_CLASS}>
               Appearance
@@ -526,16 +429,11 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
               Your learning
             </h3>
             <ul className="mt-2 space-y-1">
-              {LEARNER_MENU_LINKS.map((link) => {
-                const current = navLinkCurrent(pathname, link.href);
-                return (
-                  <li key={link.href}>
-                    <Link href={link.href} aria-current={current} onClick={shellStore.closeMenu} className={mobileRowClass(current)}>
-                      {link.label}
-                    </Link>
-                  </li>
-                );
-              })}
+              {yourLearningLinks().map((link) => (
+                <li key={link.href}>
+                  <MobileLinkRow link={link} current={navLinkCurrent(pathname, link.href)} />
+                </li>
+              ))}
             </ul>
           </nav>
           {SITE_FEATURES.accounts && <MobileAccountItems pathname={pathname} />}
@@ -545,125 +443,141 @@ function MobileMenuPanel({ pathname, links }: { pathname: string | null; links: 
   );
 }
 
+/** The five top-level items from PRIMARY_NAV, in the bar from lg. */
+function BarNav({ pathname }: { pathname: string | null }) {
+  return (
+    <nav aria-label="Main" className="hidden shrink-0 items-center gap-1 lg:flex">
+      {PRIMARY_NAV.map((item) =>
+        isNavGroup(item) ? (
+          <NavDisclosure key={item.label} group={item} pathname={pathname} />
+        ) : (
+          <Link key={item.href} href={item.href} aria-current={topItemCurrent(pathname, item)} className={barLinkClass(Boolean(topItemCurrent(pathname, item)))}>
+            {item.label}
+          </Link>
+        ),
+      )}
+    </nav>
+  );
+}
+
 /**
- * Site header for the learning pages: the course outline button, the logo,
- * curriculum search (an inline field from lg, a dialog below it), the main
- * links, the theme switch, and, only while accounts are on, the account menu
- * and (for a signed-in learner) the notification feed. Below md the phone menu
- * holds a course outline row, the main links, the theme controls, the
- * learner's own pages and, while accounts are on, the account items.
+ * Site header for the learning pages: one opaque 64 px row with a hairline
+ * below. Left, the course outline button (lesson pages, where the outline
+ * exists) and the wordmark; then the search field (it grows to 420 px); then
+ * the five main items from PRIMARY_NAV (from lg); the theme control on the
+ * right; and, only while accounts are on, the account menu and (signed in)
+ * the notification feed.
  *
- * From md to lg the bar has 720 px of room at 768 px, so the links and the
- * controls are spaced more tightly there and the divider is hidden: the default
- * bar then needs about 700 px. With accounts on, the account menu (and, signed
- * in, the bell) add about 44 px each and do not fit yet at 768 px; check this layout
- * when accounts are turned on.
+ * The header lines up with the page. While the outline is docked, the left
+ * slot is exactly as wide as the outline column and the rest of the row uses
+ * the main column's frame, so the search field starts at the lesson's left
+ * edge. Elsewhere the row uses the page frame MainLayout uses (PAGE_FRAME_CLASS).
+ *
+ * Below lg the five items do not fit, so the menu button opens the phone menu:
+ * the same items, the Practice and Reference children under group labels,
+ * then Appearance, Your learning and, while accounts are on, the account items.
  */
 const Navbar = () => {
   const pathname = usePathname();
-  const navLinks = mainNavLinks();
-  const wideLinks = navLinks.filter((link) => link.wideOnly);
   const notificationsOn = useServerFeature("notifications");
   const outline = useOutlineToggle();
   const searchOpen = useShellState((state) => state.searchOpen);
   const menuOpen = useShellState((state) => state.menuOpen);
-  const mdUp = useMinWidth(MD_MIN_WIDTH);
+  const collapsed = useShellState((state) => state.outlineCollapsed);
+  const lgUp = useMinWidth(LG_MIN_WIDTH);
 
-  // The phone menu is md:hidden; never leave it open (and trapping focus) on a wider window.
+  const hasOutline = isLessonPath(pathname);
+  // Docked from lg on lesson pages unless the learner hid it; CSS handles the breakpoint.
+  const docked = hasOutline && !collapsed;
+  const search = searchVisibility(docked);
+
+  // The phone menu is lg:hidden; never leave it open (and trapping focus) on a wider window.
   useEffect(() => {
-    if (mdUp && menuOpen) shellStore.closeMenu();
-  }, [mdUp, menuOpen]);
+    if (lgUp && menuOpen) shellStore.closeMenu();
+  }, [lgUp, menuOpen]);
+
+  const brand = (
+    <>
+      {hasOutline && (
+        <button
+          type="button"
+          onClick={outline.toggle}
+          className={iconButton}
+          data-outline-toggle
+          aria-label="Course outline"
+          aria-expanded={outline.expanded}
+          aria-controls={outline.controls}
+          aria-keyshortcuts="Control+B Meta+B"
+        >
+          <PanelLeft aria-hidden="true" className={iconButtonIconClass} />
+        </button>
+      )}
+      <Link href="/" aria-label={HOME_LINK_LABEL} className={cn("inline-flex h-10 shrink-0 items-center rounded-lg px-1", focusRing)}>
+        <Logo />
+      </Link>
+    </>
+  );
+
+  const searchButton = (className: string) => (
+    <button
+      type="button"
+      onClick={shellStore.openSearch}
+      className={cn(iconButton, className)}
+      aria-label="Search"
+      aria-haspopup="dialog"
+      aria-expanded={searchOpen}
+    >
+      <Search aria-hidden="true" className={iconButtonIconClass} />
+    </button>
+  );
 
   return (
     <>
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-background text-foreground">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:px-6 lg:px-8">
-          <button
-            type="button"
-            onClick={outline.toggle}
-            className={iconButton}
-            data-outline-toggle
-            aria-label="Course outline"
-            aria-expanded={outline.expanded}
-            aria-controls={outline.controls}
-            aria-keyshortcuts="Control+B Meta+B"
-          >
-            <PanelLeft aria-hidden="true" className={iconButtonIconClass} />
-          </button>
-          <Link href="/" aria-label="SV/UVM Hub home" className={cn("block w-32 shrink-0 rounded-lg sm:w-[150px]", focusRing)}>
-            <Logo />
-          </Link>
-
-          <div role="search" aria-label="Curriculum" className="hidden min-w-0 flex-1 justify-center px-4 lg:flex">
-            <div className="w-full max-w-md">
-              <SearchCombobox variant="popup" commandTarget testId="main-search-input" />
+      <header className="sticky top-0 z-40 h-16 w-full border-b border-border bg-background text-foreground">
+        <div className="flex h-full w-full">
+          {docked && (
+            <div className={OUTLINE_SLOT_CLASS} data-header-slot="outline">
+              {brand}
             </div>
-          </div>
+          )}
+          <div className={cn("flex min-w-0 items-center gap-2", docked ? FRAME_BESIDE_SLOT_CLASS : PAGE_FRAME_CLASS)} data-header-frame>
+            {!docked && <div className="flex shrink-0 items-center gap-2">{brand}</div>}
 
-          <nav aria-label="Main" className="hidden items-center gap-1 md:ml-auto md:flex lg:ml-0">
-            {navLinks.map((link) => {
-              const current = navLinkCurrent(pathname, link.href);
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  aria-current={current}
-                  className={cn(link.wideOnly ? "hidden xl:inline-flex" : "inline-flex", barLinkClass(Boolean(current)))}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-            {wideLinks.length > 0 && <MoreLinks pathname={pathname} links={wideLinks} />}
-          </nav>
+            <div className="flex min-w-0 flex-1 items-center">
+              <div role="search" aria-label="Curriculum" className={cn("w-full min-w-0 max-w-[420px]", search.field)}>
+                <SearchCombobox variant="popup" commandTarget testId="main-search-input" />
+              </div>
+            </div>
 
-          <div className="hidden items-center gap-1 md:flex lg:gap-2">
-            <button
-              type="button"
-              onClick={shellStore.openSearch}
-              className={cn(iconButton, "lg:hidden")}
-              aria-label="Search"
-              aria-haspopup="dialog"
-              aria-expanded={searchOpen}
-            >
-              <Search aria-hidden="true" className={iconButtonIconClass} />
-            </button>
-            <span aria-hidden="true" className="mx-1 hidden h-6 border-l border-border lg:block" />
-            <ThemeSwitcher />
-            {SITE_FEATURES.accounts && (
-              <>
-                {notificationsOn && <NotificationCenter />}
-                <UserMenu pathname={pathname} />
-              </>
-            )}
-          </div>
+            <BarNav pathname={pathname} />
 
-          <div className="ml-auto flex items-center gap-1 md:hidden">
-            <button
-              type="button"
-              onClick={shellStore.openSearch}
-              className={iconButton}
-              aria-label="Search"
-              aria-haspopup="dialog"
-              aria-expanded={searchOpen}
-            >
-              <Search aria-hidden="true" className={iconButtonIconClass} />
-            </button>
-            <button
-              type="button"
-              onClick={shellStore.openMenu}
-              className={iconButton}
-              aria-label="Open main menu"
-              aria-haspopup="dialog"
-              aria-expanded={menuOpen}
-            >
-              <Menu aria-hidden="true" className={iconButtonIconClass} />
-            </button>
+            <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-2 lg:gap-2">
+              {searchButton(search.button)}
+              <span className="hidden md:inline-flex">
+                <ThemeSwitcher />
+              </span>
+              {SITE_FEATURES.accounts && (
+                <span className="hidden items-center gap-1 md:inline-flex lg:gap-2">
+                  {notificationsOn && <NotificationCenter />}
+                  <UserMenu pathname={pathname} />
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={shellStore.openMenu}
+                className={cn(iconButton, "lg:hidden")}
+                aria-label="Open main menu"
+                aria-haspopup="dialog"
+                aria-expanded={menuOpen}
+              >
+                <Menu aria-hidden="true" className={iconButtonIconClass} />
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      {menuOpen && <MobileMenuPanel pathname={pathname} links={navLinks} />}
+      {menuOpen && <MobileMenuPanel pathname={pathname} />}
       <SearchDialog />
     </>
   );

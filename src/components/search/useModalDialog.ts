@@ -17,18 +17,40 @@ const openDialogs: HTMLElement[] = [];
 let savedBodyOverflow: string | null = null;
 
 /**
+ * Of each native radio group, only the radio the browser puts in the Tab order:
+ * the checked one, or the first when none is checked. Radios group by form and
+ * name, as in the browser; a radio without a name is its own group. Other
+ * elements pass through unchanged.
+ */
+export function tabbableRadios(elements: readonly HTMLElement[]): HTMLElement[] {
+  const isGroupedRadio = (element: HTMLElement): element is HTMLInputElement =>
+    element instanceof HTMLInputElement && element.type === "radio" && element.name !== "";
+  const chosen = new Map<HTMLFormElement | null, Map<string, HTMLInputElement>>();
+  for (const element of elements) {
+    if (!isGroupedRadio(element)) continue;
+    const byName = chosen.get(element.form) ?? new Map<string, HTMLInputElement>();
+    chosen.set(element.form, byName);
+    const current = byName.get(element.name);
+    if (!current || (!current.checked && element.checked)) byName.set(element.name, element);
+  }
+  return elements.filter((element) => !isGroupedRadio(element) || chosen.get(element.form)?.get(element.name) === element);
+}
+
+/**
  * Tabbable elements inside `container`, skipping collapsed (`hidden`) and aria-hidden parts,
  * and elements taken out of the Tab order with a negative tabIndex (such as the search
- * results, which are reached with the arrow keys).
+ * results, which are reached with the arrow keys). A radio group counts once, as its
+ * checked radio (or its first), because Tab visits only that one.
  */
 export function focusableWithin(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+  const candidates = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
     (element) =>
       element.tabIndex >= 0 &&
       !element.closest("[hidden]") &&
       !element.closest("[inert]") &&
       element.getAttribute("aria-hidden") !== "true",
   );
+  return tabbableRadios(candidates);
 }
 
 /** True while any modal dialog from this hook is open. */

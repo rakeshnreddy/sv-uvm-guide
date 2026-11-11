@@ -29,8 +29,11 @@ describe("resolveCurriculumRequest (canonical lesson URLs)", () => {
     });
   });
 
-  it("redirects a one-segment tier URL to the tier's first lesson (G30-LINK-V03)", () => {
-    expect(resolveCurriculumRequest(["T1_Foundational"])).toMatchObject({ kind: "redirect", location: F1A });
+  it("leaves a one-segment tier URL to the tier redirect: it is not a lesson (SPEC phase 2, URLs)", () => {
+    // The middleware (sectionRedirect) and the lesson route (tierRedirectHref) send it to /curriculum#t1 with a 307.
+    expect(resolveCurriculumRequest(["T1_Foundational"])).toEqual({ kind: "not-found" });
+    expect(resolveCurriculumRequest(["t1-foundational"])).toEqual({ kind: "not-found" });
+    expect(canonicalLessonPath(["T1_Foundational"])).toBeNull();
   });
 
   it("redirects pretty and wrong-case slugs to the exact folder names", () => {

@@ -7,6 +7,7 @@ import { lessonPracticeSections } from '../../src/lib/curriculum/lesson-mdx';
 import { scanLessonHeadings } from '../../src/lib/expert-index';
 import { getAllLabs } from '../../src/lib/lab-registry';
 import { getPracticeForModule } from '../../src/lib/practice-links';
+import { PRIMARY_NAV, PRACTICE_HREF, isNavGroup } from '../../src/lib/site-links';
 
 const repoRoot = process.cwd();
 const contentRoot = path.join(repoRoot, 'content', 'curriculum');
@@ -56,6 +57,7 @@ function buildCurriculumRoutes(): Set<string> {
   const data = generateCurriculumData();
 
   data.forEach((courseModule) => {
+    // A one-segment tier URL answers with a 307 to its section of /curriculum (tierSectionHref), so links to it still land.
     routes.add(`/curriculum/${courseModule.slug}`);
     courseModule.sections.forEach((section) => {
       routes.add(`/curriculum/${courseModule.slug}/${section.slug}`);
@@ -341,7 +343,11 @@ describe('Curriculum coverage audit', () => {
 
   it('keeps hard-coded curriculum routes in Playwright specs aligned with current lesson paths', () => {
     const curriculumRoutes = buildCurriculumRoutes();
-    const e2eFiles = walkFiles(path.join(repoRoot, 'tests', 'e2e'), (filePath) => filePath.endsWith('.spec.ts'));
+    // redirects.spec.ts lists old and alias URLs on purpose: it checks that they redirect.
+    const e2eFiles = walkFiles(
+      path.join(repoRoot, 'tests', 'e2e'),
+      (filePath) => filePath.endsWith('.spec.ts') && path.basename(filePath) !== 'redirects.spec.ts',
+    );
 
     e2eFiles.forEach((filePath) => {
       const source = fs.readFileSync(filePath, 'utf8');
@@ -386,8 +392,6 @@ describe('Curriculum coverage audit', () => {
     const practiceHubSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'practice', 'PracticeHub.tsx'), 'utf8');
     const practiceMapSource = fs.readFileSync(path.join(repoRoot, 'src', 'lib', 'practice-links.ts'), 'utf8');
     expect(practiceHubSource).toContain('getPracticePages()');
-    const navbarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'Navbar.tsx'), 'utf8');
-    const sidebarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'layout', 'Sidebar.tsx'), 'utf8');
     const retainedPracticeRoutes = [
       '/practice/visualizations/randomization-explorer',
       '/practice/visualizations/assertion-builder',
@@ -407,8 +411,8 @@ describe('Curriculum coverage audit', () => {
       expect(practiceMapSource).toContain(`href: '${route}'`);
     });
 
-    expect(navbarSource).toContain('/practice');
-    expect(sidebarSource).toContain('/practice');
+    // The navbar and phone menu render PRIMARY_NAV: the Practice disclosure lists the hub.
+    expect(PRIMARY_NAV.some((item) => isNavGroup(item) && item.children.some((child) => child.href === PRACTICE_HREF))).toBe(true);
   });
 
   const strictLinkAudit = process.env.QA_STRICT_LINK_AUDIT === '1';

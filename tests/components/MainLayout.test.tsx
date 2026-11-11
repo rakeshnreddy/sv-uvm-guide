@@ -3,10 +3,9 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import manifest from '../../content/curriculum/curriculum.manifest.json';
 import MainLayout from '@/components/layout/MainLayout';
+import { PAGE_FRAME_CLASS } from '@/components/layout/nav-styles';
 import { shellStore } from '@/components/search/shell-store';
-import { normalizeSlug } from '@/lib/curriculum-data';
 
 vi.mock('@/components/Navbar', () => ({
   __esModule: true,
@@ -17,6 +16,18 @@ vi.mock('@/components/Navbar', () => ({
         <a href="/curriculum">Curriculum</a>
       </nav>
     </header>
+  ),
+}));
+
+// The footer has its own suite (Footer.test.tsx); here it only has to close the frame.
+vi.mock('@/components/Footer', () => ({
+  __esModule: true,
+  default: ({ showShortcuts, frame }: { showShortcuts?: boolean; frame?: string }) => (
+    <footer data-show-shortcuts={showShortcuts ? 'true' : 'false'} data-frame={frame}>
+      <nav aria-label="Site map">
+        <a href="/curriculum">Curriculum</a>
+      </nav>
+    </footer>
   ),
 }));
 
@@ -104,32 +115,29 @@ describe('MainLayout', () => {
     expect(document.activeElement).toBe(screen.getByRole('main'));
   });
 
-  it('ends with a footer site map, so no page is a dead end (G30-SIDE-07)', async () => {
-    const user = userEvent.setup();
+  it('ends with the footer site map and its shortcuts button, so no page is a dead end (G30-SIDE-07)', () => {
     render(
       <MainLayout>
         <h1>Page</h1>
       </MainLayout>,
     );
     const footer = screen.getByRole('contentinfo');
-    const siteMap = within(footer).getByRole('navigation', { name: 'Site map' });
-    expect(within(siteMap).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
-    expect(within(siteMap).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
-    expect(within(siteMap).getByRole('link', { name: 'Exercises' })).toHaveAttribute('href', '/exercises');
-    expect(within(siteMap).getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', '/privacy-policy');
-    expect(within(siteMap).getByRole('link', { name: 'Terms of service' })).toHaveAttribute('href', '/terms-of-service');
-    expect(footer).toHaveTextContent('MIT licensed');
+    expect(within(footer).getByRole('navigation', { name: 'Site map' })).toBeInTheDocument();
+    expect(footer).toHaveAttribute('data-show-shortcuts', 'true');
+    expect(footer).toHaveAttribute('data-frame', 'learning');
+    expect(screen.getByRole('main').compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 
-    // One "Start" link per tier, each to that tier's first lesson.
-    const starts = within(siteMap).getAllByRole('link', { name: /^Start Tier/ });
-    expect(starts.map((link) => link.textContent)).toEqual(manifest.tiers.map((tier) => `Start ${tier.title}`));
-    for (const link of starts) {
-      const segments = (link.getAttribute('href') ?? '').replace(/^\/curriculum\//, '').split('/');
-      expect(normalizeSlug(segments)).toEqual(segments);
-    }
-
-    const shortcuts = within(siteMap).getByRole('button', { name: 'Keyboard shortcuts' });
-    await user.click(shortcuts);
-    expect(shellStore.getState().helpOpen).toBe(true);
+  it('puts the page in the frame the navbar uses, so the header lines up with the page', () => {
+    render(
+      <MainLayout>
+        <h1>Page</h1>
+      </MainLayout>,
+    );
+    const frame = screen.getByRole('main').querySelector('[data-page-frame]');
+    expect(frame).not.toBeNull();
+    for (const name of PAGE_FRAME_CLASS.split(' ')) expect(frame).toHaveClass(name);
+    expect(PAGE_FRAME_CLASS).toBe('mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8');
+    expect(frame).not.toHaveClass('container');
   });
 });

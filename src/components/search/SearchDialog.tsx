@@ -3,9 +3,14 @@
 import React, { useId, useRef } from "react";
 import { X } from "lucide-react";
 
+import { SITE_NAME } from "@/lib/site-links";
+
 import SearchCombobox from "./SearchCombobox";
 import { MODAL_LAYER, shellStore, useShellState } from "./shell-store";
 import { useModalDialog } from "./useModalDialog";
+
+/** The dialog's heading and accessible name. */
+export const SEARCH_DIALOG_TITLE = `Search ${SITE_NAME}`;
 
 const iconButton =
   "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors duration-150 ease-bench hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none";
@@ -32,7 +37,7 @@ function SearchDialogPanel() {
       >
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-foreground">
-            Search the curriculum
+            {SEARCH_DIALOG_TITLE}
           </h2>
           <button type="button" onClick={shellStore.closeSearch} aria-label="Close search" className={iconButton}>
             <X aria-hidden="true" className="h-5 w-5" />

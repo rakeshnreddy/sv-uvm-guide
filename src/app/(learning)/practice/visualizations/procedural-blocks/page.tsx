@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksSimulator';
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { requirePracticePage } from '@/lib/practice-links';
 
 const HREF = '/practice/visualizations/procedural-blocks';
@@ -13,13 +13,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 // Runs on the deterministic process model (src/lib/sv-process-model.ts); no browser-only APIs are needed at render time.
 const ProceduralBlocksPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description="initial, always and final procedures over simulation time, with the region each update lands in."
       diagrams={[<ProceduralBlocksSimulator key="proc-blocks" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

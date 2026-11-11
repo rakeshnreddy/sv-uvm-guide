@@ -5,6 +5,7 @@ import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-ba
 import { getAllLabs, getLabById, labCheckSummary } from '@/lib/lab-registry';
 import { labProgressRecords, labRecordId } from '@/lib/learner-store/repositories/labs';
 import { getLabLessons, getPracticePages } from '@/lib/practice-links';
+import { PRACTICE_SECTION_ID } from '@/lib/site-links';
 
 describe('PracticeHub', () => {
   it('renders hero section with title and description', () => {
@@ -27,7 +28,32 @@ describe('PracticeHub', () => {
 
     const cardTitles = screen.getAllByRole('heading', { level: 3 });
     expect(cardTitles.length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: 'exercises page' })).toHaveAttribute('href', '/exercises');
+    // The old /exercises index redirects here: nothing links to it any more.
+    expect(document.querySelector('a[href="/exercises"]')).toBeNull();
+  });
+
+  it('gives every section the id site-links.ts exports, with room under the sticky header', () => {
+    const { container } = render(<PracticeHub />);
+    for (const [section, id] of Object.entries(PRACTICE_SECTION_ID)) {
+      const heading = container.querySelector(`#${id}`);
+      expect(heading, section).not.toBeNull();
+      expect(heading?.tagName).toBe('H2');
+      expect(heading).toHaveClass('scroll-mt-24');
+      expect(heading?.closest('section')).toHaveAttribute('aria-labelledby', id);
+      // The jump list links to every section.
+      expect(container.querySelector(`nav[aria-label="Practice sections"] a[href="#${id}"]`), section).not.toBeNull();
+    }
+  });
+
+  it('keeps what the old exercises index offered: every exercise with the lesson that teaches it', () => {
+    render(<PracticeHub />);
+    const region = screen.getByRole('region', { name: 'Exercises' });
+    expect(region).toHaveTextContent('Your best score is kept in this browser.');
+    for (const exercise of getPracticePages().filter((page) => page.kind === 'exercise')) {
+      const card = within(region).getByRole('link', { name: exercise.title }).closest('li') as HTMLElement;
+      expect(within(card).getByText('Learn it in')).toBeInTheDocument();
+      expect(within(card).getAllByRole('link').map((a) => a.getAttribute('href'))).toContain(exercise.lessons[0].href);
+    }
   });
 
   it('never links coming-soon labs (their routes 404); only available labs are links', () => {

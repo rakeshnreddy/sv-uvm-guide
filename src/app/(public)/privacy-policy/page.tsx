@@ -4,6 +4,10 @@ import Link from 'next/link';
 
 import Footer from '@/components/Footer';
 import InfoPage from '@/components/templates/InfoPage';
+import { LEGAL_LINKS, SITE_NAME, PRIVACY_POLICY_HREF } from '@/lib/site-links';
+
+/** The page's one label, from the shared navigation config. */
+const PAGE_LABEL = LEGAL_LINKS.find((link) => link.href === PRIVACY_POLICY_HREF)?.label ?? '';
 
 /*
  * OWNER SIGN-OFF NEEDED (GD23): this wording was rewritten in October 2026 for
@@ -102,8 +106,8 @@ const sections = [
 ];
 
 export const metadata: Metadata = {
-  title: 'Privacy Policy',
-  description: 'The SystemVerilog & UVM learning site has no accounts: your learning data stays in your browser.',
+  title: PAGE_LABEL,
+  description: `${SITE_NAME} has no accounts: your learning data stays in your browser.`,
 };
 
 export default function PrivacyPolicyPage() {
@@ -111,7 +115,7 @@ export default function PrivacyPolicyPage() {
     <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
-          title="Privacy policy"
+          title={PAGE_LABEL}
           description="There are no accounts on this site, and your learning data stays in your browser."
         >
           <div className="space-y-10">

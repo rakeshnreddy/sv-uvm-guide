@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 
 import { LearnerDataControls } from '@/components/learner/LearnerDataControls';
 import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { siteLabel } from '@/lib/nav-labels';
+import { SETTINGS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher';
 import { estimateLearnerDataBytes } from '@/lib/learner-store/backup';
@@ -72,7 +74,7 @@ export default function SettingsPageClient() {
     <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
       <header className="space-y-4">
         <div>
-          <h1 className="text-h1 text-foreground">Settings</h1>
+          <h1 className="text-h1 text-foreground">{siteLabel(SETTINGS_HREF)}</h1>
           <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
             Your theme, and the learning data saved in this browser.
           </p>

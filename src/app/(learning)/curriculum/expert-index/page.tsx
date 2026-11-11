@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
+import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
+import { SignalTag } from '@/components/ui/SignalTag';
 import { curriculumData } from '@/lib/curriculum-data';
 import { loadExpertIndex } from '@/lib/curriculum-scan';
 import type { ExpertIndexModule, ExpertIndexTier } from '@/lib/expert-index';
-import { INTERVIEW_PREP_HREF } from '@/lib/learning-paths';
 import { routeAnchor } from '@/lib/learning-route-state';
+import { CURRICULUM_HREF, EXPERT_INDEX_HREF, FOOTER_NAV, INTERVIEW_PREP_HREF, PRIMARY_NAV, isNavGroup } from '@/lib/site-links';
 
 export const metadata: Metadata = {
   title: 'Expert index',
@@ -19,6 +21,17 @@ const focusRing =
 const inlineLink = `font-medium text-primary underline underline-offset-4 hover:no-underline ${focusRing}`;
 const listLink = `font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none ${focusRing}`;
 const eyebrow = 'text-label text-subtle';
+
+/** The labels from the one navigation config: "Curriculum" and "Expert index". */
+function navLabel(href: string, fallback: string): string {
+  const links = [...PRIMARY_NAV.flatMap((item) => (isNavGroup(item) ? item.children : [item])), ...FOOTER_NAV.flatMap((group) => group.children)];
+  return links.find((link) => link.href === href)?.label ?? fallback;
+}
+
+const EXPERT_INDEX_TRAIL = [
+  { label: navLabel(CURRICULUM_HREF, 'Curriculum'), href: CURRICULUM_HREF },
+  { label: navLabel(EXPERT_INDEX_HREF, 'Expert index') },
+] as const;
 
 function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -33,7 +46,8 @@ function TaggedModule({ module }: { module: ExpertIndexModule }) {
       className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5"
     >
       <h3 id={`expert-${module.id}`} className="text-h4 text-foreground">
-        <span className="mr-2 font-mono text-label text-subtle">{module.code}</span>
+        <SignalTag code={module.code} className="mr-2 align-[0.1em]" />
+        <span className="sr-only">: </span>
         <Link href={module.href} className={listLink}>
           {module.displayTitle}
         </Link>
@@ -87,7 +101,8 @@ function UntaggedModules({ tier, modules }: { tier: ExpertIndexTier; modules: Ex
         {modules.map((module) => (
           <li key={module.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
             <span className="min-w-0">
-              <span className="mr-2 font-mono text-label text-subtle">{module.code}</span>
+              <SignalTag code={module.code} className="mr-2" />
+              <span className="sr-only">: </span>
               <Link href={module.href} className={`${listLink} [overflow-wrap:anywhere]`}>
                 {module.displayTitle}
               </Link>
@@ -122,21 +137,7 @@ export default function ExpertIndexPage() {
 
   return (
     <div className="mx-auto max-w-5xl pb-16">
-      <nav aria-label="Breadcrumb" className="mb-6 text-sm">
-        <ol className="flex flex-wrap items-center gap-2 text-muted-foreground">
-          <li>
-            <Link href="/curriculum" className={listLink}>
-              Curriculum
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li>
-            <span aria-current="page" className="font-medium text-foreground">
-              Expert index
-            </span>
-          </li>
-        </ol>
-      </nav>
+      <Breadcrumbs items={EXPERT_INDEX_TRAIL} className="mb-4" />
 
       <header className="rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
         <p className={eyebrow}>Expert layers</p>

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { findPrevNextTopics, toPrettyCurriculumSlug } from '../../src/lib/curriculum-data';
 import { getLessonContext } from '../../src/lib/curriculum/lesson-context';
+import { tierSectionHref } from '../../src/lib/site-links';
 
 /**
  * The lesson page's orientation and URL guarantees (G30 lesson-page-navigation
@@ -22,10 +23,13 @@ const PSS = '/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index';
 
 const segmentsOf = (href: string) => href.replace(/^\/curriculum\//, '').split('/');
 
+/** The status and Location (path plus fragment) of one request that does not follow redirects. */
 async function redirectTarget(page: Page, path: string): Promise<{ status: number; location: string }> {
   const response = await page.request.get(path, { maxRedirects: 0 });
   const location = response.headers()['location'] ?? '';
-  return { status: response.status(), location: location ? new URL(location, 'http://localhost').pathname : '' };
+  if (!location) return { status: response.status(), location: '' };
+  const url = new URL(location, 'http://localhost');
+  return { status: response.status(), location: `${url.pathname}${url.hash}` };
 }
 
 test.describe('canonical lesson URLs (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11)', () => {
@@ -34,7 +38,6 @@ test.describe('canonical lesson URLs (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11)',
     const extra = `${F1A}/x/y`;
     const cases: Array<[string, string]> = [
       ['/curriculum/T1_Foundational/F1B_The_Verification_Mindset', F1B],
-      ['/curriculum/T1_Foundational', F1A],
       [pretty, F1B],
       [extra, F1A],
     ];
@@ -48,15 +51,27 @@ test.describe('canonical lesson URLs (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11)',
     expect((await page.request.get(F1B, { maxRedirects: 0 })).status()).toBe(200);
   });
 
+  test('a tier URL is not a lesson: it answers 307 to its section of /curriculum', async ({ page }) => {
+    // src/middleware.ts sends tier URLs to the tier's section of the overview (tests/e2e/redirects.spec.ts).
+    for (const attempt of [1, 2]) {
+      expect(await redirectTarget(page, '/curriculum/T1_Foundational'), `request ${attempt}`).toEqual({
+        status: 307,
+        location: tierSectionHref('T1_Foundational'),
+      });
+    }
+  });
+
   test('a legacy module URL lands on its replacement lesson (G30-LINK-03)', async ({ page }) => {
     const response = await page.goto(`/curriculum/T2_Intermediate/${'I-UVM-3_Sequences'}`);
     expect(response?.status()).toBeLessThan(400);
     await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index');
   });
 
-  test("the tier crumb's old target and F1A's Next both work", async ({ page }) => {
+  test("the tier crumb's old target lands on the tier's section, and F1A's Next works", async ({ page }) => {
     await page.goto('/curriculum/T1_Foundational');
-    await expect(page).toHaveURL(F1A);
+    await expect(page).toHaveURL(/\/curriculum#t1$/);
+    await expect(page.locator('#t1')).toBeAttached();
+    await page.goto(F1A);
     const next = page.getByRole('navigation', { name: 'Previous and next lesson' }).getByRole('link', { name: /^Next lesson/ });
     await next.click();
     await expect(page).toHaveURL(F1B);
@@ -108,8 +123,9 @@ test.describe('lesson orientation at 1280 px', () => {
     const teachBack = lesson.getByRole('heading', { name: 'Teach it back' });
     const references = lesson.getByRole('heading', { name: 'References & Next Topics' });
     const top = async (locator: typeof flashcards) => (await locator.boundingBox())!.y;
-    expect(await top(flashcards)).toBeLessThan(await top(references));
-    expect(await top(teachBack)).toBeLessThan(await top(references));
+    // Poll: lazily loaded interactives above References can swap in a beat after load and move it.
+    await expect.poll(async () => (await top(flashcards)) < (await top(references))).toBe(true);
+    await expect.poll(async () => (await top(teachBack)) < (await top(references))).toBe(true);
     await expect(page.getByRole('navigation', { name: 'On this page' }).getByRole('link', { name: 'Reinforce the essentials' })).toHaveAttribute(
       'href',
       '#reinforce-the-essentials',

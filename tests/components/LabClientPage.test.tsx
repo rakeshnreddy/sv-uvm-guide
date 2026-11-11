@@ -94,9 +94,14 @@ const basicsDir = path.join(process.cwd(), getLabById("basics-1")!.assetLocation
 const SOLUTION_TB = fs.readFileSync(path.join(basicsDir, "solution/tb_counter_refactored.sv"), "utf8");
 const labKey = (labId: string, version: string) => labProgressRecords.keyFor(`${labId}@${version}`);
 
+/** The props the lab page passes to LabClientPage (the page wraps it with the breadcrumb trail and the practice pager). */
 async function propsFor(labId: string): Promise<LabProps> {
-  const element = (await LabPage({ params: { labId } })) as React.ReactElement<LabProps>;
-  return element.props;
+  const page = (await LabPage({ params: { labId } })) as React.ReactElement<{ children?: React.ReactNode }>;
+  const client = React.Children.toArray(page.props.children).find(
+    (child): child is React.ReactElement<LabProps> => React.isValidElement(child) && child.type === LabClientPage,
+  );
+  if (!client) throw new Error(`The lab page for ${labId} renders no LabClientPage`);
+  return client.props;
 }
 
 async function renderLab(labId: string) {

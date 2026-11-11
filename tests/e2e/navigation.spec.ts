@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 import { authenticateTestLearner, requireAccountsMode } from '../fixtures/auth';
 import { followLink } from './utils/navigation';
+import { PRIMARY_NAV, isNavGroup } from '@/lib/site-links';
 
 test('sequence arbitration page next link navigates to sequence libraries', async ({ page }) => {
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration');
@@ -38,7 +39,10 @@ test.describe('Advanced Navigation Features', () => {
     await waitForShell(page);
   });
 
-  test('should toggle the course outline drawer with the navbar button', async ({ page }) => {
+  test('should toggle the course outline drawer with the navbar button on a lesson below lg', async ({ page }) => {
+    await page.setViewportSize({ width: 820, height: 1000 });
+    await page.goto(MAILBOXES);
+    await waitForShell(page);
     const outlineHeading = page.getByRole('heading', { name: 'Course outline' });
     const toggle = page.getByRole('button', { name: 'Course outline', exact: true });
     await expect(outlineHeading).toHaveCount(0);
@@ -53,6 +57,10 @@ test.describe('Advanced Navigation Features', () => {
     await page.getByRole('button', { name: 'Close course outline' }).click();
     await expect(outlineHeading).toHaveCount(0);
     await expect(toggle).toBeFocused();
+  });
+
+  test('shows the course outline button only where the outline exists', async ({ page }) => {
+    await expect(page.getByRole('banner').getByRole('button', { name: 'Course outline', exact: true })).toHaveCount(0);
   });
 
   test('should toggle the course outline with the keyboard shortcut (Ctrl/Cmd+B) and close it with Escape', async ({ page }) => {
@@ -117,7 +125,7 @@ test.describe('Advanced Navigation Features', () => {
     await page.keyboard.press('?');
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
     await expect(help).toBeVisible();
-    await expect(help.getByRole('cell', { name: 'Search lessons and sections' })).toBeVisible();
+    await expect(help.getByRole('cell', { name: 'Search lessons, labs and practice' })).toBeVisible();
     await expect(help.getByRole('cell', { name: 'Next lesson' })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(help).toHaveCount(0);
@@ -139,7 +147,7 @@ test.describe('Advanced Navigation Features', () => {
     await expect(page.getByTestId('notification-button')).toHaveCount(0);
     await expect(page.getByTestId('user-profile-button')).toHaveCount(0);
     await expect(banner.getByText(/sign in|sign out/i)).toHaveCount(0);
-    // The dashboard needs no account: it is in the main navigation (at 1280 px, in the bar itself).
+    // The dashboard needs no account: it is one of the five items in the bar.
     await expect(banner.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Dashboard' })).toHaveAttribute(
       'href',
       '/dashboard',
@@ -208,6 +216,20 @@ test.describe('Lesson page shell', () => {
     await expect(page.getByRole('navigation', { name: 'Course outline' })).toBeVisible();
   });
 
+  test('lines the header up with the docked outline and the lesson column', async ({ page }) => {
+    const outline = await page.locator('#course-outline-docked').boundingBox();
+    const slot = await page.locator('header [data-header-slot="outline"]').boundingBox();
+    const search = await page.getByRole('banner').getByRole('search').boundingBox();
+    const frame = page.locator('#main-content [data-page-frame]');
+    const contentLeft = await frame.evaluate((el) => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft));
+    const contentRight = await frame.evaluate((el) => el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight));
+    expect(Math.round(slot!.width)).toBe(Math.round(outline!.width));
+    expect(Math.round(search!.x)).toBe(Math.round(contentLeft));
+    const theme = await page.getByRole('banner').getByRole('button', { name: 'Theme', exact: true }).boundingBox();
+    expect(Math.round(theme!.x + theme!.width)).toBe(Math.round(contentRight));
+    expect(Math.round((await page.getByRole('banner').boundingBox())!.height)).toBe(64);
+  });
+
   test('skips to the lesson heading from the skip link (G30-PAGE-V18)', async ({ page }) => {
     const skip = page.getByRole('link', { name: 'Skip to main content' });
     await skip.focus();
@@ -260,7 +282,7 @@ test.describe('Phone layout (390 px)', () => {
     await expect(dashboard).toHaveAttribute('href', '/dashboard');
 
     // Reach it from the keyboard, so the focus ring is the :focus-visible one.
-    for (let step = 0; step < 12 && !(await dashboard.evaluate((link) => link === document.activeElement)); step += 1) {
+    for (let step = 0; step < 24 && !(await dashboard.evaluate((link) => link === document.activeElement)); step += 1) {
       await page.keyboard.press('Tab');
     }
     await expect(dashboard).toBeFocused();
@@ -274,10 +296,9 @@ test.describe('Phone layout (390 px)', () => {
 test.describe('Tablet layout (768 px)', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
-  test('fits the md bar without sideways scrolling, with Dashboard under "More"', async ({ page }) => {
+  test('keeps the search field and theme control in the bar and the five items in the phone menu', async ({ page }) => {
     await page.goto('/curriculum');
     await waitForShell(page);
-    // With accounts on, the account menu (and, signed in, the bell) do not fit yet; the accounts-mode check below covers that.
     test.skip(await accountUiEnabled(page), 'accountUI is on for this server; this checks the default build.');
 
     const banner = page.getByRole('banner');
@@ -285,18 +306,62 @@ test.describe('Tablet layout (768 px)', () => {
     const theme = banner.getByRole('button', { name: 'Theme', exact: true });
     await expect(theme).toBeVisible();
     await expect(theme).toHaveAttribute('aria-haspopup', 'menu');
-    await expect(banner.getByRole('combobox', { name: 'Select theme' })).toHaveCount(0);
+    await expect(banner.getByTestId('main-search-input')).toBeVisible();
+    await expect(banner.getByRole('navigation', { name: 'Main' })).toBeHidden();
     expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-    const nav = banner.getByRole('navigation', { name: 'Main' });
-    for (const name of ['Start here', 'Curriculum', 'Practice']) {
-      await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+    await banner.getByRole('button', { name: 'Open main menu' }).click();
+    const menu = page.getByTestId('mobile-menu');
+    for (const item of PRIMARY_NAV) {
+      if (isNavGroup(item)) {
+        const list = menu.getByRole('list', { name: item.label });
+        await expect(list.getByRole('link')).toHaveCount(item.children.length);
+      } else {
+        await expect(menu.getByRole('link', { name: item.label, exact: true })).toBeVisible();
+      }
     }
-    const more = nav.getByRole('button', { name: 'More' });
-    await more.click();
-    await expect(more).toHaveAttribute('aria-expanded', 'true');
-    await expect(nav.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  });
+});
+
+test.describe('Desktop bar (1024 px)', () => {
+  test.use({ viewport: { width: 1024, height: 900 } });
+
+  test('shows all five items without sideways scrolling, and the disclosures work from the keyboard', async ({ page }) => {
+    await page.goto('/practice/waveform-studio');
+    await waitForShell(page);
+    test.skip(await accountUiEnabled(page), 'accountUI is on for this server; this checks the default build.');
+
+    const banner = page.getByRole('banner');
+    const nav = banner.getByRole('navigation', { name: 'Main' });
+    for (const item of PRIMARY_NAV) {
+      const control = isNavGroup(item)
+        ? nav.getByRole('button', { name: item.label, exact: true })
+        : nav.getByRole('link', { name: item.label, exact: true });
+      await expect(control).toBeVisible();
+    }
+    await expect(banner.getByRole('button', { name: 'Open main menu' })).toBeHidden();
+    expect(await banner.evaluate((header) => header.scrollWidth <= header.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    const practice = nav.getByRole('button', { name: 'Practice', exact: true });
+    await expect(practice).toHaveAttribute('aria-current', 'true');
+    await practice.focus();
+    await page.keyboard.press('Enter');
+    await expect(practice).toHaveAttribute('aria-expanded', 'true');
+    const panel = page.locator(`[id="${await practice.getAttribute('aria-controls')}"]`);
+    await expect(panel.getByRole('link', { name: 'Waveform studio' })).toHaveAttribute('aria-current', 'page');
+    await page.keyboard.press('Tab');
+    await expect(panel.getByRole('link').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(practice).toHaveAttribute('aria-expanded', 'false');
+    await expect(practice).toBeFocused();
+
+    // A press outside closes it.
+    await practice.click();
+    await expect(practice).toHaveAttribute('aria-expanded', 'true');
+    await page.mouse.click(500, 600);
+    await expect(practice).toHaveAttribute('aria-expanded', 'false');
   });
 });
 
@@ -353,10 +418,9 @@ test.describe('Account menus (accounts mode)', () => {
     await expect(banner.getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/notifications');
   });
 
-  // Open item, kept as a check for when accounts are turned on: from md to lg the
-  // account menu and the bell add about 88 px to a bar that has 720 px of room at
-  // 768 px, so it overflows (see the Navbar component's comment). Turn this into
-  // a plain test once the md bar makes room for them.
+  // Kept as a check for when accounts are turned on. At 768 px the main items are
+  // now in the phone menu, which should leave room for the account menu and the
+  // bell; this has not been run in accounts mode yet, so it stays a fixme until it is.
   test.fixme('fits the md bar at 768 px for a signed-in learner', async ({ page }) => {
     await authenticateTestLearner(page);
     await page.setViewportSize({ width: 768, height: 1024 });

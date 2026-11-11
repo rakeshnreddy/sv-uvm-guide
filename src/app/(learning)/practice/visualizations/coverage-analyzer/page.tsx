@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import LearnInLesson from '@/components/practice/LearnInLesson';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import { CovergroupBuilder } from '@/components/visuals/CovergroupBuilder';
 import { CoverageCrossExplorerVisualizer } from '@/components/visualizers/CoverageCrossExplorerVisualizer';
 import { requirePracticePage } from '@/lib/practice-links';
@@ -13,13 +13,13 @@ export const metadata: Metadata = { title: practice.title, description: practice
 
 const CoverageAnalyzerPage = () => {
   return (
-    <InfoPage gutter={false}
+    <PracticeInfoPage href={HREF}
       title={practice.title}
       description={practice.description}
       diagrams={[<CoverageCrossExplorerVisualizer key="coverage-cross" />, <CovergroupBuilder key="covergroup-bins" />]}
     >
       <LearnInLesson item={practice} />
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 

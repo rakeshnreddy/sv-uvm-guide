@@ -30,7 +30,7 @@ test.describe('learner dashboard', () => {
     expect(response?.status()).toBe(200);
     await waitForShell(page);
 
-    await expect(page.getByRole('heading', { level: 1, name: 'Your learning' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Your learning' }).getByRole('link', { name: 'Dashboard' })).toHaveAttribute(
       'aria-current',
       'page',

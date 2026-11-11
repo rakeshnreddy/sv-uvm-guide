@@ -1,8 +1,10 @@
 /**
- * Client-side curriculum search over the index written by
- * scripts/generate-search-index.mjs. Pure functions, no dependencies:
- * tokenized prefix matching with field weights, ranked, then capped per
- * lesson so one long page cannot fill the list.
+ * Client-side site search over the index written by
+ * scripts/generate-search-index.mjs: lessons and their sections, plus labs,
+ * exercises, interactive models, tools, interview banks and reference pages.
+ * Pure functions, no dependencies: tokenized prefix matching with field
+ * weights, ranked (lessons first for equal matches), then capped per lesson
+ * so one long page cannot fill the list.
  */
 import { headingSlug, isExpertHeading } from "@/lib/heading-slug";
 
@@ -31,12 +33,43 @@ export interface SearchIndexTier {
   modules: SearchIndexModule[];
 }
 
+/** The kinds of the non-lesson entries, in the order the index lists them. */
+export const SEARCH_ITEM_KINDS = ["lab", "exercise", "model", "tool", "interview", "reference"] as const;
+
+export type SearchItemKind = (typeof SEARCH_ITEM_KINDS)[number];
+
+/** A lab, exercise, interactive model, tool, interview bank or reference page. No body text. */
+export interface SearchIndexItem {
+  kind: SearchItemKind;
+  title: string;
+  /** One line. */
+  description: string;
+  href: string;
+  keywords: string[];
+  /** Module code of the lesson that teaches it, for example "I-UVM-1C". */
+  code?: string;
+}
+
 export interface SearchIndexData {
   version: number;
   tiers: SearchIndexTier[];
+  /** Absent in indexes written before version 3. */
+  items?: SearchIndexItem[];
 }
 
-export type SearchResultKind = "lesson" | "section";
+export type SearchResultKind = "lesson" | "section" | SearchItemKind;
+
+/** The visible label for each kind of result. */
+export const SEARCH_KIND_LABELS: Readonly<Record<SearchResultKind, string>> = {
+  lesson: "Lesson",
+  section: "Section",
+  lab: "Lab",
+  exercise: "Exercise",
+  model: "Model",
+  tool: "Tool",
+  interview: "Interview",
+  reference: "Reference",
+};
 
 interface SearchField {
   text: string;
@@ -49,13 +82,15 @@ export interface SearchDocument {
   /** Unique within the index: the href. */
   id: string;
   kind: SearchResultKind;
-  /** Canonical lesson URL, plus `#anchor` for a section. */
+  /** Canonical lesson URL, plus `#anchor` for a section; the page's own URL for other kinds. */
   href: string;
+  /** The page a result belongs to (the lesson for a section), for the per-page cap. */
   lessonHref: string;
-  /** What the result is called: the lesson title, or the heading text. */
+  /** What the result is called: the lesson title, the heading text or the item title. */
   title: string;
+  /** Empty for results that are not lessons or sections. */
   lessonTitle: string;
-  /** Module code, for example "I-SV-5". */
+  /** Module code, for example "I-SV-5". Empty when an item has none. */
   code: string;
   moduleTitle: string;
   tierTitle: string;
@@ -184,7 +219,29 @@ function plain(title: string): string {
     .trim();
 }
 
-/** Flattens the index into one document per lesson and one per H2/H3 heading, in curriculum order. */
+/** Score bonus by kind: lessons win equal matches, then labs and other items, then sections. */
+const KIND_BONUS: Readonly<Record<SearchResultKind, number>> = {
+  lesson: 1.5,
+  lab: 1,
+  exercise: 1,
+  model: 1,
+  tool: 1,
+  interview: 1,
+  reference: 1,
+  section: 0,
+};
+
+/** Tie-break rank by kind, lowest first. */
+function kindRank(kind: SearchResultKind): number {
+  if (kind === "lesson") return 0;
+  if (kind === "section") return 2;
+  return 1;
+}
+
+/**
+ * Flattens the index into one document per lesson and one per H2/H3 heading,
+ * in curriculum order, followed by one per item.
+ */
 export function prepareSearchDocuments(index: SearchIndexData): SearchDocument[] {
   const docs: SearchDocument[] = [];
   let order = 0;
@@ -247,15 +304,63 @@ export function prepareSearchDocuments(index: SearchIndexData): SearchDocument[]
     }
   }
 
+  for (const entry of index.items ?? []) {
+    const code = entry.code ?? "";
+    const title = entry.title;
+    docs.push({
+      id: entry.href,
+      kind: entry.kind,
+      href: entry.href,
+      lessonHref: entry.href,
+      title,
+      lessonTitle: "",
+      code,
+      moduleTitle: "",
+      tierTitle: "",
+      track: "core",
+      description: entry.description,
+      expert: false,
+      order: order++,
+      fields: [
+        field(title, 12),
+        field(entry.description, 5),
+        field(entry.keywords.join(" "), 4),
+        ...(code ? [codeField(code, 3)] : []),
+      ],
+      plainTitle: plain(title),
+      compactCode: "",
+      generic: false,
+    });
+  }
+
   return docs;
 }
 
-/** The token and its singular forms: "mailboxes" → mailboxes, mailboxe, mailbox. */
-function stems(token: string): string[] {
+/** Shortest stem a suffix rule may leave, so short words do not match half the index. */
+const MIN_STEM_LENGTH = 4;
+
+/**
+ * The token and the forms tried after it, best first:
+ * - plurals: "mailboxes" → mailboxe, mailbox; "entries" → entrie, entri, entry
+ * - a final "e": "phase" → phas (a prefix of "phasing")
+ * - "-ing": "phasing" → phase, phas
+ * The "e" and "-ing" rules keep at least MIN_STEM_LENGTH characters.
+ */
+export function stems(token: string): string[] {
   const forms = [token];
+  const add = (form: string) => {
+    if (form.length >= MIN_STEM_LENGTH && !forms.includes(form)) forms.push(form);
+  };
+  // Plurals keep their older, shorter limit: "bits" → bit.
   if (token.length >= 4 && token.endsWith("s")) forms.push(token.slice(0, -1));
   if (token.length >= 5 && token.endsWith("es")) forms.push(token.slice(0, -2));
   if (token.length >= 5 && token.endsWith("ies")) forms.push(`${token.slice(0, -3)}y`);
+  if (token.endsWith("ing")) {
+    const base = token.slice(0, -3);
+    if (base.length >= MIN_STEM_LENGTH) add(`${base}e`);
+    add(base);
+  }
+  if (token.endsWith("e")) add(token.slice(0, -1));
   return forms;
 }
 
@@ -334,8 +439,8 @@ export function searchCurriculum(
     if (tokens.length > 1 && doc.fields[0].text.includes(phrase)) score += 6;
     if (doc.plainTitle.startsWith(phrase)) score += 3;
     if (doc.plainTitle === phrase) score += 4;
-    if (doc.kind === "lesson") score += 1.5;
-    else if (doc.depth === 2) score += 0.5;
+    score += KIND_BONUS[doc.kind];
+    if (doc.kind === "section" && doc.depth === 2) score += 0.5;
     if (doc.generic) score -= 2;
 
     scored.push({ doc, score });
@@ -344,7 +449,7 @@ export function searchCurriculum(
   scored.sort(
     (a, b) =>
       b.score - a.score ||
-      (a.doc.kind === b.doc.kind ? 0 : a.doc.kind === "lesson" ? -1 : 1) ||
+      kindRank(a.doc.kind) - kindRank(b.doc.kind) ||
       a.doc.order - b.doc.order,
   );
 
@@ -360,11 +465,48 @@ export function searchCurriculum(
   return results;
 }
 
-/** A short line that says where a result lives in the curriculum. */
+/**
+ * The title a result shows. A lesson title loses its leading module code
+ * ("I-SV-3A: Functional Coverage Fundamentals" → "Functional Coverage
+ * Fundamentals") because the signal tag beside it already shows the code;
+ * the code stays searchable through the document's fields.
+ */
+export function resultTitle(doc: Pick<SearchDocument, "title" | "code">): string {
+  return doc.code ? stripModuleCode(doc.title, doc.code) : doc.title;
+}
+
+/** True for lessons and their sections; false for labs, exercises and the other items. */
+export function isCurriculumResult(doc: Pick<SearchDocument, "kind">): boolean {
+  return doc.kind === "lesson" || doc.kind === "section";
+}
+
+/**
+ * The second line of a result, split so the module code can render as a
+ * signal tag: `code` (may be empty) and the text that follows it.
+ * - lesson: "I-SV-5" + "Synchronization and IPC · Tier 2: Intermediate"
+ * - section: "I-SV-5" + the lesson title
+ * - item: its teaching module's code + its one-line description
+ * Elective modules end with " · Elective".
+ */
+export function resultContext(doc: SearchDocument): { code: string; text: string } {
+  if (!isCurriculumResult(doc)) return { code: doc.code, text: doc.description ?? "" };
+  const elective = doc.track === "elective" ? " · Elective" : "";
+  if (doc.kind === "section") return { code: doc.code, text: `${stripModuleCode(doc.lessonTitle, doc.code)}${elective}` };
+  const moduleName = stripModuleCode(doc.moduleTitle, doc.code);
+  const lessonName = stripModuleCode(doc.title, doc.code);
+  const where = lessonName === moduleName ? doc.tierTitle : `${moduleName} · ${doc.tierTitle}`;
+  return { code: doc.code, text: `${where}${elective}` };
+}
+
+/** A short line that says where a result lives, as plain text. */
 export function describeResult(doc: SearchDocument): string {
+  if (!isCurriculumResult(doc)) {
+    const { code, text } = resultContext(doc);
+    return code ? `${code} · ${text}` : text;
+  }
   const elective = doc.track === "elective" ? " · Elective" : "";
   if (doc.kind === "section") {
-    return `${doc.lessonTitle} · ${doc.code}${elective}`;
+    return `${stripModuleCode(doc.lessonTitle, doc.code)} · ${doc.code}${elective}`;
   }
   const moduleName = stripModuleCode(doc.moduleTitle, doc.code);
   const lessonName = stripModuleCode(doc.title, doc.code);
@@ -372,8 +514,7 @@ export function describeResult(doc: SearchDocument): string {
   return `${where} · ${doc.tierTitle}${elective}`;
 }
 
-/** The visible badge for a result; text, so it never relies on colour. */
-export function resultKindLabel(doc: SearchDocument): string {
-  if (doc.kind === "lesson") return "Lesson";
-  return doc.expert ? "Expert" : "Section";
+/** The visible kind label for a result; text, so it never relies on colour. */
+export function resultKindLabel(doc: Pick<SearchDocument, "kind">): string {
+  return SEARCH_KIND_LABELS[doc.kind];
 }

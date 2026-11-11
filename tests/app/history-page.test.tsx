@@ -102,7 +102,8 @@ describe("/history page", () => {
   });
 
   it("has metadata", () => {
-    expect(metadata.title).toBe("History of SystemVerilog and UVM");
+    // The nav label (site-links.ts); the h1 is longer and starts with it.
+    expect(metadata.title).toBe("History");
     expect(String(metadata.description)).toMatch(/IEEE 1800\.2/);
   });
 

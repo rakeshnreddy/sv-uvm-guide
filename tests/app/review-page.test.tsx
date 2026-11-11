@@ -109,9 +109,13 @@ afterEach(() => {
 
 describe('/dashboard/review page shell', () => {
   it('is a static shell with the review heading and the learner navigation', () => {
-    expect(metadata.title).toBe('Flashcard review');
+    expect(metadata.title).toBe('Review');
     const html = renderToString(<FlashcardReviewPage />);
-    expect(html).toMatch(/<h1[^>]*>Flashcard review<\/h1>/);
+    // The h1 starts with the destination's nav label (site-links.ts).
+    expect(html).toMatch(/<h1[^>]*>Review<!-- --> flashcards<\/h1>/);
+    // Dashboard › Review, the last crumb the current page.
+    expect(html).toContain('aria-label="Breadcrumb"');
+    expect(html).toMatch(/<a[^>]*href="\/dashboard"[^>]*>.*Dashboard/);
     expect(html).toContain('aria-label="Your learning"');
     const reviewLink = html.match(/<a[^>]*href="\/dashboard\/review"[^>]*>/)?.[0] ?? '';
     expect(reviewLink).toContain('aria-current="page"');

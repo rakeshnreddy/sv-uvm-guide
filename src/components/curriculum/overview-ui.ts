@@ -32,3 +32,15 @@ export const secondaryAction = `inline-flex min-h-[44px] items-center justify-ce
 
 /** A tag (4 px radius); `text-xs font-medium` for the reason given on `eyebrow`. */
 export const chip = 'inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium';
+
+/**
+ * A link whose visible content is a SignalTag (a code such as "I-SV-1"): the
+ * link gives a 40 px target around the small tag, and the tag shows the accent
+ * on hover and keyboard focus (DESIGN.md section 8). Put `tagInLink` on the
+ * SignalTag inside.
+ */
+export const tagLink = 'group inline-flex min-h-[40px] items-center rounded px-0.5 focus-visible:outline-none';
+
+/** Classes for the SignalTag inside a `tagLink`. */
+export const tagInLink =
+  'transition-colors duration-150 ease-bench motion-reduce:transition-none group-hover:border-primary group-hover:text-primary group-focus-visible:border-primary group-focus-visible:text-primary group-focus-visible:ring-2 group-focus-visible:ring-ring';

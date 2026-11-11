@@ -1,14 +1,15 @@
 import React from 'react';
 import UvmAgentBuilderExercise from '@/components/exercises/UvmAgentBuilderExercise';
-import { InfoPage } from '@/components/templates/InfoPage';
+import { PracticeInfoPage } from '@/components/practice/PracticeInfoPage';
 import LearnInLesson from '@/components/practice/LearnInLesson';
 import { requirePracticePage } from '@/lib/practice-links';
 
 // The back link and lesson list come from the practice map (src/lib/practice-links.ts).
-const practice = requirePracticePage('/exercises/uvm-agent-builder');
+const HREF = '/exercises/uvm-agent-builder';
+const practice = requirePracticePage(HREF);
 
 const UvmAgentBuilderPage: React.FC = () => {
-  const pageTitle = `Exercise: ${practice.title}`;
+  const pageTitle = practice.title;
 
   const content = (
     <>
@@ -40,9 +41,9 @@ const UvmAgentBuilderPage: React.FC = () => {
   );
 
   return (
-    <InfoPage gutter={false} title={pageTitle}>
+    <PracticeInfoPage href={HREF} title={pageTitle}>
       {content}
-    </InfoPage>
+    </PracticeInfoPage>
   );
 };
 
@@ -50,7 +51,7 @@ export default UvmAgentBuilderPage;
 
 export async function generateMetadata() {
   return {
-    title: `Exercise: ${practice.title}`,
+    title: practice.title,
     description: "Interactive exercise: choose an active or passive UVM agent and build it from its components, sequencer, driver and monitor, with feedback on the get_is_active() rule.",
   };
 }

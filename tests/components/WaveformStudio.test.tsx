@@ -23,6 +23,12 @@ describe('WaveformStudio', () => {
     renderMock.mockClear();
   });
 
+  it('titles the tool in sentence case, like the nav label', () => {
+    render(<WaveformStudio />);
+    expect(screen.getByRole('heading', { level: 3, name: 'Waveform studio' })).toBeInTheDocument();
+    expect(screen.queryByText('Waveform Studio')).toBeNull();
+  });
+
   it('renders the first model sample and reports a clean AXI handshake', () => {
     render(<WaveformStudio />);
     expect(renderMock).toHaveBeenCalled();
