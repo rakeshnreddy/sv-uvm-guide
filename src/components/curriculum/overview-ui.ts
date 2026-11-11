@@ -22,10 +22,12 @@ export const textLink = `rounded-sm font-medium text-primary underline-offset-4 
 export const inlineLink = `rounded-sm font-medium text-primary underline underline-offset-4 hover:no-underline ${focusRing}`;
 
 /**
- * The one filled accent action per view. The transparent border keeps a visible
+ * The one filled accent action per view, with the primary sheen (DESIGN.md
+ * section 11: the accent 6% lighter at the top, 6% darker at the bottom, an
+ * inset highlight; hover lays a veil over it). The transparent border keeps a visible
  * boundary in Windows forced-colours mode (gap-6).
  */
-export const primaryAction = `inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText] motion-reduce:transition-none ${focusRing}`;
+export const primaryAction = `sheen-primary inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench forced-colors:border-[ButtonText] motion-reduce:transition-none ${focusRing}`;
 
 /** Every other action: the raised surface, a hairline and primary text, like Button's secondary variant. */
 export const secondaryAction = `inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-border bg-muted px-4 py-2 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-border/70 motion-reduce:transition-none ${focusRing}`;
@@ -44,3 +46,20 @@ export const tagLink = 'group inline-flex min-h-[40px] items-center rounded px-0
 /** Classes for the SignalTag inside a `tagLink`. */
 export const tagInLink =
   'transition-colors duration-150 ease-bench motion-reduce:transition-none group-hover:border-primary group-hover:text-primary group-focus-visible:border-primary group-focus-visible:text-primary group-focus-visible:ring-2 group-focus-visible:ring-ring';
+
+/**
+ * Colour and glass on hub pages (DESIGN.md section 11). Glass carries its own
+ * border, fill and shadow (globals.css), so these add only what a card needs
+ * on top of it.
+ *
+ * - `glassCardHover`: a quiet-glass card that is one link (a stretched link
+ *   or a whole-card Link): on hover the solid raised surface and the control
+ *   border, and the focus ring while a link inside has keyboard focus, the
+ *   same as Card's `interactive` variant.
+ * - `tierChip`: a jump link to a tier, on quiet glass, with the tier step mark
+ *   before the tier's name. Needs data-tier on the element.
+ */
+export const glassCardHover =
+  'transition-colors duration-150 ease-bench hover:border-input hover:bg-muted motion-reduce:transition-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring';
+
+export const tierChip = `glass-quiet inline-flex min-h-[40px] items-center gap-2 rounded-lg border-tier-current-border px-3 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none ${focusRing}`;

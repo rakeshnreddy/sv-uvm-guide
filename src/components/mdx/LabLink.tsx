@@ -72,7 +72,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
                 href={`/practice/lab/${lab.id}`}
                 aria-describedby={progressNote ? noteId : undefined}
                 className={cn(
-                  'inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground no-underline transition-colors hover:bg-primary/90 motion-reduce:transition-none',
+                  'sheen-primary inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground no-underline transition-colors motion-reduce:transition-none',
                   focusRing,
                 )}
               >

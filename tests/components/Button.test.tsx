@@ -38,4 +38,17 @@ describe("Button variants", () => {
     );
     expect(screen.getByRole("button", { name: "Copy" })).toHaveClass("text-label", "text-subtle");
   });
+
+  it("gives the primary action the sheen over the accent fill, keeping the focus ring and the disabled state", () => {
+    const recipe = buttonVariants({ variant: "default" }).split(" ");
+    expect(recipe).toEqual(
+      expect.arrayContaining(["sheen-primary", "bg-primary", "text-primary-foreground", "focus-visible:ring-2", "focus-visible:ring-ring", "disabled:opacity-50"]),
+    );
+    // Hover is the sheen's own veil (globals.css); a translucent fill would show the page through the button.
+    expect(recipe).not.toContain("hover:bg-primary/90");
+    for (const variant of ["outline", "secondary", "ghost", "link", "destructive"] as const) {
+      expect(buttonVariants({ variant }), variant).not.toMatch(/sheen-primary/);
+    }
+  });
 });
+

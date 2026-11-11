@@ -6,6 +6,7 @@ import { ChevronDown, Clock, Eye, MapPin } from 'lucide-react';
 
 import { SignalTag } from '@/components/ui/SignalTag';
 import { labelWithCode, moduleDisplayTitle, type OverviewModule } from '@/lib/curriculum-overview';
+import { tierDataAttribute, tierOfModuleCode } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { chip, focusRing, tagLink, tagInLink, textLink } from './overview-ui';
 
@@ -50,15 +51,20 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   const Heading = headingLevel === 3 ? 'h3' : 'h4';
   const elective = module.track === 'elective';
   const lessonCount = module.lessons.length;
+  // The tier from the curriculum data (never the code's prefix): the 2 px top edge and the tinted tag.
+  const tier = tierOfModuleCode(module.code);
 
   return (
     <article
       aria-labelledby={titleId}
+      data-tier={tierDataAttribute(tier)}
       className={cn(
-        'flex h-full min-w-0 flex-col rounded-xl border border-border p-4 text-card-foreground shadow-card',
-        elective && 'border-2 border-dashed',
+        // Quiet glass (DESIGN.md section 11): the module list sits below the colour field, so no blur.
+        'glass-quiet flex h-full min-w-0 flex-col rounded-xl p-4 text-card-foreground',
+        tier && 'tier-edge',
+        elective && 'border-2 border-dashed border-border',
         // The module the learner is in: the raised surface with a 2 px accent edge.
-        here ? 'border-l-2 border-l-primary bg-muted' : 'bg-card',
+        here && 'border-l-2 border-l-primary bg-muted',
       )}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">

@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { LevelBadge } from "@/components/ui/Badge";
 import { SignalTag } from "@/components/ui/SignalTag";
 import type { LessonContext } from "@/lib/curriculum/lesson-context";
+import { tierOfTierSlug } from "@/lib/tier-colors";
 import { cn } from "@/lib/utils";
 
 import { CodedLabel, withoutCode } from "./CodedLabel";
@@ -27,7 +28,7 @@ const PREREQUISITE_LINK_CLASS =
   "group inline-flex min-h-[2.5rem] max-w-full items-center rounded text-ui text-foreground underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /**
- * The tier and module as signal tags, the eyebrow over the title. The trail
+ * The tier and module as signal tags in the tier's colour, the eyebrow over the title. The trail
  * above already names both, so the eyebrow carries only the codes. The module
  * tag shows only on phones, where the trail collapses to its back-link to the
  * tier; from sm up the trail's last crumb shows it. It is left out entirely
@@ -39,7 +40,8 @@ function LessonEyebrow({ context, title }: { context: LessonContext; title: stri
   const titleHasCode = title.startsWith(`${module.code}:`) || title.startsWith(`${module.code} `);
   return (
     <>
-      <SignalTag code={tier.code} title={tier.title} />
+      {/* The tier code is not a module code, so its tier colour is set by hand. */}
+      <SignalTag code={tier.code} title={tier.title} tier={tierOfTierSlug(tier.id)} />
       <span className="sr-only">{tier.title}</span>
       {titleHasCode ? null : (
         <span className="contents sm:hidden" data-testid="lesson-eyebrow-module">

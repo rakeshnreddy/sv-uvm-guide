@@ -8,6 +8,7 @@ import Logo from "@/components/ui/Logo";
 import { PUBLIC_NAV, SITE_NAME } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
+import { GLASS_HEADER_CLASS, HEADER_BAR_CLASS, headerBarFrameClass } from "./nav-styles";
 import PublicHeaderControls from "./PublicHeaderControls";
 import { lessonPathsFromManifest } from "./public-header-resume";
 
@@ -20,14 +21,14 @@ import { lessonPathsFromManifest } from "./public-header-resume";
 export const PUBLIC_CONTAINER = "mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8";
 
 /**
- * The header itself: 56 px on phones, 64 px from 640 px, hairline included
- * (border-box), as the learning header's 64 px includes its hairline, so
- * moving between the two never shifts the page.
+ * The header itself: 56 px on phones, 64 px from 640 px, as tall as the
+ * learning header, so moving between the two never shifts the page. Sticky
+ * and transparent: the page scrolls under its glass bar (DESIGN.md section 11).
  */
-export const PUBLIC_HEADER_CLASS = "h-14 w-full border-b border-border bg-background text-foreground sm:h-16 print:hidden";
+export const PUBLIC_HEADER_CLASS = cn("sticky top-0 z-40 h-14 w-full text-foreground sm:h-16 print:hidden", GLASS_HEADER_CLASS);
 
-/** The row inside the header: the container, filling the header's height above the hairline. */
-export const PUBLIC_HEADER_CONTAINER = cn(PUBLIC_CONTAINER, "flex h-full items-center gap-2 sm:gap-4");
+/** The row inside the header: the container, filling the header's height, above the glass bar. */
+export const PUBLIC_HEADER_CONTAINER = cn(PUBLIC_CONTAINER, "relative flex h-full items-center gap-2 sm:gap-4");
 
 /** The wordmark link: a 40 px target, like the learning header's. */
 export const PUBLIC_WORDMARK_CLASS = cn("inline-flex h-10 shrink-0 items-center rounded-lg", headerFocusRing);
@@ -49,14 +50,20 @@ const linkClass = cn(
  * Below 768 px the row keeps the wordmark, search and a menu button; the menu
  * lists the same links, the accent action and the theme choices.
  *
- * One opaque row with a hairline below. A server component: the controls are
- * one small client island that server-renders at its final size.
+ * A transparent sticky row over a rounded glass bar (a background layer, as
+ * in the learning header). A server component: the controls are one small
+ * client island that server-renders at its final size.
  */
 export default function PublicHeader() {
   return (
     <>
       <SkipLink />
       <header data-testid="public-header" className={PUBLIC_HEADER_CLASS}>
+        <div aria-hidden="true" data-header-glass="" className="pointer-events-none absolute inset-0">
+          <div className={headerBarFrameClass("public")}>
+            <div className={HEADER_BAR_CLASS} data-header-bar="" />
+          </div>
+        </div>
         <div className={PUBLIC_HEADER_CONTAINER}>
           <Link href="/" aria-label={`${SITE_NAME} home`} className={PUBLIC_WORDMARK_CLASS}>
             <Logo />

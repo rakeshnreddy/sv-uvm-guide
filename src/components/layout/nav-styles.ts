@@ -15,10 +15,65 @@ export const PAGE_FRAME_CLASS = "mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8";
  * column's left edge. Below lg the outline is a drawer and the slot just holds
  * the toggle and wordmark at the page gutter.
  */
-export const OUTLINE_SLOT_CLASS = "flex shrink-0 items-center gap-2 pl-4 sm:pl-6 lg:w-64 lg:px-3 xl:w-72";
+export const OUTLINE_SLOT_CLASS = "flex shrink-0 items-center gap-2 pl-4 sm:pl-6 lg:w-64 lg:pl-5 lg:pr-3 xl:w-72";
 
 /** The frame beside that slot: the page frame, with the left gutter given to the slot below lg. */
 export const FRAME_BESIDE_SLOT_CLASS = "mx-auto w-full max-w-7xl pl-2 pr-4 sm:pr-6 lg:px-8";
+
+// ---------------------------------------------------------------------------
+// Glass on the layers that float (DESIGN.md section 11)
+// ---------------------------------------------------------------------------
+
+/**
+ * The light-mode fill of the chrome's glass: white at 82%. The section 11
+ * token (white at 62%) is right over the colour field, but lessons scroll
+ * code blocks (the always-dark code surface) under the header, the contents
+ * bar and the menus, and secondary text needs 4.5:1 over that too. Dark mode
+ * keeps the token: the page it floats over is dark as well. A unit test
+ * composites both against their worst case.
+ */
+export const CHROME_GLASS_LIGHT_ALPHA = 0.82;
+
+/**
+ * Real glass for a floating layer that carries text: the header bar, menus,
+ * popovers, dialogs, sheets and the contents bar. The `glass` utility carries
+ * the border, highlight, shadow and blur, and its fallbacks (no
+ * backdrop-filter, reduced transparency, forced colours) paint the solid card
+ * surface; this only sets the denser light fill through --glass-bg, which
+ * the fallbacks do not read. Text on it uses foreground or muted-foreground,
+ * never the subtle role.
+ */
+export const CHROME_GLASS_CLASS = "glass [[data-theme=light]_&]:[--glass-bg:0_0%_100%_/_0.82]";
+
+/**
+ * The backdrop behind a modal dialog, sheet or drawer: it dims the page in
+ * both modes (no blur, so it never counts as a blurred layer). The panel on
+ * it is glass.
+ */
+export const DIALOG_BACKDROP_CLASS = "bg-black/40 dark:bg-black/55 forced-colors:bg-[Canvas]";
+
+/** The glass bar itself: rounded 16, filling its frame. */
+export const HEADER_BAR_CLASS = cn(CHROME_GLASS_CLASS, "h-full w-full rounded-2xl");
+
+/**
+ * Where the header's glass bar sits, as a background layer inside the 64 px
+ * header (never a layout wrapper): 8 px in from the top and bottom (4 px on
+ * the public header's 56 px phone row). With the outline docked the bar spans
+ * the viewport less 8 px each side; elsewhere it is the page frame's content
+ * box plus 16 px each side, and the viewport less 8 px on phones and tablets
+ * (16 px gutters less 8, 24 less 16).
+ */
+export function headerBarFrameClass(layout: "docked" | "frame" | "public"): string {
+  if (layout === "docked") return "absolute inset-x-2 inset-y-2";
+  if (layout === "public") return "absolute inset-x-0 inset-y-1 mx-auto max-w-6xl px-2 sm:inset-y-2 lg:px-4";
+  return "absolute inset-x-0 inset-y-2 mx-auto max-w-7xl px-2 lg:px-4";
+}
+
+/**
+ * The sticky header's own box: transparent, so content scrolls under the
+ * glass bar; Canvas in forced colours, where the glass is solid anyway.
+ */
+export const GLASS_HEADER_CLASS = "forced-colors:bg-[Canvas]";
 
 /**
  * A top-level item in the bar, link or disclosure button. Every item is set at
@@ -33,10 +88,17 @@ export function barLinkClass(current: boolean): string {
   );
 }
 
-/** A disclosure's panel: the menu surface (popover, hairline, radius 12, shadow-card), faded in over 200 ms. */
+/**
+ * The surface of every floating menu and popover (Practice, Reference, theme,
+ * account, notifications, Jump to, search results): glass, radius 12.
+ */
+export const MENU_SURFACE_CLASS = cn(CHROME_GLASS_CLASS, "rounded-xl text-popover-foreground");
+
+/** A disclosure's panel: the glass menu surface, faded in over 200 ms. */
 export function menuPanelClass(open: boolean): string {
   return cn(
-    "absolute left-0 top-full z-50 mt-2 w-56 rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-card transition-[opacity,visibility] duration-200 ease-bench motion-reduce:transition-none",
+    MENU_SURFACE_CLASS,
+    "absolute left-0 top-full z-50 mt-3 w-56 p-1.5 transition-[opacity,visibility] duration-200 ease-bench motion-reduce:transition-none",
     open ? "visible opacity-100" : "invisible opacity-0",
   );
 }

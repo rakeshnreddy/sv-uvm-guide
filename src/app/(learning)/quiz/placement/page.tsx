@@ -74,7 +74,7 @@ export default function PlacementQuizPage() {
           {quizSections.map((section) => {
             const headingId = `placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`;
             return (
-              <li key={section.title} className={cardClass({ padding: 'default' })}>
+              <li key={section.title} className={cardClass({ variant: 'glassQuiet', padding: 'default' })}>
                 <h3 id={headingId} className="text-h4 text-foreground">
                   {section.title}
                 </h3>

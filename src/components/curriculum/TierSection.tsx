@@ -5,6 +5,7 @@ import { ChevronDown } from 'lucide-react';
 
 import type { OverviewModule, OverviewTier } from '@/lib/curriculum-overview';
 import { tierSectionId } from '@/lib/site-links';
+import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { ModuleCard, type ModuleCardPrerequisite } from './ModuleCard';
 import { focusRing } from './overview-ui';
@@ -63,9 +64,19 @@ export const TierSection: React.FC<TierSectionProps> = ({
         : [];
     });
 
+  // The tier colour (DESIGN.md section 11): data-tier scopes the section, so
+  // the heading's step mark, the 2 px top edge, every module card's edge and
+  // the tinted signal tags inside all take this tier's colour.
+  const tierNumber = tierOfTierSlug(tier.id);
+
   // scroll-mt-24 keeps the heading clear of the 64 px sticky header when a link lands here.
   return (
-    <section id={sectionId} aria-labelledby={headingId} className="scroll-mt-24 rounded-2xl border border-border">
+    <section
+      id={sectionId}
+      aria-labelledby={headingId}
+      data-tier={tierDataAttribute(tierNumber)}
+      className={cn('scroll-mt-24 rounded-2xl border border-border', tierNumber && 'tier-edge')}
+    >
       <h3 id={headingId} className="text-h3 text-foreground">
         <button
           type="button"
@@ -77,7 +88,10 @@ export const TierSection: React.FC<TierSectionProps> = ({
             focusRing,
           )}
         >
-          <span>{tier.title}</span>
+          <span className="flex min-w-0 items-center gap-3">
+            {tierNumber ? <span className="tier-step" aria-hidden="true" data-testid="tier-step" /> : null}
+            <span>{tier.title}</span>
+          </span>
           <ChevronDown
             className={cn('h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')}
             aria-hidden="true"

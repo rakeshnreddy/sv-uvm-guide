@@ -75,10 +75,21 @@ describe('<PublicHeader />', () => {
     expect(within(banner).getByRole('link', { name: 'Start learning' })).toHaveAttribute('href', FIRST_LESSON_HREF);
   });
 
-  it('has exactly one filled accent control', () => {
+  it('leaves the filled accent to the page: the bar\'s accent action is the secondary style, without the sheen', () => {
     render(<PublicHeader />);
     const banner = screen.getByRole('banner');
-    expect(banner.querySelectorAll('.bg-primary')).toHaveLength(1);
+    expect(banner.querySelectorAll('.bg-primary, .sheen-primary')).toHaveLength(0);
+    const resume = within(banner).getByTestId('public-header-resume');
+    expect(resume).toHaveClass('border-border', 'bg-muted', 'text-primary', 'h-10');
+  });
+
+  it('draws no scrim behind the bar, so the colour field and scrolled content show through the glass', () => {
+    render(<PublicHeader />);
+    const layer = screen.getByRole('banner').querySelector('[data-header-glass]') as HTMLElement;
+    // The background layer holds only the bar's frame, with the bar inside it.
+    expect(layer.children).toHaveLength(1);
+    expect(layer.firstElementChild?.querySelector('[data-header-bar]')).not.toBeNull();
+    expect(layer.innerHTML).not.toMatch(/--background/);
   });
 
   it('sends "Start learning" to the first lesson of the course', () => {
@@ -86,14 +97,23 @@ describe('<PublicHeader />', () => {
     expect(FIRST_LESSON_HREF).toBe(moduleHref(firstModule));
   });
 
-  it('is one opaque row with a hairline below, in the same container and gutters as the pages below it', () => {
+  it('is a transparent sticky row over a glass bar, in the same container and gutters as the pages below it', () => {
     render(<PublicHeader />);
     const banner = screen.getByRole('banner');
-    expect(banner).toHaveClass('border-b', 'border-border', 'bg-background');
-    expect(banner.className).not.toMatch(/blur|bg-background\//);
-    // The header carries the height, so its hairline sits inside 56/64 px like the learning header's.
+    expect(banner).toHaveClass('sticky', 'top-0', 'z-40', 'forced-colors:bg-[Canvas]');
+    expect(banner.className).not.toMatch(/\bglass\b|blur|\bbg-background\b|border-b/);
+    // The header carries the height: 56 px on phones, 64 px from 640 px, like the learning header.
     expect(banner).toHaveClass('h-14', 'sm:h-16');
-    const row = banner.firstElementChild as HTMLElement;
+    const layer = banner.firstElementChild as HTMLElement;
+    expect(layer).toHaveAttribute('data-header-glass');
+    expect(layer).toHaveAttribute('aria-hidden', 'true');
+    expect(layer.querySelectorAll('a, button')).toHaveLength(0);
+    const bar = layer.querySelector('[data-header-bar]') as HTMLElement;
+    expect(bar).toHaveClass('glass', 'rounded-2xl');
+    // 4 px in on the 56 px phone row, 8 px from 640 px; the content box plus 16 px from lg, the viewport less 8 px below.
+    expect(bar.parentElement).toHaveClass('inset-y-1', 'sm:inset-y-2', 'max-w-6xl', 'px-2', 'lg:px-4');
+    const row = layer.nextElementSibling as HTMLElement;
+    expect(row).toHaveClass('relative');
     expect(row).toHaveClass('h-full', 'max-w-6xl', 'px-4', 'sm:px-6', 'lg:px-8');
     expect(row.className).not.toMatch(/\bh-14\b|sm:h-16/);
     expect(PUBLIC_HEADER_CONTAINER).toContain(PUBLIC_CONTAINER);

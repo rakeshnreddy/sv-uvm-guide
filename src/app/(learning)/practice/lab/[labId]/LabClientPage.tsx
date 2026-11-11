@@ -98,7 +98,7 @@ export const COMPLETION_NOT_SAVED_MESSAGE = "Your completion was not saved.";
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 const primaryButtonClass = cn(
-  "mb-4 inline-flex min-h-11 items-center rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 forced-colors:border-[ButtonText]",
+  "sheen-primary mb-4 inline-flex min-h-11 items-center rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench disabled:cursor-not-allowed disabled:opacity-60 forced-colors:border-[ButtonText]",
   focusRing,
 );
 const dangerButtonClass = cn(

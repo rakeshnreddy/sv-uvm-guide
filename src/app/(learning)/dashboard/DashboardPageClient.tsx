@@ -4,13 +4,15 @@ import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
-import { eyebrow, focusRing, inlineLink, primaryAction, secondaryAction, textLink } from '@/components/curriculum/overview-ui';
-import { LEARNER_BODY_MIN_HEIGHT_CLASS, LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
+import { CodedLabel, withoutCode } from '@/components/curriculum/CodedLabel';
+import { eyebrow, focusRing, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from '@/components/curriculum/overview-ui';
+import { LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
 import { PageShell } from '@/components/layout/PageShell';
 import { siteLabel } from '@/lib/nav-labels';
 import { DASHBOARD_HREF, LABS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
 import { labelWithCode } from '@/lib/curriculum-overview';
+import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import {
   backupReminder,
   dailyStreak,
@@ -83,7 +85,25 @@ export interface DashboardPageClientProps {
 const NO_EXERCISES: readonly StoredExerciseProgress[] = Object.freeze([]);
 const serverRoute = () => null;
 
-const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+/**
+ * The dashboard body's least height: the learner page minimum, raised to the
+ * viewport less 20rem (the header, page header and the gap above the footer
+ * take about 21 to 23rem at every width), so the footer starts below the fold
+ * in every state. The placeholder, the empty state and the full card grid
+ * then all keep the footer out of view, and swapping one for another after
+ * hydration shifts nothing on screen.
+ */
+export const DASHBOARD_BODY_MIN_HEIGHT_CLASS =
+  'min-h-[max(22rem,calc(100svh-20rem))] sm:min-h-[max(16rem,calc(100svh-20rem))]';
+
+/*
+ * Colour and glass (DESIGN.md section 11): the dashboard's cards are quiet
+ * glass; the first card, which overlaps the colour field at the top of the
+ * page, is real glass (`glassCard`). The panels inside stay solid.
+ */
+const cardBox = 'min-w-0 rounded-xl p-5 text-card-foreground sm:p-6';
+const card = cn('glass-quiet', cardBox);
+const glassCard = cn('glass', cardBox);
 const panel = 'min-w-0 rounded-lg border border-border bg-background p-4';
 const muted = 'text-sm text-muted-foreground';
 const listItem = 'flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm';
@@ -139,15 +159,18 @@ function DashboardCard({
   id,
   title,
   className,
+  glass = false,
   children,
 }: {
   id: string;
   title: string;
   className?: string;
+  /** Real glass: only for the card at the top of the page, over the colour field. */
+  glass?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className={cn(card, className)}>
+    <section aria-labelledby={id} className={cn(glass ? glassCard : card, className)}>
       <h2 id={id} className="text-h3 text-foreground">
         {title}
       </h2>
@@ -198,7 +221,7 @@ function ContinueCard({
   const primary = continuePrimary(Boolean(last), Boolean(next));
 
   return (
-    <DashboardCard id="dashboard-continue-heading" title="Continue" className="md:col-span-2">
+    <DashboardCard id="dashboard-continue-heading" title="Continue" className="md:col-span-2" glass>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className={panel}>
           <p className={eyebrow}>Last opened</p>
@@ -267,9 +290,12 @@ function LessonsCard({ summary, moduleHrefs }: { summary: CurriculumProgressSumm
         {summary.tiers.map((tier) => {
           const active = tier.modules.filter((mod) => mod.opened > 0);
           return (
-            <li key={tier.id} className="min-w-0">
+            <li key={tier.id} className="min-w-0" data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h3 className="text-sm font-semibold text-foreground">{tier.label}</h3>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  {tierOfTierSlug(tier.id) ? <span className="tier-step" aria-hidden="true" /> : null}
+                  {tier.label}
+                </h3>
                 <p className={muted}>
                   {tier.done} of {tier.total} done ({tier.percentDone}%) · {tier.opened} opened
                 </p>
@@ -283,8 +309,12 @@ function LessonsCard({ summary, moduleHrefs }: { summary: CurriculumProgressSumm
                   <ul className="mt-2 space-y-1.5">
                     {active.map((mod) => (
                       <li key={mod.id} className={listItem}>
-                        <Link href={moduleHrefs.get(mod.id) ?? '/curriculum'} className={cn(textLink, '[overflow-wrap:anywhere]')}>
-                          {labelWithCode(mod.code, mod.title)}
+                        <Link
+                          href={moduleHrefs.get(mod.id) ?? '/curriculum'}
+                          aria-label={labelWithCode(mod.code, mod.title)}
+                          className={cn(textLink, 'group [overflow-wrap:anywhere]')}
+                        >
+                          <CodedLabel code={mod.code} title={withoutCode(mod.title, mod.code)} tagClassName={tagInLink} />
                         </Link>
                         <span className="text-muted-foreground">
                           {mod.done} of {mod.total} done · {mod.opened} opened
@@ -482,8 +512,12 @@ function QuizzesCard({
                   const lowest = entry.quizzes[0];
                   return (
                     <li key={entry.lessonPath} className={listItem}>
-                      <Link href={lesson.href} className={cn(textLink, '[overflow-wrap:anywhere]')}>
-                        {labelWithCode(lesson.moduleCode, lesson.title)}
+                      <Link
+                        href={lesson.href}
+                        aria-label={labelWithCode(lesson.moduleCode, lesson.title)}
+                        className={cn(textLink, 'group [overflow-wrap:anywhere]')}
+                      >
+                        <CodedLabel code={lesson.moduleCode} title={withoutCode(lesson.title, lesson.moduleCode)} tagClassName={tagInLink} />
                       </Link>
                       <span className="text-muted-foreground">
                         best {lowest.best} of {lowest.total} ({percentText(lowest.bestFraction)})
@@ -600,7 +634,7 @@ function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
 
 function EmptyState() {
   return (
-    <section aria-labelledby="dashboard-empty-heading" className={cn(card, 'sm:p-8')}>
+    <section aria-labelledby="dashboard-empty-heading" className={cn(glassCard, 'sm:p-8')}>
       <h2 id="dashboard-empty-heading" className="text-h3 text-foreground">
         Nothing recorded in this browser yet
       </h2>
@@ -752,7 +786,7 @@ export default function DashboardPageClient({
         lead="The lessons, labs, reviews, notes and quiz results recorded in this browser, and what to do next."
         meta={<StorageStatusNote savedLabel="Stored only in this browser" />}
       />
-      <div data-testid="dashboard-body" aria-busy={!loaded} className={LEARNER_BODY_MIN_HEIGHT_CLASS}>
+      <div data-testid="dashboard-body" aria-busy={!loaded} className={DASHBOARD_BODY_MIN_HEIGHT_CLASS}>
         {body}
       </div>
     </PageShell>

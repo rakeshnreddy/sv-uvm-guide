@@ -15,6 +15,7 @@ import React, {
 } from "react";
 import { Search } from "lucide-react";
 
+import { MENU_SURFACE_CLASS } from "@/components/layout/nav-styles";
 import { SignalTag } from "@/components/ui/SignalTag";
 import { CURRICULUM_HREF, PRACTICE_HUB_LINK } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
@@ -286,11 +287,8 @@ export default function SearchCombobox({
 
       <div hidden={!panelVisible}>
         <div
-          className={
-            variant === "popup"
-              ? "absolute left-0 right-0 top-full z-50 mt-2 min-w-[20rem] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-card"
-              : "mt-3"
-          }
+          data-search-panel={variant}
+          className={variant === "popup" ? cn(MENU_SURFACE_CLASS, "absolute left-0 right-0 top-full z-50 mt-3 min-w-[20rem] overflow-hidden") : "mt-3"}
         >
           {loadState === "error" ? (
             <p className="px-3 py-3 text-sm text-muted-foreground">
@@ -365,7 +363,7 @@ export default function SearchCombobox({
             })}
           </ul>
           {listVisible && (
-            <p aria-hidden="true" className="border-t border-border px-3 py-2 text-xs text-subtle">
+            <p aria-hidden="true" className="border-t border-glass-border px-3 py-2 text-xs text-muted-foreground">
               ↑ ↓ to choose · Enter to open · Esc to close
             </p>
           )}

@@ -4,6 +4,7 @@ import { ChevronsUpDown } from "lucide-react";
 import Link from "next/link";
 import React, { useEffect, useId, useRef, useState } from "react";
 
+import { MENU_SURFACE_CLASS } from "@/components/layout/nav-styles";
 import { cn } from "@/lib/utils";
 
 export interface JumpMenuLesson {
@@ -70,9 +71,10 @@ export default function ModuleJumpMenu({ moduleLabel, lessons, className }: Modu
       {open ? (
         <div
           id={panelId}
-          className="absolute right-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-card"
+          data-testid="module-jump-panel"
+          className={cn(MENU_SURFACE_CLASS, "absolute right-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] p-2")}
         >
-          <p id={labelId} className="px-2 pb-2 pt-1 text-label text-subtle">
+          <p id={labelId} className="px-2 pb-2 pt-1 text-label text-muted-foreground">
             Lessons in {moduleLabel}
           </p>
           <ol aria-labelledby={labelId} className="max-h-72 list-decimal space-y-0.5 overflow-y-auto pl-7 pr-1 text-sm marker:text-muted-foreground">
@@ -89,7 +91,7 @@ export default function ModuleJumpMenu({ moduleLabel, lessons, className }: Modu
                 >
                   <span className="min-w-0">{lesson.title}</span>
                   {lesson.current ? (
-                    <span aria-hidden="true" className="shrink-0 text-label text-subtle">
+                    <span aria-hidden="true" className="shrink-0 text-label text-muted-foreground">
                       Current
                     </span>
                   ) : null}

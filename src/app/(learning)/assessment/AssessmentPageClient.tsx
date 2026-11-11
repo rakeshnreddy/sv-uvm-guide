@@ -46,7 +46,13 @@ export interface AssessmentPageClientProps {
   placementVersions?: PlacementVersions;
 }
 
-const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+/*
+ * Colour and glass (DESIGN.md section 11): quiet glass cards; the first card on
+ * the page (the overview, or the empty state), over the colour field, is real glass.
+ */
+const cardBox = 'min-w-0 rounded-xl p-5 text-card-foreground sm:p-6';
+const card = cn('glass-quiet', cardBox);
+const glassCard = cn('glass', cardBox);
 const panel = 'min-w-0 rounded-lg border border-border bg-background p-4';
 const muted = 'text-sm text-muted-foreground';
 /** Standalone links are at least 40 px tall, so they are easy to tap on a phone. */
@@ -123,7 +129,7 @@ function ScoreBar({ fraction }: { fraction: number }) {
 
 function OverviewChart({ tracks }: { tracks: readonly TrackSummary[] }) {
   return (
-    <section aria-labelledby="assessment-overview-heading" className={card}>
+    <section aria-labelledby="assessment-overview-heading" className={glassCard}>
       <h2 id="assessment-overview-heading" className="text-h3 text-foreground">
         Lessons by track
       </h2>
@@ -402,7 +408,7 @@ function TrackSection({
 
 function EmptyState() {
   return (
-    <section aria-labelledby="assessment-empty-heading" className={cn(card, 'sm:p-8')}>
+    <section aria-labelledby="assessment-empty-heading" className={cn(glassCard, 'sm:p-8')}>
       <h2 id="assessment-empty-heading" className="text-h3 text-foreground">
         Nothing to assess yet
       </h2>

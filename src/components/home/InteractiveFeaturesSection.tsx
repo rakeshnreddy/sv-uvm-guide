@@ -39,7 +39,7 @@ const features = [
 type Feature = (typeof features)[number];
 
 const FeatureCard = ({ feature }: { feature: Feature }) => (
-  <div className="bg-card border rounded-xl overflow-hidden h-full flex flex-col transition-colors hover:border-primary/60 motion-reduce:transition-none">
+  <div className="glass-quiet rounded-xl overflow-hidden h-full flex flex-col transition-colors hover:border-primary/60 motion-reduce:transition-none">
     <div className="bg-muted/60 h-24 flex items-center justify-center" aria-hidden>
       <feature.icon className="w-12 h-12 text-primary/70" />
     </div>

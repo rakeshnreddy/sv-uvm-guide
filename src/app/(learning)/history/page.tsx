@@ -77,7 +77,7 @@ export default function HistoryPage() {
 
         <ul className="mt-4 space-y-3" aria-label="Reserved words by edition" data-testid="history-keywords">
           {KEYWORD_EDITIONS.map((edition) => (
-            <li key={edition.edition} className="rounded-xl border border-border bg-card p-3 sm:p-4">
+            <li key={edition.edition} className="glass-quiet rounded-xl p-3 sm:p-4">
               <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                 <span className="font-semibold text-foreground">{edition.edition}</span>
                 <span className="text-xs text-muted-foreground">IEEE 1800-2023 {edition.table}</span>

@@ -18,6 +18,7 @@ import {
   type PracticeKind,
 } from '@/lib/practice-links';
 import { INTERVIEW_PREP_HREF, PRACTICE_HREF, type PracticeSection } from '@/lib/site-links';
+import { tierDataAttribute, tierOfModuleCode, type TierNumber } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 
 import { LabProgressBadge } from './LabProgressBadge';
@@ -39,20 +40,46 @@ interface PracticeCardProps {
   details?: PracticeCardDetails;
   /** Heading level of the card title inside its section. */
   headingLevel?: 'h3' | 'h4';
+  /**
+   * Real glass with the backdrop blur, for the cards that overlap the colour
+   * field at the top of the hub; every other card is quiet glass (DESIGN.md section 11).
+   */
+  glass?: boolean;
 }
+
+/** The tier a practice item belongs to: the tier of the module that teaches it, from the curriculum data. */
+export function practiceItemTier(item: PracticeItem): TierNumber | undefined {
+  const [lesson] = item.lessons;
+  return lesson ? tierOfModuleCode(lesson.code) : undefined;
+}
+
+/**
+ * How many cards at the top of the hub get real glass. None: a row of three
+ * blurred cards with the header and one menu would pass the limit of three
+ * blurred layers in view (DESIGN.md section 11), so every card is quiet glass.
+ */
+export const PRACTICE_GLASS_CARDS = 0;
 
 /**
  * One practice item. The title links to the item and its hit area covers the
  * card; the lesson and prerequisite links sit above that layer. An item that
  * cannot be opened yet has no link at all.
  */
-export function PracticeCard({ item, details, headingLevel = 'h3' }: PracticeCardProps) {
+export function PracticeCard({ item, details, headingLevel = 'h3', glass = false }: PracticeCardProps) {
   const Heading = headingLevel;
   const [lesson] = item.lessons;
+  const tier = practiceItemTier(item);
   const statusLabel =
     item.kind === 'lab' ? (item.status === 'available' ? 'Available' : 'Coming soon') : PRACTICE_KIND_LABELS[item.kind];
   return (
-    <li className="relative flex min-w-0 flex-col rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card transition-colors duration-150 ease-bench hover:border-input motion-reduce:transition-none">
+    <li
+      data-tier={tierDataAttribute(tier)}
+      className={cn(
+        glass ? 'glass' : 'glass-quiet',
+        'relative flex min-w-0 flex-col rounded-xl p-5 text-card-foreground transition-colors duration-150 ease-bench hover:border-input motion-reduce:transition-none',
+        tier && 'tier-edge',
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <Heading className="min-w-0 text-h4 text-foreground [overflow-wrap:anywhere]">
           {item.href ? (
@@ -97,15 +124,18 @@ export function PracticeCardGrid({
   items,
   details,
   headingLevel,
+  glassCount = 0,
 }: {
   items: readonly PracticeItem[];
   details?: Readonly<Record<string, PracticeCardDetails>>;
   headingLevel?: 'h3' | 'h4';
+  /** The first this many cards get real glass (they overlap the colour field); the rest are quiet glass. */
+  glassCount?: number;
 }) {
   return (
     <ul role="list" className="not-prose grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-5">
-      {items.map((item) => (
-        <PracticeCard key={item.id} item={item} details={details?.[item.id]} headingLevel={headingLevel} />
+      {items.map((item, index) => (
+        <PracticeCard key={item.id} item={item} details={details?.[item.id]} headingLevel={headingLevel} glass={index < glassCount} />
       ))}
     </ul>
   );
@@ -247,7 +277,7 @@ const PracticeHub = () => {
           Guided labs with starter code, step-by-step instructions and reference solutions. Your progress is saved in this browser.
         </p>
         <div className="mt-5">
-          <PracticeCardGrid items={availableLabs} details={labDetails} />
+          <PracticeCardGrid items={availableLabs} details={labDetails} glassCount={PRACTICE_GLASS_CARDS} />
         </div>
         {comingSoonLabs.length > 0 ? (
           <section aria-labelledby={comingSoonAnchor} className="mt-8">

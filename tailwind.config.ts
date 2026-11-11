@@ -31,7 +31,18 @@ const proseColours = {
   "td-borders": "hsl(var(--border))",
 };
 
-const proseVariables = Object.fromEntries(
+/** text-tier-1 … text-tier-4 with their -subtle fills and -border tints (globals.css). */
+function tierColours(): Record<string, string> {
+  return Object.fromEntries(
+    [1, 2, 3, 4].flatMap((tier) => [
+      [String(tier), role(`tier-${tier}`)],
+      [`${tier}-subtle`, `var(--tier-${tier}-subtle)`],
+      [`${tier}-border`, `var(--tier-${tier}-border)`],
+    ]),
+  );
+}
+
+const proseVariables =Object.fromEntries(
   Object.entries(proseColours).flatMap(([key, value]) => [
     [`--tw-prose-${key}`, value],
     [`--tw-prose-invert-${key}`, value],
@@ -108,6 +119,20 @@ const config: Config = {
           DEFAULT: role("popover"),
           foreground: role("popover-foreground"),
         },
+        // Tier colours (DESIGN.md section 11): text-tier-2, bg-tier-2-subtle, border-tier-2-border,
+        // and the current tier from the nearest data-tier ancestor: text-tier-current,
+        // bg-tier-current-subtle, border-tier-current-border (neutral outside any data-tier).
+        tier: {
+          ...tierColours(),
+          current: role("tier-current"),
+          "current-subtle": "var(--tier-current-subtle)",
+          "current-border": "var(--tier-current-border)",
+        },
+        // Glass tokens as colours, for the rare part that needs one on its own (a divider inside a glass menu).
+        glass: {
+          DEFAULT: "hsl(var(--glass-bg))",
+          border: "hsl(var(--glass-border))",
+        },
       },
       fontFamily: {
         sans: [
@@ -155,6 +180,7 @@ const config: Config = {
       // Light mode only; in dark mode --shadow-card is a transparent zero shadow, so it still composes with rings.
       boxShadow: {
         card: "var(--shadow-card)",
+        glass: "inset 0 1px 0 hsl(var(--glass-highlight)), var(--glass-shadow)",
       },
       transitionTimingFunction: {
         // The one easing curve (DESIGN.md section 6).

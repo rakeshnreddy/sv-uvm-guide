@@ -29,6 +29,7 @@ import { getDeckCards } from "@/lib/flashcard-decks";
 import { getLinkableConcepts } from "@/lib/knowledge-graph-engine";
 import { getAllLabs } from "@/lib/lab-registry";
 import { getPracticeForModule } from "@/lib/practice-links";
+import { tierDataAttribute, tierOfTierSlug } from "@/lib/tier-colors";
 import { cn } from "@/lib/utils";
 
 import { tierRedirectHref } from "./tier-redirect";
@@ -120,9 +121,13 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   });
 
   const hasToc = toc.length > 0;
+  // The lesson's tier colour (DESIGN.md section 11): on the shell, so the
+  // header's tags and the reading progress line follow it, and on the article,
+  // where it draws the first 48 px of each layer band's rule.
+  const tierAttribute = tierDataAttribute(tierOfTierSlug(tierSlug));
 
   return (
-    <PageShell width="content" innerClassName="pb-16" data-testid="lesson-page">
+    <PageShell width="content" innerClassName="pb-16" data-testid="lesson-page" data-tier={tierAttribute}>
       <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} lessonPath={lessonPath} />
       {hasToc ? <HeaderReadingProgress /> : null}
       <LessonTrail slug={normalizedSlug} className="mb-4" />
@@ -150,6 +155,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
           id={LESSON_ARTICLE_ID}
           data-testid="lesson-content"
           data-lesson-article=""
+          data-tier={tierAttribute}
           className={cn(PROSE_CLASS, "break-words prose-headings:scroll-mt-28", hasToc && "mt-8 xl:mt-0", "xl:col-start-1 xl:row-start-2")}
         >
           {content}

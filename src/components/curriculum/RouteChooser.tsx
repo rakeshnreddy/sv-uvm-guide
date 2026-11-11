@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { Check, MapPin } from 'lucide-react';
 
+import { SignalTag } from '@/components/ui/SignalTag';
 import { labelWithCode } from '@/lib/curriculum-overview';
 import type { ResolvedMilestone, ResolvedRoute, ResolvedStep } from '@/lib/learning-paths';
 import {
@@ -14,8 +15,10 @@ import {
   type ProgressLike,
   type RouteId,
 } from '@/lib/learning-route-state';
+import { tierDataAttribute, tierOfModuleCode, type TierNumber } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
-import { chip, eyebrow, inlineLink, primaryAction, secondaryAction, textLink } from './overview-ui';
+import { CodedLabel, withoutCode } from './CodedLabel';
+import { chip, eyebrow, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from './overview-ui';
 
 export interface RouteChooserProps {
   routes: ResolvedRoute[];
@@ -27,6 +30,35 @@ export interface RouteChooserProps {
 }
 
 export const ROUTE_STEPS_ID = 'route-steps';
+
+/** The modules a route works through, in order, without the "skim first" review steps. */
+function routeModules(route: ResolvedRoute): ResolvedStep['modules'] {
+  return route.steps.filter((step) => step.kind !== 'review').flatMap((step) => step.modules);
+}
+
+/**
+ * The tier a route starts in: the tier of its first module, from the
+ * curriculum data. It colours the route card's top edge (DESIGN.md section 11).
+ */
+export function routeStartTier(route: ResolvedRoute): TierNumber | undefined {
+  const [first] = routeModules(route);
+  return first ? tierOfModuleCode(first.code) : undefined;
+}
+
+/** The first modules of a route, shown as signal tags on its card. */
+export function routeOpeningModules(route: ResolvedRoute, count = 3): ResolvedStep['modules'] {
+  return routeModules(route).slice(0, count);
+}
+
+/** A link whose text starts with a module code: the code as a tier-tinted signal tag, then the title. */
+function ModuleLink({ href, code, title }: { href: string; code: string; title: string }) {
+  return (
+    // The name is set in full: the tag's box would otherwise put a space before the colon in some accessible-name computations.
+    <Link href={href} aria-label={labelWithCode(code, title)} className={cn(textLink, 'group')}>
+      <CodedLabel code={code} title={withoutCode(title, code)} tagClassName={tagInLink} />
+    </Link>
+  );
+}
 
 function RouteCard({
   route,
@@ -41,14 +73,19 @@ function RouteCard({
   filled: boolean;
 }) {
   const anchor = routeAnchor(route.id);
+  const tier = routeStartTier(route);
+  const opening = routeOpeningModules(route);
   return (
     <article
       id={anchor}
       aria-labelledby={`${anchor}-title`}
+      data-tier={tierDataAttribute(tier)}
       className={cn(
-        'flex min-w-0 scroll-mt-24 flex-col rounded-xl border border-border p-5 text-card-foreground shadow-card',
+        // Quiet glass: three blurred cards plus the header and a menu would pass the limit of three blurred layers (DESIGN.md section 11).
+        'glass-quiet flex min-w-0 scroll-mt-24 flex-col rounded-xl p-5 text-card-foreground',
+        tier && 'tier-edge',
         // The followed route: the raised surface with a 2 px accent edge, as for every current item.
-        selected ? 'border-l-2 border-l-primary bg-muted' : 'bg-card',
+        selected && 'border-l-2 border-l-primary bg-muted',
       )}
     >
       <p className={eyebrow}>{route.name} route</p>
@@ -57,7 +94,15 @@ function RouteCard({
       </h3>
       <p className="mt-2 text-sm text-muted-foreground">{route.audience}</p>
       <p className="mt-2 text-sm text-foreground">{route.layers}</p>
-      <p className="mt-3 text-xs text-subtle">
+      {opening.length > 0 && (
+        <p className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-subtle" data-testid="route-opening-modules">
+          Starts with
+          {opening.map((m) => (
+            <SignalTag key={m.id} code={m.code} title={labelWithCode(m.code, m.title)} />
+          ))}
+        </p>
+      )}
+      <p className="mt-2 text-xs text-subtle">
         {route.steps.length} steps · {route.sequence.length} lessons
         {route.milestones.length > 0 && <> · builds {route.milestones.map((m) => m.id).join(', ')}</>}
       </p>
@@ -97,9 +142,7 @@ function StepDetails({ step }: { step: ResolvedStep }) {
             <ul className="flex flex-wrap gap-x-4 gap-y-1">
               {step.review.map((m) => (
                 <li key={m.id} className="[overflow-wrap:anywhere]">
-                  <Link href={m.href} className={textLink}>
-                    {labelWithCode(m.code, m.title)}
-                  </Link>
+                  <ModuleLink href={m.href} code={m.code} title={m.title} />
                 </li>
               ))}
             </ul>
@@ -113,9 +156,7 @@ function StepDetails({ step }: { step: ResolvedStep }) {
             <ul className="space-y-1">
               {step.modules.map((m) => (
                 <li key={m.id} className="[overflow-wrap:anywhere]">
-                  <Link href={m.href} className={textLink}>
-                    {labelWithCode(m.code, m.title)}
-                  </Link>{' '}
+                  <ModuleLink href={m.href} code={m.code} title={m.title} />{' '}
                   <span className="text-muted-foreground">
                     ({m.lessonCount} {m.lessonCount === 1 ? 'lesson' : 'lessons'})
                   </span>
@@ -153,8 +194,8 @@ function StepDetails({ step }: { step: ResolvedStep }) {
           <dd className="min-w-0">
             <ul className="space-y-1">
               {step.milestones.map((m) => (
-                <li key={m.id}>
-                  <span className="font-mono font-semibold text-foreground">{m.id}</span>{' '}
+                <li key={m.id} className="flex flex-wrap items-baseline gap-x-2">
+                  <SignalTag code={m.id} className="self-center" />
                   <span className="text-muted-foreground">{m.name}</span>
                 </li>
               ))}
@@ -176,7 +217,7 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
       id={ROUTE_STEPS_ID}
       role="region"
       aria-labelledby={`${ROUTE_STEPS_ID}-heading`}
-      className="mt-6 scroll-mt-24 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6"
+      className="glass-quiet mt-6 scroll-mt-24 rounded-2xl p-5 text-card-foreground sm:p-6"
     >
       <h3 id={`${ROUTE_STEPS_ID}-heading`} className="text-h3 text-foreground">
         The {route.name} route: {route.steps.length} steps
@@ -236,9 +277,7 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
           <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
             {route.skipped.map((m) => (
               <li key={m.id} className="[overflow-wrap:anywhere]">
-                <Link href={m.href} className={textLink}>
-                  {labelWithCode(m.code, m.title)}
-                </Link>
+                <ModuleLink href={m.href} code={m.code} title={m.title} />
               </li>
             ))}
           </ul>
@@ -252,7 +291,7 @@ function RouteSteps({ route, progress }: { route: ResolvedRoute; progress: Progr
 export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMilestone[]; routes: ResolvedRoute[] }) {
   const routeName = (id: RouteId) => routes.find((r) => r.id === id)?.name ?? id;
   return (
-    <section aria-labelledby="milestone-ladder-heading" className="mt-6 rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6">
+    <section aria-labelledby="milestone-ladder-heading" className="glass-quiet mt-6 rounded-2xl p-5 sm:p-6">
       <h3 id="milestone-ladder-heading" className="text-h3 text-foreground">
         The milestone ladder
       </h3>
@@ -262,11 +301,9 @@ export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMi
       </p>
       <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {milestones.map((m) => (
-          <li key={m.id} className="min-w-0 rounded-xl border border-border bg-card p-4">
+          <li key={m.id} className="min-w-0 rounded-xl border border-border p-4">
             <p className="flex items-start gap-2">
-              <span className="mt-0.5 shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-label text-muted-foreground">
-                {m.id}
-              </span>
+              <SignalTag code={m.id} standalone className="mt-0.5" />
               <span className="text-sm font-medium text-foreground">{m.name}</span>
             </p>
             <p className="mt-2 text-xs text-subtle">

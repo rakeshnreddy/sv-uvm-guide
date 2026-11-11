@@ -3,7 +3,9 @@
 import React, { Fragment, useId, useRef } from "react";
 import { X } from "lucide-react";
 
+import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { SITE_FEATURES } from "@/lib/site-features";
+import { cn } from "@/lib/utils";
 
 import { isApplePlatform } from "./platform";
 import { MODAL_LAYER, shellStore, useShellState } from "./shell-store";
@@ -64,7 +66,7 @@ function ShortcutsHelpPanel() {
 
   return (
     <div className={`fixed inset-0 ${MODAL_LAYER} flex items-start justify-center overflow-y-auto px-4 py-6 sm:py-[10vh]`}>
-      <div aria-hidden="true" className="fixed inset-0 bg-background/80" onClick={shellStore.closeHelp} />
+      <div aria-hidden="true" data-testid="shortcuts-help-backdrop" className={cn("fixed inset-0", DIALOG_BACKDROP_CLASS)} onClick={shellStore.closeHelp} />
       <div
         ref={panelRef}
         role="dialog"
@@ -72,9 +74,9 @@ function ShortcutsHelpPanel() {
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="relative w-full max-w-lg rounded-2xl border border-border bg-card text-card-foreground shadow-card focus:outline-none"
+        className={cn(CHROME_GLASS_CLASS, "relative w-full max-w-lg rounded-2xl text-card-foreground focus:outline-none")}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border px-5 py-4">
           <h2 id={titleId} className="text-lg font-semibold text-foreground">
             Keyboard shortcuts
           </h2>
@@ -94,7 +96,7 @@ function ShortcutsHelpPanel() {
           </p>
           {groups.map((group) => (
             <table key={group.title} className="w-full border-collapse text-left text-sm">
-              <caption className="pb-2 text-left text-label text-subtle">
+              <caption className="pb-2 text-left text-label text-muted-foreground">
                 {group.title}
               </caption>
               <thead className="sr-only">
@@ -105,7 +107,7 @@ function ShortcutsHelpPanel() {
               </thead>
               <tbody>
                 {group.items.map((item) => (
-                  <tr key={item.id} className="border-t border-border">
+                  <tr key={item.id} className="border-t border-glass-border">
                     <td className="py-2 pr-4 align-top">
                       <KeyCombos combos={item.keys} />
                     </td>

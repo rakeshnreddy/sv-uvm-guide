@@ -60,7 +60,7 @@ export default function LessonError({ error, reset }: LessonErrorProps) {
             onClick={retry}
             aria-disabled={retrying || undefined}
             className={cn(
-              "inline-flex min-h-11 items-center gap-2 rounded-lg border border-transparent bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText] motion-reduce:transition-none",
+              "sheen-primary inline-flex min-h-11 items-center gap-2 rounded-lg border border-transparent bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-bench forced-colors:border-[ButtonText] motion-reduce:transition-none",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               "aria-disabled:cursor-progress aria-disabled:opacity-80",
             )}

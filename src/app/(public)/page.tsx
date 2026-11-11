@@ -19,8 +19,9 @@ export default function HomePage() {
   // The site footer, as on the privacy and terms pages: its site map links a first-time visitor to the
   // privacy policy and terms, which explain what this site keeps in the browser.
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <main id="main-content" tabIndex={-1} className="flex flex-col items-center w-full flex-1 bg-background focus:outline-none">
+    // No background of its own: the body's page colour shows, and the public layout's colour field shows behind the hero.
+    <div className="flex min-h-screen flex-col text-foreground">
+      <main id="main-content" tabIndex={-1} className="flex flex-col items-center w-full flex-1 focus:outline-none">
         <HeroSection {...stats} />
 
         <LearningPathsSection routes={routes} />

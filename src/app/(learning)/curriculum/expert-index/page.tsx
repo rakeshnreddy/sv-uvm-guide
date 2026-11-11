@@ -12,6 +12,7 @@ import type { ExpertIndexModule, ExpertIndexTier } from '@/lib/expert-index';
 import { routeAnchor } from '@/lib/learning-route-state';
 import { siteLabel } from '@/lib/nav-labels';
 import { CURRICULUM_HREF, EXPERT_INDEX_HREF, INTERVIEW_PREP_HREF } from '@/lib/site-links';
+import { tierDataAttribute, tierOfModuleCode, tierOfTierSlug } from '@/lib/tier-colors';
 
 export const metadata: Metadata = {
   title: 'Expert index',
@@ -42,7 +43,9 @@ function TaggedModule({ module }: { module: ExpertIndexModule }) {
   return (
     <article
       aria-labelledby={`expert-${module.id}`}
-      className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5"
+      data-tier={tierDataAttribute(tierOfModuleCode(module.code))}
+      // Quiet glass with the module's tier edge (DESIGN.md section 11).
+      className={`glass-quiet rounded-xl p-4 sm:p-5${tierOfModuleCode(module.code) ? ' tier-edge' : ''}`}
     >
       <h3 id={`expert-${module.id}`} className="text-h4 text-foreground">
         <SignalTag code={module.code} className="mr-2 align-[0.1em]" />
@@ -96,7 +99,7 @@ function UntaggedModules({ tier, modules }: { tier: ExpertIndexTier; modules: Ex
         Authors are adding <code className="rounded bg-muted px-1 font-mono text-[0.9em]">Expert:</code> subsections as
         lessons are revised. Until then, go deeper through each module&apos;s Push Further section where it has one.
       </p>
-      <ul aria-labelledby={`${tier.anchor}-untagged`} className="mt-3 divide-y divide-border rounded-xl border border-border bg-card">
+      <ul aria-labelledby={`${tier.anchor}-untagged`} className="glass-quiet mt-3 divide-y divide-border rounded-xl">
         {modules.map((module) => (
           <li key={module.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
             <span className="min-w-0">
@@ -166,9 +169,13 @@ export default function ExpertIndexPage() {
             <li key={tier.id}>
               <a
                 href={`#${tier.anchor}`}
-                className={`flex min-h-[44px] items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none ${focusRing}`}
+                data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}
+                className={`glass-quiet flex min-h-[44px] items-center justify-between gap-2 rounded-lg border-tier-current-border px-3 py-2 transition-colors duration-150 ease-bench hover:bg-muted motion-reduce:transition-none ${focusRing}`}
               >
-                <span className="font-medium text-foreground">{tier.title}</span>
+                <span className="flex items-center gap-2 font-medium text-foreground">
+                  <span className="tier-step" aria-hidden="true" />
+                  {tier.title}
+                </span>
                 <span className="text-xs text-muted-foreground">{plural(tier.topicCount, 'topic')}</span>
               </a>
             </li>
@@ -180,7 +187,18 @@ export default function ExpertIndexPage() {
         const tagged = tier.modules.filter((m) => m.topicCount > 0);
         const untagged = tier.modules.filter((m) => m.topicCount === 0);
         return (
-          <Section key={tier.id} id={tier.anchor} title={tier.title} description={tier.audience || undefined}>
+          <Section
+            key={tier.id}
+            id={tier.anchor}
+            data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}
+            title={
+              <span className="flex items-center gap-3">
+                <span className="tier-step" aria-hidden="true" />
+                {tier.title}
+              </span>
+            }
+            description={tier.audience || undefined}
+          >
             {tagged.length > 0 && (
               <p className="text-sm text-muted-foreground">
                 {plural(tier.topicCount, 'expert topic')} in {tagged.length} of {plural(tier.modules.length, 'module')}.

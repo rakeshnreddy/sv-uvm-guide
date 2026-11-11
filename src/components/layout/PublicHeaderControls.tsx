@@ -9,6 +9,7 @@ import { Menu, Search, X } from "lucide-react";
 import { MODAL_LAYER, shellStore, useMinWidth, useShellState } from "@/components/search/shell-store";
 import { isEditableTarget, matchShortcut } from "@/components/search/shortcuts";
 import { useModalDialog } from "@/components/search/useModalDialog";
+import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { headerFocusRing, iconButtonClass, iconButtonIconClass } from "@/components/ui/icon-button-class";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useRecord } from "@/lib/learner-store/react";
@@ -43,11 +44,19 @@ export function useResumeHref(lessonPaths: readonly string[]): string | null {
   return useMemo(() => resumeLessonHref(lessonLog, progress, lessonPaths), [lessonLog, progress, lessonPaths]);
 }
 
-/** The accent action's style: the one filled accent in the header, 40 px tall (44 px full width in the phone menu). */
+/**
+ * The accent action's style. In the bar it is the secondary style (raised
+ * surface, hairline, primary text, no sheen), 40 px tall: the page below owns
+ * the view's one filled accent button (the landing hero's "Find your level"),
+ * DESIGN.md section 2 rule 2. In the phone menu, a sheet over the dimmed page,
+ * it is the menu's one filled accent action, 44 px and full width.
+ */
 export function resumeLinkClass(layout: "bar" | "menu"): string {
   return cn(
-    "inline-grid shrink-0 place-items-center whitespace-nowrap rounded-lg border border-transparent bg-primary px-4 text-ui font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 motion-reduce:transition-none forced-colors:border-[ButtonText]",
-    layout === "menu" ? "h-11 w-full" : "h-10",
+    "inline-grid shrink-0 place-items-center whitespace-nowrap rounded-lg border px-4 text-ui font-medium transition-colors duration-150 ease-bench motion-reduce:transition-none forced-colors:border-[ButtonText]",
+    layout === "menu"
+      ? "sheen-primary h-11 w-full border-transparent bg-primary text-primary-foreground"
+      : "h-10 border-border bg-muted text-primary hover:bg-border/70",
     headerFocusRing,
   );
 }
@@ -168,7 +177,7 @@ function PublicMenuPanel({ links, firstLessonHref, lessonPaths }: PublicMenuProp
 
   return (
     <div className={cn("fixed inset-0 md:hidden", MODAL_LAYER)}>
-      <div aria-hidden="true" className="absolute inset-0 bg-background/80" onClick={shellStore.closeMenu} />
+      <div aria-hidden="true" data-testid="public-menu-backdrop" className={cn("absolute inset-0", DIALOG_BACKDROP_CLASS)} onClick={shellStore.closeMenu} />
       <div
         ref={panelRef}
         id="public-menu"
@@ -177,9 +186,12 @@ function PublicMenuPanel({ links, firstLessonHref, lessonPaths }: PublicMenuProp
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid="public-menu"
-        className="absolute inset-y-0 right-0 flex w-4/5 max-w-sm flex-col border-l border-border bg-background text-foreground shadow-card focus:outline-none"
+        className={cn(
+          CHROME_GLASS_CLASS,
+          "absolute inset-y-2 right-2 flex w-[calc(80%-0.5rem)] max-w-sm flex-col rounded-2xl text-foreground focus:outline-none",
+        )}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border p-4">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border p-4">
           <h2 id={titleId} className="text-h4 text-foreground">
             Menu
           </h2>
@@ -207,7 +219,7 @@ function PublicMenuPanel({ links, firstLessonHref, lessonPaths }: PublicMenuProp
               onNavigate={shellStore.closeMenu}
             />
           </div>
-          <section aria-labelledby={appearanceId} className="border-t border-border pt-4">
+          <section aria-labelledby={appearanceId} className="border-t border-glass-border pt-4">
             <h3 id={appearanceId} className={menuHeadingClass}>
               Appearance
             </h3>

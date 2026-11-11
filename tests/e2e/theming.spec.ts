@@ -47,6 +47,8 @@ test.describe('Theme and Styling Verification', () => {
     const context = await browser.newContext({ colorScheme: 'dark' });
     const page = await context.newPage();
     await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences');
+    // The menu opens from a React handler: a click before hydration is lost.
+    await page.locator('html[data-shortcuts-ready]').waitFor({ state: 'attached' });
 
     const html = page.locator('html');
     await expect(html).toHaveAttribute('data-theme', 'dark');

@@ -25,7 +25,7 @@ Two modes, one brand. Values are HSL triplets for the existing `hsl(var(--x))` p
 | `--input` | `220 9% 46%` | `220 9% 54%` | control boundaries, at least 3:1 against the surface |
 | `--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--accent-foreground` | `220 20% 93%` | `222 30% 12%` | primary text, headings |
 | `--muted-foreground` | `220 10% 68%` | `220 10% 36%` | secondary text |
-| `--subtle-foreground` (new) | `220 8% 56%` | `220 8% 43%` | meta and captions only; at least 4.5:1 on every surface it sits on |
+| `--subtle-foreground` (new) | `220 8% 62%` | `220 8% 39%` | meta and captions only; at least 4.5:1 on every surface it sits on. Phase 4 (colour and glass) moved it from 56%/43% so it holds 4.5:1 over the stronger colour field and the glass on it, beyond the 3-point allowance; recorded for the lead |
 | `--primary`, `--ring` | `197 85% 59%` | `200 88% 33%` | the one accent: primary action fill, links, current-item marker, focus |
 | `--primary-foreground` | `222 40% 8%` | `0 0% 100%` | text on the accent |
 | `--success` | `152 50% 58%` | `152 65% 28%` | pass, done, progress |
@@ -142,12 +142,12 @@ Each tier has one colour, the way a waveform viewer colours each signal group. T
 
 | Tier | Dark | Light | Name |
 |---|---|---|---|
-| 1 Foundations | `172 66% 50%` | `172 80% 24%` | teal |
+| 1 Foundations | `172 66% 50%` | `172 80% 22%` | teal |
 | 2 Intermediate | `222 100% 74%` | `222 75% 42%` | blue |
 | 3 Advanced | `260 100% 79%` | `262 60% 46%` | violet |
-| 4 Expert | `36 90% 63%` | `30 92% 32%` | amber |
+| 4 Expert | `36 90% 63%` | `30 92% 29%` | amber |
 
-- A builder may move lightness by up to 4 points so that each colour, used as text, holds 4.5:1 on the page, on the card surface and on its own subtle fill. A unit test enforces it.
+- A builder may move lightness by up to 4 points so that each colour, used as text, holds 4.5:1 on the page, on the card surface and on its own subtle fill. A unit test enforces it. As built, light tier 1 is `172 80% 22%` and light tier 4 is `30 92% 29%` (moved from 24% and 32%).
 - The tier of a module code comes from the curriculum data (one shared lookup), never from the code's prefix. Milestone ids (M0 to M8) and codes with no tier stay neutral.
 - Where it shows: every signal tag (tier-coloured text, subtle fill, tinted border); tier headings on the curriculum page and in the course outline (a small step mark in the tier colour); a 2 px top edge on cards that belong to one tier (the tier colour fading to transparent); on a lesson page the header's tags and the first 48 px of each layer band's rule; progress traces.
 - Tier colour always travels with the tier's name or the module code, so it is never the only cue. The sky accent keeps its meaning: clickable or current. Headings and body text stay neutral.
@@ -157,8 +157,9 @@ Each tier has one colour, the way a waveform viewer colours each signal group. T
 A static, decorative layer behind the top of a page (`aria-hidden`, no pointer events, no animation, no JavaScript): three or four soft radial gradients in the tier colours, masked so it has fully faded by the end of its height.
 
 - Strength: 0.34 to 0.55 alpha per gradient in dark mode, 0.14 to 0.24 in light mode.
-- Variants: `all` (landing, curriculum, practice, dashboard, reference and info pages: all four tier colours in fixed positions) and `tier` (lesson pages, labs and anything that belongs to one tier: that tier's colour leads and its neighbours are faint).
-- Height: up to 820 px on hub pages. On lesson pages it covers the header only and has fully faded before the first paragraph of the article.
+- The field does not paint the text-safe tier colours. It has its own tokens, `--field-1` to `--field-4` with `--field-1-alpha` to `--field-4-alpha`: deeper tier hues (dark `172 100% 20%`, `222 90% 37%`, `262 80% 43%`, `32 100% 26%` at 0.48 to 0.5; light `172 70% 42%`, `222 90% 60%`, `262 80% 64%`, `34 92% 52%` at 0.22 to 0.24), so subtle text still holds 4.5:1 over the strongest stop.
+- Variants: `all` (landing, curriculum, practice, lab, dashboard, reference and info pages: all four tier colours in fixed positions) and `tier` (lesson pages: that tier's colour leads and its neighbour is faint). Lab pages use the `all` field.
+- Height: up to 820 px on hub pages. On lesson pages it is 24rem tall (solid to 66%, then masked to nothing), with the tier's colour centred at 26% across and 58% down (below the header bar, around the title and lead) holding near full strength over the left ~60% of the width and the neighbouring tier at half strength centred at 86% across, so it has fully faded before the first paragraph of the article (a lesson header ends about 26rem to 42rem down).
 - Text over the field (page titles, leads, meta) must hold 4.5:1 against the worst-case blend; the unit test composites the strongest gradient stop over the page colour and checks primary, secondary and subtle text.
 
 ### Glass
@@ -173,18 +174,19 @@ Tokens `--glass-bg`, `--glass-border`, `--glass-highlight`, `--glass-shadow`, `-
 | `--glass-shadow` | `0 12px 40px rgb(0 0 0 / 0.28)` | `0 8px 30px rgb(16 24 40 / 0.08)` |
 | `--glass-blur` | `blur(22px) saturate(170%)` | `blur(22px) saturate(150%)` |
 
-- **Real glass (with backdrop blur)** is for layers that float above content: the header bar, menus and popovers (Practice, Reference, theme, Jump to, search results), dialogs and sheets (search, shortcuts help, the lesson contents sheet, the phone menu and the outline drawer), the sticky "On this page" bar, and cards that overlap a colour field at the top of a hub page.
+- **Real glass (with backdrop blur)** is for layers that float above content: the header bar, menus and popovers (Practice, Reference, theme, Jump to, search results), dialogs and sheets (search, shortcuts help, the lesson contents sheet, the phone menu and the outline drawer), the sticky "On this page" bar, and at most one card that overlaps a colour field at the top of a hub page (as built, only the landing hero card; route cards, landing highlights, learning-path cards and practice cards are quiet glass), so the three-layer limit holds.
 - **Quiet glass (no blur)** is for cards further down hub pages: the translucent fill, the hairline and the top highlight, with no backdrop filter.
-- **Never glass:** lesson running text, code blocks and editors, tables, quiz and exercise controls, form fields, the docked outline and the "On this page" panel. No glass on glass: a glass card never sits inside a glass panel.
+- **Never glass:** lesson running text, code blocks and editors, tables, quiz and exercise controls, form fields, the docked outline and the "On this page" panel. The docked outline has no fill of its own (transparent, with its right hairline), so the colour field continues behind the top of the column. No glass on glass: a glass card never sits inside a glass panel.
 - At most three blurred layers are visible at once (header, one menu or dialog, one sticky bar). No `will-change`. The field and the glass must not cause layout shift.
 - Fallbacks: without `backdrop-filter` support, with `prefers-reduced-transparency: reduce` and in forced colours, glass becomes the solid card surface with its hairline.
 - The header stays 64 px tall (56 px for the public header on phones) and keeps its alignment with the page columns; the glass bar is a rounded background layer (radius 16) inside that height, not a layout wrapper. Content scrolling under it is what shows the glass.
-- Text on glass holds 4.5:1 against the worst case (the glass fill over the strongest field colour); the unit test checks it.
+- Text on glass holds 4.5:1 against the worst case (the glass fill over the strongest field colour); the unit test checks it. Text on glass uses the foreground or secondary colour, never the subtle one.
+- Chrome glass that can float over the code surface (header bar, menus, popovers, dialogs, sheets, contents bar) uses white at 82% in light mode instead of 62% (`CHROME_GLASS_LIGHT_ALPHA` in `src/components/layout/nav-styles.ts`), so secondary text holds 4.5:1 over code blocks scrolling under it; hub cards keep 62%.
 
 ### Gradient accents
 
-Allowed: the reading progress line (tier colour into the accent), progress traces, the 2 px top edge of tier cards, and a vertical sheen on the one primary button (the accent 6% lighter at the top, 6% darker at the bottom, with an inset highlight). Not allowed: gradient text, gradient borders around whole cards, animated gradients.
+Allowed: the reading progress line (tier colour into the accent), progress traces, the 2 px top edge of tier cards, and a vertical sheen on the one primary button (the accent 6 points lighter at the top, 6 darker at the bottom, with an inset highlight; in light mode the top is 4 points lighter so white text holds 4.5:1). Not allowed: gradient text, gradient borders around whole cards, animated gradients.
 
 ### Light mode
 
-The same structure, paler: field alphas from the light column, white glass at 62% with the softer shadow, tier colours from the light column. Both modes are checked at every release.
+The same structure, paler: field alphas from the light column, white glass at 62% with the softer shadow, tier colours from the light column. Chrome glass that can float over the code surface (header bar, menus, popovers, dialogs, sheets, contents bar) uses white at 82% in light mode instead of 62%, so secondary text holds 4.5:1 over code blocks scrolling under it; hub cards keep 62%. Both modes are checked at every release.

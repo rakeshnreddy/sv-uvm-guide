@@ -29,7 +29,7 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
     <article
       aria-labelledby={headingId}
       data-testid={`home-route-${route.id}`}
-      className="flex h-full min-w-0 flex-col rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm transition-colors hover:border-primary/60 motion-reduce:transition-none"
+      className="glass-quiet flex h-full min-w-0 flex-col rounded-2xl p-6 text-card-foreground transition-colors hover:border-primary/60 motion-reduce:transition-none"
     >
       <div className="flex items-center gap-3">
         <Icon aria-hidden="true" className="h-7 w-7 shrink-0 text-primary" />

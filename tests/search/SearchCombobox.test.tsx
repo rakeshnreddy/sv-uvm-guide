@@ -207,6 +207,22 @@ describe('SearchCombobox results across kinds', () => {
     expect(options[0].className).not.toMatch(/border-primary/);
   });
 
+  it('floats the results on glass, with the highlighted row raised and marked, and the hint in secondary text', async () => {
+    render(<SearchCombobox variant="popup" />);
+    const { user } = await typeQuery('mailbox');
+    const listbox = await screen.findByRole('listbox');
+    const panel = listbox.closest('[data-search-panel]') as HTMLElement;
+    expect(panel).toHaveAttribute('data-search-panel', 'popup');
+    expect(panel).toHaveClass('glass', 'rounded-xl', 'mt-3');
+    expect(panel.className).not.toMatch(/\bbg-popover\b/);
+    const options = within(listbox).getAllByRole('option');
+    expect(options[0]).toHaveClass('bg-muted', 'border-primary');
+    const hint = panel.querySelector('p.border-t');
+    expect(hint).toHaveClass('text-muted-foreground');
+    expect(hint).not.toHaveClass('text-subtle');
+    await user.keyboard('{Escape}');
+  });
+
   it('shows lesson titles without the module code the tag beside them shows', async () => {
     render(<SearchCombobox variant="popup" />);
     await typeQuery('I-SV-3A');

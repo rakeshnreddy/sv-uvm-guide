@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Navbar, { HOME_LINK_LABEL, searchVisibility, signInHref } from '@/components/Navbar';
 import Sidebar, { DOCKED_OUTLINE_WIDTH, OUTLINE_DRAWER_ID } from '@/components/layout/Sidebar';
-import { MOBILE_GROUP_HEADING_CLASS, OUTLINE_SLOT_CLASS, PAGE_FRAME_CLASS } from '@/components/layout/nav-styles';
+import { DIALOG_BACKDROP_CLASS, MOBILE_GROUP_HEADING_CLASS, OUTLINE_SLOT_CLASS, PAGE_FRAME_CLASS } from '@/components/layout/nav-styles';
 import { SEARCH_PLACEHOLDER } from '@/components/search/SearchCombobox';
 import { SEARCH_DIALOG_TITLE } from '@/components/search/SearchDialog';
 import { PRIMARY_NAV, SITE_NAME, isNavGroup } from '@/lib/site-links';
@@ -205,11 +205,32 @@ describe('Navbar landmarks and links', () => {
     expect(within(barNav()).getByRole('link', { name: 'Curriculum' })).not.toHaveAttribute('aria-current');
   });
 
-  it('is one opaque sticky 64 px row with a hairline: no blur and no translucent background', () => {
+  it('is a transparent sticky 64 px row over a rounded glass bar, which is a background layer and not a wrapper', () => {
     render(<Navbar />);
     const banner = screen.getByRole('banner');
-    expect(banner).toHaveClass('sticky', 'top-0', 'h-16', 'border-b', 'border-border', 'bg-background');
-    expect(banner.className).not.toMatch(/backdrop-blur|bg-background\/|supports-\[backdrop-filter\]/);
+    expect(banner).toHaveClass('sticky', 'top-0', 'h-16', 'forced-colors:bg-[Canvas]');
+    expect(banner.className).not.toMatch(/\bglass\b|backdrop-blur|\bbg-background\b|border-b/);
+    const layer = banner.querySelector('[data-header-glass]') as HTMLElement;
+    expect(layer).toHaveAttribute('aria-hidden', 'true');
+    expect(layer).toHaveClass('pointer-events-none', 'absolute', 'inset-0');
+    // The glass layer holds no control: every link and button sits in the row after it.
+    expect(layer.querySelectorAll('a, button, input')).toHaveLength(0);
+    const bar = layer.querySelector('[data-header-bar]') as HTMLElement;
+    expect(bar).toHaveClass('glass', 'rounded-2xl', 'h-full', 'w-full');
+    expect(bar.parentElement).toHaveClass('absolute', 'inset-y-2', 'max-w-7xl', 'px-2', 'lg:px-4');
+    const row = layer.nextElementSibling as HTMLElement;
+    expect(row).toHaveClass('relative', 'flex', 'h-full', 'w-full');
+    expect(row.querySelector('[data-header-frame]')).not.toBeNull();
+  });
+
+  it('spans the glass bar across the viewport less 8 px while the outline is docked', () => {
+    nav.pathname = LESSON;
+    render(<Navbar />);
+    const bar = screen.getByRole('banner').querySelector('[data-header-bar]') as HTMLElement;
+    expect(bar.parentElement).toHaveClass('absolute', 'inset-x-2', 'inset-y-2');
+    expect(bar.parentElement?.className).not.toMatch(/max-w/);
+    // No scrim beside the bar: the colour field and scrolled content show through the glass.
+    expect(bar.parentElement?.parentElement?.children).toHaveLength(1);
   });
 
   it('gives every header icon button one style: 40 px, rounded-lg, bordered card surface, hover raised', () => {
@@ -298,7 +319,8 @@ describe('Practice and Reference disclosures', () => {
     await user.click(practice);
     expect(practice).toHaveAttribute('aria-expanded', 'true');
     expect(panel).toHaveAttribute('data-state', 'open');
-    expect(panel).toHaveClass('visible', 'bg-popover', 'border', 'border-border', 'rounded-xl', 'shadow-card', 'duration-200', 'ease-bench');
+    expect(panel).toHaveClass('visible', 'glass', 'rounded-xl', 'text-popover-foreground', 'duration-200', 'ease-bench');
+    expect(panel.className).not.toMatch(/shadow-(lg|xl|2xl)|\bbg-popover\b/);
     const group = PRIMARY_NAV.find((item) => item.label === 'Practice')!;
     expect(isNavGroup(group)).toBe(true);
     expect(within(panel).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual(
@@ -638,15 +660,15 @@ describe('phone menu', () => {
     }
   });
 
-  it('dims the page behind the phone menu without blur, and keeps shadows to shadow-card', async () => {
+  it('dims the page behind the phone menu without blur, and makes the menu a glass panel', async () => {
     const user = userEvent.setup();
     render(<Navbar />);
     const { menu } = await openPhoneMenu(user);
     const backdrop = screen.getByTestId('mobile-menu-backdrop');
-    expect(backdrop).toHaveClass('bg-background/80');
-    expect(backdrop.className).not.toMatch(/blur/);
-    expect(menu).toHaveClass('shadow-card');
-    expect(menu.className).not.toMatch(/shadow-(lg|xl|2xl)/);
+    for (const name of DIALOG_BACKDROP_CLASS.split(' ')) expect(backdrop).toHaveClass(name);
+    expect(backdrop.className).not.toMatch(/blur|\bglass\b/);
+    expect(menu).toHaveClass('glass', 'rounded-2xl', 'inset-y-2', 'right-2');
+    expect(menu.className).not.toMatch(/shadow-(lg|xl|2xl)|\bbg-background\b/);
   });
 
   it('sets every group heading in the label style (12/16, weight 500, sentence case), in order', async () => {

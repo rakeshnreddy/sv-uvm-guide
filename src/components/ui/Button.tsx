@@ -12,9 +12,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         // The one filled accent action per view. The transparent border keeps a
-        // visible boundary in Windows forced-colours mode (gap-6).
+        // visible boundary in Windows forced-colours mode (gap-6). sheen-primary
+        // (globals.css, DESIGN.md section 11) lays the vertical sheen and inset
+        // highlight over bg-primary, darkens or lightens it on hover and keeps
+        // the focus ring; bg-primary stays as the fallback fill.
         default:
-          "border border-transparent bg-primary text-primary-foreground hover:bg-primary/90 forced-colors:border-[ButtonText]",
+          "sheen-primary border border-transparent bg-primary text-primary-foreground forced-colors:border-[ButtonText]",
         destructive:
           "border border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90 forced-colors:border-[ButtonText]",
         // Transparent: it takes the surface it sits on, so it never reads as a page-coloured hole in a card.

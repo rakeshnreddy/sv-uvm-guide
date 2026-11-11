@@ -38,7 +38,7 @@ function ResourceCard({ resource }: { resource: ResolvedResource }) {
     <article
       aria-labelledby={headingId}
       data-resource-id={resource.id}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-card sm:p-5"
+      className="glass-quiet flex min-w-0 flex-col gap-3 rounded-xl p-4 sm:p-5"
     >
       <header className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">

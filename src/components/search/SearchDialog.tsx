@@ -3,7 +3,9 @@
 import React, { useId, useRef } from "react";
 import { X } from "lucide-react";
 
+import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { SITE_NAME } from "@/lib/site-links";
+import { cn } from "@/lib/utils";
 
 import SearchCombobox from "./SearchCombobox";
 import { MODAL_LAYER, shellStore, useShellState } from "./shell-store";
@@ -25,7 +27,7 @@ function SearchDialogPanel() {
 
   return (
     <div className={`fixed inset-0 ${MODAL_LAYER} flex items-start justify-center px-4 pb-4 pt-4 sm:pt-[12vh]`}>
-      <div aria-hidden="true" className="absolute inset-0 bg-background/80" onClick={shellStore.closeSearch} />
+      <div aria-hidden="true" data-testid="search-dialog-backdrop" className={cn("absolute inset-0", DIALOG_BACKDROP_CLASS)} onClick={shellStore.closeSearch} />
       <div
         ref={panelRef}
         role="dialog"
@@ -33,9 +35,9 @@ function SearchDialogPanel() {
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid="search-dialog"
-        className="relative flex max-h-full w-full max-w-xl flex-col rounded-2xl border border-border bg-card text-card-foreground shadow-card focus:outline-none"
+        className={cn(CHROME_GLASS_CLASS, "relative flex max-h-full w-full max-w-xl flex-col rounded-2xl text-card-foreground focus:outline-none")}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-foreground">
             {SEARCH_DIALOG_TITLE}
           </h2>

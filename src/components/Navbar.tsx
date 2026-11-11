@@ -8,11 +8,17 @@ import { Bell, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
 import NavDisclosure from "@/components/layout/NavDisclosure";
 import { currentChild, navLinkCurrent, topItemCurrent, yourLearningLinks } from "@/components/layout/nav-current";
 import {
+  CHROME_GLASS_CLASS,
+  DIALOG_BACKDROP_CLASS,
   FRAME_BESIDE_SLOT_CLASS,
+  GLASS_HEADER_CLASS,
+  HEADER_BAR_CLASS,
+  MENU_SURFACE_CLASS,
   MOBILE_GROUP_HEADING_CLASS,
   OUTLINE_SLOT_CLASS,
   PAGE_FRAME_CLASS,
   barLinkClass,
+  headerBarFrameClass,
   mobileRowClass,
 } from "@/components/layout/nav-styles";
 import { useDismiss } from "@/components/layout/use-dismiss";
@@ -49,8 +55,7 @@ const focusRing = headerFocusRing;
 const iconButton = iconButtonClass;
 
 /** The account menu's and the notification feed's panels. */
-const popoverPanel =
-  "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-card";
+const popoverPanel = cn(MENU_SURFACE_CLASS, "absolute right-0 top-full z-50 mt-3 overflow-hidden");
 
 /** The accessible name of the wordmark link. */
 export const HOME_LINK_LABEL = `${SITE_NAME} home`;
@@ -104,7 +109,7 @@ function UserMenu({ pathname }: { pathname: string | null }) {
           <p className="px-2 text-sm font-semibold text-foreground">
             {user ? user.displayName || "Signed in" : status === "loading" ? "Checking sign-in…" : "Not signed in"}
           </p>
-          <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
+          <ul className="mt-2 space-y-0.5 border-t border-glass-border pt-2">
             <li>
               <Link href={DASHBOARD_HREF} className={itemClass} onClick={() => setOpen(false)}>
                 Dashboard
@@ -208,7 +213,7 @@ function NotificationCenter() {
       </button>
       {open && (
         <div id={panelId} className={cn(popoverPanel, "w-80 max-w-[calc(100vw-2rem)]")}>
-          <p className="border-b border-border p-3 text-sm font-semibold text-foreground">Notifications</p>
+          <p className="border-b border-glass-border p-3 text-sm font-semibold text-foreground">Notifications</p>
           <div className="max-h-80 overflow-y-auto">
             {loading && <p className="p-4 text-sm text-muted-foreground">Loading notifications…</p>}
             {!loading && error && <p className="p-4 text-sm text-foreground">Error: {error}</p>}
@@ -219,7 +224,7 @@ function NotificationCenter() {
               </div>
             )}
             {!loading && !error && items.length > 0 && (
-              <ul className="divide-y divide-border">
+              <ul className="divide-y divide-glass-border">
                 {items.map((notification) => {
                   const meta = NOTIFICATION_CATEGORY_META[notification.category];
                   return (
@@ -250,7 +255,7 @@ function NotificationCenter() {
               </ul>
             )}
           </div>
-          <div className="border-t border-border p-2 text-center">
+          <div className="border-t border-glass-border p-2 text-center">
             <Link href="/notifications" className="text-label text-foreground underline-offset-2 hover:underline">
               View all
             </Link>
@@ -285,7 +290,7 @@ function MobileAccountItems({ pathname }: { pathname: string | null }) {
   const accountLinks = notificationsOn ? [{ label: "Notifications", href: "/notifications" }] : [];
 
   return (
-    <div data-testid="mobile-account" className="mt-4 border-t border-border pt-4">
+    <div data-testid="mobile-account" className="mt-4 border-t border-glass-border pt-4">
       <h3 className={MOBILE_GROUP_HEADING_CLASS}>Account</h3>
       <p aria-live="polite" className="mt-1 break-words px-3 text-sm text-foreground">
         {mobileAccountStatus(user, status)}
@@ -384,7 +389,7 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
 
   return (
     <div className={cn("fixed inset-0 lg:hidden", MODAL_LAYER)}>
-      <div aria-hidden="true" data-testid="mobile-menu-backdrop" className="absolute inset-0 bg-background/80" onClick={shellStore.closeMenu} />
+      <div aria-hidden="true" data-testid="mobile-menu-backdrop" className={cn("absolute inset-0", DIALOG_BACKDROP_CLASS)} onClick={shellStore.closeMenu} />
       <div
         ref={panelRef}
         id="mobile-menu"
@@ -393,9 +398,12 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid="mobile-menu"
-        className="absolute inset-y-0 right-0 flex w-4/5 max-w-sm flex-col border-l border-border bg-background text-foreground shadow-card focus:outline-none"
+        className={cn(
+          CHROME_GLASS_CLASS,
+          "absolute inset-y-2 right-2 flex w-[calc(80%-0.5rem)] max-w-sm flex-col rounded-2xl text-foreground focus:outline-none",
+        )}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border p-4">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border p-4">
           <h2 id={titleId} className="text-lg font-semibold">
             Menu
           </h2>
@@ -416,7 +424,7 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
             Course outline
           </button>
           <MobileMainNav pathname={pathname} />
-          <section aria-labelledby={appearanceId} data-testid="mobile-appearance" className="mt-4 border-t border-border pt-4">
+          <section aria-labelledby={appearanceId} data-testid="mobile-appearance" className="mt-4 border-t border-glass-border pt-4">
             <h3 id={appearanceId} className={MOBILE_GROUP_HEADING_CLASS}>
               Appearance
             </h3>
@@ -424,7 +432,7 @@ function MobileMenuPanel({ pathname }: { pathname: string | null }) {
               <ThemeSwitcher layout="menu" />
             </div>
           </section>
-          <nav aria-labelledby={learningId} data-testid="mobile-learning" className="mt-4 border-t border-border pt-4">
+          <nav aria-labelledby={learningId} data-testid="mobile-learning" className="mt-4 border-t border-glass-border pt-4">
             <h3 id={learningId} className={MOBILE_GROUP_HEADING_CLASS}>
               Your learning
             </h3>
@@ -533,8 +541,14 @@ const Navbar = () => {
 
   return (
     <>
-      <header className="sticky top-0 z-40 h-16 w-full border-b border-border bg-background text-foreground">
-        <div className="flex h-full w-full">
+      <header className={cn("sticky top-0 z-40 h-16 w-full text-foreground print:hidden", GLASS_HEADER_CLASS)}>
+        {/* The glass bar: a background layer inside the 64 px row, never a wrapper around its controls. */}
+        <div aria-hidden="true" data-header-glass="" className="pointer-events-none absolute inset-0">
+          <div className={headerBarFrameClass(docked ? "docked" : "frame")}>
+            <div className={HEADER_BAR_CLASS} data-header-bar="" />
+          </div>
+        </div>
+        <div className="relative flex h-full w-full">
           {docked && (
             <div className={OUTLINE_SLOT_CLASS} data-header-slot="outline">
               {brand}

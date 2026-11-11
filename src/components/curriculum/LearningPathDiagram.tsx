@@ -10,6 +10,7 @@ import {
   type OverviewTier,
   type PlannedModule,
 } from '@/lib/curriculum-overview';
+import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { eyebrow, focusRing } from './overview-ui';
 
@@ -114,9 +115,12 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
           <section
             key={tier.id}
             aria-labelledby={`map-${tier.anchor}`}
-            className="min-w-0 rounded-xl border border-border bg-card p-3"
+            // Each column in its tier's colour (DESIGN.md section 11): the top edge, the step mark and the module codes.
+            data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}
+            className={cn('glass-quiet min-w-0 rounded-xl p-3', tierOfTierSlug(tier.id) && 'tier-edge')}
           >
-            <h4 id={`map-${tier.anchor}`} className="text-sm font-semibold text-foreground">
+            <h4 id={`map-${tier.anchor}`} className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <span className="tier-step" aria-hidden="true" />
               {tier.title}
             </h4>
             {tierLanes(tier, planned).map((lane) => {
@@ -169,7 +173,7 @@ export default function CurriculumMap({ tiers, planned, hereModuleId }: Curricul
                               isActive && 'ring-2 ring-primary',
                             )}
                           >
-                            <span className="flex items-center gap-1 font-mono font-medium">
+                            <span className="flex items-center gap-1 font-mono font-medium text-tier-current">
                               {m.code}
                               {here && <MapPin className="h-3.5 w-3.5 text-primary" aria-hidden="true" />}
                             </span>

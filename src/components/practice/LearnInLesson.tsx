@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 
+import { SignalTag } from '@/components/ui/SignalTag';
 import type { LabPrerequisites, LessonLink, PracticeItem } from '@/lib/practice-links';
 import { cn } from '@/lib/utils';
 
@@ -21,7 +22,7 @@ interface LessonChipLinkProps {
   className?: string;
 }
 
-/** A link to a lesson: the module code as a tag, then the lesson title. Electives say so in text. */
+/** A link to a lesson: the module code as a tier-tinted signal tag, then the lesson title. Electives say so in text. */
 export function LessonChipLink({ lesson, className }: LessonChipLinkProps) {
   return (
     <Link
@@ -32,9 +33,7 @@ export function LessonChipLink({ lesson, className }: LessonChipLinkProps) {
         className,
       )}
     >
-      <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-xs font-medium text-muted-foreground [font-variant-ligatures:none]">
-        {lesson.code}
-      </span>
+      <SignalTag code={lesson.code} className="[font-variant-ligatures:none]" />
       <span className="min-w-0 [overflow-wrap:anywhere]">
         {lesson.title}
         {lesson.track === 'elective' ? <span className="text-muted-foreground"> (elective)</span> : null}

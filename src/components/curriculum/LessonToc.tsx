@@ -4,8 +4,9 @@ import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { focusElement } from "@/components/search/focus-target";
-import { MODAL_LAYER } from "@/components/search/shell-store";
+import { MODAL_LAYER, useShellState } from "@/components/search/shell-store";
 import { useModalDialog } from "@/components/search/useModalDialog";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { cn } from "@/lib/utils";
@@ -34,12 +35,34 @@ export function tocSummary(entries: readonly TocEntry[]): string {
 
 /**
  * Below 1280 px the nav is the contents bar: sticky under the 64 px site
- * header, running edge to edge of the main column (the page frame's 16, 24
+ * header, spanning the main column (the nav cancels the page frame's 16, 24
  * and 32 px gutters, PAGE_FRAME_CLASS), 44 px tall. From 1280 px it is the
  * sticky right-hand column.
  */
 export const LESSON_TOC_NAV_CLASS =
   "sticky top-16 z-30 -mx-4 min-w-0 sm:-mx-6 lg:-mx-8 xl:top-24 xl:z-auto xl:mx-0 print:hidden";
+
+/**
+ * The contents bar: a rounded glass bar (DESIGN.md section 11, the sticky
+ * "On this page" bar), 44 px tall, 8 px in from the main column's edges so it
+ * lines up with the header's glass bar above it (the viewport less 8 px on
+ * phones and while the outline is docked). With the outline hidden at lg the
+ * header bar sits 16 px in, and so does this one. Only below 1280 px; the
+ * column from 1280 px stays plain.
+ */
+export function contentsBarClass(outlineCollapsed: boolean): string {
+  return cn(
+    CHROME_GLASS_CLASS,
+    "relative mx-2 flex h-11 items-stretch rounded-xl px-3 sm:px-4 xl:hidden",
+    outlineCollapsed && "lg:mx-4",
+  );
+}
+
+/** The contents sheet's panel: glass, floating 8 px above the bottom and sides, radius 16. */
+export const CONTENTS_SHEET_PANEL_CLASS = cn(
+  CHROME_GLASS_CLASS,
+  "absolute inset-x-2 bottom-2 mx-auto flex max-h-[85vh] max-w-3xl flex-col rounded-2xl text-popover-foreground focus:outline-none",
+);
 
 function isModifiedClick(event: React.MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
@@ -189,7 +212,7 @@ function ContentsSheet({ id, onClose, children }: ContentsSheetProps) {
 
   return (
     <div className="fixed inset-0 xl:hidden" data-testid="lesson-contents-sheet">
-      <div aria-hidden="true" className="absolute inset-0 bg-background/80" onClick={onClose} />
+      <div aria-hidden="true" data-testid="lesson-contents-backdrop" className={cn("absolute inset-0", DIALOG_BACKDROP_CLASS)} onClick={onClose} />
       <motion.div
         ref={panelRef}
         id={id}
@@ -200,9 +223,9 @@ function ContentsSheet({ id, onClose, children }: ContentsSheetProps) {
         initial={reduceMotion ? false : { y: "100%" }}
         animate={{ y: 0 }}
         transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute inset-x-0 bottom-0 mx-auto flex max-h-[85vh] max-w-3xl flex-col rounded-t-2xl border border-b-0 border-border bg-popover text-popover-foreground shadow-card focus:outline-none"
+        className={CONTENTS_SHEET_PANEL_CLASS}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border py-2 pl-4 pr-2">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border py-2 pl-4 pr-2">
           <h2 id={titleId} className="text-h4 text-foreground">
             On this page
           </h2>
@@ -245,6 +268,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
   const holdingId = groupHolding(groups, activeId);
   const [choices, setChoices] = useState<Record<string, boolean>>({});
   const [open, setOpen] = useState(false);
+  const outlineCollapsed = useShellState((state) => state.outlineCollapsed);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const idBase = useId();
@@ -307,7 +331,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
 
   return (
     <nav aria-label="On this page" data-lesson-toc="" className={cn(LESSON_TOC_NAV_CLASS, open && MODAL_LAYER, className)}>
-      <div className="relative flex h-11 items-stretch border-b border-border bg-background px-4 sm:px-6 lg:px-8 xl:hidden" data-testid="lesson-contents-bar">
+      <div className={contentsBarClass(outlineCollapsed)} data-testid="lesson-contents-bar">
         <button
           ref={buttonRef}
           type="button"
@@ -323,7 +347,7 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
           </span>
           <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
         </button>
-        <ReadingProgressLine className="absolute inset-x-0 -bottom-px" />
+        <ReadingProgressLine className="absolute inset-x-3 bottom-0" />
       </div>
 
       {open ? (

@@ -2,6 +2,7 @@ import React from "react";
 
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
+import { RoutePageField } from "@/components/layout/PageField";
 import Sidebar from "@/components/layout/Sidebar";
 import { PAGE_FRAME_CLASS } from "@/components/layout/nav-styles";
 import { MAIN_CONTENT_ID } from "@/components/search/focus-target";
@@ -16,10 +17,15 @@ import { cn } from "@/lib/utils";
  *
  * The page sits in PAGE_FRAME_CLASS, the frame the navbar also uses, so the
  * header's edges line up with the page's at every width.
+ *
+ * The root is `relative isolate` so the colour field (RoutePageField: the
+ * lesson's tier at header size on lesson pages, all four tiers elsewhere) sits
+ * behind every child and above the body colour.
  */
 const MainLayout = ({ children }: { children: React.ReactNode }) => {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="relative isolate flex min-h-screen flex-col">
+      <RoutePageField />
       <SkipLink />
       <Navbar />
       <div className="flex flex-1">

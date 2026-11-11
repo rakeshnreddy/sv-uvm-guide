@@ -29,7 +29,7 @@ export default function AIAssistantLauncher() {
       <Button
         onClick={() => setIsOpen(true)}
         size="lg"
-        className="flex h-16 w-16 items-center justify-center rounded-full bg-primary p-0 shadow-card hover:bg-primary/90"
+        className="sheen-primary flex h-16 w-16 items-center justify-center rounded-full bg-primary p-0 shadow-card"
         aria-label="Open AI assistant"
       >
         <MessageSquarePlus aria-hidden="true" size={28} />

@@ -235,6 +235,31 @@ describe('docked course outline on a lesson page', () => {
     expect(within(nav).getByRole('link', { name: /^Tier 2: Intermediate\W/ })).toHaveAttribute('href', '/curriculum#t2');
   });
 
+  it('marks each tier heading with its tier and the step mark in the tier colour, the name staying neutral', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    manifest.tiers.forEach((tier, index) => {
+      const link = within(nav).getByRole('link', { name: new RegExp(`^${tier.title}\\W`) });
+      expect(link).toHaveAttribute('data-tier', String(index + 1));
+      const step = link.querySelector('.tier-step');
+      expect(step).toHaveAttribute('aria-hidden', 'true');
+      // The mark sits right before the tier's name, which keeps the primary text colour.
+      expect(step?.parentElement).toHaveTextContent(tier.title);
+      expect(step?.parentElement).toHaveClass('text-foreground');
+    });
+  });
+
+  it('is not glass: the docked outline is a plain column with no fill of its own', () => {
+    render(<Sidebar />);
+    const docked = document.getElementById('course-outline-docked')!;
+    expect(docked.className).not.toMatch(/glass/);
+    expect(docked.querySelector('.glass, .glass-quiet')).toBeNull();
+    // Transparent, so the colour field continues behind the top of the column; the hairline stays.
+    expect(docked).toHaveClass('bg-transparent', 'border-r', 'border-border');
+    expect(docked.className).not.toMatch(/\bbg-(background|card|muted)\b/);
+    expect(screen.getByRole('navigation', { name: 'Course outline' })).toHaveClass('sticky', 'top-16');
+  });
+
   it('renders module codes as signal tags inside the module links', () => {
     render(<Sidebar />);
     const nav = screen.getByRole('navigation', { name: 'Course outline' });
@@ -309,6 +334,17 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(opener);
     expect(shellStore.getState().outlineOpen).toBe(false);
+  });
+
+  it('floats as a glass panel over a backdrop that dims the page', () => {
+    renderWithOpener();
+    act(() => shellStore.openOutline());
+    const dialog = screen.getByRole('dialog', { name: 'Course outline' });
+    expect(dialog).toHaveClass('glass', 'rounded-2xl', 'inset-y-2', 'left-2');
+    expect(dialog.className).not.toMatch(/\bbg-card\b|shadow-(lg|xl|2xl)/);
+    const backdrop = screen.getByTestId('course-outline-backdrop');
+    expect(backdrop).toHaveClass('bg-black/40');
+    expect(backdrop.className).not.toMatch(/blur/);
   });
 
   it('closes from the backdrop and from its close button', async () => {

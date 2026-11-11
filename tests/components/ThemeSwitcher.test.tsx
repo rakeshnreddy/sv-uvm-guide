@@ -149,6 +149,30 @@ describe('ThemeSwitcher in the header (menu button)', () => {
     expect(setTheme).not.toHaveBeenCalled();
   });
 
+  it('opens as a glass menu below the header bar', async () => {
+    const user = userEvent.setup();
+    render(<ThemeSwitcher />);
+    await user.click(await screen.findByRole('button', { name: 'Theme' }));
+    const menu = screen.getByRole('menu', { name: 'Theme' });
+    expect(menu).toHaveClass('glass', 'rounded-xl', 'mt-3');
+    expect(menu.className).not.toMatch(/\bbg-popover\b|shadow-(lg|xl|2xl)/);
+  });
+
+  it('closes when focus leaves it, so it never stays open under a dialog', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <ThemeSwitcher />
+        <input aria-label="Search field" />
+      </>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Theme' }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    // Ctrl/Cmd+K moves focus into the search dialog's field without a press outside.
+    act(() => screen.getByRole('textbox', { name: 'Search field' }).focus());
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
   it('shows the monitor once mounted when the choice is System, and the mode icon otherwise', async () => {
     current.theme = 'system';
     current.resolvedTheme = 'light';

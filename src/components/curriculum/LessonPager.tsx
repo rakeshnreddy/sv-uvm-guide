@@ -15,7 +15,7 @@ import { focusRing, inlineLink } from "./overview-ui";
  * colours.
  */
 export const NEXT_LESSON_LINK_CLASS = cn(
-  "flex min-w-0 items-center gap-4 rounded-xl border border-transparent bg-primary px-5 py-4 text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText] motion-reduce:transition-none",
+  "sheen-primary flex min-w-0 items-center gap-4 rounded-xl border border-transparent bg-primary px-5 py-4 text-primary-foreground transition-colors duration-150 ease-bench forced-colors:border-[ButtonText] motion-reduce:transition-none",
   focusRing,
 );
 

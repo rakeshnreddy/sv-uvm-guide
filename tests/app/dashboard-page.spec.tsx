@@ -53,7 +53,7 @@ vi.mock('@/lib/persistence/target', () => ({
 }));
 
 import DashboardPage, * as dashboardModule from '@/app/(learning)/dashboard/page';
-import { continuePrimary } from '@/app/(learning)/dashboard/DashboardPageClient';
+import { DASHBOARD_BODY_MIN_HEIGHT_CLASS, continuePrimary } from '@/app/(learning)/dashboard/DashboardPageClient';
 
 const NOW = new Date(2026, 9, 18, 10, 0).getTime();
 const HOUR = 60 * 60 * 1000;
@@ -177,8 +177,9 @@ describe('/dashboard', () => {
     expect(html).toContain('aria-label="Your learning"');
     expect(html).toContain('Stored only in this browser');
     expect(html).toContain('Reading what this browser has saved');
-    // The body reserves the empty state's height while it loads, so the footer does not jump after hydration.
-    expect(html).toMatch(/<div data-testid="dashboard-body" aria-busy="true" class="min-h-\[22rem\] sm:min-h-\[16rem\]">/);
+    // The body reaches below the fold in every state, so the footer does not jump when the cards arrive after hydration.
+    expect(html).toContain(`<div data-testid="dashboard-body" aria-busy="true" class="${DASHBOARD_BODY_MIN_HEIGHT_CLASS}">`);
+    expect(DASHBOARD_BODY_MIN_HEIGHT_CLASS).toContain('calc(100svh-20rem)');
     // The server render shows none of the stored data, so hydration always matches.
     expect(html).not.toContain('Nothing recorded in this browser yet');
     expect(html).not.toContain('Clocking blocks');

@@ -43,6 +43,8 @@ const focusRing =
 /** The accent link style, the same as the review page's. */
 const textLink = inlineLink;
 const panelClass = 'min-w-0 rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+/** A panel with no form fields in it (the "choose an entry" message): quiet glass (DESIGN.md section 11). Panels with fields stay solid. */
+const quietPanelClass = 'glass-quiet min-w-0 rounded-2xl p-5 text-card-foreground sm:p-6';
 const fieldClass =
   'w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 const errorText = 'font-medium text-danger';
@@ -493,7 +495,7 @@ export default function NotebookPageClient() {
         {selected ? (
           <NoteEditor key={selected.id} entry={selected} titleInputRef={titleInputRef} onDeleted={handleDeleted} />
         ) : hydrated && entries.length > 0 ? (
-          <div className={cn(panelClass, 'text-sm text-muted-foreground')}>
+          <div className={cn(quietPanelClass, 'text-sm text-muted-foreground')}>
             <p>Choose an entry to read or edit it, or add a new note.</p>
           </div>
         ) : null}

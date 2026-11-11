@@ -7,6 +7,7 @@ import { useTheme } from "next-themes";
 // clsx, not cn, where a class list holds a type token (text-ui): tailwind-merge reads it as a colour and drops it.
 import { clsx } from "clsx";
 
+import { MENU_SURFACE_CLASS } from "@/components/layout/nav-styles";
 import {
   iconButtonClass,
   iconButtonIconClass,
@@ -215,8 +216,13 @@ function ThemeMenu() {
     }
   };
 
+  const onBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (next && !containerRef.current?.contains(next)) setOpen(false);
+  };
+
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div ref={containerRef} className="relative inline-flex" onBlur={onBlur}>
       <button
         ref={buttonRef}
         type="button"
@@ -242,7 +248,8 @@ function ThemeMenu() {
           onKeyDown={onMenuKeyDown}
           style={{ width: MENU_WIDTH_PX }}
           className={cn(
-            "absolute top-full z-50 mt-2 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-card",
+            MENU_SURFACE_CLASS,
+            "absolute top-full z-50 mt-3 p-1",
             alignStart ? "left-0" : "right-0",
           )}
         >
@@ -336,7 +343,7 @@ function ThemeSegments() {
       <p
         aria-live="polite"
         data-testid="theme-system-note"
-        className="mt-1 min-h-4 px-1 text-label text-subtle"
+        className="mt-1 min-h-4 px-1 text-label text-muted-foreground"
       >
         {choice === "system" && systemTheme
           ? `Following this device: ${themeMode(systemTheme)} mode`

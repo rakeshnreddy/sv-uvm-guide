@@ -3,18 +3,20 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
+import { tierChip } from '@/components/curriculum/overview-ui';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Section } from '@/components/layout/Section';
 import { cardClass } from '@/components/ui/Card';
 import { verificationStackLinks } from '@/components/diagrams/verification-stack-links';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
-import { buildCurriculumOverview, PLANNED_MODULES, type LessonPosition } from '@/lib/curriculum-overview';
+import { buildCurriculumOverview, PLANNED_MODULES, type LessonPosition, type OverviewTier } from '@/lib/curriculum-overview';
 import { readLessonMinutes, readManifestTiers } from '@/lib/curriculum-scan';
 import { getAllLabs } from '@/lib/lab-registry';
 import { resolveMilestones, resolveRoutes } from '@/lib/learning-paths';
 import { siteLabel } from '@/lib/nav-labels';
-import { CURRICULUM_HREF } from '@/lib/site-links';
+import { CURRICULUM_HREF, tierSectionId } from '@/lib/site-links';
+import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 
 export const metadata: Metadata = {
   title: 'Curriculum',
@@ -28,6 +30,28 @@ function nextLesson(lesson: LessonPosition): LessonPosition | undefined {
   if (!next) return undefined;
   const [tierId, moduleId, lessonSlug] = next.slug.split('/');
   return tierId && moduleId && lessonSlug ? { tierId, moduleId, lessonSlug } : undefined;
+}
+
+/**
+ * The four tiers as jump links under the page lead, each with its step mark
+ * in the tier colour (DESIGN.md section 11), so the page reads as four
+ * coloured tiers from the top. "#t3" opens and scrolls to that tier's section.
+ */
+function TierJumpLinks({ tiers }: { tiers: readonly OverviewTier[] }) {
+  return (
+    <nav aria-label="Tiers" className="mt-6" data-testid="tier-jump-links">
+      <ul className="flex flex-wrap gap-2">
+        {tiers.map((tier) => (
+          <li key={tier.id}>
+            <a href={`#${tierSectionId(tier.id)}`} data-tier={tierDataAttribute(tierOfTierSlug(tier.id))} className={tierChip}>
+              <span className="tier-step" aria-hidden="true" />
+              {tier.title}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
 }
 
 export default function CurriculumPage() {
@@ -48,7 +72,9 @@ export default function CurriculumPage() {
       <PageHeader
         title={siteLabel(CURRICULUM_HREF)}
         lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route that matches your experience, or browse every module below."
-      />
+      >
+        <TierJumpLinks tiers={tiers} />
+      </PageHeader>
 
       <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />
 
@@ -60,7 +86,7 @@ export default function CurriculumPage() {
       >
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {stackLessons.map(({ id, title, description, href }) => (
-            <li key={id} className={cardClass({ variant: 'interactive', padding: 'compact', className: 'flex min-w-0 flex-col' })}>
+            <li key={id} className={cardClass({ variant: 'glassQuietInteractive', padding: 'compact', className: 'flex min-w-0 flex-col' })}>
               <Link
                 data-node-id={id}
                 href={href}

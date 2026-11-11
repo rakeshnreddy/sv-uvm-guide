@@ -239,7 +239,7 @@ describe('every href resolves', () => {
     }
     // TierSection renders <section id={sectionId}> with sectionId = tierSectionId(tier.id); the overview builds anchor from tierAnchor.
     const tierSection = fs.readFileSync(path.resolve(__dirname, '../../src/components/curriculum/TierSection.tsx'), 'utf8');
-    expect(tierSection).toMatch(/<section id=\{sectionId\}/);
+    expect(tierSection).toMatch(/<section\s+id=\{sectionId\}/);
     expect(tierSection).toMatch(/const sectionId = tierSectionId\(tier\.id\)/);
     const overview = fs.readFileSync(path.resolve(__dirname, '../../src/lib/curriculum-overview.ts'), 'utf8');
     expect(overview).toMatch(/anchor: tierAnchor\(tier\.slug\)/);

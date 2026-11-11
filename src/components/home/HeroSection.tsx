@@ -25,10 +25,15 @@ const highlights = ({ labCount }: HomeStats) => [
 
 type HeroSectionProps = HomeStats;
 
-/** The home page hero. Static markup, so it is visible before and without JavaScript. */
+/**
+ * The home page hero. Static markup, so it is visible before and without
+ * JavaScript. It has no background of its own, so the public layout's colour
+ * field shows behind it; the skills-check card and the three highlights over
+ * the field are glass (DESIGN.md section 11).
+ */
 const HeroSection = (stats: HeroSectionProps) => {
   return (
-    <section className="w-full bg-background text-foreground">
+    <section className="w-full text-foreground">
       <div className="mx-auto flex max-w-6xl flex-col gap-14 px-4 pb-24 pt-28 sm:px-6">
         <div className="flex flex-col items-center gap-8 text-center">
           <span className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-1 text-label text-muted-foreground">
@@ -43,7 +48,7 @@ const HeroSection = (stats: HeroSectionProps) => {
         </div>
 
         <div className="flex flex-col gap-8">
-          <div className="rounded-3xl border border-border/60 bg-card/80 p-6 text-left shadow-sm">
+          <div className="glass rounded-3xl p-6 text-left" data-testid="home-hero-card">
             <h2 className="text-h2 text-foreground">
               Start with a quick skills check
             </h2>
@@ -68,7 +73,8 @@ const HeroSection = (stats: HeroSectionProps) => {
             {highlights(stats).map((item) => (
               <div
                 key={item.title}
-                className="rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-sm"
+                // Quiet glass: the hero card above is the page's one blurred card (at most three blurred layers, DESIGN.md section 11).
+                className="glass-quiet rounded-2xl p-4 text-left"
               >
                 <dt className="text-sm font-semibold text-foreground">{item.title}</dt>
                 <dd className="mt-2 text-sm text-muted-foreground">{item.description}</dd>

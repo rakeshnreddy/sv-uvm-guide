@@ -45,7 +45,10 @@ type DeckLoad =
   | { status: 'missing' }
   | { status: 'error' };
 
+/** The flashcard's panel: solid, since it holds the card and the rating controls (DESIGN.md section 11). */
 const panelClass = 'rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6';
+/** The "all caught up" and "nothing to review" message: real glass, over the colour field at the top of the page. */
+const messagePanelClass = 'glass rounded-2xl p-5 sm:p-6';
 /** The accent link style, the same as the notebook's. */
 const linkClass = inlineLink;
 
@@ -251,7 +254,7 @@ export default function ReviewPageClient() {
     const introduced = countCardsIntroducedToday(data, now);
     const moreNewTomorrow = introduced >= NEW_CARDS_PER_DAY && unreviewedCards(data).length > 0;
     return frame(
-      <div className={panelClass}>
+      <div className={messagePanelClass} data-testid="review-message-panel">
         {next !== null ? (
           <>
             <h2 ref={summaryRef} tabIndex={-1} className="text-h3 text-foreground focus-visible:outline-none">

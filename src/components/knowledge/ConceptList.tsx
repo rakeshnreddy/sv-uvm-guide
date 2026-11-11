@@ -108,8 +108,8 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
 
       <ul className="space-y-3">
         {shown.map((node) => (
-          <li key={node.id} className="rounded-xl border border-border bg-card p-3 shadow-card sm:p-4">
-            <p className="text-xs font-medium text-subtle">
+          <li key={node.id} className="glass-quiet rounded-xl p-3 sm:p-4">
+            <p className="text-xs font-medium text-muted-foreground">
               {KIND_LABEL[node.kind ?? 'term']} · {node.tier}
               {node.kind === 'term' && node.code ? ` · first taught in ${node.code}` : ''}
               {node.track === 'elective' ? ' · elective' : ''}

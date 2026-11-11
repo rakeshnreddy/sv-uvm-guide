@@ -63,7 +63,7 @@ export default function PostClientPage({ post }: PostClientPageProps) {
             onChange={(e) => setNewComment(e.target.value)}
             className="mb-2 w-full rounded-lg border border-input bg-background p-2"
           />
-          <button type="submit" className="rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench hover:bg-primary/90 forced-colors:border-[ButtonText]">
+          <button type="submit" className="sheen-primary rounded-lg border border-transparent bg-primary px-4 py-2 font-medium text-primary-foreground transition-colors duration-150 ease-bench forced-colors:border-[ButtonText]">
             Add comment
           </button>
         </form>

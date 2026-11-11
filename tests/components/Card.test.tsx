@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, cardClass } from '@/components/ui/Card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, cardClass, cardTierProps } from '@/components/ui/Card';
 
 const classes = (element: Element) => element.className.split(/\s+/);
 
@@ -72,5 +72,44 @@ describe('Card', () => {
     );
     expect(screen.getByTestId('row').tagName).toBe('LI');
     expect(screen.getByTestId('row')).not.toHaveAttribute('data-tone');
+  });
+
+  it('glass: the glass class (fill, hairline, highlight and blur from globals.css) and no solid card surface', () => {
+    render(<Card variant="glass" data-testid="glass">Hub card</Card>);
+    const card = screen.getByTestId('glass');
+    expect(card).toHaveAttribute('data-card', 'glass');
+    expect(classes(card)).toEqual(['rounded-xl', 'text-card-foreground', 'glass']);
+  });
+
+  it('glassQuiet: the quiet glass class without blur', () => {
+    expect(cardClass({ variant: 'glassQuiet' }).split(' ')).toEqual(['rounded-xl', 'text-card-foreground', 'glass-quiet']);
+  });
+
+  it('glassQuietInteractive: quiet glass with the interactive hover and focus ring, no blur', () => {
+    const classes = cardClass({ variant: 'glassQuietInteractive' }).split(' ');
+    expect(classes).toEqual(expect.arrayContaining(['glass-quiet', 'relative', 'hover:bg-muted', 'hover:border-input', 'has-[:focus-visible]:ring-2']));
+    expect(classes).not.toContain('glass');
+  });
+
+  it('tier: sets data-tier and adds the tier top edge on any variant, and leaves both off without a tier', () => {
+    render(
+      <>
+        <Card tier={2} data-testid="tiered">Tier 2</Card>
+        <Card variant="glassQuiet" tier={4} padding="default" data-testid="quiet">Tier 4</Card>
+        <Card data-testid="plain">Plain</Card>
+      </>,
+    );
+    expect(screen.getByTestId('tiered')).toHaveAttribute('data-tier', '2');
+    expect(classes(screen.getByTestId('tiered'))).toEqual(expect.arrayContaining(['bg-card', 'border-border', 'tier-edge']));
+    expect(screen.getByTestId('quiet')).toHaveAttribute('data-tier', '4');
+    expect(classes(screen.getByTestId('quiet'))).toEqual(expect.arrayContaining(['glass-quiet', 'tier-edge', 'p-5']));
+    expect(screen.getByTestId('plain')).not.toHaveAttribute('data-tier');
+    expect(screen.getByTestId('plain').className).not.toContain('tier-edge');
+  });
+
+  it('cardTierProps gives data-tier for a Link styled with cardClass', () => {
+    expect(cardTierProps(3)).toEqual({ 'data-tier': '3' });
+    expect(cardTierProps(undefined)).toEqual({});
+    expect(cardClass({ variant: 'interactive', tier: 1 })).toContain('tier-edge');
   });
 });

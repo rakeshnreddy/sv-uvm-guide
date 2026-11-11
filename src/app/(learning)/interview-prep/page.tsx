@@ -230,7 +230,7 @@ export default function InterviewPrepPage() {
             <li key={bank.id}>
               <a
                 href={`#${bank.anchor}`}
-                className={`flex h-full min-h-[44px] flex-col justify-center rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors duration-150 ease-bench hover:bg-muted ${focusRing}`}
+                className={`glass-quiet flex h-full min-h-[44px] flex-col justify-center rounded-lg px-3 py-2 text-sm transition-colors duration-150 ease-bench hover:bg-muted ${focusRing}`}
               >
                 <span className="font-medium text-foreground">{bank.title}</span>
                 <span className="text-xs tabular-nums text-subtle">{bank.questionCount} questions</span>

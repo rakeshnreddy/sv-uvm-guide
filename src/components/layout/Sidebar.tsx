@@ -28,7 +28,10 @@ import { useModalDialog } from "@/components/search/useModalDialog";
 import { SignalTag } from "@/components/ui/SignalTag";
 import { curriculumData } from "@/lib/curriculum-data";
 import { CURRICULUM_HREF, tierSectionHref, type NavLink } from "@/lib/site-links";
+import { tierDataAttribute, tierOfTierSlug } from "@/lib/tier-colors";
 import { cn } from "@/lib/utils";
+
+import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "./nav-styles";
 
 /** The id the navbar's outline button points at (aria-controls) while the drawer is open. */
 export const OUTLINE_DRAWER_ID = "course-outline-drawer";
@@ -210,7 +213,9 @@ function ModuleItem({
 /**
  * Tiers → modules → lessons. Each tier heading is a link to that tier's
  * section of /curriculum, with a disclosure button beside it; each
- * multi-lesson module is a disclosure too.
+ * multi-lesson module is a disclosure too. A tier heading carries its tier
+ * (data-tier) and the small step mark in the tier colour before its name
+ * (DESIGN.md section 11); the name stays neutral text.
  */
 export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
   const idPrefix = useId().replace(/:/g, "");
@@ -241,6 +246,7 @@ export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
               <Link
                 href={tierHref}
                 data-outline-tier={tier.code}
+                data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}
                 onClick={(event) => {
                   if (!isModifiedClick(event)) onNavigate?.(tierHref);
                 }}
@@ -250,7 +256,8 @@ export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
                   focusRing,
                 )}
               >
-                <span className={cn("text-sm text-foreground", tier.current ? "font-semibold" : "font-medium")}>
+                <span className={cn("flex items-center gap-2 text-sm text-foreground", tier.current ? "font-semibold" : "font-medium")}>
+                  {tierOfTierSlug(tier.id) ? <span aria-hidden="true" className="tier-step" data-tier-step="" /> : null}
                   {tier.title}
                 </span>
                 <span className="sr-only">, </span>
@@ -287,7 +294,7 @@ export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
                     aria-labelledby={labelId}
                     className="mb-1 ml-4 mt-2 rounded-lg border border-dashed border-border p-1"
                   >
-                    <p id={labelId} className="px-2 pb-1 pt-1 text-label text-subtle">
+                    <p id={labelId} className="px-2 pb-1 pt-1 text-label text-muted-foreground">
                       Electives
                       <span className="ml-1 font-normal">(optional: the core path skips them)</span>
                     </p>
@@ -310,7 +317,11 @@ function useCourseOutline() {
   return { outline, isLessonPage: current !== null, pathname };
 }
 
-/** The outline docked beside the lesson at lg and wider; hidden below lg, where the drawer takes over. */
+/**
+ * The outline docked beside the lesson at lg and wider; hidden below lg, where the drawer takes over.
+ * It has no fill of its own (bg-transparent, not glass), so the page's colour field continues behind
+ * the top of the column; only its right hairline marks the edge.
+ */
 function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -325,7 +336,7 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   };
 
   return (
-    <div id={DOCKED_OUTLINE_ID} className={cn("hidden shrink-0 border-r border-border lg:block", DOCKED_OUTLINE_WIDTH)}>
+    <div id={DOCKED_OUTLINE_ID} className={cn("hidden shrink-0 border-r border-border bg-transparent lg:block", DOCKED_OUTLINE_WIDTH)}>
       <nav aria-label="Course outline" className="sticky top-16 flex max-h-[calc(100vh-4rem)] flex-col">
         <div className="flex items-center justify-between gap-2 pb-1 pl-3 pr-2 pt-2">
           <p className="text-label text-subtle">Course outline</p>
@@ -381,7 +392,7 @@ function OutlineDrawer({ outline, pathname }: { outline: OutlineTier[]; pathname
       <div
         aria-hidden="true"
         data-testid="course-outline-backdrop"
-        className="absolute inset-0 bg-background/80"
+        className={cn("absolute inset-0", DIALOG_BACKDROP_CLASS)}
         onClick={shellStore.closeOutline}
       />
       <motion.div
@@ -394,9 +405,12 @@ function OutlineDrawer({ outline, pathname }: { outline: OutlineTier[]; pathname
         initial={reduceMotion ? false : { x: "-100%" }}
         animate={{ x: 0 }}
         transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col border-r border-border bg-card text-foreground shadow-card focus:outline-none"
+        className={cn(
+          CHROME_GLASS_CLASS,
+          "absolute inset-y-2 left-2 flex w-[min(22rem,calc(88vw-0.5rem))] flex-col rounded-2xl text-foreground focus:outline-none",
+        )}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-glass-border px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-foreground">
             Course outline
           </h2>
