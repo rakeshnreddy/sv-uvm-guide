@@ -23,6 +23,11 @@ describe('WaveformStudio', () => {
     renderMock.mockClear();
   });
 
+  it('reserves the first sample\'s drawn height while the drawing box is empty, so nothing moves when WaveDrom draws', () => {
+    render(<WaveformStudio />);
+    expect(screen.getByTestId('studio-waveform')).toHaveClass('empty:min-h-[200px]');
+  });
+
   it('titles the tool in sentence case, like the nav label', () => {
     render(<WaveformStudio />);
     expect(screen.getByRole('heading', { level: 3, name: 'Waveform studio' })).toBeInTheDocument();

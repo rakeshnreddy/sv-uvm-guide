@@ -102,7 +102,7 @@ describe('/knowledge-hub', () => {
     fireEvent.click(within(map).getByRole('button', { name: /^I-SV-1/ }));
 
     const details = screen.getByRole('region', { name: /^I-SV-1:/ });
-    fireEvent.click(within(details).getByRole('button', { name: /^F4B:.*\(Foundational\)/ }));
+    fireEvent.click(within(details).getByRole('button', { name: /^F4B:.*\(Tier 1: Foundations\)/ }));
     expect(mapTier('Tier 1')).toHaveAttribute('aria-checked', 'true');
     expect(within(mapGroup()).getByRole('button', { name: /^F4B/ })).toHaveAttribute('aria-pressed', 'true');
   });

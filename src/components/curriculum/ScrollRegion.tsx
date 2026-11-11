@@ -1,5 +1,6 @@
 import React from "react";
 
+import { LessonCheckbox, LessonTableHeader } from "@/components/mdx/LessonGfm";
 import { cn } from "@/lib/utils";
 
 import { ScrollRegionFrame } from "./ScrollRegionFrame";
@@ -45,4 +46,7 @@ export function LessonTable({ className, ...props }: React.ComponentPropsWithout
  */
 export const lessonScrollRegionComponents = {
   table: LessonTable,
+  // GFM task-list marks and an empty corner header cell, made accessible (LessonGfm).
+  input: LessonCheckbox,
+  th: LessonTableHeader,
 };

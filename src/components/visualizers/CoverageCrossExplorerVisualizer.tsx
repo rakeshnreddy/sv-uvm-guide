@@ -40,6 +40,20 @@ import {
 } from "@/lib/coverage-model";
 import { cn } from "@/lib/utils";
 
+
+/** A bin name with a line-break opportunity before its bracket ("auto" / "[WRITE]"), so narrow columns wrap there and not mid-word. */
+function withBracketBreak(name: string): React.ReactNode {
+  const at = name.indexOf("[");
+  if (at <= 0) return name;
+  return (
+    <>
+      {name.slice(0, at)}
+      <wbr />
+      {name.slice(at)}
+    </>
+  );
+}
+
 export const COVERAGE_ASSUMPTIONS = [
   "Implements IEEE 1800-2023 §19.5 (bins), §19.6 (crosses, binsof/intersect, ignore/illegal cross bins) and §19.11 (coverage computation). Tested rule by rule.",
   "Stimulus is drawn from an exact distribution with a seeded generator: dist weights multiply across variables and excluded combinations are removed. A real solver's random sequence differs, but the probabilities match.",
@@ -258,17 +272,17 @@ function CrossGrid({ model, marks, snapshot, justHit, action, onToggleCells }: G
   const crossCounts = snapshot?.items.find((i) => i.type === "cross");
   const actionName = markStyles[action].label;
   const headerBtn =
-    "flex min-h-10 w-full flex-col items-center justify-center rounded-md border border-dashed border-border/70 px-1 py-1 text-[11px] leading-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
+    "flex min-h-10 w-full flex-col items-center justify-center rounded-md border border-dashed border-border/70 px-1 py-1 text-xs leading-tight text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 
   return (
     <div className="overflow-x-auto">
       <div
-        className="grid min-w-[280px] gap-1.5"
-        style={{ gridTemplateColumns: `minmax(3.5rem, auto) repeat(${cols.length}, minmax(0, 1fr))` }}
+        className="grid min-w-[320px] gap-1.5"
+        style={{ gridTemplateColumns: `minmax(3.5rem, 6rem) repeat(${cols.length}, minmax(0, 1fr))` }}
         aria-label={`${cross.name}: ${rowsCp.name} rows × ${colsCp.name} columns`}
         role="group"
       >
-        <div className="flex items-end p-1 font-mono text-[10px] text-muted-foreground [font-variant-ligatures:none]">
+        <div className="flex items-end p-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
           {rowsCp.name} ↓ · {colsCp.name} →
         </div>
         {cols.map((c) => (
@@ -279,7 +293,7 @@ function CrossGrid({ model, marks, snapshot, justHit, action, onToggleCells }: G
             aria-label={`Toggle ${actionName} for column ${c.name}`}
             className={headerBtn}
           >
-            <span className="font-mono font-semibold text-foreground [font-variant-ligatures:none]">{c.name}</span>
+            <span className="max-w-full font-mono font-semibold text-foreground [overflow-wrap:anywhere] [font-variant-ligatures:none]">{withBracketBreak(c.name)}</span>
             <span className="font-mono [font-variant-ligatures:none]">{binCaption(c, colsCp.enumLabels)}</span>
           </button>
         ))}
@@ -341,7 +355,7 @@ function CrossGrid({ model, marks, snapshot, justHit, action, onToggleCells }: G
                     {isNew ? "▲ " : ""}
                     {glyph}
                   </span>
-                  <span aria-hidden className="mt-0.5 font-mono text-[11px] leading-none tabular-nums">
+                  <span aria-hidden className="mt-0.5 font-mono text-xs leading-none tabular-nums">
                     {text}
                   </span>
                 </button>
@@ -367,7 +381,7 @@ function CoverageCurve({ curve, cursor, errorSamples, closedAt }: { curve: numbe
   const at = (count: number) => (count <= 0 ? 0 : curve[Math.min(count, curve.length) - 1] ?? 0);
   const label = `Coverage of cg_bus against samples. ${curve.length} samples run; ${closedAt ? `100% at sample ${closedAt}` : `ends at ${fmtPct(at(curve.length))}`}. Cursor at sample ${cursor} (${fmtPct(at(cursor))}).`;
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} className="block h-auto w-full max-w-[520px]">
         <line x1={28} x2={W - 8} y1={y(100)} y2={y(100)} className="stroke-emerald-500/50" strokeDasharray="4 3" />
         <text x={24} y={y(100) + 3} textAnchor="end" className="fill-muted-foreground text-[9px]">
@@ -391,7 +405,7 @@ function CoverageCurve({ curve, cursor, errorSamples, closedAt }: { curve: numbe
           sample {curve.length}
         </text>
       </svg>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         x-axis: number of sample() calls, not simulation time. ✕ marks illegal-bin errors; the amber line is the playback cursor.
       </figcaption>
     </figure>
@@ -406,8 +420,8 @@ function CoverageMath({ snapshot, model }: { snapshot: CoverageSnapshot; model: 
   const ignored = cross.products.filter((p) => p.status === "ignored").length;
   const illegal = cross.products.filter((p) => p.status === "illegal").length;
   return (
-    <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm" aria-live="polite">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Coverage math (§19.11)</p>
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
+      <p className="text-label text-muted-foreground">Coverage math (§19.11)</p>
       <ul className="space-y-1 font-mono text-[12px] [font-variant-ligatures:none]">
         {snapshot.items.map((it) => (
           <li key={it.name}>
@@ -504,8 +518,8 @@ function ClosureChallenge({ showEyebrow = true }: { showEyebrow?: boolean }) {
   }, [fixId, baseSpec, baseStim, variant]);
 
   return (
-    <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
-      {showEyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Debug it · closure challenge</p> : null}
+    <div className="space-y-3 rounded-xl border border-border bg-card p-3">
+      {showEyebrow ? <p className="text-label text-muted-foreground">Debug it · closure challenge</p> : null}
       <p className="text-sm text-foreground">
         A regression is stuck at <strong>{fmtPct(stuck.final.percent)}</strong>. The constrained stimulus never sends BURST to addresses 48..63, so the cross cell{" "}
         <code className="font-mono [font-variant-ligatures:none]">{stuck.forecast.unreachable.map((t) => t.name).join(", ")}</code> has probability 0. Which fix is right depends on the spec.
@@ -525,7 +539,7 @@ function ClosureChallenge({ showEyebrow = true }: { showEyebrow?: boolean }) {
         <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
           {fixes.map((f) => (
             <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-              <input type="radio" name="coverage-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+              <input type="radio" name="coverage-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
               <span className="min-w-0 break-words font-mono text-[12px] [font-variant-ligatures:none]">{f.label}</span>
             </label>
           ))}
@@ -679,7 +693,7 @@ export const CoverageCrossExplorerVisualizer: React.FC<CoverageCrossExplorerProp
           <p className="text-xs text-muted-foreground">{stimulusPresets[stimulusId].summary}</p>
         </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" checked={crossOnly} onChange={(e) => setCrossOnly(e.target.checked)} className="accent-cyan-500" />
+          <input type="checkbox" checked={crossOnly} onChange={(e) => setCrossOnly(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
           Count only the cross (<code className="font-mono [font-variant-ligatures:none]">option.weight = 0</code> on both coverpoints)
         </label>
       </div>
@@ -711,7 +725,7 @@ export const CoverageCrossExplorerVisualizer: React.FC<CoverageCrossExplorerProp
           action={action}
           onToggleCells={toggleCells}
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           ○ counted bin (hole until hit) · ✓ covered, with hit count · ▲ hit on this step · ⊘ ignore_bins: not counted · ✕ illegal_bins: run-time error when hit
         </p>
         {Object.keys(marks).length > 0 ? (
@@ -788,8 +802,8 @@ export const CoverageCrossExplorerVisualizer: React.FC<CoverageCrossExplorerProp
           <CoverageCurve curve={run.curve} cursor={step.samples} errorSamples={run.errorSamples} closedAt={run.closedAt} />
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
             <CoverageMath snapshot={step.snapshot} model={model} />
-            <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Holes at this step</p>
+            <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
+              <p className="text-label text-muted-foreground">Holes at this step</p>
               {holes.length === 0 ? (
                 <p className="text-emerald-700 dark:text-emerald-300">✓ None: every counted bin is covered.</p>
               ) : (
@@ -805,8 +819,8 @@ export const CoverageCrossExplorerVisualizer: React.FC<CoverageCrossExplorerProp
               )}
               {errorsSoFar.length > 0 ? (
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-300">✕ Run-time errors: {errorsSoFar.length}</p>
-                  <ul className="mt-1 space-y-1 font-mono text-[11px] text-rose-700 [font-variant-ligatures:none] dark:text-rose-300">
+                  <p className="text-label text-danger">✕ Run-time errors: {errorsSoFar.length}</p>
+                  <ul className="mt-1 space-y-1 font-mono text-xs text-rose-700 [font-variant-ligatures:none] dark:text-rose-300">
                     {errorsSoFar.slice(0, 3).map((e) => (
                       <li key={`${e.sample}-${e.bin}`}>
                         ✕ Error (sample {e.sample + 1}): {e.message}

@@ -77,7 +77,7 @@ function RegionButton({
       )}
     >
       <span className="text-sm font-semibold text-foreground">{REGION_LABELS[region]}</span>
-      <span className="text-[11px] leading-tight text-muted-foreground">{guide.tag}</span>
+      <span className="text-xs leading-tight text-muted-foreground">{guide.tag}</span>
       {state === "correct" ? (
         <span className="absolute right-2 top-1.5 text-emerald-700 dark:text-emerald-300" aria-label="correct answer">
           ✓

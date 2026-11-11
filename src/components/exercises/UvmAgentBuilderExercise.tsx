@@ -122,7 +122,7 @@ const UvmAgentBuilderExercise: React.FC = () => {
       >
         <span className="min-w-0 flex-1">
           <span className="block font-medium text-foreground">{item.name}</span>
-          <span className="block truncate font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{palette?.cls}</span>
+          <span className="block truncate font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{palette?.cls}</span>
         </span>
         <button
           type="button"
@@ -236,7 +236,7 @@ const UvmAgentBuilderExercise: React.FC = () => {
           {feedback.passed ? (
             <details className="rounded-lg border border-border/70 bg-background/50 p-2">
               <summary className="cursor-pointer font-medium text-foreground">How bus_agent builds this with get_is_active()</summary>
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+              <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
                 {agentClassSource({ name: "agt", configured: mode, callsSuperBuild: true, guardsConnect: true })
                   .map((l) => l.text)
                   .join("\n")}

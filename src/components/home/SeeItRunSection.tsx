@@ -36,8 +36,9 @@ export function seeItRunInstruction(stepCount: number): string {
 export const SEE_IT_RUN_ACTION_CLASS =
   'inline-flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-x-2 gap-y-1 text-ui text-muted-foreground';
 
+/** On phones the target grows to 40 px by padding that negative margins cancel, so the line does not move. */
 const linkClass =
-  'rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  'rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:inline-block max-sm:-my-2.5 max-sm:py-2.5';
 
 /**
  * The live visualizer's box (its own border, fill, radius and padding), so the

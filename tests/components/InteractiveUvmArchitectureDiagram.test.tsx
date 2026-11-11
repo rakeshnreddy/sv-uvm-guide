@@ -40,18 +40,18 @@ describe('InteractiveUvmArchitectureDiagram', () => {
     render(<InteractiveUvmArchitectureDiagram />);
 
     const detail = screen.getByTestId('uvm-node-detail');
-    expect(detail).toHaveTextContent('UVM Test & Component Basics');
+    expect(detail).toHaveTextContent('UVM tests and component basics');
 
     const summary = screen.getByTestId('uvm-quick-summary');
-    const agentButton = within(summary).getByRole('button', { name: /Agents, Sequencers & Drivers/i });
+    const agentButton = within(summary).getByRole('button', { name: /Agents, sequencers and drivers/i });
 
     fireEvent.click(agentButton);
 
-    expect(detail).toHaveTextContent('Agents, Sequencers & Drivers');
+    expect(detail).toHaveTextContent('Agents, sequencers and drivers');
     expect(detail).toHaveTextContent('Agents bridge stimulus generation and DUT interaction');
 
     const flowList = screen.getByTestId('uvm-flow-list');
-    const agentFlowButton = within(flowList).getByRole('button', { name: /Agents, Sequencers & Drivers/i });
+    const agentFlowButton = within(flowList).getByRole('button', { name: /Agents, sequencers and drivers/i });
     expect(agentFlowButton).toHaveAttribute('aria-pressed', 'true');
   });
 
@@ -73,7 +73,7 @@ describe('InteractiveUvmArchitectureDiagram', () => {
     expect(within(summary).queryByRole('button', { name: /See the full visualization/i })).not.toBeInTheDocument();
     const link = within(summary).getByRole('link', { name: /See the full visualization/i });
     expect(link).toHaveAttribute('href', '/practice/visualizations/uvm-architecture');
-    expect(screen.getByTestId('uvm-node-detail')).toHaveTextContent('Functional Coverage');
+    expect(screen.getByTestId('uvm-node-detail')).toHaveTextContent('Functional coverage');
   });
 
   it('hides the full-page link when already on the full-page route', () => {

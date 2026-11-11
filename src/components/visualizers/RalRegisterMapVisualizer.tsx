@@ -78,7 +78,7 @@ export function RegisterValueTable({
       <td className={cn("px-2 py-1.5 font-mono tabular-nums", ch && "bg-cyan-500/10")}>
         <span aria-label={`${fieldHex(value, size)}${ch ? ", just changed" : ""}`}>{fieldHex(value, size)}</span>
         {ch ? (
-          <span aria-hidden className="ml-1 text-[10px] text-cyan-600 dark:text-cyan-300">
+          <span aria-hidden className="ml-1 text-xs text-cyan-600 dark:text-cyan-300">
             ▲
           </span>
         ) : null}
@@ -98,8 +98,8 @@ export function RegisterValueTable({
   return (
     <div className="overflow-x-auto rounded-xl border border-border/70">
       <table className="w-full min-w-[300px] border-collapse text-left text-xs [font-variant-ligatures:none]">
-        <caption className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{caption}</caption>
-        <thead className="bg-muted/30 text-[11px] text-muted-foreground">
+        <caption className="px-3 py-2 text-left text-label text-muted-foreground">{caption}</caption>
+        <thead className="bg-muted/30 text-xs text-muted-foreground">
           <tr>
             <th scope="col" className="px-2 py-1.5 font-semibold">
               Field
@@ -133,7 +133,7 @@ export function RegisterValueTable({
                   <span className="ml-1 font-normal text-muted-foreground">
                     [{f.lsb + f.size - 1 === f.lsb ? f.lsb : `${f.lsb + f.size - 1}:${f.lsb}`}]
                   </span>
-                  {f.volatile ? <span className="ml-1 rounded border border-border px-1 text-[9px] font-normal uppercase text-muted-foreground">vol</span> : null}
+                  {f.volatile ? <span className="ml-1 rounded border border-border px-1 text-label font-normal text-muted-foreground">vol</span> : null}
                 </th>
                 <td className="px-2 py-1.5 font-mono">{f.access}</td>
                 {cell(s.desired, f.size, p?.desired, pending ? <span className="ml-1 text-amber-700 dark:text-amber-300" aria-label="update pending">↻</span> : null)}
@@ -153,7 +153,7 @@ export function RegisterValueTable({
           </tr>
         </tbody>
       </table>
-      <p className="border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+      <p className="border-t border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
         ✕ mirror differs from the DUT · ↻ desired differs from the mirror (update() would write) · ▲ changed by the last call · vol = configured volatile
       </p>
     </div>
@@ -172,11 +172,11 @@ const severityClass: Record<UvmMessage["severity"], string> = {
 export function UvmLog({ messages, label = "Log" }: { messages: UvmMessage[]; label?: string }) {
   if (messages.length === 0) return null;
   return (
-    <figure className="overflow-hidden rounded-lg border border-border/70 bg-slate-950/90">
-      <figcaption className="border-b border-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+    <figure className="overflow-hidden rounded-lg border border-border/70 bg-code-surface">
+      <figcaption className="border-b border-code-border px-3 py-1 text-label text-code-muted">
         {label} (abridged: no file, time or reporter)
       </figcaption>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11.5px] leading-5 [font-variant-ligatures:none]">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-5 [font-variant-ligatures:none]">
         {messages.map((m, i) => (
           <span key={i} className={cn("block", severityClass[m.severity])}>
             {m.severity === "SIM_FATAL" ? "Simulator error" : m.severity}
@@ -192,7 +192,7 @@ export function UvmLog({ messages, label = "Log" }: { messages: UvmMessage[]; la
 export function StepCard({ step, block }: { step: RalStep; block: RalBlockSpec }) {
   const reg = "reg" in step.op ? findReg(block, step.op.reg) : null;
   return (
-    <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
       <code className="block whitespace-pre-wrap break-words font-mono text-[12.5px] font-semibold text-foreground [font-variant-ligatures:none]">{step.code}</code>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
         <dt className="text-muted-foreground">Bus</dt>
@@ -395,7 +395,7 @@ function Sandbox() {
               { value: "none", label: "None (default)" },
             ]}
           />
-          <code className="block font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{ENV_CODE[prediction]}</code>
+          <code className="block font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{ENV_CODE[prediction]}</code>
         </div>
         <div className="space-y-1.5">
           <p className="text-xs font-semibold text-foreground">Backdoor</p>
@@ -408,7 +408,7 @@ function Sandbox() {
               { value: "no", label: "No HDL path" },
             ]}
           />
-          <code className="block font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+          <code className="block font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
             {hdlPath ? 'add_hdl_path("tb_top.dut.u_regs");' : "// configure(this, null, \"\") — no backdoor"}
           </code>
         </div>
@@ -455,7 +455,7 @@ function Sandbox() {
                 aria-pressed={fieldName === f.name}
                 onClick={() => setFieldName(fieldName === f.name ? null : f.name)}
                 className={cn(
-                  "min-h-10 rounded-md border px-2 py-1 text-left font-mono text-[11px] leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
+                  "min-h-10 rounded-md border px-2 py-1 text-left font-mono text-xs leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
                   fieldName === f.name ? "border-cyan-500 bg-cyan-500/10" : "border-border/70 hover:bg-muted",
                 )}
               >
@@ -480,10 +480,10 @@ function Sandbox() {
                 ? "volatile = 1: configure() sets its compare to UVM_NO_CHECK, so mirror(UVM_CHECK) skips it."
                 : `volatile = 0: mirror(UVM_CHECK) ${fieldIsCompared(effectiveAccess(selectedField.access, reg.rights), "UVM_CHECK") ? "compares it" : "never compares it (write-only)"}.`}
             </p>
-            <code className="mt-1 block whitespace-pre-wrap break-words font-mono text-[11px] text-foreground [font-variant-ligatures:none]">{fieldConfigureLine(selectedField)}</code>
+            <code className="mt-1 block whitespace-pre-wrap break-words font-mono text-xs text-foreground [font-variant-ligatures:none]">{fieldConfigureLine(selectedField)}</code>
           </div>
         ) : (
-          <p className="text-[11px] text-muted-foreground">Select a field to see its policy and its generated configure() call.</p>
+          <p className="text-xs text-muted-foreground">Select a field to see its policy and its generated configure() call.</p>
         )}
       </div>
 
@@ -553,7 +553,7 @@ function Sandbox() {
         </div>
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-3 text-xs">
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={predictFirst} onChange={(e) => setPredictFirst(e.target.checked)} className="h-4 w-4 accent-amber-500" />
+            <input type="checkbox" checked={predictFirst} onChange={(e) => setPredictFirst(e.target.checked)} className="size-5 shrink-0 accent-amber-500" />
             Predict the mirror before each call
           </label>
           <button type="button" className={buttonClass} onClick={() => run({ kind: "reset" })}>
@@ -706,7 +706,7 @@ function VolatileDebug() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "min-h-8 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "min-h-8 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -738,7 +738,7 @@ function VolatileDebug() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {DEBUG_FIXES.map((f) => (
               <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="ral-volatile-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="ral-volatile-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="min-w-0 break-words font-mono text-[12px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}

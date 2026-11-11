@@ -84,7 +84,7 @@ const linkBtn = "-ml-2 inline-flex min-h-10 items-center rounded-md px-2 text-xs
 
 function PredictChip() {
   return (
-    <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">
+    <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">
       Predict
     </span>
   );
@@ -124,7 +124,7 @@ function ChoiceGroup<T extends string>({
               value === o.value ? "border-amber-500/70 bg-amber-500/10" : "border-border/70 bg-background/50",
             )}
           >
-            <input type="radio" name={name} value={o.value} checked={value === o.value} onChange={() => onChange(o.value)} className="accent-amber-500" />
+            <input type="radio" name={name} value={o.value} checked={value === o.value} onChange={() => onChange(o.value)} className="size-5 shrink-0 accent-amber-500" />
             {o.label}
           </label>
         ))}
@@ -304,7 +304,7 @@ function DetectorTable({
             <tr key={row} className="border-b border-border/40 align-top">
               <th scope="row" className="py-1.5 pr-2 font-mono font-normal">
                 {row === "x" ? noMatchLabel(m) : row}
-                {row !== "x" && moore.includes(row) ? <span className="block font-sans text-[10px] text-muted-foreground">detected = 1</span> : null}
+                {row !== "x" && moore.includes(row) ? <span className="block font-sans text-xs text-muted-foreground">detected = 1</span> : null}
               </th>
               {([0, 1] as Bit[]).map((din) => {
                 const text = cellText(m, row, din, seeds);
@@ -314,7 +314,7 @@ function DetectorTable({
                     {now ? <span aria-hidden>▶ </span> : null}
                     {text.main}
                     {text.warning ? (
-                      <span className="mt-0.5 block font-sans text-[11px] text-rose-700 dark:text-rose-300">
+                      <span className="mt-0.5 block font-sans text-xs text-rose-700 dark:text-rose-300">
                         <span aria-hidden>⚠ </span>
                         {text.warning}
                       </span>
@@ -326,7 +326,7 @@ function DetectorTable({
           ))}
         </tbody>
       </table>
-      {!seeds ? <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">⚠ An unassigned output {LATCH_NOTE}.</p> : null}
+      {!seeds ? <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">⚠ An unassigned output {LATCH_NOTE}.</p> : null}
     </div>
   );
 }
@@ -417,7 +417,7 @@ function DetectorStepper({ preset, className }: { preset?: string; className?: s
         {live}
       </p>
 
-      <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+      <div className="space-y-3 rounded-xl border border-border bg-card p-3">
         <SegmentedControl
           label="din stream preset"
           value={presetId}
@@ -510,7 +510,7 @@ function DetectorStepper({ preset, className }: { preset?: string; className?: s
                 setSeedsOff(e.target.checked);
                 restart();
               }}
-              className="h-4 w-4 accent-rose-500"
+              className="size-5 shrink-0 accent-rose-500"
             />
             Break it: remove the seed lines
           </label>
@@ -574,7 +574,7 @@ function DetectorStepper({ preset, className }: { preset?: string; className?: s
       ) : null}
 
       {!seedsOff && grade && focusEdge !== null && review === null ? (
-        <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm" data-testid="fsm-feedback">
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm" data-testid="fsm-feedback">
           <Verdict ok={grade.predicted ? grade.nextCorrect && grade.detectedCorrect : null}>{grade.headline}</Verdict>
           <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
             {grade.sentences.map((s) => (
@@ -753,7 +753,7 @@ function TrafficStepper({ preset, className }: { preset?: string; className?: st
       <p role="status" aria-live="polite" className="sr-only" data-testid="fsm-live">
         {live}
       </p>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border/70 bg-background/40 p-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-card p-3">
         <SegmentedControl
           label="Controller version"
           value={broken ? "break-yellow" : "lesson"}
@@ -863,7 +863,7 @@ function TrafficStepper({ preset, className }: { preset?: string; className?: st
           </div>
         </div>
       ) : (
-        <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm" data-testid="fsm-feedback">
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm" data-testid="fsm-feedback">
           {lightGrade ? <Verdict ok={committed?.light ? lightGrade.correct : null}>{lightGrade.headline}</Verdict> : null}
           <p className="text-muted-foreground">{explainLightAt(run, predictEdge)}</p>
           {printGrade ? <Verdict ok={printGrade.correct}>{printGrade.sentence}</Verdict> : null}
@@ -911,8 +911,8 @@ function TrafficStepper({ preset, className }: { preset?: string; className?: st
             ]}
             cycleWidth={52}
           />
-          <figure className="rounded-xl border border-border/70 bg-slate-950/90 p-3 text-slate-100">
-            <figcaption className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Log up to edge {k}</figcaption>
+          <figure className="rounded-xl border border-border/70 bg-code-surface p-3 text-code-foreground">
+            <figcaption className="mb-1 text-label text-code-muted">Log up to edge {k}</figcaption>
             <pre className="whitespace-pre-wrap break-words font-mono text-xs [font-variant-ligatures:none]" data-testid="fsm-log">
               {log.length ? log.join("\n") : "(nothing printed yet)"}
             </pre>

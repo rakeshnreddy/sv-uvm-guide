@@ -146,7 +146,7 @@ function CoordinationWave({ result }: { result: VcResult }) {
       <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/[0.06] p-3 text-sm" aria-live="polite">
         {selected ? (
           <>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-label text-muted-foreground">
               cycle {selected.t} · {vcNs(selected.t)}
             </p>
             <p className="mt-1 text-foreground">{selected.notes.length ? selected.notes.join(". ") + "." : "Nothing changes in this cycle."}</p>
@@ -171,7 +171,7 @@ function ItemsTable({ result }: { result: VcResult }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[300px] border-collapse text-xs">
-        <caption className="mb-1 text-left text-[11px] text-muted-foreground">The {VC_ITEMS} planned data items</caption>
+        <caption className="mb-1 text-left text-xs text-muted-foreground">The {VC_ITEMS} planned data items</caption>
         <thead>
           <tr>
             {["Item", "Sent", "Fate", "Why"].map((h) => (
@@ -214,7 +214,7 @@ function RunReveal({ result }: { result: VcResult }) {
       </div>
       <CoordinationWave key={JSON.stringify(result.config)} result={result} />
       <ItemsTable result={result} />
-      <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
+      <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Simulation log">
         {result.log.join("\n")}
       </pre>
     </div>
@@ -263,7 +263,7 @@ function CoordinationExplorer() {
         {advanced ? (
           <div className="mt-2 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             <label className="flex min-h-10 items-center gap-2 text-xs text-foreground">
-              <input type="checkbox" checked={config.reset} onChange={(e) => setConfig((c) => ({ ...c, reset: e.target.checked }))} className="h-4 w-4 accent-cyan-500" />
+              <input type="checkbox" checked={config.reset} onChange={(e) => setConfig((c) => ({ ...c, reset: e.target.checked }))} className="size-5 shrink-0 accent-cyan-500" />
               Assert rst_n at 80 ns for 20 ns
             </label>
             <div>
@@ -351,7 +351,7 @@ function CoordinationDebugChallenge() {
       fidelity="model"
       assumptions={COORDINATION_MODEL_ASSUMPTIONS}
     >
-      <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Failing log">
+      <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Failing log">
         {[
           `UVM_INFO  @ ${vcNs(buggy.items[buggy.items.length - 1].out ?? 0)} [SCB] ${buggy.items.filter((i) => i.fate === "matched").length} of ${VC_ITEMS} items matched`,
           ...buggy.log.filter((l) => l.includes("FATAL")),
@@ -371,7 +371,7 @@ function CoordinationDebugChallenge() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -403,7 +403,7 @@ function CoordinationDebugChallenge() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {vcFixes.map((f) => (
               <label key={f.variant} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fix === f.variant ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="vc-fix" checked={fix === f.variant} onChange={() => setFix(f.variant)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="vc-fix" checked={fix === f.variant} onChange={() => setFix(f.variant)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span>{f.label}</span>
               </label>
             ))}
@@ -416,7 +416,7 @@ function CoordinationDebugChallenge() {
                 {fixInfo.review}
               </p>
               {fixResult.outcome === "pass" ? (
-                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">
+                <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">
                   {vseqSource(fixInfo.variant)
                     .map((l) => l.text)
                     .join("\n")}

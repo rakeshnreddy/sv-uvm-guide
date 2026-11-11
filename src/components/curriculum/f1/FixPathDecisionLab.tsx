@@ -196,22 +196,22 @@ function ResultFacts({ decision, scenario }: { decision: FixDecision; scenario: 
   return (
     <dl className="grid gap-2 text-sm grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
       <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
-        <dt className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Rule-of-thumb cost</dt>
+        <dt className="text-label text-muted-foreground">Rule-of-thumb cost</dt>
         <dd className="mt-0.5 text-foreground">
           <span className="font-mono font-semibold">{decision.multiplierText}</span> at {decision.stage.label}
         </dd>
       </div>
       <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
-        <dt className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Typical delay (project-dependent)</dt>
+        <dt className="text-label text-muted-foreground">Typical delay (project-dependent)</dt>
         <dd className="mt-0.5 text-foreground">{decision.delay}</dd>
       </div>
       <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
-        <dt className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">What changes</dt>
+        <dt className="text-label text-muted-foreground">What changes</dt>
         <dd className="mt-0.5 text-foreground">{decision.whatChanges}</dd>
       </div>
       {scenario?.detail ? (
         <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">The fix in detail</dt>
+          <dt className="text-label text-muted-foreground">The fix in detail</dt>
           <dd className="mt-0.5 text-foreground">{scenario.detail}</dd>
         </div>
       ) : null}
@@ -294,7 +294,7 @@ function CountInput({ label, value, onChange }: { label: string; value: number; 
           className="h-10 w-20 rounded-lg border border-border/70 bg-background px-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
-      <p id={hintId} className="text-[11px] text-muted-foreground">
+      <p id={hintId} className="text-xs text-muted-foreground">
         {pending ? `Type a whole number from 0 to 999; until then the count stays ${value.toLocaleString("en-US")}.` : "A whole number from 0 to 999."}
       </p>
     </div>
@@ -312,7 +312,7 @@ function CustomControls({ facts, onChange }: { facts: BugFacts; onChange: (f: Bu
   const counts = typeof fix.spare === "object" ? fix.spare : { gatesNeeded: 0, spareCellsNearby: 0 };
   const setFix = (over: Partial<FixShape>) => onChange({ ...facts, fix: { ...fix, ...over } });
   return (
-    <div role="group" aria-label="Facts of your bug" className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+    <div role="group" aria-label="Facts of your bug" className="space-y-3 rounded-xl border border-border bg-card p-3">
       <div className="space-y-1">
         <p className="text-xs font-semibold text-foreground">Taped out?</p>
         <SegmentedControl
@@ -413,7 +413,7 @@ function DecideMode({ preset }: { preset?: string }) {
         />
       </div>
       {scenario ? (
-        <p className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm text-foreground">{scenario.prompt}</p>
+        <p className="rounded-xl border border-border bg-card p-3 text-sm text-foreground">{scenario.prompt}</p>
       ) : (
         <>
           <CustomControls facts={custom} onChange={setCustom} />
@@ -456,7 +456,7 @@ function RankingTask({
   const right = graded.filter((m) => m === "correct").length;
   const items = marks && ungradedNote ? rankItems.map((i) => (marks[i.id as StageId] ? i : { ...i, description: ungradedNote })) : rankItems;
   return (
-    <section aria-label={title} className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3">
+    <section aria-label={title} className="space-y-2 rounded-xl border border-border bg-card p-3">
       <h4 className="text-sm font-semibold text-foreground">{title}</h4>
       <ReorderList items={items} order={order} onChange={setOrder} label={listLabel} marks={marks ?? undefined} disabled={marks !== null} />
       {marks ? (
@@ -499,7 +499,7 @@ function KataMode() {
       <ol className="space-y-4">
         {KATA_SCENARIOS.map((s, i) => (
           <li key={s.id} aria-label={`Scenario ${i + 1}`} className="space-y-2">
-            <p className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm text-foreground">
+            <p className="rounded-xl border border-border bg-card p-3 text-sm text-foreground">
               <span className="font-semibold">{i + 1}. </span>
               {s.prompt}
             </p>

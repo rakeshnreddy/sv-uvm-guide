@@ -114,7 +114,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicyPage() {
   return (
-    <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
+    <div className="flex min-h-[calc(100vh-3.5rem)] flex-col text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
           width="reading"

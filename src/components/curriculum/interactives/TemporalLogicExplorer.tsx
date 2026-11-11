@@ -166,7 +166,7 @@ export default function TemporalLogicExplorer() {
           onChange={setOpIndex}
           options={family.operators.map((op, i) => ({ value: String(i), label: op.property }))}
         />
-        <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+        <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]">
           <code>{`a_check: assert property (@(posedge clk) ${operator.property});\n// reads as: ${operator.summary}`}</code>
         </pre>
 
@@ -215,7 +215,7 @@ export default function TemporalLogicExplorer() {
               <ol className="space-y-1 text-sm" aria-label={`How ${operator.property} matched for attempt A${k}`}>
                 {focus.steps.map((s, i) => (
                   <li key={i} className="flex flex-wrap gap-x-2">
-                    <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
+                    <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">
                       {s.toEdge !== undefined && s.toEdge !== s.edge ? `edges ${s.edge}–${s.toEdge}` : `edge ${s.edge}`}
                     </span>
                     <span aria-hidden>{s.kind === "match" ? "✓" : s.kind === "fail" ? "✕" : s.kind === "wait" ? "…" : "→"}</span>

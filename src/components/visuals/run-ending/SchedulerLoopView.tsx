@@ -50,11 +50,11 @@ export function RevealSignal({ onReveal }: { onReveal: (revealed: boolean) => vo
 export function RunNarration({ step, result }: { step: TraceStep; result: SimResult }) {
   const badges = runStepBadges(step, result.outcome, result);
   return (
-    <div aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-4">
-      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+    <div aria-live="polite" className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 font-bold uppercase tracking-wider",
+            "rounded px-1.5 py-0.5 font-bold",
             badges.tone === "kill"
               ? "bg-rose-500/15 text-rose-800 dark:text-rose-200"
               : badges.tone === "horizon"
@@ -87,10 +87,10 @@ export function RunLog({ step, result, prepared, index }: { step: TraceStep; res
   const hasSeverity = step.log.some((l) => l.severity);
   const diagnostic = endDiagnosticNote(result, prepared);
   return (
-    <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">
-      <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Simulation output</p>
+    <div className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">
+      <p className="mb-1 font-sans text-label text-code-muted">Simulation output</p>
       {step.log.length === 0 ? (
-        <span className="text-slate-400">(no output yet)</span>
+        <span className="text-code-muted">(no output yet)</span>
       ) : (
         <ol className="space-y-0.5" aria-label="Simulation output, oldest first">
           {step.log.map((l, i) => (
@@ -99,18 +99,18 @@ export function RunLog({ step, result, prepared, index }: { step: TraceStep; res
               <span className="min-w-0 flex-1 break-words">
                 {l.severity ? <span className="text-amber-200/90">{severityPrefix(l.severity, l.time)} </span> : null}
                 {l.text}
-                {l.region === "final" ? <span className="text-slate-400"> (final)</span> : null}
+                {l.region === "final" ? <span className="text-code-muted"> (final)</span> : null}
               </span>
             </li>
           ))}
         </ol>
       )}
       {hasSeverity ? (
-        <p className="mt-2 font-sans text-[11px] text-slate-400">
+        <p className="mt-2 font-sans text-xs text-slate-400">
           ‹… prefix› is a placeholder: the tool prints its own text with the severity, file and line, scope and time. That layout is tool-specific (§20.10).
         </p>
       ) : null}
-      {diagnostic && index >= diagnostic.index ? <p className="mt-2 font-sans text-[11px] text-slate-400">{diagnostic.text}</p> : null}
+      {diagnostic && index >= diagnostic.index ? <p className="mt-2 font-sans text-xs text-slate-400">{diagnostic.text}</p> : null}
     </div>
   );
 }
@@ -150,21 +150,21 @@ function LoopFlowchart({ result, index }: { result: SimResult; index: number }) 
   const note = loopBoxNote(result, index);
   const passed = loopBoxPassed(result, index);
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-3">
-      <figcaption className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">The scheduler loop (§4.5, simplified)</figcaption>
+    <figure className="rounded-xl border border-border bg-card p-3">
+      <figcaption className="mb-2 text-label text-muted-foreground">The scheduler loop (§4.5, simplified)</figcaption>
       <ol className="space-y-1.5" aria-label="Scheduler loop boxes">
         {LOOP_BOXES.map((box, i) => {
           const isActive = box.id === active;
           const isPassed = passed?.box === box.id;
           return (
             <li key={box.id}>
-              {i === 2 ? <p className="pl-3 text-[11px] text-muted-foreground" aria-hidden>↓ yes</p> : null}
+              {i === 2 ? <p className="pl-3 text-xs text-muted-foreground" aria-hidden>↓ yes</p> : null}
               {i === 4 ? (
-                <p className="pl-3 text-[11px] text-muted-foreground" aria-hidden>
+                <p className="pl-3 text-xs text-muted-foreground" aria-hidden>
                   ↺ slot empty: back to “Is any time slot nonempty?” · a process may call $finish instead ↓
                 </p>
               ) : null}
-              {i === 5 ? <p className="pl-3 text-[11px] text-muted-foreground" aria-hidden>↓ then the run is over</p> : null}
+              {i === 5 ? <p className="pl-3 text-xs text-muted-foreground" aria-hidden>↓ then the run is over</p> : null}
               <div
                 aria-current={isActive ? "step" : undefined}
                 className={cn(
@@ -205,7 +205,7 @@ function SlotLists({ result, index, hideOrder }: { result: SimResult; index: num
   return (
     <div className="grid min-w-0 gap-3">
       <section aria-label="This time slot" className="rounded-xl border border-border/70 p-3">
-        <h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <h4 className="text-label text-muted-foreground">
           {slot.finalPhase ? "After the last time slot · final procedures" : `This time slot · t = ${slot.time} ns`}
         </h4>
         {slot.items.length === 0 ? (
@@ -230,13 +230,13 @@ function SlotLists({ result, index, hideOrder }: { result: SimResult; index: num
             ))}
           </ul>
         )}
-        <p className="mt-2 text-[11px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           ◆ update event: a value changed · ▶ evaluation event: a process runs (§4.3)
           {slot.finalPhase ? " · ■ final procedure: runs after the last time slot, in zero time, not as a separate process (§9.2.3)" : ""}
         </p>
       </section>
       <section aria-label="Booked for later" className="rounded-xl border border-border/70 p-3">
-        <h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <h4 className="text-label text-muted-foreground">
           Booked for later {hideOrder ? "· in booking order" : "· earliest first"}
         </h4>
         {booked.length === 0 ? (
@@ -250,7 +250,7 @@ function SlotLists({ result, index, hideOrder }: { result: SimResult; index: num
             ))}
           </ul>
         )}
-        {hideOrder ? <p className="mt-2 text-[11px] text-muted-foreground">Sorted by due time once you have predicted the jump.</p> : null}
+        {hideOrder ? <p className="mt-2 text-xs text-muted-foreground">Sorted by due time once you have predicted the jump.</p> : null}
       </section>
     </div>
   );

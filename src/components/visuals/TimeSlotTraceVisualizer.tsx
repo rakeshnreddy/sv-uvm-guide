@@ -169,7 +169,7 @@ export default function TimeSlotTraceVisualizer({
                 key={o.key}
                 className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm", o.key === ordering?.key ? "border-amber-500 bg-amber-500/15" : "border-border/70")}
               >
-                <input type="radio" name={`order-${scenarioId}`} checked={o.key === ordering?.key} onChange={() => setOrderKey(o.key)} className="accent-amber-500" />
+                <input type="radio" name={`order-${scenarioId}`} checked={o.key === ordering?.key} onChange={() => setOrderKey(o.key)} className="size-5 shrink-0 accent-amber-500" />
                 {o.label}
               </label>
             ))}
@@ -235,7 +235,7 @@ export default function TimeSlotTraceVisualizer({
             <div className="w-full overflow-x-auto">
               <RegionLadder currentRegion={step.kind === "slot-start" ? "preponed" : step.kind === "slot-end" ? "postponed" : step.region} sourceRegion={step.sourceRegion} counts={counts} className="mx-auto" />
             </div>
-            <p className="text-center text-[11px] text-muted-foreground">
+            <p className="text-center text-xs text-muted-foreground">
               Badges count queued events. ▶ marks the region executing now{step.sourceRegion ? `; ↺ marks ${REGION_LABELS[step.sourceRegion]}, where this event was scheduled.` : "."}
             </p>
           </div>
@@ -256,8 +256,8 @@ export default function TimeSlotTraceVisualizer({
       />
 
       {run.log.length > 0 ? (
-        <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
-          {step.log.length === 0 ? <span className="text-slate-400">(no output yet)</span> : step.log.map((l, i) => <div key={i} className="whitespace-pre-wrap break-words">{l}</div>)}
+        <div className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]" aria-label="Simulation log">
+          {step.log.length === 0 ? <span className="text-code-muted">(no output yet)</span> : step.log.map((l, i) => <div key={i} className="whitespace-pre-wrap break-words">{l}</div>)}
         </div>
       ) : null}
 
@@ -266,7 +266,7 @@ export default function TimeSlotTraceVisualizer({
   );
 
   return (
-    <section aria-label="Time slot trace" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
+    <section aria-label="Time slot trace" className="glass-liquid not-prose my-8 space-y-4 p-3 sm:p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
           <p className={TRACE_LABEL_CLASS}>Step through one clock edge</p>

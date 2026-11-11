@@ -147,7 +147,7 @@ export default function AnimatedUvmTestbenchDiagram() {
         <div className="space-y-4">
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">in_agt is_active</p>
+              <p className="text-label text-muted-foreground">in_agt is_active</p>
               <SegmentedControl
                 label="in_agt is_active"
                 mono
@@ -160,7 +160,7 @@ export default function AnimatedUvmTestbenchDiagram() {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">out_agt is_active</p>
+              <p className="text-label text-muted-foreground">out_agt is_active</p>
               <SegmentedControl
                 label="out_agt is_active"
                 mono
@@ -174,7 +174,7 @@ export default function AnimatedUvmTestbenchDiagram() {
             </div>
           </div>
           <fieldset className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <legend className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Inject a bug into bus_agent</legend>
+            <legend className="mb-1 text-label text-muted-foreground">Inject a bug into bus_agent</legend>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={skipSuper} onChange={(e) => setSkipSuper(e.target.checked)} className="h-4 w-4 accent-rose-500" />
               build_phase skips <code className="font-mono">super.build_phase(phase)</code>
@@ -222,7 +222,7 @@ export default function AnimatedUvmTestbenchDiagram() {
           <p className="text-xs text-muted-foreground">
             Build log: [CFG] and [BUILD] lines are what a `uvm_info in the test and agent would print; a null-object line comes from the simulator itself.
           </p>
-          <pre aria-label="Build log" className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+          <pre aria-label="Build log" className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
             {tb.log.join("\n")}
           </pre>
           <CodeTrace

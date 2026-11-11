@@ -69,7 +69,7 @@ export const KEYWORD_ASSUMPTIONS: Record<KeywordSetExplorerMode, string[]> = {
 };
 
 const mono = "font-mono [font-variant-ligatures:none]";
-const panel = "rounded-xl border border-border/70 bg-background/40 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 const inputClass =
   "h-10 w-full min-w-0 rounded-lg border border-border/70 bg-background/60 px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const buttonClass =
@@ -102,7 +102,7 @@ const VERDICT_STYLE: Record<KeywordVerdict["verdict"], { glyph: string; classNam
 function TokenTag({ result, text }: { result: KeywordVerdict; text: string }) {
   const style = VERDICT_STYLE[result.verdict];
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium", style.className)}>
+    <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium", style.className)}>
       <span aria-hidden>{style.glyph}</span>
       <code className={mono}>{text}</code>
       <span>: {verdictWord(result)}</span>
@@ -150,7 +150,7 @@ export function KeywordRings({ specifier, entered, excluded = false, word }: Rin
         data-lit={lit}
         data-entry={isEntry}
       >
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 pb-1 text-[11px]">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 pb-1 text-xs">
           <span className={cn("font-semibold", lit ? "text-foreground" : "text-muted-foreground")}>Table {table.id}</span>
           <span className={cn(mono, "text-muted-foreground")}>{table.revision}</span>
           <span className="tabular-nums text-muted-foreground">+{table.words.length}</span>
@@ -385,7 +385,7 @@ function StackView({ step, base }: { step: RegionStep; base: KeywordSetting }) {
   const bottomLabel = settingLabel(base);
   return (
     <div className={cn(panel, "space-y-2")} data-testid="keyword-stack">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Keyword-set stack</p>
+      <p className="text-label text-muted-foreground">Keyword-set stack</p>
       <ol className="flex flex-col-reverse gap-1.5" aria-label="Keyword-set stack, bottom first">
         <li className={cn("rounded-lg border border-dashed px-2 py-1 text-xs", baseInEffect ? "border-cyan-500/70 bg-cyan-500/10 font-semibold text-foreground" : "border-border/70 text-muted-foreground")}>
           bottom: {bottomLabel}
@@ -480,7 +480,7 @@ function RegionsView({ preset }: { preset?: string }) {
               <div key={file.name} className="min-w-0">
                 {boundary ? (
                   <p
-                    className={cn("mb-2 rounded border border-dashed px-2 py-1 text-center text-[11px]", shown === boundary.index ? "border-cyan-500 bg-cyan-500/10 text-foreground" : "border-border/70 text-muted-foreground")}
+                    className={cn("mb-2 rounded border border-dashed px-2 py-1 text-center text-xs", shown === boundary.index ? "border-cyan-500 bg-cyan-500/10 text-foreground" : "border-border/70 text-muted-foreground")}
                     aria-current={shown === boundary.index ? "step" : undefined}
                   >
                     {boundary.index > limit ? "file boundary" : boundary.text}
@@ -492,7 +492,7 @@ function RegionsView({ preset }: { preset?: string }) {
                     {file.name} appears after you predict.
                   </p>
                 ) : (
-                  <ol className="overflow-hidden rounded-lg bg-slate-950/90 py-1 text-[12px] leading-5 text-slate-100">
+                  <ol className="overflow-hidden rounded-lg bg-code-surface py-1 text-[12px] leading-5 text-code-foreground">
                     {file.steps.map((s) => {
                       if (s.index > limit) return null;
                       const current = s.index === shown;
@@ -512,7 +512,7 @@ function RegionsView({ preset }: { preset?: string }) {
                           {visited && (s.tokens.length > 0 || s.event !== "line") ? (
                             <div className="flex flex-wrap gap-1 pb-1 pl-7">
                               {s.event !== "line" ? (
-                                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider", s.event === "error" ? "bg-rose-500/30 text-rose-100" : "bg-cyan-500/30 text-cyan-50")}>
+                                <span className={cn("rounded px-1.5 py-0.5 text-label", s.event === "error" ? "bg-rose-500/30 text-rose-100" : "bg-cyan-500/30 text-cyan-50")}>
                                   {EVENT_LABEL[s.event]}
                                 </span>
                               ) : null}
@@ -535,7 +535,7 @@ function RegionsView({ preset }: { preset?: string }) {
         <div className="min-w-0 space-y-3">
           <StackView step={step} base={{ kind: "default", assumed }} />
           <div className={cn(panel, "text-sm")} data-testid="step-note">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-label text-muted-foreground">
               {step.file}
               {step.lineNumber ? `, line ${step.lineNumber}` : ""} · {EVENT_LABEL[step.event]}
             </p>
@@ -591,7 +591,7 @@ function TableBars({ highlight }: { highlight: TableId | null }) {
         {KEYWORD_TABLES.map((t) => {
           const lit = t.id === highlight;
           return (
-            <li key={t.id} className="grid grid-cols-[4.5rem_1fr_2rem] items-center gap-2 text-[11px]" data-testid={`bar-${t.id}`} data-lit={lit}>
+            <li key={t.id} className="grid grid-cols-[4.5rem_1fr_2rem] items-center gap-2 text-xs" data-testid={`bar-${t.id}`} data-lit={lit}>
               <span className={cn(lit ? "font-semibold text-foreground" : "text-muted-foreground")}>
                 Table {t.id}
               </span>
@@ -647,7 +647,7 @@ function LineageView() {
           <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs" role="group" aria-label="Standards by designation year; choose one to jump to it">
             <span aria-hidden />
             {LANES.map((l) => (
-              <span key={l.id} className="pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" aria-hidden>
+              <span key={l.id} className="pb-1 text-label text-muted-foreground" aria-hidden>
                 {l.label}
               </span>
             ))}
@@ -675,8 +675,8 @@ function LineageView() {
                           )}
                         >
                           <span className="break-words">{s.label}</span>
-                          {!s.ieee ? <span className="block text-[10px] not-italic">precursor, no date</span> : null}
-                          {s.attachments.length ? <span className="block text-[10px]">+ uvm-core 2020.3.1</span> : null}
+                          {!s.ieee ? <span className="block text-xs not-italic">precursor, no date</span> : null}
+                          {s.attachments.length ? <span className="block text-xs">+ uvm-core 2020.3.1</span> : null}
                         </button>
                       );
                     })}
@@ -688,7 +688,7 @@ function LineageView() {
 
           <div className={cn(panel, "space-y-3")} data-testid="lineage-panel">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 {stop.lane === "uvm" ? "UVM lane" : "SystemVerilog lane"} · {year ? `designation year ${year}` : "no date: placed in order only"}
               </p>
               <h4 className="text-base font-semibold text-foreground">{stop.label}</h4>

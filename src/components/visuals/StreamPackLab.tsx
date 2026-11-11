@@ -57,12 +57,12 @@ const selectClass = "h-10 min-w-0 rounded-md border border-border/70 bg-backgrou
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-40 motion-reduce:transition-none";
 const mono = "font-mono [font-variant-ligatures:none]";
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 /** The shared primitives size some buttons below 40 px (text links, min-h-9 segments): size them for touch from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
 const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
 const checkLabelClass = "flex items-center gap-2 text-xs text-foreground [@media(pointer:coarse)]:min-h-10";
-const eyebrowClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+const eyebrowClass = "text-label text-muted-foreground";
 
 const toPredictionOptions = (options: LabOption[], seed: string): PredictionOption[] =>
   arrangeOptions(options, seed).map((o) => ({ id: o.id, label: <span className={cn(mono, "break-words text-xs")}>{o.label}</span>, correct: o.correct, feedback: o.feedback }));
@@ -104,7 +104,7 @@ function RevealHeading({ children, testId = "reveal-heading" }: { children: Reac
     ref.current?.focus();
   }, []);
   return (
-    <h4 ref={ref} tabIndex={-1} data-testid={testId} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <h4 ref={ref} tabIndex={-1} data-testid={testId} className="text-label text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {children}
     </h4>
   );
@@ -151,7 +151,7 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 
 function CodeBlock({ lines, label }: { lines: string[]; label: string }) {
   return (
-    <pre aria-label={label} className={cn("whitespace-pre-wrap break-words rounded-lg bg-slate-950/90 p-3 text-[12px] leading-5 text-slate-100", mono)} data-testid="lab-code">
+    <pre aria-label={label} className={cn("whitespace-pre-wrap break-words rounded-lg bg-code-surface p-3 text-[12px] leading-5 text-code-foreground", mono)} data-testid="lab-code">
       <code>{lines.join("\n")}</code>
     </pre>
   );
@@ -170,7 +170,7 @@ function toneFor(origin: string): BitTone {
 /** One line that tells the learner which number is which. */
 function BracketKey() {
   return (
-    <p className="text-[11px] text-muted-foreground" data-testid="bracket-key">
+    <p className="text-xs text-muted-foreground" data-testid="bracket-key">
       Each label names a field and its own bits, left to right (kind bits 0..7 is kind bit-reversed), then [where they sit in this strip].
     </p>
   );
@@ -219,7 +219,7 @@ function StepView({ step, reducedMotion, groupId }: { step: StreamStep; reducedM
         <ol className="flex flex-wrap gap-2" aria-label={`${step.title}: ${cards.length} pieces, in order`}>
           {cards.map((c, i) => (
             <motion.li layout="position" layoutId={`${groupId}-${c.label}`} transition={transition} key={`${c.label}-${i}`} className="min-w-0 max-w-full rounded-lg border border-border/70 bg-background/60 p-2">
-              <p className={cn("mb-1 text-[11px] font-semibold text-foreground", mono)}>{c.label}</p>
+              <p className={cn("mb-1 text-xs font-semibold text-foreground", mono)}>{c.label}</p>
               <Strip bits={c.bits} label={c.label} />
             </motion.li>
           ))}
@@ -265,7 +265,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
           {i + 1}/{steps.length}
         </span>
       </div>
-      <ol className="flex flex-wrap gap-1 text-[11px]" aria-label="Steps">
+      <ol className="flex flex-wrap gap-1 text-xs" aria-label="Steps">
         {steps.map((s, k) => (
           <li key={s.id}>
             <button
@@ -394,7 +394,7 @@ function StreamLab({ preset }: { preset?: string }) {
         ) : (
           <div className="flex flex-wrap gap-x-4 gap-y-2">
             <label className={checkLabelClass}>
-              <input type="checkbox" checked={config.withRange} onChange={(e) => change({ withRange: e.target.checked })} className="h-4 w-4 accent-cyan-500" />
+              <input type="checkbox" checked={config.withRange} onChange={(e) => change({ withRange: e.target.checked })} className="size-5 shrink-0 accent-cyan-500" />
               <span>
                 Use <code className={mono}>with [0 +: hdr.len]</code>
               </span>
@@ -415,7 +415,7 @@ function StreamLab({ preset }: { preset?: string }) {
         )}
         {!unpack && subject !== "literal" ? (
           <label className={checkLabelClass}>
-            <input type="checkbox" checked={config.xInAddr} onChange={(e) => change({ xInAddr: e.target.checked })} className="h-4 w-4 accent-cyan-500" />
+            <input type="checkbox" checked={config.xInAddr} onChange={(e) => change({ xInAddr: e.target.checked })} className="size-5 shrink-0 accent-cyan-500" />
             <span>
               Inject x into <code className={mono}>hdr.addr[3:0]</code>
             </span>
@@ -525,7 +525,7 @@ function CastLab({ preset }: { preset?: string }) {
               disabled={!xAllowed}
               aria-describedby={xAllowed ? undefined : xId}
               onChange={(e) => change({ xInAddr: e.target.checked })}
-              className="h-4 w-4 accent-cyan-500 disabled:opacity-40"
+              className="size-5 shrink-0 accent-cyan-500 disabled:opacity-40"
             />
             <span>
               Inject x into <code className={mono}>rec.addr[3:0]</code>

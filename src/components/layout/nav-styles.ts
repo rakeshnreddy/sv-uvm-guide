@@ -70,6 +70,19 @@ export function headerBarFrameClass(layout: "docked" | "frame" | "public"): stri
 }
 
 /**
+ * The header's backing (HeaderGlassLayer): clipped to the header's row and faded out over its lower
+ * third, so the page colour covers the gutters above and beside the glass bar without a hard edge.
+ */
+export const HEADER_BACKING_CLASS =
+  "absolute inset-0 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)] forced-colors:hidden";
+
+/**
+ * The cut-out in the backing: the bar's rounded shape with a spread shadow in the page colour all
+ * round it. A shadow paints only outside its box, so nothing sits under the bar's blur.
+ */
+export const HEADER_BACKING_CUTOUT_CLASS = "h-full w-full rounded-2xl shadow-[0_0_0_100vmax_hsl(var(--background))]";
+
+/**
  * The sticky header's own box: transparent, so content scrolls under the
  * glass bar; Canvas in forced colours, where the glass is solid anyway.
  */

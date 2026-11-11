@@ -229,8 +229,10 @@ describe('Navbar landmarks and links', () => {
     const bar = screen.getByRole('banner').querySelector('[data-header-bar]') as HTMLElement;
     expect(bar.parentElement).toHaveClass('absolute', 'inset-x-2', 'inset-y-2');
     expect(bar.parentElement?.className).not.toMatch(/max-w/);
-    // No scrim beside the bar: the colour field and scrolled content show through the glass.
-    expect(bar.parentElement?.parentElement?.children).toHaveLength(1);
+    // The backing behind it uses the same frame, so its cut-out matches the bar exactly.
+    const layer = bar.parentElement?.parentElement as HTMLElement;
+    expect(layer.children).toHaveLength(2);
+    expect(layer.querySelector('[data-header-backing]')?.firstElementChild?.className).toBe(bar.parentElement?.className);
   });
 
   it('gives every header icon button one style: 40 px, rounded-lg, bordered card surface, hover raised', () => {
@@ -295,6 +297,33 @@ describe('header alignment', () => {
     const widths = DOCKED_OUTLINE_WIDTH.split(' ').map((name) => (name.includes(':') ? name : `lg:${name}`));
     for (const name of widths) expect(slot).toHaveClass(name);
     expect(OUTLINE_SLOT_CLASS).toContain('lg:w-64');
+  });
+
+  it('keeps keyboard focus on the outline button when it hides or shows the docked outline (the button remounts)', async () => {
+    nav.pathname = LESSON;
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({ matches: true, media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }) as unknown as MediaQueryList,
+    );
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    try {
+      render(<Navbar />);
+      const before = screen.getByRole('button', { name: 'Course outline' });
+      before.focus();
+      // The click's update commits at the end of the event, as React does for a discrete event; focus follows a frame later.
+      act(() => before.click());
+      await frame();
+      // Hidden: the header swapped frames, so this is a new button, and it has focus.
+      expect(screen.getByRole('banner').querySelector('[data-header-slot]')).toBeNull();
+      expect(document.activeElement).toHaveAttribute('data-outline-toggle');
+      expect(document.activeElement).toHaveAttribute('aria-expanded', 'false');
+      act(() => (document.activeElement as HTMLElement).click());
+      await frame();
+      expect(document.activeElement).toHaveAttribute('data-outline-toggle');
+      expect(document.activeElement).toHaveAttribute('aria-expanded', 'true');
+    } finally {
+      matchMedia.mockRestore();
+    }
   });
 
   it('drops the slot when the learner has hidden the docked outline', () => {

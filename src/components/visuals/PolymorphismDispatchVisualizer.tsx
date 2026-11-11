@@ -146,7 +146,7 @@ function HierarchyCards({ table, config, result, revealed }: { table: ClassTable
         return (
           <li key={c.name}>
             {i > 0 ? (
-              <p className="ml-5 border-l border-border pl-3 font-mono text-[10px] leading-5 text-muted-foreground [font-variant-ligatures:none]">extends {c.extends}</p>
+              <p className="ml-5 border-l border-border pl-3 font-mono text-xs leading-5 text-muted-foreground [font-variant-ligatures:none]">extends {c.extends}</p>
             ) : null}
             <div
               className={cn(
@@ -157,13 +157,13 @@ function HierarchyCards({ table, config, result, revealed }: { table: ClassTable
             >
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{c.name}</span>
-                {isHandle ? <span className="rounded-full border border-amber-500/70 bg-amber-500/15 px-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-100">handle type</span> : null}
-                {isObject ? <span className="rounded-sm border border-indigo-500/70 bg-indigo-500/15 px-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-100">object</span> : null}
-                {isBinding ? <span className="rounded-sm bg-cyan-500/20 px-1.5 text-[10px] font-bold uppercase tracking-wider text-cyan-900 dark:text-cyan-100">▶ call binds here</span> : null}
-                {!isBinding && runs ? <span className="text-[10px] font-semibold text-cyan-800 dark:text-cyan-200">▶ runs via super</span> : null}
-                {!visible.includes(c.name) ? <span className="text-[10px] text-muted-foreground">(members hidden from h)</span> : null}
+                {isHandle ? <span className="rounded-full border border-amber-500/70 bg-amber-500/15 px-1.5 text-label text-amber-900 dark:text-amber-100">handle type</span> : null}
+                {isObject ? <span className="rounded-sm border border-indigo-500/70 bg-indigo-500/15 px-1.5 text-label text-indigo-900 dark:text-indigo-100">object</span> : null}
+                {isBinding ? <span className="rounded-sm bg-cyan-500/20 px-1.5 text-label text-cyan-900 dark:text-cyan-100">▶ call binds here</span> : null}
+                {!isBinding && runs ? <span className="text-xs font-semibold text-cyan-800 dark:text-cyan-200">▶ runs via super</span> : null}
+                {!visible.includes(c.name) ? <span className="text-xs text-muted-foreground">(members hidden from h)</span> : null}
               </div>
-              <ul className="mt-1 space-y-0.5 font-mono text-[11.5px] text-foreground [font-variant-ligatures:none]">
+              <ul className="mt-1 space-y-0.5 font-mono text-xs text-foreground [font-variant-ligatures:none]">
                 {c.methods.map((m) => {
                   const inherited = !m.isVirtual && c.extends ? isVirtualFrom(table, c.extends, m.name) : false;
                   return (
@@ -233,15 +233,15 @@ function DispatchExplorer() {
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Handle declared as</p>
+          <p className="text-label text-muted-foreground">Handle declared as</p>
           <SegmentedControl label="Handle type" mono options={CLASSES.map((c) => ({ value: c, label: c }))} value={handleType} onChange={setHandleType} />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Object created with new</p>
+          <p className="text-label text-muted-foreground">Object created with new</p>
           <SegmentedControl label="Object type" mono options={CLASSES.map((c) => ({ value: c, label: c }))} value={objectType} onChange={setObjectType} />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="text-label text-muted-foreground">
             <code className="font-mono normal-case tracking-normal [font-variant-ligatures:none]">describe()</code> is
           </p>
           <SegmentedControl
@@ -256,7 +256,7 @@ function DispatchExplorer() {
           />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Call</p>
+          <p className="text-label text-muted-foreground">Call</p>
           <SegmentedControl
             label="Method call"
             mono
@@ -294,11 +294,11 @@ function DispatchExplorer() {
                     <p className="font-medium text-foreground">
                       <span aria-hidden>▶ </span>
                       The call binds to <code className="font-mono [font-variant-ligatures:none]">{`${result.implementation}::${method}()`}</code>{" "}
-                      <span className={cn("ml-1 rounded-sm px-1.5 py-0.5 text-[11px] font-semibold", result.binding === "dynamic" ? "bg-violet-500/15 text-violet-800 dark:text-violet-200" : "bg-slate-500/15 text-slate-800 dark:text-slate-200")}>
+                      <span className={cn("ml-1 rounded-sm px-1.5 py-0.5 text-xs font-semibold", result.binding === "dynamic" ? "bg-violet-500/15 text-violet-800 dark:text-violet-200" : "bg-slate-500/15 text-slate-800 dark:text-slate-200")}>
                         {result.binding === "dynamic" ? "dynamic: object's class" : "static: handle's class"}
                       </span>
                     </p>
-                    <div className="rounded-lg bg-slate-950/90 p-2 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Output">
+                    <div className="rounded-lg bg-code-surface p-2 font-mono text-xs text-code-foreground [font-variant-ligatures:none]" aria-label="Output">
                       {result.output.map((line, i) => (
                         <div key={i}>{line}</div>
                       ))}
@@ -395,11 +395,11 @@ function CastExplorer() {
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">src declared as</p>
+          <p className="text-label text-muted-foreground">src declared as</p>
           <SegmentedControl label="Source handle type" mono options={CLASSES.map((c) => ({ value: c, label: c }))} value={srcType} onChange={changeSrc} />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">src holds an object of</p>
+          <p className="text-label text-muted-foreground">src holds an object of</p>
           <SegmentedControl
             label="Object type"
             mono
@@ -409,11 +409,11 @@ function CastExplorer() {
           />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">dst declared as</p>
+          <p className="text-label text-muted-foreground">dst declared as</p>
           <SegmentedControl label="Destination type" mono options={CLASSES.map((c) => ({ value: c, label: c }))} value={dstType} onChange={setDstType} />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Assign with</p>
+          <p className="text-label text-muted-foreground">Assign with</p>
           <SegmentedControl
             label="Assignment form"
             mono

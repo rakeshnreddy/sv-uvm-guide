@@ -119,8 +119,8 @@ function CallbackTopology({ result }: { result: CbResult }) {
 function QueuesPanel({ result }: { result: CbResult }) {
   const s = result.finalState;
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3 text-xs">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Callback queues for (my_driver, drv_cb)</p>
+    <div className="rounded-xl border border-border bg-card p-3 text-xs">
+      <p className="mb-2 text-label text-muted-foreground">Callback queues for (my_driver, drv_cb)</p>
       <dl className="space-y-1.5">
         <div className="flex flex-wrap gap-2">
           <dt className="min-w-[8rem] font-mono text-foreground">type-wide (*)</dt>
@@ -154,7 +154,7 @@ function ElaborationTimeline({ result }: { result: CbResult }) {
             s.isAdd ? (s.message?.severity === "fatal" ? "border-rose-500/60 bg-rose-500/10" : s.message?.severity === "warning" ? "border-amber-500/60 bg-amber-500/10" : "border-cyan-500/60 bg-cyan-500/10") : "border-border/60",
           )}
         >
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <p className="text-label text-muted-foreground">
             {i + 1}. {s.phase} · {s.scope}
             {s.isAdd ? " · ▶ your add()" : ""}
           </p>
@@ -165,7 +165,7 @@ function ElaborationTimeline({ result }: { result: CbResult }) {
               {s.message.text}
             </p>
           ) : null}
-          <p className="mt-1 text-[11px] text-muted-foreground">exists now: {s.exists.join(", ") || "only the test"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">exists now: {s.exists.join(", ") || "only the test"}</p>
         </li>
       ))}
     </ol>
@@ -177,7 +177,7 @@ function RunTable({ result }: { result: CbResult }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[300px] border-collapse text-xs">
-        <caption className="mb-1 text-left text-[11px] text-muted-foreground">pre_send hooks per packet, in the order `uvm_do_callbacks runs them</caption>
+        <caption className="mb-1 text-left text-xs text-muted-foreground">pre_send hooks per packet, in the order `uvm_do_callbacks runs them</caption>
         <thead>
           <tr>
             {["Driver", "Packet", "Callbacks run", "CRC sent"].map((h) => (
@@ -320,7 +320,7 @@ function CallbackExplorer() {
               />
             </div>
             <label className="flex min-h-10 items-center gap-2 text-xs text-foreground">
-              <input type="checkbox" checked={config.disableAt20ns} onChange={(e) => set("disableAt20ns", e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+              <input type="checkbox" checked={config.disableAt20ns} onChange={(e) => set("disableAt20ns", e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
               err_cb.callback_mode(0) at 20 ns
             </label>
           </div>
@@ -348,7 +348,7 @@ function CallbackExplorer() {
           </div>
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
             <div className="min-w-0">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Build order, top-down</p>
+              <p className="mb-2 text-label text-muted-foreground">Build order, top-down</p>
               <ElaborationTimeline result={result} />
             </div>
             <div className="min-w-0 space-y-3">
@@ -458,7 +458,7 @@ function CallbackDebugChallenge() {
       fidelity="model"
       assumptions={CALLBACK_MODEL_ASSUMPTIONS}
     >
-      <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Failing log">
+      <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Failing log">
         {buggy.runs
           .filter((r) => r.corrupted)
           .map((r) =>
@@ -482,7 +482,7 @@ function CallbackDebugChallenge() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -514,7 +514,7 @@ function CallbackDebugChallenge() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {cbFixes.map((f) => (
               <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="cb-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="cb-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="font-mono text-[12.5px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}

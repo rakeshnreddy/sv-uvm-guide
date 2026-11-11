@@ -14,7 +14,8 @@ const Logo = () => {
       className="inline-flex items-baseline gap-[0.3em] whitespace-nowrap text-[17px] leading-6"
     >
       <span className="font-mono font-semibold text-foreground">SV/UVM</span>
-      <span className="font-sans font-medium text-muted-foreground">Hub</span>
+      {/* Foreground at 80%, not the secondary colour: it sits on the header glass and must hold 4.5:1 over bright content under it. */}
+      <span className="font-sans font-medium text-foreground/80">Hub</span>
     </span>
   );
 };

@@ -159,11 +159,11 @@ const UvmVirtualSequencerDiagram: React.FC = () => {
       >
         Show the env wiring
       </button>
-      <div className="rounded-xl border border-border/70 bg-background/60 p-3" aria-live="polite">
+      <div className="rounded-xl border border-border bg-card p-3" aria-live="polite">
         <p className="text-sm font-semibold text-foreground">{info.title}</p>
         <p className="mt-1 text-sm text-muted-foreground">{info.text}</p>
         {info.code ? (
-          <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
             <code>{info.code}</code>
           </pre>
         ) : null}

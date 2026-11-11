@@ -113,7 +113,7 @@ const inputClass =
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 motion-reduce:transition-none";
 const mono = "font-mono [font-variant-ligatures:none]";
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 /** The shared primitives size some buttons below 40 px (text links, min-h-9 segments): size them for touch from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
 const promptClass = touchButtons;
@@ -161,7 +161,7 @@ const hasPadding = (text: string, template: string) => splitPadding(text, templa
 
 function PaddingKey() {
   return (
-    <span aria-hidden className="ml-1 font-sans text-[11px] font-normal text-muted-foreground">
+    <span aria-hidden className="ml-1 font-sans text-xs font-normal text-muted-foreground">
       ({PADDING_GLYPH} is one padding space)
     </span>
   );
@@ -226,7 +226,7 @@ function RevealHeading({ children, testId = "reveal-heading" }: { children: Reac
     ref.current?.focus();
   }, []);
   return (
-    <h4 ref={ref} tabIndex={-1} data-testid={testId} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <h4 ref={ref} tabIndex={-1} data-testid={testId} className="text-label text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {children}
     </h4>
   );
@@ -504,15 +504,15 @@ function RoundingLab({ preset }: { preset?: string }) {
               <TickRuler rounded={rounded} />
               <dl className={cn("grid gap-2 text-sm grid-cols-[repeat(auto-fit,minmax(min(100%,140px),1fr))]", panel)}>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Written</dt>
+                  <dt className="text-label text-muted-foreground">Written</dt>
                   <dd className={mono}>#{delayText.replace(/^#/, "")}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.input.kind === "xz" ? "Interpreted as zero" : rounded.input.kind === "literal" ? "Converted to the current unit" : "Exact size: number × unit"}</dt>
+                  <dt className="text-label text-muted-foreground">{rounded.input.kind === "xz" ? "Interpreted as zero" : rounded.input.kind === "literal" ? "Converted to the current unit" : "Exact size: number × unit"}</dt>
                   <dd className={mono}>{rounded.scaledText}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{rounded.ticks && rounded.ticks.down !== rounded.ticks.up ? "On the precision grid" : "Wake time"}</dt>
+                  <dt className="text-label text-muted-foreground">{rounded.ticks && rounded.ticks.down !== rounded.ticks.up ? "On the precision grid" : "Wake time"}</dt>
                   <dd className={cn(mono, "font-semibold")}>{wakeText(rounded)}</dd>
                 </div>
               </dl>
@@ -523,7 +523,7 @@ function RoundingLab({ preset }: { preset?: string }) {
               </ol>
               {rounded.toolDependent ? (
                 <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                  <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">Tool-dependent</span>
+                  <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label">Tool-dependent</span>
                   §3.14.1 states no tie rule. Half away from zero gives {rounded.tie ? tickCount(rounded.tie.awayFromZero) : ""} and half to even gives {rounded.tie ? tickCount(rounded.tie.toEven) : ""}. Keep delays clear of half ticks when two simulators must agree.
                   {binaryNote ? <span className="mt-1 block" data-testid="binary-remark">{binaryNote}</span> : null}
                 </p>
@@ -884,7 +884,7 @@ function TimeFormatControls({ mode, setMode, format, setFormat, build, showDefau
   const def = effectiveFormat(null, build);
   return (
     <div className={cn(panel, "space-y-2")}>
-      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">$timeformat in force before the code runs</p>
+      <p className="text-label text-muted-foreground">$timeformat in force before the code runs</p>
       <SegmentedControl<FormatMode>
         label="$timeformat before the code runs"
         className={touchButtons}
@@ -1123,7 +1123,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
             <ScaleSelect label="Caller's time precision" value={precision} onChange={setPrecision} />
             <DelayField label="Delay sequence" value={delaysText} onChange={setDelaysText} invalid={delaysInvalid} errorId={errorId} onEditing={setEditingDelays} />
             <label className={cn(checkLabelClass, "self-end")}>
-              <input type="checkbox" checked={customTimescale} onChange={(e) => setCustomTimescale(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+              <input type="checkbox" checked={customTimescale} onChange={(e) => setCustomTimescale(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
               the build has a `timescale with this precision
             </label>
           </>
@@ -1215,7 +1215,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
             <div className="space-y-3 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.05] p-4" data-testid="read-time-reveal">
               <>
                 <h4 ref={revealHeading} tabIndex={-1} data-testid="reveal-heading" className="text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200">Moment {idx + 1}</span>
+                  <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-label text-emerald-800 dark:text-emerald-200">Moment {idx + 1}</span>
                   {/* The question the verdict below answers, even after the %t argument is toggled. */}
                   {questionFor(snapshot, answer?.asked ?? askedNow)}
                 </h4>
@@ -1234,7 +1234,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                 ) : null}
                 {printedLine ? (
                   <p className={cn("text-sm text-foreground", mono, "whitespace-pre-wrap break-words")} data-testid="moment-prints" data-line={printedLine.text}>
-                    <span className="font-sans text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prints </span>
+                    <span className="font-sans text-label text-muted-foreground">Prints </span>
                     <OutputText text={printedLine.text} template={snapshot.template} />
                     {hasPadding(printedLine.text, snapshot.template) ? <PaddingKey /> : null}
                   </p>
@@ -1278,7 +1278,7 @@ function ReadTimeLab({ preset }: { preset?: string }) {
           <ScrollRegion label="Time readings of every moment">
             <table className="w-full min-w-[560px] text-left text-xs">
               <caption className="sr-only">Every moment with its time readings, %t shown without its padding; moments you have not predicted yet are hidden</caption>
-              <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <thead className="text-label text-muted-foreground">
                 <tr>
                   <th className="py-1 pr-2">Moment</th>
                   <th className="py-1 pr-2">Caller</th>
@@ -1363,17 +1363,17 @@ function ReadTimeLab({ preset }: { preset?: string }) {
                 : "%t of $time and %t of $realtime print the same text here, so there is nothing to toggle: every %t line runs at a whole number of the caller's units, or its format's digits hide the fraction."}
             </p>
           ) : null}
-          <figure className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-            <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Log, as the code prints it</figcaption>
+          <figure className="overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+            <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">Log, as the code prints it</figcaption>
             <pre role="region" tabIndex={0} aria-label="Printed log" className={cn("overflow-x-auto p-3 text-xs leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", mono)}>
               {trace.lines.map((l, i) =>
                 isRevealed(l.momentIndex) ? (
                   <div key={i}>
-                    <span className="text-slate-400">{`t = ${formatFsAuto(l.absFs)}`.padEnd(14)}</span>
+                    <span className="text-code-muted">{`t = ${formatFsAuto(l.absFs)}`.padEnd(14)}</span>
                     {showToolDependent(l.text)}
                   </div>
                 ) : (
-                  <div key={i} className="text-slate-400">
+                  <div key={i} className="text-code-muted">
                     {`t = ?`.padEnd(14)}⟨{l.caller}: predict moment {l.momentIndex + 1} to reveal this line⟩
                   </div>
                 ),
@@ -1437,7 +1437,7 @@ function WhichUnitLab() {
     id: f.id,
     label: f.label,
     description: (
-      <pre className={cn("whitespace-pre-wrap text-[11px] leading-5", mono)}>{f.code.join("\n")}</pre>
+      <pre className={cn("whitespace-pre-wrap text-xs leading-5", mono)}>{f.code.join("\n")}</pre>
     ),
   }));
 
@@ -1472,11 +1472,11 @@ function WhichUnitLab() {
           ]}
         />
         <label className={checkLabelClass}>
-          <input type="checkbox" checked={includeReset} onChange={(e) => toggleReset(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+          <input type="checkbox" checked={includeReset} onChange={(e) => toggleReset(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
           include a `resetall file
         </label>
         <label className={checkLabelClass}>
-          <input type="checkbox" checked={includeCu} onChange={(e) => toggleCu(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+          <input type="checkbox" checked={includeCu} onChange={(e) => toggleCu(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
           include a compilation-unit timeunit (kept first: §3.14.2.2)
         </label>
       </div>
@@ -1505,7 +1505,7 @@ function WhichUnitLab() {
           <ScrollRegion label="Resolved unit and precision of every design element">
             <table className="w-full min-w-[640px] text-left text-xs">
               <caption className="sr-only">Resolved unit and precision of every design element</caption>
-              <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <thead className="text-label text-muted-foreground">
                 <tr>
                   <th className="py-1 pr-2">Element</th>
                   <th className="py-1 pr-2">Unit</th>
@@ -1621,7 +1621,7 @@ function GlobalPrecisionLab() {
         <CodeTrace label="tb.sv (timeunit and timeprecision, no `timescale)" lines={(tbFile?.code ?? []).map((text) => ({ text }))} />
         <div className="space-y-2">
           <label className={cn(panel, "flex cursor-pointer items-start gap-2 text-sm text-foreground")}>
-            <input type="checkbox" checked={withVendor} onChange={(e) => setWithVendor(e.target.checked)} className="mt-1 h-4 w-4 accent-cyan-500" />
+            <input type="checkbox" checked={withVendor} onChange={(e) => setWithVendor(e.target.checked)} className="mt-px size-5 shrink-0 accent-cyan-500" />
             <span>
               Add <code className={mono}>vendor_model.sv</code>, compiled under <code className={mono}>`timescale 1ns/1fs</code>. slow_gen and tb_top keep their own timeunit and timeprecision; vendor_model takes both from the directive.
             </span>
@@ -1667,7 +1667,7 @@ function GlobalPrecisionLab() {
           <ScrollRegion label={vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}>
             <table className="w-full min-w-[520px] text-left text-xs">
               <caption className="sr-only">{vendorRevealed ? "What the vendor model changes" : "The design without the vendor model"}</caption>
-              <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <thead className="text-label text-muted-foreground">
                 <tr>
                   <th className="py-1 pr-2">Quantity</th>
                   <th className={cn("py-1 pr-2", !withVendor && "text-foreground")}>Without vendor model</th>
@@ -1832,7 +1832,7 @@ function CrossScopeLab() {
     { id: "log", title: "wake / log" },
   ];
   const laneIndex = step ? SCOPE_ORDER.indexOf(step.scope) : 0;
-  const logLine = <p className={cn("rounded-lg border border-border/70 bg-slate-950/90 px-3 py-2 text-xs text-slate-100", mono)}>{trace.printed}</p>;
+  const logLine = <p className={cn("rounded-lg border border-border/70 bg-code-surface px-3 py-2 text-xs text-code-foreground", mono)}>{trace.printed}</p>;
 
   const followTheValue =
     step && !hunting ? (
@@ -1868,7 +1868,7 @@ function CrossScopeLab() {
                 <div
                   key={lane.id}
                   className={cn(
-                    "min-h-[110px] rounded-lg border p-2 text-[11px] font-semibold uppercase tracking-wider",
+                    "min-h-[110px] rounded-lg border p-2 text-label",
                     lane.id === "boundary" ? "border-dashed border-border" : "border-border/70",
                     i === laneIndex ? "bg-cyan-500/10 text-foreground" : "text-muted-foreground",
                   )}
@@ -1886,7 +1886,7 @@ function CrossScopeLab() {
             >
               <div className="mx-auto w-fit max-w-full rounded-lg border border-amber-500/70 bg-amber-500/15 px-2 py-1 text-center">
                 <div className={cn("text-sm font-semibold text-foreground", mono)}>{step.value}</div>
-                <div className={cn("text-[10px]", CHIP_CAPTION_CLASS[step.unitState])}>
+                <div className={cn("text-xs", CHIP_CAPTION_CLASS[step.unitState])}>
                   {step.unitState === "dropped" && step.lostTag ? (
                     <>
                       <span className="text-muted-foreground line-through">{step.lostTag}</span>{" "}
@@ -1980,12 +1980,12 @@ function CrossScopeLab() {
                           className={cn(buttonClass, "w-full justify-between gap-3", pressed && "border-amber-500 bg-amber-500/15")}
                         >
                           <span className="min-w-0">
-                            <span className="block text-[11px] font-normal text-muted-foreground">
+                            <span className="block text-xs font-normal text-muted-foreground">
                               line {row.lineNumber}, {row.scope}
                             </span>
                             <code className={cn("block break-words text-xs", mono)}>{row.code}</code>
                           </span>
-                          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" aria-hidden>
+                          <span className="shrink-0 text-label text-muted-foreground" aria-hidden>
                             {pressed ? "Suspected" : "Suspect"}
                           </span>
                         </button>
@@ -2022,7 +2022,7 @@ function CrossScopeLab() {
               </div>
               {followTheValue ? (
                 <>
-                  <h4 ref={traceHeading} tabIndex={-1} data-testid="trace-heading" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <h4 ref={traceHeading} tabIndex={-1} data-testid="trace-heading" className="text-label text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     Follow the value across the scope
                   </h4>
                   {followTheValue}
@@ -2041,17 +2041,17 @@ function CrossScopeLab() {
                           className={cn(buttonClass, "flex-wrap justify-between gap-2", fixId === f.id && "border-cyan-500 bg-cyan-500/10")}
                         >
                           <span className="min-w-0">{f.label}</span>
-                          {fixId === f.id ? <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chosen</span> : null}
+                          {fixId === f.id ? <span className="shrink-0 text-label text-muted-foreground">Chosen</span> : null}
                         </button>
                       ))}
                     </div>
                     {fix ? (
                       <div data-testid="fix-verdict" className={cn("space-y-2 rounded-lg border p-3 text-sm", fix.robust ? "border-emerald-500/50 bg-emerald-500/10" : "border-amber-500/50 bg-amber-500/10")}>
                         <p className="font-semibold text-foreground">Chosen fix: {fix.label}</p>
-                        <pre role="region" tabIndex={0} aria-label="Code of this fix" className={cn("overflow-x-auto rounded bg-slate-950/90 p-2 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", mono)}>{fix.code}</pre>
+                        <pre role="region" tabIndex={0} aria-label="Code of this fix" className={cn("overflow-x-auto rounded bg-code-surface p-2 text-xs text-code-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", mono)}>{fix.code}</pre>
                         <table className="w-full text-left text-xs">
                           <caption className="sr-only">Wake time by caller unit</caption>
-                          <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                          <thead className="text-label text-muted-foreground">
                             <tr>
                               <th className="py-1 pr-2">Caller unit</th>
                               <th className="py-1 pr-2">Wakes at</th>

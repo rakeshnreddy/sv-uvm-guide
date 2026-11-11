@@ -33,7 +33,7 @@ export default function RoutesStrip({ routes }: RoutesStripProps) {
       action={
         <Link
           href={START_HERE_HREF}
-          className="rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex min-h-10 items-center rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Compare the routes
         </Link>

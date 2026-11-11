@@ -82,7 +82,7 @@ function TicketChip({ ticket, reduced }: { ticket: TicketView; reduced: boolean 
       <span className="sr-only">, </span>
       <span className="opacity-80">{ticket.detail}</span>
       <span className="sr-only">: </span>
-      <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider no-underline">{style.word}</span>
+      <span className="ml-auto text-label no-underline">{style.word}</span>
     </li>
   );
 }
@@ -97,7 +97,7 @@ function RegionStrip({ stage, reported }: { stage: StripStage | null; reported: 
             key={s}
             aria-current={current ? "step" : undefined}
             className={cn(
-              "min-w-0 rounded-md border px-1 py-1.5 text-center text-[10px] sm:text-xs",
+              "min-w-0 rounded-md border px-1 py-1.5 text-center text-xs sm:text-xs",
               s === "postponed" ? "border-dashed" : "",
               current ? "border-2 border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground",
             )}
@@ -115,7 +115,7 @@ function RegionStrip({ stage, reported }: { stage: StripStage | null; reported: 
               <span className="sr-only sm:not-sr-only">{STRIP_LABELS[s]}</span>
             </span>
             {reported.has(s) ? (
-              <span className="block text-[10px] text-rose-700 dark:text-rose-300">
+              <span className="block text-xs text-rose-700 dark:text-rose-300">
                 <span aria-hidden>✉ </span>report
               </span>
             ) : null}
@@ -144,7 +144,7 @@ function Lanes({ scenario, step, reduced }: { scenario: DeferredScenario; step: 
               <span className={cn("border px-1 text-[9px] font-bold leading-4", owner.className)}>{owner.tag}</span>
               <span className="font-mono text-sm font-semibold text-foreground">{proc.label}</span>
               {running ? (
-                <span className="text-[11px] font-medium text-cyan-700 dark:text-cyan-300">
+                <span className="text-xs font-medium text-cyan-700 dark:text-cyan-300">
                   <span aria-hidden>▶ </span>
                   <span className="sr-only">, </span>running now
                 </span>
@@ -152,7 +152,7 @@ function Lanes({ scenario, step, reduced }: { scenario: DeferredScenario; step: 
             </div>
             {hasChecks ? (
               <div className="mt-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pending reports</p>
+                <p className="text-label text-muted-foreground">Pending reports</p>
                 {tray.length ? (
                   <ul className="mt-1 space-y-1" aria-label={`${proc.label}'s report queue`}>
                     {tray.map((t) => (
@@ -200,7 +200,7 @@ function Stepper({ scenario, run, onStep }: { scenario: DeferredScenario; run: D
       </div>
       <Lanes scenario={scenario} step={step} reduced={reduced} />
       <div className="rounded-lg border border-border/70 bg-background/50 p-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Printed so far</p>
+        <p className="text-label text-muted-foreground">Printed so far</p>
         {shownReports.length ? (
           <ul aria-label="Reports printed so far" className="mt-1 space-y-1 font-mono text-xs [font-variant-ligatures:none]">
             {shownReports.map((r) => (

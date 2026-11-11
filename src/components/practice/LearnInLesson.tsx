@@ -122,6 +122,11 @@ interface LearnInLessonProps {
   /** The practice item, from `requirePracticePage(<route>)` in src/lib/practice-links.ts. */
   item: Pick<PracticeItem, 'title' | 'lessons'>;
   className?: string;
+  /**
+   * `card` (the default): a boxed "Learn this in" panel. `row`: the lab page's meta row, "Learn it in"
+   * then the tag and link, with no box, for pages that sit beside the labs (the exercises).
+   */
+  variant?: 'card' | 'row';
 }
 
 /**
@@ -129,9 +134,18 @@ interface LearnInLessonProps {
  * teaches it, plus related lessons. The data comes from the practice map, so
  * the page and the Practice Hub always agree.
  */
-export default function LearnInLesson({ item, className }: LearnInLessonProps) {
+export default function LearnInLesson({ item, className, variant = 'card' }: LearnInLessonProps) {
   if (item.lessons.length === 0) return null;
   const [teacher, ...related] = item.lessons;
+
+  if (variant === 'row') {
+    return (
+      <nav aria-label={`Lessons for ${item.title}`} data-learn-in="row" className={cn('not-prose mb-6 space-y-3', className)}>
+        <LessonLinkList lessons={[teacher]} label="Learn it in" />
+        <LessonLinkList lessons={related} label="Related lessons" />
+      </nav>
+    );
+  }
 
   return (
     <nav

@@ -53,7 +53,7 @@ export const CLOSURE_ASSUMPTIONS = [
   "The directed run stands for any targeted stimulus aimed at the rare scenario; formal tools can also show such a scenario is reachable. The lab shows no covergroup source: that is taught in I-SV-3A.",
 ];
 
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const pressedClass = "border-cyan-500 bg-cyan-500/15";
@@ -163,7 +163,7 @@ function BinGrid({ summary }: { summary: ClosureSummary }) {
           title={binText(bin)}
           data-status={bin.status}
           className={cn(
-            "flex h-8 min-w-8 items-center justify-center rounded-md border px-1 text-[10px] font-semibold",
+            "flex h-8 min-w-8 items-center justify-center rounded-md border px-1 text-xs font-semibold",
             bin.status === "covered" && "border-emerald-600/60 bg-emerald-500/25 text-foreground",
             bin.status === "waived" && cn("border-amber-600/70 text-foreground", stripes),
             bin.status === "hole" && "border-rose-500/70 bg-transparent text-rose-700 dark:text-rose-300",

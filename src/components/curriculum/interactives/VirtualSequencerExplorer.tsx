@@ -93,7 +93,7 @@ function Timeline({ run }: { run: VseqRun }) {
   const ticks = Array.from({ length: Math.floor(maxT / 10) + 1 }, (_, i) => i * 10);
   const endLabel = run.outcome.kind === "fatal" ? "UVM_FATAL" : "test ends";
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/70 bg-background/50 p-2">
+    <div className="overflow-x-auto rounded-xl border border-border bg-card p-2">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="block h-auto w-full min-w-[300px]"
@@ -185,7 +185,7 @@ export default function VirtualSequencerExplorer() {
         onChange={setDispatch}
       />
       <label className="flex min-h-10 items-center gap-2 text-sm">
-        <input type="checkbox" className="h-4 w-4 accent-cyan-500" checked={assigned} onChange={(e) => setAssigned(e.target.checked)} />
+        <input type="checkbox" className="size-5 shrink-0 accent-cyan-500" checked={assigned} onChange={(e) => setAssigned(e.target.checked)} />
         env.connect_phase assigns <code className="font-mono [font-variant-ligatures:none]">vsqr.data_sqr</code>
       </label>
 
@@ -213,7 +213,7 @@ export default function VirtualSequencerExplorer() {
             {run.events.map((e, i) => (
               <li key={i} className="flex gap-2">
                 <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">t = {e.time}</span>
-                <span className="w-12 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{e.lane}</span>
+                <span className="w-12 shrink-0 text-label text-muted-foreground">{e.lane}</span>
                 <span className="min-w-0 text-foreground">{e.what}</span>
               </li>
             ))}

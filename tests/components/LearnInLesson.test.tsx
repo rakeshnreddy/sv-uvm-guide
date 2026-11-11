@@ -27,6 +27,15 @@ describe('LearnInLesson', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders the lab page\'s meta row with no box in the row variant, as the exercise pages use it', () => {
+    const item = requirePracticePage('/exercises/uvm-phase-sorter');
+    render(<LearnInLesson item={item} variant="row" />);
+    const nav = screen.getByRole('navigation', { name: `Lessons for ${item.title}` });
+    expect(within(nav).getByText('Learn it in')).toBeInTheDocument();
+    expect(nav.className).not.toMatch(/\bborder\b|\bbg-card\b|shadow/);
+    expect(within(nav).getByRole('link')).toHaveAttribute('href', item.lessons[0].href);
+  });
+
   it('labels elective lessons in text', () => {
     const lesson = resolveLessonRef('I-SV-8_Power_Intent_and_UPF/index');
     expect(lesson?.track).toBe('elective');

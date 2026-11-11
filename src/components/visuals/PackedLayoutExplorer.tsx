@@ -230,7 +230,7 @@ function StripPanel({ children, footer, label, className, reveal }: { children: 
     if (ref.current && reveal?.length) scrollBitIntoView(ref.current, reveal[0]);
   }, [ref, reveal]);
   return (
-    <div className={cn("min-w-0 rounded-xl border border-border/70 bg-background/50 p-2", className)}>
+    <div className={cn("min-w-0 rounded-xl border border-border bg-card p-2", className)}>
       {/* The padding is on the scroller, so a cell's ring at the edge is not clipped by it. */}
       <div
         ref={ref}
@@ -815,10 +815,10 @@ function StructMode({ preset: presetId }: { preset?: string }) {
                   className={cn("min-w-[3.25rem] rounded-md border px-2 py-1 text-center font-mono text-xs [font-variant-ligatures:none]", shared ? "border-rose-500/60 bg-rose-500/[0.08]" : "border-border/70 bg-background/50")}
                 >
                   <span className="block text-base font-bold text-foreground">{lessonHexDigits(n.digit ?? "")}</span>
-                  <span className="block text-[10px] text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     [{n.hi}:{n.lo}]
                   </span>
-                  <span className="block text-[10px] text-foreground">
+                  <span className="block text-xs text-foreground">
                     {n.members.join(" + ")}
                     {shared ? <span className="sr-only"> (shared digit)</span> : null}
                   </span>
@@ -956,7 +956,7 @@ function UnionRowView({
             aria-label={`bits ${width - 1} to ${row.width} are not part of ${row.path}${highlightsUnaffected ? ", unaffected by the write" : ""}`}
             style={{ width: placeholderWidth }}
             className={cn(
-              "flex h-6 items-center justify-center self-end rounded-[3px] border border-dashed text-[10px] font-medium",
+              "flex h-6 items-center justify-center self-end rounded-[3px] border border-dashed text-xs font-medium",
               highlightsUnaffected ? "border-amber-500/80 bg-amber-500/[0.08] text-amber-900 dark:text-amber-200" : "border-slate-400/60 text-muted-foreground",
             )}
           >
@@ -1541,7 +1541,7 @@ function MutationMode() {
           <div key={m.id} className="rounded-lg border border-border/70 p-3 text-sm">
             <p className="font-semibold text-foreground">{m.label}</p>
             <p className="text-xs text-muted-foreground">{m.description}</p>
-            <pre className="mt-2 overflow-x-auto rounded bg-slate-950/90 p-2 font-mono text-[11px] leading-4 text-slate-100 [font-variant-ligatures:none]">
+            <pre className="mt-2 overflow-x-auto rounded bg-code-surface p-2 font-mono text-xs leading-4 text-code-foreground [font-variant-ligatures:none]">
               <code>
                 {m.before.split("\n").map((l) => `- ${l}`).join("\n")}
                 {"\n"}
@@ -1727,7 +1727,7 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
       {causeRevealed ? (
         <section aria-label="Declarations" className="space-y-2" data-testid="clinic-lines">
           <h4 className="text-sm font-semibold text-foreground">Click the suspect declaration line</h4>
-          <ol className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 py-2 font-mono text-[12px] leading-6 text-slate-100 [font-variant-ligatures:none]">
+          <ol className="overflow-hidden rounded-xl border border-border/70 bg-code-surface py-2 font-mono text-[12px] leading-6 text-code-foreground [font-variant-ligatures:none]">
             {scenario.lines.map((l, i) => {
               const isPicked = picked === l.key;
               const isSuspect = isSuspectLine(l.key);
@@ -1748,7 +1748,7 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
                       isPicked || (suspectShown && isSuspect) ? (isSuspect ? "border-emerald-400 bg-emerald-400/10" : "border-rose-400 bg-rose-400/10") : "border-transparent",
                     )}
                   >
-                    <span aria-hidden className="w-6 shrink-0 text-right text-[11px] text-slate-400">
+                    <span aria-hidden className="w-6 shrink-0 text-right text-xs text-slate-400">
                       {i + 1}
                     </span>
                     <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">{l.text}</code>

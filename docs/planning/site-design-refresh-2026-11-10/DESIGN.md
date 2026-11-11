@@ -26,7 +26,7 @@ Two modes, one brand. Values are HSL triplets for the existing `hsl(var(--x))` p
 | `--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--accent-foreground` | `220 20% 93%` | `222 30% 12%` | primary text, headings |
 | `--muted-foreground` | `220 10% 68%` | `220 10% 36%` | secondary text |
 | `--subtle-foreground` (new) | `220 8% 62%` | `220 8% 39%` | meta and captions only; at least 4.5:1 on every surface it sits on. Phase 4 (colour and glass) moved it from 56%/43% so it holds 4.5:1 over the stronger colour field and the glass on it, beyond the 3-point allowance; recorded for the lead |
-| `--primary`, `--ring` | `197 85% 59%` | `200 88% 33%` | the one accent: primary action fill, links, current-item marker, focus |
+| `--primary`, `--ring` | `197 85% 59%` | `200 88% 31%` (darkened from 33% on 2026-11-11 so accent text holds 4.5:1 over the strongest part of the light colour field) | the one accent: primary action fill, links, current-item marker, focus |
 | `--primary-foreground` | `222 40% 8%` | `0 0% 100%` | text on the accent |
 | `--success` | `152 50% 58%` | `152 65% 28%` | pass, done, progress |
 | `--warning` | `38 90% 62%` | `32 90% 32%` | caution |

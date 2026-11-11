@@ -236,8 +236,8 @@ export default function TLMPortConnector() {
           />
           <PlaybackControls playback={playback} stepCount={run.steps.length} stepNoun="Step" describeStep={(i) => run.steps[i]?.what ?? ""} />
           {step ? (
-            <div className="rounded-xl border border-border/70 bg-background/50 p-3 text-[15px]" aria-live="polite">
-              <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{step.phase}</p>
+            <div className="rounded-xl border border-border bg-card p-3 text-[15px]" aria-live="polite">
+              <p className="mb-1 font-mono text-label text-muted-foreground">{step.phase}</p>
               <p className="text-foreground">
                 <strong>What: </strong>
                 {step.what}
@@ -259,7 +259,7 @@ export default function TLMPortConnector() {
             </p>
           ) : null}
           {run.elaboration.log.length > 0 ? (
-            <pre aria-label="Simulation log" className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+            <pre aria-label="Simulation log" className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
               {run.elaboration.log.join("\n")}
             </pre>
           ) : null}

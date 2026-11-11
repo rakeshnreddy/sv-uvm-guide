@@ -56,7 +56,7 @@ const debugHints: Record<string, string[]> = {
 };
 
 const inputClass =
-  "h-9 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-[11.5px] text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-9 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const smallButton =
   "inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -89,10 +89,10 @@ function SetRow({
   return (
     <li className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-muted px-1.5 font-mono text-[11px] font-bold">set #{n}</span>
-        <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground [font-variant-ligatures:none]">{opToSource(op)}</code>
+        <span className="rounded bg-muted px-1.5 font-mono text-xs font-bold">set #{n}</span>
+        <code className="min-w-0 flex-1 break-all font-mono text-xs text-foreground [font-variant-ligatures:none]">{opToSource(op)}</code>
       </div>
-      <div className="grid gap-2 text-[11px] text-muted-foreground grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]">
+      <div className="grid gap-2 text-xs text-muted-foreground grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]">
         <label htmlFor={`${id}-caller`} className="flex flex-col gap-0.5">
           Called from
           <select
@@ -147,7 +147,7 @@ function SetRow({
           <input id={`${id}-value`} className={inputClass} value={op.value} spellCheck={false} onChange={(e) => onChange({ ...op, value: e.target.value })} />
         </label>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         <span className="mr-auto">
           scope <code className="font-mono text-foreground">&quot;{resolveScope(op.cntxt, op.instName)}&quot;</code>
         </span>
@@ -170,10 +170,10 @@ function GetRow({ op, onChange }: { op: CfgGetOp; onChange: (next: CfgGetOp) => 
   return (
     <div className="space-y-2 rounded-lg border border-sky-500/50 bg-sky-500/[0.05] p-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-sky-500/20 px-1.5 font-mono text-[11px] font-bold">get</span>
-        <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground [font-variant-ligatures:none]">{opToSource(op)}</code>
+        <span className="rounded bg-sky-500/20 px-1.5 font-mono text-xs font-bold">get</span>
+        <code className="min-w-0 flex-1 break-all font-mono text-xs text-foreground [font-variant-ligatures:none]">{opToSource(op)}</code>
       </div>
-      <div className="grid gap-2 text-[11px] text-muted-foreground grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]">
+      <div className="grid gap-2 text-xs text-muted-foreground grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]">
         <label htmlFor={`${id}-caller`} className="flex flex-col gap-0.5">
           Called in (this)
           <select id={`${id}-caller`} className={inputClass} value={op.caller} onChange={(e) => onChange({ ...op, caller: e.target.value, cntxt: e.target.value })}>
@@ -210,7 +210,7 @@ function GetRow({ op, onChange }: { op: CfgGetOp; onChange: (next: CfgGetOp) => 
 
 function Mark({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <span className={cn("rounded border px-1 text-[10px] font-semibold", ok ? "border-emerald-500/60 text-emerald-800 dark:text-emerald-200" : "border-rose-500/60 text-rose-700 dark:text-rose-200")}>
+    <span className={cn("rounded border px-1 text-xs font-semibold", ok ? "border-emerald-500/60 text-emerald-800 dark:text-emerald-200" : "border-rose-500/60 text-rose-700 dark:text-rose-200")}>
       {ok ? "✓" : "✕"} {label}
     </span>
   );
@@ -223,7 +223,7 @@ function Resolution({ ops, run, getId }: { ops: CfgOp[]; run: ConfigRun; getId: 
   const rows = [...g.candidates].sort((a, b) => Number(b.fieldMatches) - Number(a.fieldMatches) || a.queuePos - b.queuePos);
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+      <p className="text-label text-muted-foreground">
         Database at the moment of get(): lookup path <code className="font-mono normal-case tracking-normal">&quot;{g.lookupPath}&quot;</code>
       </p>
       {rows.length === 0 ? <p className="text-sm text-muted-foreground">The database is empty when get() runs.</p> : null}
@@ -239,7 +239,7 @@ function Resolution({ ops, run, getId }: { ops: CfgOp[]; run: ConfigRun; getId: 
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-semibold text-foreground">{c.resource.setIds.map(label).join(" + ")}</span>
               {c.winner ? <span className="font-bold text-emerald-800 dark:text-emerald-200">★ returned</span> : c.eligible ? <span className="font-semibold text-amber-800 dark:text-amber-200">matches, loses</span> : null}
-              <span className="ml-auto font-mono text-[11px] [font-variant-ligatures:none]">
+              <span className="ml-auto font-mono text-xs [font-variant-ligatures:none]">
                 precedence {c.resource.precedence} · queue position {c.queuePos + 1}
               </span>
             </div>
@@ -247,7 +247,7 @@ function Resolution({ ops, run, getId }: { ops: CfgOp[]; run: ConfigRun; getId: 
               <Mark ok={c.fieldMatches} label={`field '${c.resource.field}'`} />
               <Mark ok={c.typeMatches} label={`type ${c.resource.type}`} />
               <Mark ok={c.scopeMatches} label={`scope "${c.resource.scope}"`} />
-              <span className="font-mono text-[11px] text-foreground [font-variant-ligatures:none]">= {c.resource.value}</span>
+              <span className="font-mono text-xs text-foreground [font-variant-ligatures:none]">= {c.resource.value}</span>
             </div>
           </li>
         ))}
@@ -264,8 +264,8 @@ function ReachTree({ ops, getId }: { ops: CfgOp[]; getId: string }) {
   const g = ops.find((o) => o.id === getId) as CfgGetOp | undefined;
   const sets = ops.filter((o) => o.kind === "set");
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card p-3">
+      <p className="mb-2 text-label text-muted-foreground">
         What every component would read for &apos;{g?.field}&apos; ({g?.type}) at the same moment
       </p>
       <ul className="space-y-1 font-mono text-[12px] [font-variant-ligatures:none]" aria-label="Reach of the configuration in the hierarchy">
@@ -279,11 +279,11 @@ function ReachTree({ ops, getId }: { ops: CfgOp[]; getId: string }) {
                 {shortName(p)}
               </span>
               {r?.found ? (
-                <span className="rounded border border-emerald-500/60 px-1 text-[10px] text-emerald-800 dark:text-emerald-200">
+                <span className="rounded border border-emerald-500/60 px-1 text-xs text-emerald-800 dark:text-emerald-200">
                   ✓ {r.value} (set #{sets.findIndex((s) => s.id === r.setId) + 1})
                 </span>
               ) : (
-                <span className="rounded border border-dashed border-slate-400/70 px-1 text-[10px] text-muted-foreground">— get returns 0</span>
+                <span className="rounded border border-dashed border-slate-400/70 px-1 text-xs text-muted-foreground">— get returns 0</span>
               )}
             </li>
           );
@@ -374,7 +374,7 @@ export default function ConfigDbExplorer() {
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
         <div className="min-w-0 space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Calls (edit any field)</p>
+          <p className="text-label text-muted-foreground">Calls (edit any field)</p>
           <ol className="space-y-2" aria-label="set() calls">
             {setCalls.map((op, i) => (
               <SetRow
@@ -428,7 +428,7 @@ export default function ConfigDbExplorer() {
           <Resolution ops={ops} run={run} getId={getId} />
           <details className="rounded-lg border border-border/70 p-2 text-sm">
             <summary className="cursor-pointer font-medium text-foreground">Log with +UVM_CONFIG_DB_TRACE (abbreviated)</summary>
-            <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11px] leading-5 text-slate-100 [font-variant-ligatures:none]">{run.trace.join("\n")}</pre>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]">{run.trace.join("\n")}</pre>
           </details>
         </div>
       </PredictionPrompt>

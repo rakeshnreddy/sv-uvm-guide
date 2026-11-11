@@ -111,7 +111,7 @@ function ScoreboardLanes({ result, current }: { result: SbResult; current?: SbSt
     .join(", ")}. run_phase ends at ${ns(result.endTime)}.`;
 
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="block min-w-[300px]" role="img" aria-label={`Transaction timeline. ${describe}`}>
           {/* not-observed region */}
@@ -192,7 +192,7 @@ function ScoreboardLanes({ result, current }: { result: SbResult; current?: SbSt
           ))}
         </svg>
       </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         x-axis: simulation time in ns (one column per 10 ns cycle). EXP chips are dashed, ACT chips solid; each shows #request and id·data. ✓ match, ✕
         mismatch or unexpected, ⏸ held for check_phase, ! overwrote an outstanding prediction.
       </figcaption>
@@ -292,26 +292,26 @@ function PendingPanel({ step }: { step?: SbStep }) {
   if (!step) return null;
   const { pending, held, outstanding } = step.snapshot;
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3 text-xs">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Inside the scoreboard after this step</p>
+    <div className="rounded-xl border border-border bg-card p-3 text-xs">
+      <p className="mb-2 text-label text-muted-foreground">Inside the scoreboard after this step</p>
       <div className="space-y-1.5">
         {pending.length === 0 ? <p className="text-muted-foreground">No expected items pending.</p> : null}
         {pending.map((p) => (
           <div key={p.name} className="flex flex-wrap items-center gap-1.5">
-            <code className="min-w-[5.5rem] font-mono text-[11px] text-foreground [font-variant-ligatures:none]">{p.name}</code>
+            <code className="min-w-[5.5rem] font-mono text-xs text-foreground [font-variant-ligatures:none]">{p.name}</code>
             {p.items.length === 0 ? <span className="text-muted-foreground">empty</span> : null}
             {p.items.map((it, i) => (
-              <span key={`${p.name}-${i}`} className="rounded border border-dashed border-teal-500/70 px-1.5 py-0.5 font-mono text-[11px] text-teal-800 dark:text-teal-200">
+              <span key={`${p.name}-${i}`} className="rounded border border-dashed border-teal-500/70 px-1.5 py-0.5 font-mono text-xs text-teal-800 dark:text-teal-200">
                 EXP #{it.seq} {itemShort(it)}
               </span>
             ))}
           </div>
         ))}
         <div className="flex flex-wrap items-center gap-1.5">
-          <code className="min-w-[5.5rem] font-mono text-[11px] text-foreground">held_q</code>
+          <code className="min-w-[5.5rem] font-mono text-xs text-foreground">held_q</code>
           {held.length === 0 ? <span className="text-muted-foreground">empty</span> : null}
           {held.map((it, i) => (
-            <span key={`h${i}`} className="rounded border border-sky-500/70 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-800 dark:text-sky-100">
+            <span key={`h${i}`} className="rounded border border-sky-500/70 bg-sky-500/10 px-1.5 py-0.5 font-mono text-xs text-sky-800 dark:text-sky-100">
               ACT {itemShort(it)}
             </span>
           ))}
@@ -344,7 +344,7 @@ function RunReveal({ result }: { result: SbResult }) {
       <ScoreboardLanes result={result} current={step} />
       <PlaybackControls playback={playback} stepCount={steps.length} stepNoun="Scoreboard step" describeStep={(i) => steps[i]?.what ?? ""} />
       <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/[0.06] p-3 text-sm" aria-live="polite">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="text-label text-muted-foreground">
           {step.phase === "check" ? "check_phase" : step.phase === "end" ? "end of run_phase" : ns(step.t)} · step {playback.index + 1} of {steps.length}
         </p>
         <p className="mt-1 text-[15px] text-foreground">
@@ -363,7 +363,7 @@ function RunReveal({ result }: { result: SbResult }) {
         </div>
         <CodeTrace label="rsp_scoreboard (generated from the model)" lines={lines} activeKey={step.codeKey} className="min-w-0" />
       </div>
-      <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
+      <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Simulation log">
         {result.log.join("\n")}
       </pre>
     </div>
@@ -403,7 +403,7 @@ function PolicyMatrix({ dut }: { dut: DutOrdering }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[300px] border-collapse text-xs">
-        <caption className="mb-2 text-left text-[11px] text-muted-foreground">
+        <caption className="mb-2 text-left text-xs text-muted-foreground">
           Every DUT bug against every policy, {dut === "cross-id" ? "DUT reorders across IDs" : "in-order DUT"}, wait-until-idle, check_phase on.
         </caption>
         <thead>
@@ -485,7 +485,7 @@ function ScoreboardExplorer() {
             options={(["none", "drain-time", "until-idle"] as EndOfTest[]).map((e) => ({ value: e, label: endOfTestLabels[e] }))}
           />
           <label className="mt-2 flex min-h-10 items-center gap-2 text-xs text-foreground">
-            <input type="checkbox" checked={config.checkPhase} onChange={(e) => set("checkPhase", e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+            <input type="checkbox" checked={config.checkPhase} onChange={(e) => set("checkPhase", e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
             check_phase reports leftovers
           </label>
         </div>
@@ -500,7 +500,7 @@ function ScoreboardExplorer() {
       </PredictionPrompt>
 
       <div className="space-y-3 rounded-xl border border-border/70 p-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Exhaustive check</p>
+        <p className="text-label text-muted-foreground">Exhaustive check</p>
         <PredictionPrompt question="The DUT swaps two responses that share an ID (#1 and #3). Which scoreboard lets this bug through?" options={reorderOptions} resetKey={config.dut}>
           <PolicyMatrix dut={config.dut} />
         </PredictionPrompt>
@@ -568,7 +568,7 @@ function ScoreboardDebugChallenge() {
       fidelity="model"
       assumptions={SCOREBOARD_MODEL_ASSUMPTIONS}
     >
-      <pre className="overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Failing log">
+      <pre className="overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Failing log">
         {buggy.log.join("\n")}
       </pre>
       <div>
@@ -585,7 +585,7 @@ function ScoreboardDebugChallenge() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -617,7 +617,7 @@ function ScoreboardDebugChallenge() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {fixes.map((f) => (
               <label key={f.policy} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fix === f.policy ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="sb-fix" checked={fix === f.policy} onChange={() => setFix(f.policy)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="sb-fix" checked={fix === f.policy} onChange={() => setFix(f.policy)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span>{f.label}</span>
               </label>
             ))}
@@ -648,7 +648,7 @@ function ScoreboardDebugChallenge() {
                 ))}
               </ul>
               {grade.ok ? (
-                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">
+                <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">
                   {scoreboardSource({ policy: "per-id", endOfTest: "until-idle", checkPhase: true })
                     .map((l) => l.text)
                     .join("\n")}

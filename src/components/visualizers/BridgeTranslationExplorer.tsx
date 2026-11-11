@@ -84,7 +84,7 @@ function OutputCard({ out, index }: { out: BridgeResult["outputs"][number]; inde
   return (
     <div className={cn("min-w-0 rounded-xl border p-3", index % 2 === 0 ? "border-sky-500/40 bg-sky-500/[0.05]" : "border-violet-500/40 bg-violet-500/[0.05]")}>
       <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-        <span aria-hidden className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current text-[11px]">
+        <span aria-hidden className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs">
           {index + 1}
         </span>
         {out.label}
@@ -118,7 +118,7 @@ function ByteMap({ result, inputLo, inputHi }: { result: BridgeResult; inputLo: 
         {segs.map((s) => (
           <div
             key={s.i}
-            className={cn("absolute top-1 bottom-1 flex items-center justify-center rounded border text-[11px] font-semibold", s.i % 2 === 0 ? "border-sky-500/60 bg-sky-500/20" : "border-violet-500/60 bg-violet-500/20")}
+            className={cn("absolute top-1 bottom-1 flex items-center justify-center rounded border text-xs font-semibold", s.i % 2 === 0 ? "border-sky-500/60 bg-sky-500/20" : "border-violet-500/60 bg-violet-500/20")}
             style={{ left: `${pct(s.lo)}%`, width: `${Math.max(2, ((s.hi - s.lo + 1) / span) * 100)}%` }}
           >
             {s.i + 1}
@@ -128,7 +128,7 @@ function ByteMap({ result, inputLo, inputHi }: { result: BridgeResult; inputLo: 
           <div key={b.at} className="absolute top-0 bottom-0 border-l-2 border-dashed border-rose-500" style={{ left: `${pct(b.at)}%` }} />
         ))}
       </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         Bytes {hex(inputLo)} to {hex(inputHi)}. Numbered boxes are the output bursts.{" "}
         {boundaries.length ? `Dashed lines: ${boundaries.map((b) => `${b.kind} boundary ${hex(b.at)}`).join(", ")}.` : "No 1KB boundary inside this range."}
       </figcaption>
@@ -322,7 +322,7 @@ export function BridgeTranslationExplorer() {
             <ul className="space-y-1 text-sm" aria-label="Why the bridge does this">
               {result.reasons.map((r, i) => (
                 <li key={i} className={cn("rounded-lg border px-3 py-2", r.kind === "illegal-input" ? "border-rose-500/50 bg-rose-500/10" : "border-border/60")}>
-                  <span className={cn("mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase", r.basis === "protocol" ? "bg-cyan-500/15 text-cyan-900 dark:text-cyan-100" : "bg-amber-500/15 text-amber-900 dark:text-amber-100")}>
+                  <span className={cn("mr-2 rounded px-1.5 py-0.5 text-label", r.basis === "protocol" ? "bg-cyan-500/15 text-cyan-900 dark:text-cyan-100" : "bg-amber-500/15 text-amber-900 dark:text-amber-100")}>
                     {r.basis === "protocol" ? `Protocol ${r.clause}` : "Bridge policy"}
                   </span>
                   {r.kind === "illegal-input" ? "✕ " : ""}

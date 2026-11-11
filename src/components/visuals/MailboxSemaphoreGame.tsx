@@ -57,18 +57,18 @@ function Transcript({ entries, empty }: { entries: TranscriptEntry[]; empty: str
   const latest = entries[entries.length - 1];
   return (
     <div className="space-y-2">
-      <div className="max-h-64 overflow-y-auto rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs [font-variant-ligatures:none]">
-        <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">SystemVerilog call log</p>
+      <div className="max-h-64 overflow-y-auto rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs [font-variant-ligatures:none]">
+        <p className="mb-1 font-sans text-label text-code-muted">SystemVerilog call log</p>
         {entries.length === 0 ? (
-          <p className="text-slate-400">{empty}</p>
+          <p className="text-code-muted">{empty}</p>
         ) : (
           <ol className="space-y-1">
             {entries.map((e) => (
               <li key={e.id} className={toneClass[e.tone]}>
                 <span aria-hidden>{toneGlyph[e.tone]} </span>
-                <span className="text-slate-400">{e.who}: </span>
+                <span className="text-code-muted">{e.who}: </span>
                 <span>{e.code}</span>
-                <span className="block pl-4 font-sans text-[11px] text-slate-400">{e.result}</span>
+                <span className="block pl-4 font-sans text-xs text-slate-400">{e.result}</span>
               </li>
             ))}
           </ol>
@@ -586,7 +586,7 @@ function KeyLeakDebug() {
         aria-pressed={chosen}
         aria-label={`Suspect line: ${line.text.trim()}`}
         className={cn(
-          "rounded-md border px-2 py-0.5 font-sans text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+          "inline-flex min-h-6 items-center rounded-md border px-2 py-0.5 font-sans text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
           chosen ? (entry.culprit ? "border-emerald-300 bg-emerald-400/20 text-emerald-100" : "border-rose-300 bg-rose-400/20 text-rose-100") : "border-cyan-400/50 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20",
         )}
       >
@@ -650,7 +650,7 @@ function KeyLeakDebug() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {LEAK_FIXES.map((f) => (
               <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="key-leak-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="key-leak-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="font-mono text-xs [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}
@@ -672,7 +672,7 @@ function KeyLeakDebug() {
               );
             })}
           </ul>
-          <ol className="space-y-0.5 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+          <ol className="space-y-0.5 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
             {fixRun.result.log.map((l, i) => (
               <li key={i}>
                 {l.time} ns · {l.label}: {l.text}

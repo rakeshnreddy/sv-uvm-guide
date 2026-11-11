@@ -89,7 +89,8 @@ export const moduleConceptId = (moduleId: string): string => `module:${moduleId}
 export const lessonConceptId = (key: string): string => `lesson:${key}`;
 export const termConceptId = (slug: string): string => `term:${slug}`;
 
-const TIER_NAMES: readonly ConceptTier[] = ['Foundational', 'Intermediate', 'Advanced', 'Expert'];
+/** The concept tiers in course order: index 0 is Tier 1. */
+export const TIER_NAMES: readonly ConceptTier[] = ['Foundational', 'Intermediate', 'Advanced', 'Expert'];
 
 export function conceptTierName(tierId: string): ConceptTier {
   return TIER_NAMES[tierNumber(tierId) - 1] ?? 'Foundational';

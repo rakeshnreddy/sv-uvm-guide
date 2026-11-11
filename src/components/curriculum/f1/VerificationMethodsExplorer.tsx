@@ -80,7 +80,7 @@ export const VERIFICATION_METHODS_PRESETS: Record<VerificationMethodsPreset, { t
 export const CUSTOM_TEST_NAME = "Test 4: yours";
 
 const mono = "font-mono [font-variant-ligatures:none]";
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const selectClass = "h-10 min-w-0 rounded-md border border-border/70 bg-background/60 px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -166,11 +166,11 @@ function MethodsGrid({ caption, summary, dSlice, cell, testId }: MethodsGridProp
         <caption className="mb-1 text-left text-xs text-muted-foreground">{caption}</caption>
         <thead>
           <tr>
-            <th scope="col" className="w-[3.25rem] text-left text-[10px] font-medium text-muted-foreground">
+            <th scope="col" className="w-[3.25rem] text-left text-xs font-medium text-muted-foreground">
               count
             </th>
             {COUNT_VALUES.map((c) => (
-              <th key={c} scope="col" className={cn("text-[11px] font-semibold text-muted-foreground", mono)}>
+              <th key={c} scope="col" className={cn("text-xs font-semibold text-muted-foreground", mono)}>
                 {c}
               </th>
             ))}
@@ -179,7 +179,7 @@ function MethodsGrid({ caption, summary, dSlice, cell, testId }: MethodsGridProp
         <tbody>
           {ROWS.map((row, r) => (
             <tr key={row}>
-              <th scope="row" className="truncate text-left text-[11px] font-medium text-foreground" title={ROW_LABELS[row]}>
+              <th scope="row" className="truncate text-left text-xs font-medium text-foreground" title={ROW_LABELS[row]}>
                 <abbr title={ROW_LABELS[row]} className="no-underline">
                   {ROW_SHORT[row]}
                 </abbr>
@@ -217,7 +217,7 @@ function MethodsGrid({ caption, summary, dSlice, cell, testId }: MethodsGridProp
                         e.preventDefault();
                       }}
                       className={cn(
-                        "relative flex h-9 w-full min-w-0 items-center justify-center rounded-md border text-[10px] leading-none text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                        "relative flex h-9 w-full min-w-0 items-center justify-center rounded-md border text-xs leading-none text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                         mono,
                         g.excluded ? "border-dashed border-slate-400/70 bg-slate-500/10 text-muted-foreground" : "border-border/60",
                         bug && !masked && "border-2 border-rose-500 dark:border-rose-400",
@@ -325,7 +325,7 @@ function DirectedTab({ dSlice }: { dSlice: number | null }) {
           <label key={t.id} className="flex items-start gap-2 text-sm text-foreground [@media(pointer:coarse)]:min-h-10">
             <input
               type="checkbox"
-              className="mt-1 accent-cyan-500"
+              className="size-5 shrink-0 mt-px accent-cyan-500"
               checked={selectedTests.includes(t.id)}
               onChange={(e) => setSelectedTests((s) => (e.target.checked ? LESSON_TESTS.map((x) => x.id).filter((id) => id === t.id || s.includes(id)) : s.filter((id) => id !== t.id)))}
             />
@@ -338,7 +338,7 @@ function DirectedTab({ dSlice }: { dSlice: number | null }) {
           </label>
         ))}
         <label className="flex items-start gap-2 text-sm text-foreground [@media(pointer:coarse)]:min-h-10">
-          <input type="checkbox" className="mt-1 accent-cyan-500" checked={useCustom} disabled={custom.length === 0} onChange={(e) => setUseCustom(e.target.checked)} />
+          <input type="checkbox" className="size-5 shrink-0 mt-px accent-cyan-500" checked={useCustom} disabled={custom.length === 0} onChange={(e) => setUseCustom(e.target.checked)} />
           <span>
             <span className="font-medium">{CUSTOM_TEST_NAME}</span>
             <span className={cn("block text-xs text-muted-foreground", mono)} data-testid="custom-steps">
@@ -673,7 +673,7 @@ function RandomTab({ dSlice }: { dSlice: number | null }) {
                   Next
                 </button>
               </span>
-              <span id={`${seedId}-hint`} className="text-[10px]">
+              <span id={`${seedId}-hint`} className="text-xs">
                 1 to 99999; Enter or leave the field to apply.
               </span>
             </div>

@@ -155,11 +155,11 @@ export default function GenerateElaborationVisualizer() {
       {mode === "generate" ? (
         <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
           <label className="flex items-center gap-2">
-            <input type="checkbox" className="accent-amber-500" checked={labelled} onChange={(e) => setLabelled(e.target.checked)} />
+            <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={labelled} onChange={(e) => setLabelled(e.target.checked)} />
             Label the loop block <code className="font-mono">: gen_chk</code>
           </label>
           <label className="flex items-center gap-2">
-            <input type="checkbox" className="accent-amber-500" checked={covFirst} onChange={(e) => setCovFirst(e.target.checked)} />
+            <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={covFirst} onChange={(e) => setCovFirst(e.target.checked)} />
             Put an <code className="font-mono">if (EN_COV)</code> generate block first
           </label>
         </div>
@@ -178,7 +178,7 @@ export default function GenerateElaborationVisualizer() {
           options={options}
         >
           <div className="space-y-2" aria-live="polite">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Elaborated hierarchy (built before time 0)</p>
+            <p className="text-label text-muted-foreground">Elaborated hierarchy (built before time 0)</p>
             <ul aria-label="Elaborated instances" className="space-y-1.5">
               {paths.map((p) => (
                 <li key={p} className="w-fit max-w-full break-all rounded-sm border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 font-mono text-xs text-foreground">
@@ -194,8 +194,8 @@ export default function GenerateElaborationVisualizer() {
           </div>
         </PredictionPrompt>
       ) : (
-        <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm" aria-live="polite">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Runtime execution (simulation time)</p>
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
+          <p className="text-label text-muted-foreground">Runtime execution (simulation time)</p>
           <ol className="list-decimal space-y-1 pl-5 font-mono text-xs">
             {Array.from({ length: numCh }, (_, i) => (
               <li key={i}>

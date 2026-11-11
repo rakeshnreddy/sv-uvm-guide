@@ -100,10 +100,10 @@ export default function RaceDebugChallenge() {
   ];
 
   return (
-    <section aria-label="Race debugging challenge" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
+    <section aria-label="Race debugging challenge" className="glass-liquid not-prose my-8 space-y-4 p-3 sm:p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Debug it</p>
+          <p className="text-label text-muted-foreground">Debug it</p>
           <h3 className="text-lg font-semibold text-foreground">The test that only fails on the other simulator</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             The scoreboard expects the flop to capture <strong>{EXPECTED_Q}</strong> (din&apos;s value before the edge). Two runs of the same code disagree.
@@ -117,7 +117,7 @@ export default function RaceDebugChallenge() {
           const pass = o.finalValues.q === EXPECTED_Q;
           return (
             <div key={o.signature} className={cn("rounded-xl border p-3 font-mono text-xs [font-variant-ligatures:none]", pass ? "border-emerald-500/40" : "border-rose-500/50")}>
-              <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-1 font-sans text-label text-muted-foreground">
                 Run order: {o.runs[0].executionOrder.map(labelOf).join(" → ")}
               </p>
               <p className={pass ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
@@ -142,7 +142,7 @@ export default function RaceDebugChallenge() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "inline-flex min-h-6 items-center rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -189,7 +189,7 @@ export default function RaceDebugChallenge() {
                   fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70",
                 )}
               >
-                <input type="radio" name="race-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="race-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="font-mono text-[13px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}
@@ -214,7 +214,7 @@ export default function RaceDebugChallenge() {
                 {fixResult.fix.review}
               </p>
               {fixResult.fix.id === "cb" ? (
-                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">{`// The same fix inside a UVM driver
+                <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">{`// The same fix inside a UVM driver
 task run_phase(uvm_phase phase);
   forever begin
     seq_item_port.get_next_item(req);

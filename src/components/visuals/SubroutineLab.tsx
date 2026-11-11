@@ -106,7 +106,7 @@ const code = "rounded bg-muted px-1 font-mono text-[0.95em] [font-variant-ligatu
 const button =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const lineControlClass =
-  "min-h-10 rounded-md border border-border/70 bg-slate-900 px-1.5 font-mono text-[11px] sm:h-7 sm:min-h-0 text-slate-100 [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400";
+  "min-h-10 rounded-md border border-border/70 bg-slate-900 px-1.5 font-mono text-xs sm:h-7 sm:min-h-0 text-slate-100 [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400";
 
 /* ========================================================================= */
 /* Line controls rendered inside the code                                     */
@@ -240,9 +240,9 @@ const kindLabels: Record<SubStep["kind"], string> = {
 
 function Narration({ step }: { step: SubStep }) {
   return (
-    <div data-testid="narration" className="rounded-xl border border-border/70 bg-background/50 p-4">
-      <div className="flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-bold uppercase tracking-wider text-cyan-800 dark:text-cyan-200">{kindLabels[step.kind]}</span>
+    <div data-testid="narration" className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-bold text-cyan-800 dark:text-cyan-200">{kindLabels[step.kind]}</span>
         {step.clause ? <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">{step.clause}</span> : null}
         {step.choice ? (
           <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-800 dark:text-amber-200" title="The standard leaves this order open (§4.7)">
@@ -277,8 +277,8 @@ function StoragePanel({ step, run }: { step: SubStep; run: SubroutineRun }) {
         .join("; ")
     : "no subroutine storage exists";
   return (
-    <section aria-label="Subroutine storage" data-testid="storage" className="rounded-xl border border-border/70 bg-background/40 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Storage at t = {step.time} ns</p>
+    <section aria-label="Subroutine storage" data-testid="storage" className="rounded-xl border border-border bg-card p-3">
+      <p className="text-label text-muted-foreground">Storage at t = {step.time} ns</p>
       <p className="sr-only">{summary}</p>
       {step.boxes.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">No activation is open and nothing is static: no subroutine storage exists right now.</p>
@@ -298,10 +298,10 @@ function StoragePanel({ step, run }: { step: SubStep; run: SubroutineRun }) {
               <p className="flex flex-wrap items-center gap-1 text-xs font-semibold text-foreground">
                 <span aria-hidden>{box.owner === "static" ? "▣" : "▢"}</span>
                 {boxTitle(box, run)}
-                {!box.alive ? <span className="rounded bg-rose-500/15 px-1 text-[10px] uppercase tracking-wider text-rose-800 dark:text-rose-200">{box.vars.length ? "dropped at return" : "ended at return"}</span> : null}
+                {!box.alive ? <span className="rounded bg-rose-500/15 px-1 text-label text-rose-800 dark:text-rose-200">{box.vars.length ? "dropped at return" : "ended at return"}</span> : null}
               </p>
               {box.owner === "static" && box.activations.length > 1 ? (
-                <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">shared by {box.activations.length} activations at once</p>
+                <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">shared by {box.activations.length} activations at once</p>
               ) : null}
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {box.vars.map((x) => (
@@ -314,7 +314,7 @@ function StoragePanel({ step, run }: { step: SubStep; run: SubroutineRun }) {
                   >
                     <span aria-hidden className="inline-flex items-center gap-1">
                       {r.name} ≡ {r.target}
-                      <span className="text-[10px] opacity-80">{r.direction}</span>
+                      <span className="text-xs opacity-80">{r.direction}</span>
                     </span>
                     <span className="sr-only">
                       {r.name} is a {r.direction} to {r.target}: one variable, two names
@@ -357,7 +357,7 @@ function CallLanes({ run, step }: { run: SubroutineRun; step: SubStep }) {
     .map((a) => `${laneLabel(a)}, ${a.label}, ${a.endTime !== undefined && a.endTime <= step.time ? `ran from ${a.startTime} to ${a.endTime} ns` : `started at ${a.startTime} ns and is still running`}`)
     .join("; ");
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <ScrollFrame label="call lanes">
         <svg viewBox={`0 0 ${x1 + 20} ${height}`} role="img" aria-label={`Call lanes up to t = ${step.time} ns: ${summary}.`} className="w-full min-w-[380px] text-foreground">
           {ticks(maxTime).map((t) => (
@@ -406,7 +406,7 @@ function CallLanes({ run, step }: { run: SubroutineRun; step: SubStep }) {
           <line x1={xOf(step.time)} x2={xOf(step.time)} y1={top - 4} y2={height - 4} strokeDasharray="4 3" className="stroke-cyan-600 dark:stroke-cyan-300" strokeWidth={1.5} />
         </svg>
       </ScrollFrame>
-      <figcaption className="px-1 pt-1 text-[11px] text-muted-foreground">Horizontal axis: simulation time (ns). Bar = the call is active; ● = it printed; ✓ = it returned. The dashed cursor marks the current step.</figcaption>
+      <figcaption className="px-1 pt-1 text-xs text-muted-foreground">Horizontal axis: simulation time (ns). Bar = the call is active; ● = it printed; ✓ = it returned. The dashed cursor marks the current step.</figcaption>
     </figure>
   );
 }
@@ -414,10 +414,10 @@ function CallLanes({ run, step }: { run: SubroutineRun; step: SubStep }) {
 /** `emphasizeLast` tints the newest line of a log that grows; a finished log has no line to single out. */
 function LogPanel({ lines, label = "Simulation output", testId = "log", emphasizeLast = true }: { lines: { time?: number; text: string }[]; label?: string; testId?: string; emphasizeLast?: boolean }) {
   return (
-    <div data-testid={testId} className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">
-      <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+    <div data-testid={testId} className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">
+      <p className="mb-1 font-sans text-label text-code-muted">{label}</p>
       {lines.length === 0 ? (
-        <span className="text-slate-400">(no output yet)</span>
+        <span className="text-code-muted">(no output yet)</span>
       ) : (
         <ol className="space-y-0.5">
           {lines.map((l, i) => (
@@ -689,7 +689,7 @@ function LifetimeSendLab() {
               setDebugPrints(e.target.checked);
               setSelected(0);
             }}
-            className="h-4 w-4 accent-cyan-500"
+            className="size-5 shrink-0 accent-cyan-500"
           />
           Add the enter/use debug prints
         </label>
@@ -912,7 +912,7 @@ function RecursionTable({ run, index }: { run: SubroutineRun; index: number }) {
     <ScrollFrame label="recursion trace table" className="rounded-xl border border-border/70">
       <table className="w-full text-left text-xs" data-testid="recursion-table">
         <caption className="sr-only">Trace of the recursion, one row per entry and per return; the base case's entry and return share one row</caption>
-        <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+        <thead className="bg-muted/40 text-label text-muted-foreground">
           <tr>
             <th scope="col" className="px-2 py-1.5 font-semibold">
               Step
@@ -1128,7 +1128,7 @@ function DirectionsDiagram({ step, directions, lifetime }: { step: SubStep; dire
   };
   const summary = DIR_FORMALS.map((f) => `${DIR_ACTUALS[f]} = ${formatValue(step.globals[DIR_ACTUALS[f]])}, ${formalSummary(f)}`).join("; ");
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <ScrollFrame label="caller and task storage">
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Caller and task storage at t = ${step.time} ns: ${summary}.`} className="w-full min-w-[470px] text-foreground">
           <defs>
@@ -1223,7 +1223,7 @@ function DirectionsDiagram({ step, directions, lifetime }: { step: SubStep; dire
           </li>
         ))}
       </ul>
-      <figcaption className="px-1 pt-1 text-[11px] text-muted-foreground">
+      <figcaption className="px-1 pt-1 text-xs text-muted-foreground">
         Arrows appear only while a call is open. A copy-in arrow stays from the call on and lights up on the step that performs it. A copy-out arrow appears only on the return, the step that performs it; until then the row says no copy out yet. A ref is one box with two names: nothing is copied. A static task's box stays between calls and keeps its values.
       </figcaption>
     </figure>
@@ -1289,7 +1289,7 @@ function ShowDirsLab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4">
         <label className="flex min-h-10 items-center gap-2 text-sm text-foreground">
-          <input type="checkbox" checked={calls === 2} onChange={(e) => setCalls(e.target.checked ? 2 : 1)} className="h-4 w-4 accent-cyan-500" />
+          <input type="checkbox" checked={calls === 2} onChange={(e) => setCalls(e.target.checked ? 2 : 1)} className="size-5 shrink-0 accent-cyan-500" />
           Call show_dirs a second time after the join
         </label>
         <button type="button" className={button} onClick={() => load({ lifetime: "automatic", directions: DEFAULT_DIRECTIONS, calls: 1 })}>
@@ -1692,7 +1692,7 @@ function FormalsLab({ preset: initial }: { preset: FormalsPreset }) {
         }
         options={returnOptions(resolved, returnType)}
       >
-        <div data-testid="return-type-strip" className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm [font-variant-ligatures:none]">
+        <div data-testid="return-type-strip" className="rounded-xl border border-border bg-card p-3 text-sm [font-variant-ligatures:none]">
           <p className="text-muted-foreground">
             Resolved return type: <code className={code}>{ret.type}</code> ({ret.source === "implicit" ? "no return type written, so a one-bit logic, §13.4" : "written"}).
           </p>
@@ -1717,7 +1717,7 @@ function FormalsLab({ preset: initial }: { preset: FormalsPreset }) {
         }
         options={waitOptions(signature.name, first, waitIssues)}
       >
-        <div data-testid="wait-cycles-strip" className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm [font-variant-ligatures:none]">
+        <div data-testid="wait-cycles-strip" className="rounded-xl border border-border bg-card p-3 text-sm [font-variant-ligatures:none]">
           {waitIssues.length ? (
             <IssueList issues={waitIssues} testId="wait-cycles-issues" />
           ) : (
@@ -1760,7 +1760,7 @@ function FormalsLab({ preset: initial }: { preset: FormalsPreset }) {
         <ScrollFrame label="formals table">
           <table className="w-full text-left text-xs">
             <caption className="sr-only">Each formal's written direction and type; blank means not written</caption>
-            <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <thead className="bg-muted/40 text-label text-muted-foreground">
               <tr>
                 <th scope="col" className="px-2 py-1.5 font-semibold">
                   Formal
@@ -1880,7 +1880,7 @@ function DebugLab() {
           const pickedLine = KATA_SUSPECTS.find((l) => l.key === pickedKey);
           const right = pickedKey === symptom.suspect;
           return (
-            <div key={symptom.id} data-testid={`symptom-${symptom.id}`} className="rounded-xl border border-border/70 bg-background/50 p-3">
+            <div key={symptom.id} data-testid={`symptom-${symptom.id}`} className="rounded-xl border border-border bg-card p-3">
               <p className="text-sm text-foreground [font-variant-ligatures:none]">
                 <span className="font-mono text-rose-700 dark:text-rose-300">{symptom.observed}</span> <span className="text-muted-foreground">(expected</span>{" "}
                 <span className="font-mono text-emerald-700 dark:text-emerald-300">{symptom.expected}</span>
@@ -1896,7 +1896,7 @@ function DebugLab() {
                       aria-pressed={isPicked}
                       onClick={() => setSuspects((prev) => ({ ...prev, [symptom.id]: line.key }))}
                       className={cn(
-                        "min-h-10 rounded-lg border px-2 py-1 text-left font-mono text-[11px] [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "min-h-10 rounded-lg border px-2 py-1 text-left font-mono text-xs [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         isPicked && right ? "border-emerald-500 bg-emerald-500/15" : isPicked ? "border-rose-500 bg-rose-500/15" : "border-border/70 hover:bg-muted",
                       )}
                     >
@@ -1920,7 +1920,7 @@ function DebugLab() {
       <section aria-label="Step 2: choose a fix for each subroutine" className="space-y-3">
         <h4 className="text-sm font-semibold text-foreground">2. Choose the smallest fix for each subroutine, then rerun</h4>
         {KATA_SUBS.map((sub: KataSub) => (
-          <div key={sub} className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-background/50 p-3">
+          <div key={sub} className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3">
             <code className={cn(code, "text-sm")}>{sub}</code>
             <SegmentedControl<KataFix>
               label={`Fix for ${sub}`}
@@ -1959,7 +1959,7 @@ function DebugLab() {
         </div>
         <div aria-live="polite" data-testid="grade-live">
           {graded ? (
-            <div data-testid="grade" className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+            <div data-testid="grade" className="space-y-2 rounded-xl border border-border bg-card p-3">
               <p className={cn("text-sm font-semibold", graded.passed ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200")}>
                 {graded.passed ? "Passes: the log matches the corrected log line for line." : graded.issues.length ? "Does not compile." : "Not yet: some lines still differ from the corrected log."}
               </p>
@@ -1999,7 +1999,7 @@ function DebugLab() {
         {runOpen ? (
           <TraceView bench={bench} run={run} issues={issues} issuesTestId="bench-issues" resetKey={fixesKey} stepNoun="Simulation step" lanes />
         ) : (
-          <div data-testid="run-closed" className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-background/50 p-3 text-sm text-muted-foreground">
+          <div data-testid="run-closed" className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3 text-sm text-muted-foreground">
             <p className="min-w-0 flex-1 basis-60">The step-by-step run explains each bug as it happens, so it opens with your first rerun.</p>
             <button
               type="button"
@@ -2015,19 +2015,19 @@ function DebugLab() {
           </div>
         )}
       </section>
-      <details className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+      <details className="rounded-xl border border-border bg-card p-3 text-sm">
         <summary className="cursor-pointer font-medium text-foreground">Show the worked solution</summary>
         <p className="mt-2 text-muted-foreground">
           {allFound ? "You found all three declarations. " : ""}
           The fixes, one word each:
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">
+        <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">
           {`task automatic log_after(input int delay_ns, input string msg);   // 1: automatic
 function automatic int sum_to(input int n);                        // 2: automatic
 task automatic pulse(ref logic flag);                              // 3: ref, not output`}
         </pre>
         <p className="mt-2 text-muted-foreground">The corrected log:</p>
-        <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">{KATA_EXPECTED_LOG.join("\n")}</pre>
+        <pre className="mt-1 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">{KATA_EXPECTED_LOG.join("\n")}</pre>
       </details>
     </div>
   );

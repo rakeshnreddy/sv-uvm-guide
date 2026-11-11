@@ -59,7 +59,7 @@ export interface CounterBenchLabProps {
 }
 
 const mono = "font-mono [font-variant-ligatures:none]";
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
 const selectClass =
   "h-10 min-w-0 max-w-full rounded-md border border-border/70 bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -126,7 +126,7 @@ function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
   const c = run.checks[upTo];
   const label = `Waveform for checks 0 to ${upTo}: count (ACT, solid) and expected (EXP, dashed). At check ${upTo}, count is ${showSample(c.actual)} and expected is ${showSample(c.compared)}; results so far PASS=${c.passSoFar} FAIL=${c.failSoFar}.`;
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <svg viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full" role="img" aria-label={label}>
         {/* X lane and value grid */}
         <rect x={LEFT} y={TOP} width={n * CW} height={X_LANE} className="fill-rose-500/10" />
@@ -158,7 +158,7 @@ function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
           </text>
         ))}
       </svg>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         x-axis: check k, taken at the falling edge {`10 + 10k`} ns. <span className="text-cyan-700 dark:text-cyan-300">── ACT</span> is count;{" "}
         <span className="text-amber-700 dark:text-amber-300">- - EXP</span> is the value the compare uses. Top row: ✓ pass, ✕ fail, – no compare ran. The shaded lane is X.
       </figcaption>
@@ -307,7 +307,7 @@ function MutationRun({ config, announce }: { config: BenchConfig; announce: (t: 
       <CheckTable run={run} upTo={i} />
       {isLast ? (
         <div className={panel}>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">The bench prints</p>
+          <p className="text-label text-muted-foreground">The bench prints</p>
           <pre className={cn(mono, "mt-1 whitespace-pre-wrap text-sm text-foreground")} data-testid="printed-lines">
             {`${run.passLine}\n${run.coverageLine}`}
           </pre>
@@ -321,7 +321,7 @@ function MutationRun({ config, announce }: { config: BenchConfig; announce: (t: 
       <AnatomyDiagram run={run} />
       {isLast ? (
         <div className={panel} data-testid="mutant-verdicts">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="text-label text-muted-foreground">
             {dut.mutant ? "Did the check catch the mutant?" : `Can ${COMPARE_FORMS[config.form].label} fail? Each mutant with this compare:`}
           </p>
           <ul className="mt-1 space-y-1 text-sm">
@@ -465,7 +465,7 @@ function MatrixView({ announce }: { announce: (t: string) => void }) {
         </div>
       ) : null}
       <div className={panel}>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{fillHole ? `The plan, with coverage counts with rst asserted again at edge ${HOLE_FILL_EDGE}` : "The plan, with coverage counts on the lesson bench"}</p>
+        <p className="text-label text-muted-foreground">{fillHole ? `The plan, with coverage counts with rst asserted again at edge ${HOLE_FILL_EDGE}` : "The plan, with coverage counts on the lesson bench"}</p>
         <div className="mt-2 max-w-full overflow-x-auto">
           <table className="w-full border-collapse text-left text-xs" aria-label="Plan rows with coverage counts">
             <thead className="text-muted-foreground">
@@ -500,7 +500,7 @@ function MatrixView({ announce }: { announce: (t: string) => void }) {
         {revealed ? (
           <div className="mt-3 space-y-2">
             <label className="flex items-center gap-2 text-sm text-foreground [@media(pointer:coarse)]:min-h-10">
-              <input type="checkbox" checked={fillHole} onChange={(e) => setFillHole(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+              <input type="checkbox" checked={fillHole} onChange={(e) => setFillHole(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
               Fill the hole: assert rst again at edge {HOLE_FILL_EDGE}
             </label>
             {fillHole ? (
@@ -544,7 +544,7 @@ function CoverageResults({ run }: { run: BenchRun }) {
           const hits = line.key ? hitFor[line.key] : undefined;
           if (hits === undefined) return null;
           return (
-            <span className={cn(mono, "inline-block min-w-[2.5rem] rounded border px-1 text-right text-[11px]", hits === 0 ? "border-rose-400 text-rose-300" : "border-slate-500 text-slate-200")} aria-label={`${hits} hits`}>
+            <span className={cn(mono, "inline-block min-w-[2.5rem] rounded border px-1 text-right text-xs", hits === 0 ? "border-rose-400 text-rose-300" : "border-slate-500 text-slate-200")} aria-label={`${hits} hits`}>
               {hits}×
             </span>
           );
@@ -552,7 +552,7 @@ function CoverageResults({ run }: { run: BenchRun }) {
       />
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
         <div className={panel}>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Code coverage (§19.2)</p>
+          <p className="text-label text-muted-foreground">Code coverage (§19.2)</p>
           <p className="mt-1 text-sm text-foreground" data-testid="statement-coverage">
             Statements {code.statementsCovered} of {code.statementsTotal} ({percent(code.statementsCovered, code.statementsTotal)}%) <span className="text-xs text-muted-foreground">§40.2.2</span>
           </p>
@@ -576,10 +576,10 @@ function CoverageResults({ run }: { run: BenchRun }) {
               </li>
             ))}
           </ul>
-          <p className="mt-1 text-[11px] text-muted-foreground">A bit seen at 0 and at 1 counts as toggled (§40.2.2). Tools that count 0-to-1 and 1-to-0 transitions may report rst as only partly toggled.</p>
+          <p className="mt-1 text-xs text-muted-foreground">A bit seen at 0 and at 1 counts as toggled (§40.2.2). Tools that count 0-to-1 and 1-to-0 transitions may report rst as only partly toggled.</p>
         </div>
         <div className={panel}>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Functional coverage against the plan</p>
+          <p className="text-label text-muted-foreground">Functional coverage against the plan</p>
           <ul className="mt-1 space-y-1 text-sm" aria-label="Plan items with hit counts">
             {PLAN_ITEMS.map((p) => (
               <li key={p.id} className={cn("flex items-baseline justify-between gap-2", fn.hits[p.id] === 0 ? "text-rose-700 dark:text-rose-300" : "text-foreground")}>

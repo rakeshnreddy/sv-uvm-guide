@@ -325,7 +325,7 @@ function DistributionRows({ setup, result }: { setup: ModeSetup; result: SolveRe
                   </div>
                   <span className="w-24 shrink-0 text-right font-mono tabular-nums">{pr > 0 ? frac(pr) : "never"}</span>
                 </div>
-                {note ? <div className="pl-7 text-[11px] text-muted-foreground">{note}</div> : null}
+                {note ? <div className="pl-7 text-xs text-muted-foreground">{note}</div> : null}
               </td>
             </tr>
           );

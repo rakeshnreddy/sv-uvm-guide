@@ -1,5 +1,6 @@
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import CurriculumNotFound, { BLOCK_LINK_CLASS, FindYourWayBack } from "@/components/curriculum/CurriculumNotFound";
@@ -32,6 +33,16 @@ beforeEach(() => {
 });
 
 describe("<CurriculumNotFound />", () => {
+  it("reserves the requested-address line in the server HTML, so nothing below it moves after hydration", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<CurriculumNotFound />);
+    const line = host.querySelector('[data-testid="not-found-address"]');
+    expect(line).not.toBeNull();
+    expect(line).toHaveClass("invisible");
+    expect(line).toHaveAttribute("aria-hidden", "true");
+  });
+
+
   it("explains the 404 and offers the ways back into the curriculum, with search tips", async () => {
     render(<CurriculumNotFound />);
     expect(await screen.findByText("/curriculum/does-not-exist")).toBeInTheDocument();

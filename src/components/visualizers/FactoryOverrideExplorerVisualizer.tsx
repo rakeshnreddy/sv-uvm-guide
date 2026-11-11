@@ -189,7 +189,7 @@ export function FactoryMessages({ messages }: { messages: FactoryMessage[] }) {
   return (
     <ul className="space-y-1" aria-label="UVM messages">
       {messages.map((m, i) => (
-        <li key={`${m.id}-${i}`} className={cn("rounded-md border px-2 py-1 font-mono text-[11.5px] [font-variant-ligatures:none]", severityStyle[m.severity])}>
+        <li key={`${m.id}-${i}`} className={cn("rounded-md border px-2 py-1 font-mono text-xs [font-variant-ligatures:none]", severityStyle[m.severity])}>
           <span className="font-bold">
             {m.severity === "FATAL" || m.severity === "ERROR" ? "✕ " : m.severity === "WARNING" ? "⚠ " : "ℹ "}UVM_{m.severity} [{m.id}]
           </span>{" "}
@@ -204,7 +204,7 @@ export function LookupLog({ program, node }: { program: FactoryProgram; node: No
   return (
     <pre
       aria-label={`create() log for ${node.path}`}
-      className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]"
+      className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]"
     >
       {lookupLog(program, node).join("\n")}
     </pre>
@@ -241,13 +241,13 @@ export function FactoryTree({
 }) {
   const rows = run.nodes;
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card p-3">
+      <p className="mb-2 text-label text-muted-foreground">
         Component hierarchy {revealed ? "· built types" : "· requested types (predict first)"}
       </p>
       <ul className="space-y-1 font-mono text-[12px] [font-variant-ligatures:none]" aria-label="Component hierarchy">
         <li className="flex flex-wrap items-center gap-2 text-muted-foreground">
-          <span className="text-foreground">{ROOT}</span> : {program.root.requested} <span className="text-[11px]">(run_test)</span>
+          <span className="text-foreground">{ROOT}</span> : {program.root.requested} <span className="text-xs">(run_test)</span>
         </li>
         {rows.map((node) => {
           const depth = node.path.split(".").length - 1;
@@ -263,7 +263,7 @@ export function FactoryTree({
                   {outcome !== OUTCOME_NOT_BUILT && outcome !== node.requested ? (
                     <span className="font-semibold text-foreground">→ {outcome === OUTCOME_FATAL ? node.built : outcome}</span>
                   ) : null}
-                  <span className={cn("rounded border px-1.5 text-[10px] font-semibold", badge.className)}>{badge.text}</span>
+                  <span className={cn("rounded border px-1.5 text-xs font-semibold", badge.className)}>{badge.text}</span>
                 </>
               ) : (
                 <span className="text-muted-foreground">
@@ -428,10 +428,10 @@ function OverrideList({
         return (
           <li key={o.id} className="rounded-lg border border-border/70 bg-background/60 p-2">
             <div className="flex flex-wrap items-start gap-2">
-              <span className="rounded bg-muted px-1.5 font-mono text-[11px] font-bold">#{i + 1}</span>
-              <code className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-foreground [font-variant-ligatures:none]">{overrideToSource(o)}</code>
+              <span className="rounded bg-muted px-1.5 font-mono text-xs font-bold">#{i + 1}</span>
+              <code className="min-w-0 flex-1 break-all font-mono text-xs text-foreground [font-variant-ligatures:none]">{overrideToSource(o)}</code>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               {o.kind === "inst" ? (
                 <span>
                   full path <code className="font-mono text-foreground">&quot;{fullInstPath(o)}&quot;</code>
@@ -542,7 +542,7 @@ export function FactoryOverrideExplorerVisualizer() {
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
         <div className="min-w-0 space-y-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Override calls, in code order</p>
+          <p className="text-label text-muted-foreground">Override calls, in code order</p>
           <OverrideList
             overrides={overrides}
             effects={run.effects}
@@ -589,13 +589,13 @@ export function FactoryOverrideExplorerVisualizer() {
               <strong>Result: {outcomeLabel(outcomeOf(node))}.</strong> {explainNode(program, run, target)}
             </p>
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">What the factory checks, in order</p>
+              <p className="mb-1 text-label text-muted-foreground">What the factory checks, in order</p>
               <LookupLog program={program} node={node} />
             </div>
             <FactoryMessages messages={run.messages} />
             <details className="rounded-lg border border-border/70 p-2 text-sm">
               <summary className="cursor-pointer font-medium text-foreground">uvm_factory::get().print() after the build</summary>
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+              <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]">
                 {factoryPrintout(run.state).join("\n")}
               </pre>
             </details>

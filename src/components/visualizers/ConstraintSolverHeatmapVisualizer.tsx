@@ -390,7 +390,7 @@ function SolutionGrid({ result }: { result: SolveResult }) {
       <div role="grid" aria-label="Solution space: x across, y up. Each cell gives the exact probability." className="max-w-[26rem] space-y-px" onKeyDown={onKey}>
         {Array.from({ length: SIDE }, (_, r) => SIDE - 1 - r).map((y) => (
           <div role="row" key={y} className="grid gap-px" style={rowTemplate}>
-            <div role="rowheader" className="flex items-center justify-end pr-1 font-mono text-[10px] text-muted-foreground">
+            <div role="rowheader" className="flex items-center justify-end pr-1 font-mono text-xs text-muted-foreground">
               <span className="sr-only">y = </span>
               {y}
             </div>
@@ -412,7 +412,7 @@ function SolutionGrid({ result }: { result: SolveResult }) {
                   onClick={() => setFocus({ x, y })}
                   style={sol ? { backgroundColor: `rgba(6, 182, 212, ${alpha.toFixed(3)})` } : undefined}
                   className={cn(
-                    "flex h-9 min-w-0 items-center justify-center rounded-[3px] font-mono text-[10px] tabular-nums outline-none sm:text-[11px] [font-variant-ligatures:none]",
+                    "flex h-9 min-w-0 items-center justify-center rounded-[3px] font-mono text-xs tabular-nums outline-none sm:text-[11px] [font-variant-ligatures:none]",
                     sol ? "border border-cyan-500/40 text-foreground" : "border border-dashed border-border/60 bg-muted/20 text-muted-foreground",
                     isFocus && "ring-2 ring-amber-500 ring-offset-1 ring-offset-background",
                   )}
@@ -424,9 +424,9 @@ function SolutionGrid({ result }: { result: SolveResult }) {
           </div>
         ))}
         <div className="grid gap-px" style={rowTemplate} aria-hidden>
-          <div className="text-right font-mono text-[10px] text-muted-foreground">y/x</div>
+          <div className="text-right font-mono text-xs text-muted-foreground">y/x</div>
           {Array.from({ length: SIDE }, (_, x) => (
-            <div key={x} className="text-center font-mono text-[10px] text-muted-foreground">
+            <div key={x} className="text-center font-mono text-xs text-muted-foreground">
               {x}
             </div>
           ))}
@@ -474,8 +474,8 @@ function MarginalTable({ result }: { result: SolveResult }) {
       </div>
       <table className="w-full table-fixed border-collapse text-xs">
         <caption className="mb-2 text-left text-sm font-semibold text-foreground">
-          P(x): exact <span className={cn("rounded border px-1 text-[10px] font-bold", comparisonStyles.expected.className)}>{comparisonStyles.expected.tag}</span> vs sampled{" "}
-          <span className={cn("rounded border px-1 text-[10px] font-bold", comparisonStyles.actual.className)}>{comparisonStyles.actual.tag}</span>
+          P(x): exact <span className={cn("rounded border px-1 text-xs font-bold", comparisonStyles.expected.className)}>{comparisonStyles.expected.tag}</span> vs sampled{" "}
+          <span className={cn("rounded border px-1 text-xs font-bold", comparisonStyles.actual.className)}>{comparisonStyles.actual.tag}</span>
         </caption>
         <thead>
           <tr className="text-left text-muted-foreground">
@@ -564,7 +564,7 @@ function CorePanel({ built }: { built: Built }) {
         contextKeys={coreIds}
         renderLineControl={(line) =>
           line.key && coreIds.includes(line.key) ? (
-            <span className="rounded border border-rose-400/70 bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold text-rose-100">✕ conflict</span>
+            <span className="rounded border border-rose-400/70 bg-rose-500/20 px-1.5 py-0.5 text-xs font-bold text-rose-100">✕ conflict</span>
           ) : null
         }
       />
@@ -683,7 +683,7 @@ export const ConstraintSolverHeatmapVisualizer = ({ initialScenario = "coupling"
       </p>
 
       <div className="space-y-2">
-        <p id={toggleGroupId} className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <p id={toggleGroupId} className="text-label text-muted-foreground">
           Constraint blocks (constraint_mode)
         </p>
         <div role="group" aria-labelledby={toggleGroupId} className="flex flex-wrap gap-2">
@@ -703,7 +703,7 @@ export const ConstraintSolverHeatmapVisualizer = ({ initialScenario = "coupling"
               >
                 <span aria-hidden>{on ? "✓" : "✕"}</span>
                 {b}
-                <span className="font-sans text-[10px] uppercase tracking-wide">{on ? "on" : "off"}</span>
+                <span className="font-sans text-label">{on ? "on" : "off"}</span>
               </button>
             );
           })}

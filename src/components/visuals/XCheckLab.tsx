@@ -65,7 +65,7 @@ const mono = "font-mono [font-variant-ligatures:none]";
 const buttonClass =
   "inline-flex min-h-10 items-center rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const textButtonClass = "inline-flex min-h-10 items-center text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const panel = "rounded-xl border border-border/70 bg-background/50 p-3";
+const panel = "rounded-xl border border-border bg-card p-3";
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
 
 /** Mounted only inside a revealed prompt, so the parent knows the answer is on screen. */
@@ -86,7 +86,7 @@ function LiveAnnouncement({ text }: { text: string }) {
 }
 
 function ClauseTag({ clause }: { clause: string }) {
-  return <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{clause}</span>;
+  return <span className="rounded border border-border/70 px-1.5 py-0.5 text-xs font-semibold text-muted-foreground">{clause}</span>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -147,7 +147,7 @@ function OperatorBitTable({ config }: { config: CheckerConfig }) {
           <tr>
             <th />
             {bits.map((b) => (
-              <th key={b.index} className="text-[10px] font-normal text-muted-foreground">
+              <th key={b.index} className="text-xs font-normal text-muted-foreground">
                 {b.index}
               </th>
             ))}
@@ -156,7 +156,7 @@ function OperatorBitTable({ config }: { config: CheckerConfig }) {
         <tbody aria-hidden>
           {(["left", "right"] as const).map((side) => (
             <tr key={side}>
-              <th className="pr-2 text-left text-[11px] font-normal text-muted-foreground">{side === "left" ? leftName : "e.sum"}</th>
+              <th className="pr-2 text-left text-xs font-normal text-muted-foreground">{side === "left" ? leftName : "e.sum"}</th>
               {bits.map((b) => (
                 <td key={b.index} className="p-px">
                   <span className={cn(cell, valueStyles[classifyValue(b[side])].className)}>{b[side]}</span>
@@ -165,7 +165,7 @@ function OperatorBitTable({ config }: { config: CheckerConfig }) {
             </tr>
           ))}
           <tr>
-            <th className="pr-2 text-left text-[11px] font-semibold text-foreground">bit</th>
+            <th className="pr-2 text-left text-xs font-semibold text-foreground">bit</th>
             {bits.map((b) => (
               <td key={b.index} className="p-px">
                 <span className={cn(cell, "font-semibold", outcomeClass[b.outcome])}>{outcomeGlyph[b.outcome]}</span>
@@ -174,7 +174,7 @@ function OperatorBitTable({ config }: { config: CheckerConfig }) {
           </tr>
         </tbody>
       </table>
-      <p className="mt-1 text-[11px] text-muted-foreground">= match, ≠ a known bit differs, ? unknown (x or z) against == or !=.</p>
+      <p className="mt-1 text-xs text-muted-foreground">= match, ≠ a known bit differs, ? unknown (x or z) against == or !=.</p>
     </div>
   );
 }
@@ -207,7 +207,7 @@ function CheckerLab({ preset }: { preset?: string }) {
         aria-label="Checker form"
         value={config.form}
         onChange={(e) => update({ form: e.target.value as CheckerForm })}
-        className={cn("min-h-8 rounded border border-white/20 bg-slate-900 px-1 text-[11px] text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400", mono)}
+        className={cn("min-h-8 rounded border border-white/20 bg-slate-900 px-1 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400", mono)}
       >
         {CHECKER_FORMS.map((f) => (
           <option key={f} value={f}>
@@ -231,7 +231,7 @@ function CheckerLab({ preset }: { preset?: string }) {
       assumptions={XCHECK_ASSUMPTIONS}
     >
       <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Rows of the lesson table, and two more ways X hides</p>
+        <p className="text-label text-muted-foreground">Rows of the lesson table, and two more ways X hides</p>
         <div role="group" aria-label="Presets" className={cn("flex flex-wrap gap-1.5", touchButtons)}>
           {CHECKER_PRESETS.map((p) => (
             <button
@@ -326,7 +326,7 @@ function CheckerLab({ preset }: { preset?: string }) {
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-semibold text-muted-foreground">{i + 1}.</span>
+                  <span className="text-xs font-semibold text-muted-foreground">{i + 1}.</span>
                   <code className={cn("text-xs text-foreground", mono)}>{s.label}</code>
                   <span aria-hidden>→</span>
                   <ValueChip value={s.value} />
@@ -468,13 +468,13 @@ function DebugLab() {
                   className={cn(buttonClass, "w-full justify-between gap-3", picked === s.id && "border-amber-500 bg-amber-500/15")}
                 >
                   <span className="min-w-0">
-                    <span className="block text-[11px] font-normal text-muted-foreground">
+                    <span className="block text-xs font-normal text-muted-foreground">
                       line {line + 1}, {source[line].owner === "design" ? "status_reg" : "tb_top"}
                     </span>
                     <code className={cn("block break-words text-xs", mono)}>{codeOnly(source[line].text)}</code>
                   </span>
                   {isFound ? (
-                    <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">✓ found</span>
+                    <span className="shrink-0 text-label text-success">✓ found</span>
                   ) : null}
                 </button>
               </li>
@@ -545,10 +545,10 @@ function DebugLab() {
           ) : null}
           {logShown ? (
             <div data-testid="debug-log" className="space-y-2">
-              <pre aria-label="Simulation log" className={cn("overflow-x-auto rounded-lg border border-border/70 bg-slate-950/90 px-3 py-2 text-xs text-slate-100", mono)}>
+              <pre aria-label="Simulation log" className={cn("overflow-x-auto rounded-lg border border-border/70 bg-code-surface px-3 py-2 text-xs text-code-foreground", mono)}>
                 {run.log.map((l) => (l.kind === "error" ? `Error @ edge ${l.edge}: ${l.text}` : l.text)).join("\n")}
               </pre>
-              <p className="text-[11px] text-muted-foreground">The prefix of each $error line is tool-specific (§20.10); the user text and the $display line are exact.</p>
+              <p className="text-xs text-muted-foreground">The prefix of each $error line is tool-specific (§20.10); the user text and the $display line are exact.</p>
             </div>
           ) : null}
         </section>

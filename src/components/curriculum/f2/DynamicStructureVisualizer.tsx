@@ -126,18 +126,18 @@ export function ElementStrip({ name, values, changed = [], bound = null, discard
         <span
           key={`free-${i}`}
           aria-hidden
-          className="inline-flex h-7 min-w-10 items-center justify-center rounded-md border border-dashed border-border px-1.5 font-mono text-[10px] text-muted-foreground/70"
+          className="inline-flex h-7 min-w-10 items-center justify-center rounded-md border border-dashed border-border px-1.5 font-mono text-xs text-muted-foreground/70"
         >
           [{values.length + i}]
         </span>
       ))}
       {bound !== null ? (
-        <span aria-hidden className="inline-flex h-7 items-center gap-1 border-l-2 border-amber-500 pl-1.5 font-mono text-[10px] font-semibold text-amber-800 dark:text-amber-200">
+        <span aria-hidden className="inline-flex h-7 items-center gap-1 border-l-2 border-amber-500 pl-1.5 font-mono text-xs font-semibold text-amber-800 dark:text-amber-200">
           $:{bound}
         </span>
       ) : null}
       {discarded.length > 0 ? (
-        <span aria-hidden className="ml-1 inline-flex flex-wrap items-center gap-1 rounded-md border border-rose-500/50 bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-800 dark:text-rose-200">
+        <span aria-hidden className="ml-1 inline-flex flex-wrap items-center gap-1 rounded-md border border-rose-500/50 bg-rose-500/10 px-1.5 py-0.5 text-xs text-rose-800 dark:text-rose-200">
           ✕ discarded
           {discarded.map((v, i) => (
             <span key={i} className="font-mono line-through">
@@ -173,7 +173,7 @@ export function AssocStrip({ state, changedKeys = [] }: { state: AssocArrayState
             <ValueChip name={formatAssocKey(e.key)} value={chipValue(e.value)} changed={changedKeys.includes(e.key)} />
           </span>
         ))}
-        {state.entries.length > 1 ? <span aria-hidden className="text-[10px] text-muted-foreground">index order →</span> : null}
+        {state.entries.length > 1 ? <span aria-hidden className="text-xs text-muted-foreground">index order →</span> : null}
       </div>
       <p className="text-xs text-muted-foreground">
         <span className="font-mono [font-variant-ligatures:none]">key = {formatAssocKey(state.iter)}</span>
@@ -528,7 +528,7 @@ function ContainerLab({ initialKind = "dynamic" }: { initialKind?: Kind }) {
             />
           ) : null}
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={predictFirst} onChange={(e) => setPredictFirst(e.target.checked)} />
+            <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={predictFirst} onChange={(e) => setPredictFirst(e.target.checked)} />
             Predict before tricky operations
           </label>
         </div>
@@ -537,8 +537,8 @@ function ContainerLab({ initialKind = "dynamic" }: { initialKind?: Kind }) {
           <div className="min-w-0" data-testid="container-code">
             <CodeTrace label="Code you have run" lines={codeLines} activeKey={last ? `op-${history.length - 1}` : undefined} />
           </div>
-          <div className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/50 p-3" data-testid="container-state">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3" data-testid="container-state">
+            <p className="text-label text-muted-foreground">
               {current.kind === "assoc" ? `Entries · num() = ${current.entries.length}` : `Elements · size() = ${current.values.length}`}
               {current.kind === "queue" && current.bound !== null ? ` of at most ${queueCapacity(current)}` : ""}
             </p>
@@ -557,7 +557,7 @@ function ContainerLab({ initialKind = "dynamic" }: { initialKind?: Kind }) {
             question={<InlineCode text={pending.prediction.question} />}
             options={pending.prediction.options}
           >
-            <div className="space-y-3 rounded-xl border border-border/70 bg-background/60 p-3">
+            <div className="space-y-3 rounded-xl border border-border bg-card p-3">
               <ContainerStateView state={pending.result.after} result={pending.result} />
               <OpResultPanel result={pending.result} elemType={elemType} />
               <button
@@ -570,7 +570,7 @@ function ContainerLab({ initialKind = "dynamic" }: { initialKind?: Kind }) {
             </div>
           </PredictionPrompt>
         ) : (
-          <div aria-live="polite" data-testid="container-result" className="rounded-xl border border-border/70 bg-background/50 p-3">
+          <div aria-live="polite" data-testid="container-result" className="rounded-xl border border-border bg-card p-3">
             {last ? <OpResultPanel result={last} elemType={elemType} /> : <p className="text-sm text-muted-foreground">Pick an operation. The ones whose outcome often surprises people ask for your prediction first.</p>}
           </div>
         )}
@@ -653,7 +653,7 @@ function MultiPrediction({ questions, resetKey, children }: { questions: AccessQ
   return (
     <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3 sm:p-4" data-testid="access-prediction">
       <p className="text-sm font-semibold text-foreground">
-        <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+        <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
         Commit to all {questions.length} answers, then reveal.
       </p>
       {questions.map((q) => {
@@ -682,7 +682,7 @@ function MultiPrediction({ questions, resetKey, children }: { questions: AccessQ
                     name={`${groupId}-${q.aspect}`}
                     checked={picked[q.aspect] === o.id}
                     onChange={() => setPicked((p) => ({ ...p, [q.aspect]: o.id }))}
-                    className="mt-1 accent-amber-500"
+                    className="size-5 shrink-0 mt-px accent-amber-500"
                   />
                   <span className="flex-1 break-words font-mono text-xs [font-variant-ligatures:none]">{o.label}</span>
                   {revealed && o.correct ? <span aria-label="correct answer">✓</span> : null}
@@ -814,11 +814,11 @@ function AccessSemanticsPanel() {
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={declares} onChange={(e) => setDeclares(e.target.checked)} />
+          <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={declares} onChange={(e) => setDeclares(e.target.checked)} />
           Declares <code className="font-mono [font-variant-ligatures:none]">default:{DECLARED_DEFAULT}</code>
         </label>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={startsWithEntry} onChange={(e) => setStartsWithEntry(e.target.checked)} />
+          <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={startsWithEntry} onChange={(e) => setStartsWithEntry(e.target.checked)} />
           Starts with <code className="font-mono [font-variant-ligatures:none]">a[{WRITTEN_KEY}] = {WRITTEN_VALUE}</code>
         </label>
         <button type="button" className={smallButton} onClick={loadStandardExample}>
@@ -838,15 +838,15 @@ function AccessSemanticsPanel() {
         <div className="min-w-0">
           <CodeTrace label="Statement under test" lines={codeLines} activeKey="stmt" />
         </div>
-        <div className="min-w-0 space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Before · num() = {state.entries.length}</p>
+        <div className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-3">
+          <p className="text-label text-muted-foreground">Before · num() = {state.entries.length}</p>
           <AssocStrip state={state} />
         </div>
       </div>
 
       <MultiPrediction questions={questions} resetKey={resetKey}>
-        <div className="space-y-3 rounded-xl border border-border/70 bg-background/60 p-3" data-testid="access-result">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">After · num() = {result.after.entries.length}</p>
+        <div className="space-y-3 rounded-xl border border-border bg-card p-3" data-testid="access-result">
+          <p className="text-label text-muted-foreground">After · num() = {result.after.entries.length}</p>
           <AssocStrip state={result.after} changedKeys={result.changedKeys} />
           <p className={cn("text-sm", allocated ? "text-cyan-800 dark:text-cyan-200" : "text-muted-foreground")}>
             <strong className="text-foreground">{allocated ? "An entry appeared. " : removed ? "An entry was removed. " : "No entry appeared. "}</strong>
@@ -928,7 +928,7 @@ function TrackHandle({ name, value, onChange, trackRef, track }: HandleProps) {
   return (
     <div className="grid min-w-0" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {pos === null ? (
-        <span className="col-span-full font-mono text-[11px] text-rose-700 [font-variant-ligatures:none] dark:text-rose-300">{name} = kx (&apos;x): off the track</span>
+        <span className="col-span-full font-mono text-xs text-rose-700 [font-variant-ligatures:none] dark:text-rose-300">{name} = kx (&apos;x): off the track</span>
       ) : (
         <div
           role="slider"
@@ -1041,8 +1041,8 @@ function SlicePanel() {
         onChange={setMode}
       />
 
-      <div className="space-y-1 rounded-xl border border-border/70 bg-background/50 p-2 sm:p-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+      <div className="space-y-1 rounded-xl border border-border bg-card p-2 sm:p-3">
+        <p className="text-label text-muted-foreground">
           q = {formatElemList(q.values)} · $ = {q.values.length - 1}
         </p>
         {mode === "slice" ? (
@@ -1060,18 +1060,18 @@ function SlicePanel() {
               <div key={i} className="flex min-w-0 flex-col items-center">
                 <span
                   className={cn(
-                    "flex h-8 w-full items-center justify-center rounded-sm font-mono text-[11px] tabular-nums",
+                    "flex h-8 w-full items-center justify-center rounded-sm font-mono text-xs tabular-nums",
                     inside ? "border border-cyan-500/50 bg-cyan-500/10 text-foreground" : "border border-dashed border-border text-muted-foreground/60",
                   )}
                 >
                   {inside ? formatElem(q.values[i]) : i === q.values.length ? "$+1" : "·"}
                 </span>
-                <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{i}</span>
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">{i}</span>
               </div>
             );
           })}
         </div>
-        <p className="text-[11px] text-muted-foreground">Tab to a handle, then use the arrow keys, or drag it. Dashed cells lie outside 0..$.</p>
+        <p className="text-xs text-muted-foreground">Tab to a handle, then use the arrow keys, or drag it. Dashed cells lie outside 0..$.</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -1086,7 +1086,7 @@ function SlicePanel() {
             <NumberField label="v" value={wValue} min={-999} max={999} onChange={(n) => setWValue(Math.max(-999, Math.min(999, n)))} />
           </>
         )}
-        <span className="text-[11px] text-muted-foreground">Type an integer, or x for an index with x bits.</span>
+        <span className="text-xs text-muted-foreground">Type an integer, or x for an index with x bits.</span>
       </div>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Lesson examples">
         {mode === "slice"
@@ -1106,7 +1106,7 @@ function SlicePanel() {
 
       {prediction ? (
         <PredictionPrompt resetKey={result.code} question={<InlineCode text={prediction.question} />} options={prediction.options}>
-          <div className="space-y-3 rounded-xl border border-border/70 bg-background/60 p-3" data-testid="slice-result">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-3" data-testid="slice-result">
             {mode === "slice" ? (
               <>
                 <p className="text-xs text-muted-foreground">
@@ -1259,8 +1259,8 @@ function DeleteWalkPanel() {
         <div className="min-w-0">
           <CodeTrace label="Cleanup code" lines={codeLines} activeKey={step?.line} />
         </div>
-        <div className="min-w-0 space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-3">
+          <p className="text-label text-muted-foreground">
             {step ? <span className="font-mono normal-case tracking-normal [font-variant-ligatures:none]">{step.code}</span> : "Start"}
           </p>
           {step?.prediction && awaiting ? <WalkStrip state={step.before} /> : null}

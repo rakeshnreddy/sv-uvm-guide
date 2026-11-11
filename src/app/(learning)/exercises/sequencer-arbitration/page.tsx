@@ -17,8 +17,8 @@ export const metadata = {
 const SequencerArbitrationPage: React.FC = () => {
   return (
     <PracticeInfoPage href={HREF} title={practice.title}>
-      <LearnInLesson item={practice} />
-      <p className="mb-6 text-muted-foreground">
+      <LearnInLesson item={practice} variant="row" />
+      <p className="mb-6 max-w-[30em] text-muted-foreground">
         Three sequences share one driver. Choose a scenario or edit the sequences, predict which one the sequencer grants, then read the
         reason it gives for every candidate. The rules follow <code>uvm_sequencer_base</code> in uvm-core 2020.3.1: arbitration runs when the
         driver calls <code>get_next_item()</code>, a <code>lock()</code> is held until <code>unlock()</code>, and <code>grab()</code> jumps to

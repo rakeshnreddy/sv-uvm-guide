@@ -181,6 +181,43 @@ describe("lesson code blocks and tables scroll in a focusable, labelled region",
     expect(table?.querySelectorAll("tbody td")).toHaveLength(2);
   });
 
+  it("draws an empty corner header as a plain cell and keeps the header text cells", async () => {
+    const host = await renderMdx("| | Mailbox | Queue |\n| --- | --- | --- |\n| blocking | yes | no |\n");
+    const head = host.querySelector("thead tr");
+    expect(head?.querySelectorAll("th")).toHaveLength(2);
+    const corner = head?.querySelector("td[data-empty-header]");
+    expect(corner).not.toBeNull();
+    expect(corner?.textContent).toBe("");
+    expect(host.querySelector("table")?.textContent).toBe("MailboxQueueblockingyesno");
+  });
+
+  it("hides GFM task-list marks from assistive technology without changing the item text", async () => {
+    const host = await renderMdx("- [ ] Draw the mailbox\n- [x] Name the queue\n");
+    const boxes = host.querySelectorAll('input[type="checkbox"]');
+    expect(boxes).toHaveLength(2);
+    for (const box of boxes) {
+      expect(box).toHaveAttribute("aria-hidden", "true");
+      expect(box).toHaveAttribute("tabindex", "-1");
+      expect(box).toHaveAttribute("disabled");
+    }
+    expect(boxes[1]).toHaveAttribute("checked");
+    expect(host.querySelector("ul")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Draw the mailbox Name the queue");
+  });
+
+  it("numbers boxes that share a name, so each region landmark has its own", () => {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(900);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+    const { getAllByRole } = render(
+      <>
+        <ScrollRegion label="Table">a</ScrollRegion>
+        <ScrollRegion label="Table">b</ScrollRegion>
+        <ScrollRegion label="Code sample">c</ScrollRegion>
+      </>,
+    );
+    expect(getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Table 1", "Table 2", "Code sample"]);
+    vi.restoreAllMocks();
+  });
+
   it("is a Tab stop only while its content overflows", () => {
     const widths = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get");
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);

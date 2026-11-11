@@ -48,7 +48,8 @@ function PagerCard({ link, direction, kind }: { link: PracticePagerLink; directi
       {link.lesson ? (
         <span className={cn("mt-1 flex min-w-0 items-center gap-2 text-xs text-subtle", isNext && "sm:justify-end")}>
           <SignalTag code={link.lesson.code} />
-          <span className="min-w-0 truncate">{link.lesson.title}</span>
+          {/* Two lines at most, so a long lesson title is read in full on phones rather than cut off. */}
+          <span className="min-w-0 line-clamp-2">{link.lesson.title}</span>
         </span>
       ) : null}
     </Link>

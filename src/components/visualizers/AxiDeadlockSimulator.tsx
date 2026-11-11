@@ -88,10 +88,10 @@ function WaitGraph({ analysis }: { analysis: DeadlockAnalysis }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border/60 bg-background/60 p-2">
       <svg viewBox="0 0 360 214" role="img" aria-label={label} className="h-auto w-full min-w-[300px] max-w-[520px]">
-        <text x={MASTER_X} y={12} className="fill-muted-foreground text-[10px] font-semibold uppercase">
+        <text x={MASTER_X} y={12} className="fill-muted-foreground text-[10px] font-semibold">
           Master
         </text>
-        <text x={SLAVE_X} y={12} className="fill-muted-foreground text-[10px] font-semibold uppercase">
+        <text x={SLAVE_X} y={12} className="fill-muted-foreground text-[10px] font-semibold">
           Slave
         </text>
         {analysis.edges.map((edge, i) => {
@@ -132,7 +132,7 @@ function WaitGraph({ analysis }: { analysis: DeadlockAnalysis }) {
           );
         })}
       </svg>
-      <p className="mt-1 text-[11px] text-muted-foreground">
+      <p className="mt-1 text-xs text-muted-foreground">
         Arrow X → Y: X waits for Y. Numbers match the list below. Thick solid arrows and ↻ nodes form a loop; grey arrows are waits AXI4 requires.
       </p>
     </div>
@@ -181,7 +181,7 @@ function Outcome({ analysis }: { analysis: DeadlockAnalysis }) {
                   {pretty(edge.from)} waits for {pretty(edge.to)}
                 </span>
                 <span className={cn("text-xs font-semibold", tag.className)}>{tag.text}</span>
-                {edge.rule ? <span className="font-mono text-[11px] text-muted-foreground">{edge.rule}</span> : null}
+                {edge.rule ? <span className="font-mono text-xs text-muted-foreground">{edge.rule}</span> : null}
               </p>
               <p className="mt-1 text-muted-foreground">{edge.explanation}</p>
             </li>
@@ -199,7 +199,7 @@ function PolicyGroup({ side, title, selected, onToggle }: { side: WaitPolicy["si
       <div className="space-y-1">
         {WRITE_POLICIES.filter((p) => p.side === side).map((policy) => (
           <label key={policy.id} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-1 text-sm hover:bg-muted/50">
-            <input type="checkbox" checked={selected.includes(policy.id)} onChange={() => onToggle(policy.id)} className="h-4 w-4 accent-cyan-600" />
+            <input type="checkbox" checked={selected.includes(policy.id)} onChange={() => onToggle(policy.id)} className="size-5 shrink-0 accent-cyan-600" />
             <span className="font-mono [font-variant-ligatures:none]">{policy.label}</span>
           </label>
         ))}

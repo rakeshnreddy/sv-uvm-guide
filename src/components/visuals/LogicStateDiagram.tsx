@@ -148,8 +148,8 @@ const PICTURE: { bit: Bit4; title: string; meaning: string }[] = [
 
 function FourValuePicture() {
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/50 p-3">
-      <figcaption className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+    <figure className="rounded-xl border border-border bg-card p-3">
+      <figcaption className="mb-2 text-label text-muted-foreground">
         The picture: every 4-state bit holds one of four values
       </figcaption>
       <ul className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
-import { PageHeader } from '@/components/layout/PageHeader';
+import { PAGE_HEADER_ACTION_LINK_CLASS, PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Section } from '@/components/layout/Section';
 import { SignalTag } from '@/components/ui/SignalTag';
@@ -23,9 +23,10 @@ export const metadata: Metadata = {
 const focusRing =
   'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 const inlineLink = `font-medium text-primary underline underline-offset-4 hover:no-underline ${focusRing}`;
-const listLink = `font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none ${focusRing}`;
-/** A quiet header action: a 40 px link in the accent, no fill (the page has no filled action). */
-const actionLink = `inline-flex min-h-10 items-center text-ui ${listLink}`;
+/** On phones each link's target grows to 32 px by padding that negative margins cancel, so the dense lists keep their rhythm. */
+const listLink = `font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none max-sm:inline-block max-sm:-my-1.5 max-sm:py-1.5 ${focusRing}`;
+/** A quiet header action (no fill: the page has no filled action), in primary text over the colour field. */
+const actionLink = PAGE_HEADER_ACTION_LINK_CLASS;
 
 /** The labels from the one navigation config: "Curriculum" and "Expert index". */
 const EXPERT_INDEX_TRAIL = [

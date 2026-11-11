@@ -116,8 +116,8 @@ function PhaseMap({ selected, onSelect }: { selected: string; onSelect: (name: s
   const run = COMMON_PHASES[4];
   const after = COMMON_PHASES.slice(5);
   return (
-    <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3" role="group" aria-label="UVM phase map">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Common domain · zero-time functions</p>
+    <div className="space-y-3 rounded-xl border border-border bg-card p-3" role="group" aria-label="UVM phase map">
+      <p className="text-label text-muted-foreground">Common domain · zero-time functions</p>
       <div className="flex flex-wrap items-center gap-2">
         {before.map((p, i) => (
           <React.Fragment key={p.name}>
@@ -128,12 +128,12 @@ function PhaseMap({ selected, onSelect }: { selected: string; onSelect: (name: s
       </div>
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
         <div className="rounded-lg border border-dashed border-amber-500/60 p-2">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800 dark:text-amber-200">Lane 1 · common domain</p>
+          <p className="mb-2 text-label text-warning">Lane 1 · common domain</p>
           <PhaseChip phase={run} selected={selected === run.name} onSelect={onSelect} />
           <p className="mt-2 text-xs text-muted-foreground">One task phase. Ends only after its objections drop and the uvm schedule beside it has ended.</p>
         </div>
         <div className="rounded-lg border border-dashed border-amber-500/60 p-2">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-800 dark:text-amber-200">
+          <p className="mb-2 text-label text-warning">
             Lane 2 · uvm domain, schedule &quot;uvm_sched&quot; ∥ run_phase
           </p>
           <ol className="flex flex-wrap items-center gap-1.5">
@@ -146,7 +146,7 @@ function PhaseMap({ selected, onSelect }: { selected: string; onSelect: (name: s
           <p className="mt-2 text-xs text-muted-foreground">12 task phases, one after another. Each starts for every component together.</p>
         </div>
       </div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Both lanes done → zero-time functions</p>
+      <p className="text-label text-muted-foreground">Both lanes done → zero-time functions</p>
       <div className="flex flex-wrap items-center gap-2">
         {after.map((p, i) => (
           <React.Fragment key={p.name}>
@@ -155,7 +155,7 @@ function PhaseMap({ selected, onSelect }: { selected: string; onSelect: (name: s
           </React.Fragment>
         ))}
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Square chip = function (no time) · round chip = task (consumes time) · ↓ top-down · ↑ bottom-up · ∥ all components in parallel
       </p>
     </div>
@@ -170,29 +170,29 @@ function PhaseDetail({ name }: { name: string }) {
     <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]" aria-live="polite">
       <dl className="space-y-2 text-sm">
         <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Phase</dt>
+          <dt className="text-label text-muted-foreground">Phase</dt>
           <dd className="font-mono [font-variant-ligatures:none]">
             {phase.method} · {phase.phaseClass} extends {phase.base}
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Order</dt>
+          <dt className="text-label text-muted-foreground">Order</dt>
           <dd>
             {ORDER_GLYPH[order]} {ORDER_TEXT[order]} · {isTaskPhase(phase) ? "task (consumes time)" : "function (zero time)"}
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Purpose</dt>
+          <dt className="text-label text-muted-foreground">Purpose</dt>
           <dd>{phase.purpose}</dd>
         </div>
         <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source</dt>
+          <dt className="text-label text-muted-foreground">Source</dt>
           <dd>
             IEEE 1800.2-2020 §{phase.clause}; {phase.domain === "uvm" ? "uvm_runtime_phases.svh" : "uvm_common_phases.svh"}
           </dd>
         </div>
       </dl>
-      <pre className="min-w-0 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+      <pre className="min-w-0 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
         <code>{PHASE_SNIPPET[phase.name] ?? runtimeSnippet(phase)}</code>
       </pre>
     </div>
@@ -251,7 +251,7 @@ function TreeList({ node, prefix, current, done }: { node: ComponentNode; prefix
           {isCurrent ? "▶" : isDone ? "✓" : "·"}
         </span>
         {node.name}
-        <span className="text-[10px] text-muted-foreground">{node.type}</span>
+        <span className="text-xs text-muted-foreground">{node.type}</span>
         {isCurrent ? <span className="sr-only"> (executing now)</span> : isDone ? <span className="sr-only"> (done)</span> : null}
       </span>
       {node.children?.length ? (
@@ -284,10 +284,10 @@ function CallOrderPlayer({ phaseName }: { phaseName: string }) {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <ul className="space-y-1 rounded-xl border border-border/70 bg-background/40 p-3" aria-label={`Component tree during ${order.phase.method}`}>
+        <ul className="space-y-1 rounded-xl border border-border bg-card p-3" aria-label={`Component tree during ${order.phase.method}`}>
           <TreeList node={EXAMPLE_TREE} prefix="" current={call.path} done={done} />
         </ul>
-        <ol className="min-w-0 overflow-x-auto rounded-xl bg-slate-950/90 p-3 font-mono text-[12px] leading-6 text-slate-100 [font-variant-ligatures:none]" aria-label="Call log">
+        <ol className="min-w-0 overflow-x-auto rounded-xl bg-code-surface p-3 font-mono text-[12px] leading-6 text-code-foreground [font-variant-ligatures:none]" aria-label="Call log">
           {order.calls.slice(0, index + 1).map((c, i) => (
             <li key={c.path} className={i === index ? "text-cyan-300" : undefined}>
               {i + 1}. {c.path}.{order.phase.method}()
@@ -456,7 +456,7 @@ function LaneChart({ result }: { result: RunResult }) {
   const run = result.lanes.run;
   const label = `run_phase from 0 to ${formatTime(run.end)}. uvm schedule: ${longPhases.map((l) => `${l.phase} ${formatTime(l.start)}–${formatTime(l.end)}`).join(", ") || "every phase ends at once"}. Cleanup at ${formatTime(result.cleanupAt)}.`;
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${LANE_W} 132`} role="img" aria-label={label} className="block h-auto w-full min-w-[300px]">
           <text x={4} y={30} fontSize="11" className="fill-foreground">
@@ -498,7 +498,7 @@ function LaneChart({ result }: { result: RunResult }) {
           ))}
         </svg>
       </div>
-      <figcaption className="px-1 text-[11px] text-muted-foreground">x-axis: simulation time. Dashed tick: phases that ended at once (no objection).</figcaption>
+      <figcaption className="px-1 text-xs text-muted-foreground">x-axis: simulation time. Dashed tick: phases that ended at once (no objection).</figcaption>
     </figure>
   );
 }

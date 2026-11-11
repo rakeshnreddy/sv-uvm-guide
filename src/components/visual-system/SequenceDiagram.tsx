@@ -166,8 +166,8 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
           })}
         </svg>
       </DiagramScrollFrame>
-      <details className="rounded-lg border border-border/70 px-3 py-2 text-sm">
-        <summary className="cursor-pointer font-medium text-foreground">Steps as text</summary>
+      <details className="rounded-lg border border-border px-3 text-sm [&[open]]:pb-2">
+        <summary className="min-h-10 cursor-pointer py-2.5 font-medium text-foreground">Steps as text</summary>
         <ol className="mt-2 list-none space-y-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">
           {layout.messages.map((m) => (
             <li key={m.index} className={m.kind === "note" || m.kind === "divider" ? "text-muted-foreground" : undefined}>

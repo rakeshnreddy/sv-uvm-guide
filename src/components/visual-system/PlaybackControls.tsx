@@ -95,7 +95,7 @@ export function PlaybackControls({ playback, stepCount, stepNoun = "Step", descr
           onChange={(e) => playback.seek(Number(e.target.value))}
           aria-label={`${stepNoun} scrubber`}
           aria-valuetext={`${stepNoun} ${playback.index + 1} of ${stepCount}${describeStep ? `: ${describeStep(playback.index)}` : ""}`}
-          className="h-2 w-full cursor-pointer accent-cyan-500"
+          className="h-10 w-full cursor-pointer accent-cyan-500"
         />
         <span className="whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground" aria-hidden>
           {playback.index + 1}/{stepCount}

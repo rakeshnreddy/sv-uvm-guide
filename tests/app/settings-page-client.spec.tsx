@@ -120,9 +120,10 @@ describe('SettingsPageClient', () => {
       expect(within(appearance).getByText(/^Motion follows your operating system/)).toHaveClass('max-w-[30em]');
       // One light/dark control; the palette select is gone (DESIGN.md section 7).
       expect(within(themeGroup).queryByRole('combobox', { name: 'Select theme' })).not.toBeInTheDocument();
-      // The shared theme menu button: Light, Dark and System as radio items.
-      await user.click(await within(themeGroup).findByRole('button', { name: 'Theme' }));
-      await user.click(await screen.findByRole('menuitemradio', { name: 'Light' }));
+      // On Settings the three choices are always visible: a radio group, so the current mode shows without opening a menu.
+      const radios = within(within(themeGroup).getByRole('radiogroup', { name: 'Theme' })).getAllByRole('radio');
+      expect(radios.map((radio) => radio.closest('label')?.textContent)).toEqual(['Light', 'Dark', 'System']);
+      await user.click(within(themeGroup).getByRole('radio', { name: 'Light' }));
       expect(mocks.setTheme).toHaveBeenCalledWith('light');
       expect(appearance).toHaveTextContent(/reduce-motion setting/i);
 

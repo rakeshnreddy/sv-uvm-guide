@@ -93,11 +93,11 @@ export default function CurriculumNotFound() {
         title="Page not found"
         lead="This page could not be found."
         meta={
-          pathname ? (
-            <span className="break-all">
-              Requested address: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{pathname}</code>
-            </span>
-          ) : null
+          // Always in the server HTML, invisible until the address is known, so the line's height is
+          // reserved and nothing below it moves after hydration.
+          <span data-testid="not-found-address" className={cn("break-all", !pathname && "invisible")} aria-hidden={pathname ? undefined : true}>
+            Requested address: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{pathname || "/"}</code>
+          </span>
         }
       />
 

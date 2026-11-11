@@ -49,7 +49,7 @@ export default function DesignGapChart() {
       fidelity="illustration"
       assumptions={["Shape only. No data is plotted, and the axes have no units or scale.", "The point is the trend: the gap widens over time."]}
     >
-      <figure className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-3">
+      <figure className="min-w-0 rounded-xl border border-border bg-card p-3">
         <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={titleId} aria-describedby={descId} className="mx-auto h-auto w-full max-w-[560px]">
           <title id={titleId}>Illustration: design complexity versus verification capability over time</title>
           <desc id={descId}>
@@ -94,7 +94,7 @@ export default function DesignGapChart() {
             strokeDasharray="7 5"
             strokeLinecap="round"
           />
-          <text x={PLOT.left + 6} y={PLOT.top} className="fill-muted-foreground text-[9px] uppercase tracking-wider">
+          <text x={PLOT.left + 6} y={PLOT.top} className="fill-muted-foreground text-[9px]">
             Illustrative
           </text>
         </svg>

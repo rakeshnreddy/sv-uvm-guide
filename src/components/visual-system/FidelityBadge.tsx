@@ -21,8 +21,8 @@ export function FidelityBadge({ fidelity, assumptions = [], className }: Fidelit
         {label.title}
       </span>
       {assumptions.length > 0 ? (
-        <details className="mt-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-muted-foreground">
-          <summary className="cursor-pointer font-medium text-foreground">Assumptions and limits</summary>
+        <details className="mt-2 rounded-lg border border-border bg-card px-3 text-muted-foreground [&[open]]:pb-2">
+          <summary className="min-h-10 cursor-pointer py-3 font-medium text-foreground">Assumptions and limits</summary>
           <p className="mt-1">{label.description}</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">
             {assumptions.map((a) => (

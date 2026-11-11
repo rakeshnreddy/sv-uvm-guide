@@ -180,13 +180,13 @@ const TALLY_ROWS: TallyRow[] = [
 function TallyBar({ label, tally }: { label: string; tally: AttemptTally }) {
   return (
     <div className="flex items-center gap-2" aria-hidden>
-      <span className="w-12 shrink-0 text-[11px] font-semibold text-muted-foreground">{label}</span>
+      <span className="w-12 shrink-0 text-xs font-semibold text-muted-foreground">{label}</span>
       <div className="flex h-7 min-w-0 flex-1 overflow-hidden rounded-md border border-border/70">
         {TALLY_ROWS.filter((row) => tally[row.key] > 0).map((row) => (
           <div
             key={row.key}
             style={{ flexGrow: tally[row.key], flexBasis: 0 }}
-            className={cn("flex min-w-[2rem] items-center justify-center border-r border-border/40 font-mono text-[11px] last:border-r-0", row.barClassName)}
+            className={cn("flex min-w-[2rem] items-center justify-center border-r border-border/40 font-mono text-xs last:border-r-0", row.barClassName)}
           >
             {row.glyph} {tally[row.key]}
           </div>
@@ -290,7 +290,7 @@ function VacuityTally({ assertion, buggy, fixed, chosenInStep3 }: VacuityTallyPr
         <div className="space-y-3">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-xs">
-              <caption className="mb-1 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <caption className="mb-1 text-left text-label text-muted-foreground">
                 Attempt tally, {edges} edges per run
               </caption>
               <thead>
@@ -321,16 +321,16 @@ function VacuityTally({ assertion, buggy, fixed, chosenInStep3 }: VacuityTallyPr
                 <tbody>
                   <tr className="border-t-2 border-border/70 align-top">
                     <th scope="row" className="py-1.5 pr-2 font-normal text-foreground">
-                      <code className="block whitespace-pre-wrap break-words font-mono text-[11px] [font-variant-ligatures:none]">{cover.source}</code>
+                      <code className="block whitespace-pre-wrap break-words font-mono text-xs [font-variant-ligatures:none]">{cover.source}</code>
                       <span className="text-muted-foreground">hits (the companion cover on the antecedent)</span>
                     </th>
                     <td className={cn("py-1.5 pr-2 text-right font-mono", runs.buggy.hits.length === 0 && "font-bold text-rose-700 dark:text-rose-300")}>
                       {runs.buggy.hits.length}
-                      {runs.buggy.hits.length > 0 ? <span className="block text-[10px] text-muted-foreground">{edgeList(runs.buggy.hits)}</span> : null}
+                      {runs.buggy.hits.length > 0 ? <span className="block text-xs text-muted-foreground">{edgeList(runs.buggy.hits)}</span> : null}
                     </td>
                     <td className="py-1.5 text-right font-mono">
                       {runs.fixed.hits.length}
-                      {runs.fixed.hits.length > 0 ? <span className="block text-[10px] text-muted-foreground">{edgeList(runs.fixed.hits)}</span> : null}
+                      {runs.fixed.hits.length > 0 ? <span className="block text-xs text-muted-foreground">{edgeList(runs.fixed.hits)}</span> : null}
                     </td>
                   </tr>
                 </tbody>
@@ -393,7 +393,7 @@ const PRESETS: Record<FirstBugHuntPreset, { tallyAssertionId: string }> = {
 function StepHeading({ n, title, done }: { n: number; title: string; done: boolean }) {
   return (
     <h4 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Step {n}</span>
+      <span className="rounded bg-muted px-1.5 py-0.5 text-label text-muted-foreground">Step {n}</span>
       {title}
       {done ? (
         <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
@@ -464,7 +464,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
         assumptions={ASSUMPTIONS}
       >
         <div className="rounded-xl border border-teal-500/50 border-dashed bg-teal-500/[0.05] p-3 text-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-800 dark:text-teal-200">Spec</p>
+          <p className="text-label text-teal-800 dark:text-teal-200">Spec</p>
           <p className="mt-1 text-foreground">
             After <code className="font-mono [font-variant-ligatures:none]">rst</code> is released,{" "}
             <code className="font-mono [font-variant-ligatures:none]">count</code> increases by 1 on every rising{" "}
@@ -516,7 +516,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
                     onClick={() => setSuspect(line.key as string)}
                     disabled={lineFound}
                     className={cn(
-                      "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-default",
+                      "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-default",
                       suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                     )}
                   >
@@ -534,7 +534,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
             {!lineFound ? <HintLadder hints={LINE_HINTS} resetKey={String(round)} /> : null}
 
             {lineFound ? (
-              <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3">
+              <div className="space-y-2 rounded-xl border border-border bg-card p-3">
                 <button
                   type="button"
                   aria-pressed={fixApplied}
@@ -590,7 +590,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
                     <RevealSignal onReveal={markAssertionRevealed} />
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[300px] border-collapse text-left text-xs">
-                        <caption className="mb-1 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                        <caption className="mb-1 text-left text-label text-muted-foreground">
                           Model result for every option
                         </caption>
                         <thead>

@@ -11,13 +11,14 @@ import { isEditableTarget, matchShortcut } from "@/components/search/shortcuts";
 import { useModalDialog } from "@/components/search/useModalDialog";
 import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { headerFocusRing, iconButtonClass, iconButtonIconClass } from "@/components/ui/icon-button-class";
+import { SignalTag } from "@/components/ui/SignalTag";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useContinueLesson } from "@/hooks/useContinueLesson";
-import { continueAccessibleName, continueLabel, type ContinueLessonEntry } from "@/lib/continue-lesson";
+import { continueAccessibleName, type ContinueLessonEntry } from "@/lib/continue-lesson";
 import type { NavLink } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
-import { START_LEARNING_LABEL, longestContinueLabel } from "./public-header-resume";
+import { CONTINUE_LABEL, START_LEARNING_LABEL, longestContinueCode } from "./public-header-resume";
 
 /** Tailwind's `md`: below it the header shows the wordmark, search and the menu button. */
 export const PUBLIC_MENU_MAX_WIDTH = 768;
@@ -54,6 +55,26 @@ export function resumeLinkClass(layout: "bar" | "menu"): string {
   );
 }
 
+const CONTINUE_ROW_CLASS = "inline-flex items-center gap-1.5";
+
+/**
+ * "Continue" and the module code as a signal tag (DESIGN.md section 8). Its text reads exactly as
+ * continueLabel ("Continue F2D"). In the bar the tag keeps its tier tint; on the phone menu's accent
+ * fill it takes the fill's text colour.
+ */
+function ContinueWithTag({ code, layout }: { code: string; layout: "bar" | "menu" }) {
+  return (
+    <>
+      {CONTINUE_LABEL}{" "}
+      {layout === "menu" ? (
+        <SignalTag code={code} neutral className="border-primary-foreground/40 text-primary-foreground" />
+      ) : (
+        <SignalTag code={code} />
+      )}
+    </>
+  );
+}
+
 interface ResumeLinkProps {
   firstLessonHref: string;
   /** Every lesson in course order (continueLessons()), for the one continue rule. */
@@ -74,7 +95,7 @@ interface ResumeLinkProps {
 export function ResumeLink({ firstLessonHref, lessons, layout = "bar", onNavigate }: ResumeLinkProps) {
   const position = useContinueLesson(lessons);
   const lesson = position?.lesson ?? null;
-  const sizer = useMemo(() => longestContinueLabel(lessons), [lessons]);
+  const sizer = useMemo(() => longestContinueCode(lessons), [lessons]);
   const cell = "col-start-1 row-start-1";
 
   return (
@@ -89,11 +110,11 @@ export function ResumeLink({ firstLessonHref, lessons, layout = "bar", onNavigat
       <span className={cn(cell, lesson && "invisible")} aria-hidden={lesson ? true : undefined}>
         {START_LEARNING_LABEL}
       </span>
-      <span className={cn(cell, !lesson && "invisible")} aria-hidden={lesson ? undefined : true}>
-        {lesson ? continueLabel(lesson) : null}
+      <span className={cn(cell, CONTINUE_ROW_CLASS, !lesson && "invisible")} aria-hidden={lesson ? undefined : true}>
+        {lesson ? <ContinueWithTag code={lesson.code} layout={layout} /> : null}
       </span>
-      <span className={cn(cell, "invisible")} aria-hidden="true" data-resume-sizer="">
-        {sizer}
+      <span className={cn(cell, CONTINUE_ROW_CLASS, "invisible")} aria-hidden="true" data-resume-sizer="">
+        <ContinueWithTag code={sizer} layout={layout} />
       </span>
     </Link>
   );

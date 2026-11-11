@@ -14,15 +14,27 @@ interface VisualRecapProps {
   children?: React.ReactNode;
 }
 
+/**
+ * The recap card's frame: the lesson figure frame (DESIGN.md section 12), quiet liquid glass with a
+ * hairline and radius 16, no hue gradient.
+ */
+export const VISUAL_RECAP_CLASS = "glass-liquid not-prose my-8 overflow-hidden";
+/** The "Recap" chip: a tag (radius 4) in the lesson's tier colour. */
+export const VISUAL_RECAP_TAG_CLASS =
+  "rounded border border-tier-current-border bg-tier-current-subtle px-1.5 py-0.5 text-label text-tier-current";
+/** The minimal code: on the code surface (dark in both modes), a focusable region when it scrolls sideways. */
+export const VISUAL_RECAP_CODE_CLASS =
+  "overflow-x-auto rounded-lg border border-code-border bg-code-surface p-3 font-mono text-code text-code-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
 /** Compact, animation-free recap card: picture, rule, code, mistake, real-TB location. */
 export function VisualRecap({ title, rule, code, mistake, inTestbench, children }: VisualRecapProps) {
   return (
     <section
       aria-label={`Visual recap: ${title}`}
-      className="not-prose my-8 overflow-hidden rounded-2xl border border-cyan-500/40 bg-gradient-to-br from-cyan-500/[0.07] via-transparent to-violet-500/[0.07]"
+      className={VISUAL_RECAP_CLASS}
     >
       <header className="flex items-center gap-2 border-b border-border/60 px-5 py-3">
-        <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-label text-cyan-800 dark:text-cyan-200">
+        <span className={VISUAL_RECAP_TAG_CLASS}>
           Recap
         </span>
         <h3 className="text-base font-semibold text-foreground">{title}</h3>
@@ -40,13 +52,18 @@ export function VisualRecap({ title, rule, code, mistake, inTestbench, children 
           <div>
             <dt className="text-label text-subtle">Minimal code</dt>
             <dd className="mt-1">
-              <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+              <pre
+                className={VISUAL_RECAP_CODE_CLASS}
+                tabIndex={0}
+                role="region"
+                aria-label={`Recap code: ${title}`}
+              >
                 <code>{code.trim()}</code>
               </pre>
             </dd>
           </div>
           <div>
-            <dt className="text-label text-rose-700 dark:text-rose-300">✕ Common mistake</dt>
+            <dt className="text-label text-danger">✕ Common mistake</dt>
             <dd className="mt-1 text-foreground">{mistake}</dd>
           </div>
           <div>

@@ -181,7 +181,7 @@ export function OutcomeGroups({
       <div role="status" aria-live="polite" className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           {multi ? (
-            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">
+            <span className="rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">
               Scheduler choice
             </span>
           ) : null}
@@ -224,12 +224,12 @@ export function OutcomeGroups({
               <span className="flex flex-wrap items-start justify-between gap-2">
                 <span className="min-w-0 text-sm font-semibold text-foreground">{heading}</span>
                 {countText ? (
-                  <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{countText}</span>
+                  <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{countText}</span>
                 ) : null}
               </span>
               {single && g.title ? <span className="mt-1 block text-xs text-muted-foreground">{g.title}</span> : null}
               {g.badge ? (
-                <span className="mt-2 inline-block rounded border border-border/70 bg-background/60 px-1.5 py-0.5 text-[11px] font-medium text-foreground">{g.badge}</span>
+                <span className="mt-2 inline-block rounded border border-border/70 bg-background/60 px-1.5 py-0.5 text-xs font-medium text-foreground">{g.badge}</span>
               ) : null}
               <span id={linesId} className="mt-2 block space-y-1">
                 {g.lines.map((line, li) => {
@@ -242,10 +242,10 @@ export function OutcomeGroups({
                         marked ? "border-l-2 border-amber-500 bg-amber-500/15 text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {line.time ? <span className="mr-1.5 font-mono text-[11px] opacity-80">{line.time}</span> : null}
+                      {line.time ? <span className="mr-1.5 font-mono text-xs opacity-80">{line.time}</span> : null}
                       <span className="break-words">{line.text}</span>
                       {marked ? (
-                        <span className="ml-1.5 inline-block rounded bg-amber-500/25 px-1 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:text-amber-100">
+                        <span className="ml-1.5 inline-block rounded bg-amber-500/25 px-1 text-label text-amber-900 dark:text-amber-100">
                           ≠ first difference
                         </span>
                       ) : null}
@@ -254,7 +254,7 @@ export function OutcomeGroups({
                 })}
                 {g.endState ? (
                   <span className="mt-2 block border-t border-border/60 pt-2 text-xs">
-                    <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">End state</span>
+                    <span className="mr-1.5 text-label text-muted-foreground">End state</span>
                     <span className="font-mono text-foreground [font-variant-ligatures:none]">{g.endState}</span>
                   </span>
                 ) : null}

@@ -116,7 +116,15 @@ interface TreeProps {
   outline: OutlineTier[];
   /** Runs when a link is followed (the drawer closes itself). */
   onNavigate?: (href: string) => void;
+  /**
+   * The docked column: below xl it is only 256 px wide, so each module's tag sits on its own line
+   * above the title and the title gets the whole row, instead of splitting long words.
+   */
+  docked?: boolean;
 }
+
+/** A module row's link in the docked column: the tag above the title below xl, beside it from xl. */
+export const DOCKED_MODULE_ROW_CLASS = "max-xl:flex-col max-xl:gap-1";
 
 function useExpansion(outline: OutlineTier[]) {
   const initial = useMemo(() => defaultExpansion(outline), [outline]);
@@ -151,12 +159,14 @@ function ModuleItem({
   onToggle,
   idPrefix,
   onNavigate,
+  docked = false,
 }: {
   mod: OutlineModule;
   open: boolean;
   onToggle: () => void;
   idPrefix: string;
   onNavigate?: (href: string) => void;
+  docked?: boolean;
 }) {
   const [first, ...rest] = mod.lessons;
   const lessonsId = `${idPrefix}-${mod.code}-lessons`;
@@ -173,7 +183,7 @@ function ModuleItem({
           // One name in every browser ("F1A: The Cost of Bugs"); the visible code and title, in order.
           aria-label={`${mod.code}: ${mod.title}`}
           onClick={(event) => follow(event, first.href)}
-          className={outlineRowClass(first.current)}
+          className={cn(outlineRowClass(first.current), docked && DOCKED_MODULE_ROW_CLASS)}
         >
           <SignalTag code={mod.code} className="-my-px" />
           <span className={cn("min-w-0 break-words", mod.current && !first.current && "font-medium text-foreground")}>
@@ -217,7 +227,7 @@ function ModuleItem({
  * (data-tier) and the small step mark in the tier colour before its name
  * (DESIGN.md section 11); the name stays neutral text.
  */
-export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
+export function CourseOutlineTree({ outline, onNavigate, docked = false }: TreeProps) {
   const idPrefix = useId().replace(/:/g, "");
   const { tierOpen, moduleOpen, toggleTier, toggleModule } = useExpansion(outline);
 
@@ -277,6 +287,7 @@ export function CourseOutlineTree({ outline, onNavigate }: TreeProps) {
                     onToggle={() => toggleModule(mod.id)}
                     idPrefix={idPrefix}
                     onNavigate={onNavigate}
+                    docked={docked}
                   />
                 ));
                 if (group.track === "core") {
@@ -335,7 +346,7 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
 
   const hide = () => {
     shellStore.setOutlineCollapsed(true);
-    document.querySelector<HTMLElement>("[data-outline-toggle]")?.focus();
+    focusOutlineToggleAfterRender();
   };
 
   return (
@@ -357,7 +368,7 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
           </button>
         </div>
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-6">
-          <CourseOutlineTree outline={outline} />
+          <CourseOutlineTree outline={outline} docked />
         </div>
       </nav>
     </div>
@@ -458,6 +469,30 @@ function OutlineDrawer({ outline, pathname }: { outline: OutlineTier[]; pathname
   );
 }
 
+/**
+ * Puts focus on the header's outline button once React has committed. Showing or hiding the docked
+ * outline moves that button between the header's docked and undocked frames, which remounts it, so
+ * focus set before the render would fall to <body>.
+ */
+export function focusOutlineToggleAfterRender(): void {
+  requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-outline-toggle]")?.focus());
+}
+
+/**
+ * The outline button's and Ctrl/Cmd+B's action. Where the outline is docked, a keyboard user whose
+ * focus was on the button (or inside the column being hidden) keeps it on the button afterwards.
+ */
+export function toggleOutlineKeepingFocus(pathname: string | null): void {
+  const docked = outlineDockedNow(pathname);
+  const active = typeof document === "undefined" ? null : document.activeElement;
+  const restore =
+    docked &&
+    active instanceof HTMLElement &&
+    (active.matches("[data-outline-toggle]") || active.closest(`#${DOCKED_OUTLINE_ID}`) !== null);
+  shellStore.toggleOutline(docked);
+  if (restore) focusOutlineToggleAfterRender();
+}
+
 /** True when the outline is docked right now: a lesson page at lg or wider. */
 export function outlineDockedNow(pathname: string | null): boolean {
   return isLessonPath(pathname) && viewportAtLeast(LG_MIN_WIDTH);
@@ -478,7 +513,7 @@ export function useOutlineToggle() {
   return {
     expanded,
     controls: expanded ? (docked ? DOCKED_OUTLINE_ID : OUTLINE_DRAWER_ID) : undefined,
-    toggle: () => shellStore.toggleOutline(outlineDockedNow(pathname)),
+    toggle: () => toggleOutlineKeepingFocus(pathname),
   };
 }
 

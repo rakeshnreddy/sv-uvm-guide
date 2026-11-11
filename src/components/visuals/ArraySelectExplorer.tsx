@@ -71,7 +71,7 @@ function RevealSignal({ onChange }: { onChange: (revealed: boolean) => void }) {
 function Given({ lines }: { lines: string[] }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/50 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Given</p>
+      <p className="text-label text-muted-foreground">Given</p>
       <ul className="mt-1 space-y-0.5 font-mono text-xs text-foreground [font-variant-ligatures:none]">
         {lines.map((l) => (
           <li key={l} className="break-words">
@@ -142,13 +142,13 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
       <div role="img" aria-label={`${decl.declText}: four separate 8-bit elements${revealed ? `; ${result.expr} ${result.rows.length ? `reads element${result.rows.length > 1 ? "s" : ""} ${result.rows.map((r) => r[0]).join(" and ")}` : "reads no element"}` : ""}`} className="flex flex-wrap gap-2">
         {indices.map((i) => (
           <div key={i} className={cn("min-w-16 rounded-lg border px-2 py-1.5 text-center font-mono text-xs [font-variant-ligatures:none]", isRowRead([i]) ? lit : "border-slate-400/60 bg-slate-500/10")}>
-            <div className="text-[10px] text-muted-foreground">{revealed ? `b[${i}]` : "element"}</div>
+            <div className="text-xs text-muted-foreground">{revealed ? `b[${i}]` : "element"}</div>
             {hex2(decl.word([i]))}
           </div>
         ))}
         {bad !== undefined ? (
           <div className={cn("min-w-16 rounded-lg border border-dashed px-2 py-1.5 text-center font-mono text-xs", state === "logic" ? hatch : "border-slate-400/80")}>
-            <div className="text-[10px]">{typeof bad === "object" ? "" : `b[${c.items[0].kind === "index" ? (c.items[0].name ?? bad) : bad}]`}</div>
+            <div className="text-xs">{typeof bad === "object" ? "" : `b[${c.items[0].kind === "index" ? (c.items[0].name ?? bad) : bad}]`}</div>
             no element
           </div>
         ) : null}
@@ -162,7 +162,7 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
     return (
       <div className="space-y-2">
         <div className="max-w-full overflow-x-auto">
-          <table aria-label={`${decl.declText}: 16 words in rows, four byte lanes in columns`} className="border-separate border-spacing-0.5 font-mono text-[11px] [font-variant-ligatures:none]">
+          <table aria-label={`${decl.declText}: 16 words in rows, four byte lanes in columns`} className="border-separate border-spacing-0.5 font-mono text-xs [font-variant-ligatures:none]">
             <thead>
               <tr>
                 <th scope="col" className="px-1 text-left font-normal text-muted-foreground">
@@ -212,7 +212,7 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
   const rows = rangeIndices(decl.unpacked[0]);
   const cols = rangeIndices(decl.unpacked[1]);
   return (
-    <table aria-label={`${decl.declText}: 4 rows of 8 ints`} className="border-separate border-spacing-0.5 font-mono text-[11px] [font-variant-ligatures:none]">
+    <table aria-label={`${decl.declText}: 4 rows of 8 ints`} className="border-separate border-spacing-0.5 font-mono text-xs [font-variant-ligatures:none]">
       <tbody>
         {rows.map((r) => (
           <tr key={r}>
@@ -452,13 +452,13 @@ function PartMode({ initialCase, initialSlider }: { initialCase: string; initial
 function DimColumn({ title, active, children }: { title: string; active: boolean; children: React.ReactNode }) {
   return (
     <div className={cn("min-w-0 rounded-lg border p-2", active ? "border-cyan-500 bg-cyan-500/10" : "border-border/60")}>
-      <p className={cn("mb-1 font-mono text-[11px] [font-variant-ligatures:none]", active ? "font-semibold text-foreground" : "text-muted-foreground")}>{title}</p>
+      <p className={cn("mb-1 font-mono text-xs [font-variant-ligatures:none]", active ? "font-semibold text-foreground" : "text-muted-foreground")}>{title}</p>
       {children}
     </div>
   );
 }
 
-const chip = "inline-flex min-w-8 items-center justify-center rounded border border-slate-400/60 bg-slate-500/10 px-1.5 py-0.5 font-mono text-[11px] [font-variant-ligatures:none]";
+const chip = "inline-flex min-w-8 items-center justify-center rounded border border-slate-400/60 bg-slate-500/10 px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]";
 
 /** Nested columns, slowest-varying dimension first. The chosen dimension is outlined; nothing here shows a query result. */
 function QueryLayout({ target, dimension }: { target: QueryTarget; dimension: number }) {
@@ -504,7 +504,7 @@ function QueryLayout({ target, dimension }: { target: QueryTarget; dimension: nu
     const keys = d.keys ?? [];
     if (!keys.length) return <span className={cn(chip, "border-dashed")}>no keys</span>;
     return (
-      <ul className="space-y-1 text-[11px]">
+      <ul className="space-y-1 text-xs">
         <li className="text-muted-foreground">⋮ (no smaller keys)</li>
         {keys.map((key, n) => (
           <React.Fragment key={key}>
@@ -624,7 +624,7 @@ function QueryMode({ initialTarget, initialDimension }: { initialTarget: string;
         }}
       >
         <p id={`${formId}-legend`} className="mb-2 text-sm font-semibold text-foreground">
-          <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+          <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
           Type what each call returns: a number, {code("'x")}, or {code("error")}.
         </p>
         <ul className="space-y-2">

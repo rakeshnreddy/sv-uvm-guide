@@ -414,12 +414,12 @@ export function TlmConnectionBuilderVisualizer() {
   const elaborationPanel = (
     <div className="space-y-3" aria-live="polite">
       <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="mb-1 text-label text-muted-foreground">
           {elaboration.compiles ? "Log up to start of run_phase" : "Compiler output"}
         </p>
         <pre
           aria-label="Simulation log"
-          className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]"
+          className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]"
         >
           {elaboration.log.length > 0
             ? elaboration.log.join("\n")
@@ -524,7 +524,7 @@ export function TlmConnectionBuilderVisualizer() {
               .filter((c) => topo.endpoints.some((e) => e.owner === c.id))
               .map((c) => (
                 <fieldset key={c.id} className="min-w-0 rounded-lg border border-border/60 p-2">
-                  <legend className="px-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+                  <legend className="px-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
                     {c.name} · {c.cls}
                   </legend>
                   <div className="flex flex-col gap-1">
@@ -549,8 +549,8 @@ export function TlmConnectionBuilderVisualizer() {
                               {GLYPH[kind]}
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate">{ep.handle}</span>
-                              <span className="block truncate text-[10px] text-muted-foreground">
+                              <span className="block [overflow-wrap:anywhere]">{ep.handle}</span>
+                              <span className="block text-label font-normal text-muted-foreground [overflow-wrap:anywhere]">
                                 {ep.role} · {ep.typeName}
                               </span>
                             </span>
@@ -593,7 +593,7 @@ export function TlmConnectionBuilderVisualizer() {
                   setCheckRelationships(e.target.checked);
                   setRan(false);
                 }}
-                className="h-4 w-4 accent-cyan-500"
+                className="size-5 shrink-0 accent-cyan-500"
               />
               check_connection_relationships = 1
             </label>
@@ -601,7 +601,7 @@ export function TlmConnectionBuilderVisualizer() {
           <HintLadder hints={HINTS} resetKey={scenario.id} />
 
           {ran ? (
-            <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+            <div className="space-y-3 rounded-xl border border-border bg-card p-3">
               {elaborationPanel}
               <ul className="space-y-1 text-sm" aria-label="Goals">
                 {goals.map((g) => (
@@ -645,7 +645,7 @@ export function TlmConnectionBuilderVisualizer() {
                       type="button"
                       onClick={() => removeConnection(line.key as string)}
                       aria-label={`Remove ${line.text}`}
-                      className="rounded-md border border-slate-500 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                      className="rounded-md border border-slate-500 px-2 py-0.5 text-xs text-slate-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                     >
                       remove
                     </button>
@@ -653,13 +653,13 @@ export function TlmConnectionBuilderVisualizer() {
               : undefined
           }
         />
-        <details className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+        <details className="rounded-xl border border-border bg-card p-3 text-sm">
           <summary className="cursor-pointer font-medium text-foreground">Declarations behind these symbols</summary>
           <div className="mt-2 space-y-3">
             {declarations.map((d) => (
               <div key={d.owner}>
-                <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">class {d.cls}</p>
-                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-2 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+                <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">class {d.cls}</p>
+                <pre className="overflow-x-auto rounded-lg bg-code-surface p-2 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
                   {d.lines.join("\n")}
                 </pre>
               </div>
@@ -701,7 +701,7 @@ function ConnectVerdict({ result, topo }: { result: ConnectResult; topo: TlmTopo
         {heading} <code className="font-mono font-normal [font-variant-ligatures:none]">{result.statement.code}</code>
       </p>
       {result.log ? (
-        <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950/90 p-2 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">{result.log}</pre>
+        <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-code-surface p-2 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">{result.log}</pre>
       ) : result.kind === "compile_error" ? (
         <p className="font-mono text-xs [font-variant-ligatures:none]">{result.message}</p>
       ) : null}

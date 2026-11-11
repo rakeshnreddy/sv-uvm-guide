@@ -181,7 +181,7 @@ function StrengthLadder({ net, drivers, result, charge }: { net: NetType; driver
                   {row.name} ({row.level})
                   {isWin ? <span className="sr-only">, strongest level present</span> : null}
                   {isCharge ? <span className="sr-only">, stored charge</span> : null}
-                  {charge && row.charge && row.name.startsWith(charge) ? <span className="block text-[10px]">declared charge</span> : null}
+                  {charge && row.charge && row.name.startsWith(charge) ? <span className="block text-xs">declared charge</span> : null}
                 </th>
                 <td className="border border-border/60 px-2 py-1">
                   <div className="flex flex-wrap justify-end gap-1">
@@ -784,7 +784,7 @@ function BitwiseLab() {
         </legend>
         {BIT_WRITERS.map((w) => (
           <label key={w.key} className="flex min-h-9 cursor-pointer flex-wrap items-center gap-2 text-sm">
-            <input type="checkbox" checked={keys.includes(w.key)} onChange={() => toggle(w.key)} className="h-4 w-4 accent-cyan-600" />
+            <input type="checkbox" checked={keys.includes(w.key)} onChange={() => toggle(w.key)} className="size-5 shrink-0 accent-cyan-600" />
             <code className="break-all font-mono text-xs [font-variant-ligatures:none]">{w.line}</code>
             {WRITER_NOTES[w.key] ? <span className="text-xs text-muted-foreground">({WRITER_NOTES[w.key]})</span> : null}
           </label>
@@ -840,7 +840,7 @@ function BitwiseLab() {
                           <li key={w.key} className="flex flex-wrap items-center gap-1 text-xs">
                             <span
                               className={cn(
-                                "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                "rounded px-1.5 py-0.5 text-label",
                                 continuous ? "bg-cyan-500/20 text-cyan-900 dark:text-cyan-100" : "bg-violet-500/20 text-violet-900 dark:text-violet-100",
                               )}
                             >

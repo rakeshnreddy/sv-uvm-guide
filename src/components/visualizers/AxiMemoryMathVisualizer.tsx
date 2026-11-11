@@ -137,7 +137,7 @@ function LaneCells({ lanes, dataBusBytes, strobe }: { lanes: number[]; dataBusBy
           key={lane}
           aria-hidden
           className={cn(
-            "inline-flex h-5 w-5 items-center justify-center rounded-sm border font-mono text-[10px]",
+            "inline-flex h-5 w-5 items-center justify-center rounded-sm border font-mono text-xs",
             on.has(lane) ? "border-cyan-500/70 bg-cyan-500/20 text-cyan-900 dark:text-cyan-100" : "border-border/60 text-muted-foreground",
             strobe && strobe.includes(lane) && !on.has(lane) && "border-rose-500 bg-rose-500/20 text-rose-800 dark:text-rose-200",
           )}
@@ -207,7 +207,7 @@ export default function AxiMemoryMathVisualizer() {
           ["Bytes carried", result.lowestByte === null ? "undefined" : `${hex(result.lowestByte)} to ${hex(result.highestByte as number)}`],
         ].map(([k, v]) => (
           <div key={k} className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
-            <dt className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{k}</dt>
+            <dt className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{k}</dt>
             <dd className="font-mono font-semibold text-foreground">{v}</dd>
           </div>
         ))}
@@ -256,7 +256,7 @@ export default function AxiMemoryMathVisualizer() {
                     </span>
                   </td>
                   <td className="px-2 py-1 font-mono text-xs [font-variant-ligatures:none]">{formatStrobe(b.lanes, request.dataBusBytes)}</td>
-                  <td className="px-2 py-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{b.why}</td>
+                  <td className="px-2 py-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{b.why}</td>
                 </tr>
               ))}
             </tbody>

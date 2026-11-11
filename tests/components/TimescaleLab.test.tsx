@@ -1358,7 +1358,8 @@ describe("TimescaleLab · read-time shows the code it runs and asks about each l
     render(<TimescaleLab mode="read-time" />);
     skip();
     expect(log().innerHTML).not.toContain("text-slate-500");
-    expect(log().innerHTML).toContain("text-slate-400");
+    // The code-surface secondary role (DESIGN.md section 2), 68% lightness on the 5% code surface.
+    expect(log().innerHTML).toContain("text-code-muted");
   });
 });
 

@@ -153,7 +153,7 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
         type="button"
         onClick={() => setScenario((s) => withAssignmentOp(s, line.key as string, op === "nba" ? "blocking" : "nba"))}
         aria-label={`Change ${line.text.trim()} to ${op === "nba" ? "a blocking (=)" : "a nonblocking (<=)"} assignment`}
-        className="rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
+        className="inline-flex min-h-6 items-center rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-xs text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
       >
         use {op === "nba" ? "=" : "<="}
       </button>
@@ -168,10 +168,10 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
   const groups = useMemo(() => (nbaBench ? traceOutcomeGroups(scenario, exploration) : []), [nbaBench, scenario, exploration]);
 
   return (
-    <section aria-label="Race condition debugger" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
+    <section aria-label="Race condition debugger" className="glass-liquid not-prose my-8 space-y-4 p-3 sm:p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Experiment</p>
+          <p className="text-label text-muted-foreground">Experiment</p>
           <h3 className="text-lg font-semibold text-foreground">Race Condition Debugger</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Flip operators, predict, then let the model run <em>every</em> order the standard allows. A race is code whose result changes with that order.
@@ -223,7 +223,7 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
           aria-expanded={showAdvanced}
-          className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex min-h-10 items-center text-xs font-medium text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {showAdvanced ? "Hide" : "Show"} advanced experiment: #0 delays
         </button>
@@ -233,7 +233,7 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
               <label key={p.id} className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  className="accent-amber-500"
+                  className="size-5 shrink-0 accent-amber-500"
                   checked={p.body[0]?.kind === "delay0"}
                   onChange={(e) => setScenario((s) => withZeroDelay(s, p.id, e.target.checked))}
                 />
@@ -300,8 +300,8 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
               {exploration.outcomes.map((o, i) => {
                 const faithful = outcomeMatchesExpected(o.finalValues);
                 return (
-                  <div key={o.signature} className="rounded-xl border border-border/70 bg-background/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Outcome {i + 1}</p>
+                  <div key={o.signature} className="rounded-xl border border-border bg-card p-3">
+                    <p className="text-label text-muted-foreground">Outcome {i + 1}</p>
                     <p className="mt-1 text-sm text-foreground">
                       {o.runs.map((r) => r.executionOrder.map(labelOf).join(" → ")).join(" · ")}
                     </p>
@@ -346,8 +346,8 @@ export default function RaceConditionDebugger({ bench: initialBench = "shift" }:
                 <p className="text-sm font-semibold text-foreground">Compare two executions — they split at step {runs.diverge + 1}</p>
                 <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
                   {[runs.r1, runs.r2].map((r, idx) => (
-                    <div key={idx} className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div key={idx} className="space-y-2 rounded-xl border border-border bg-card p-3">
+                      <p className="text-label text-muted-foreground">
                         Run {idx + 1}: {r.executionOrder.map(labelOf).join(" → ")}
                       </p>
                       <ol className="space-y-1 text-xs">

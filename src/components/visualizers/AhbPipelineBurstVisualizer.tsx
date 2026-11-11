@@ -245,24 +245,24 @@ export default function AhbPipelineBurstVisualizer() {
         />
 
         <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-          <div className="min-w-0 rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+          <div className="min-w-0 rounded-xl border border-border bg-card p-3 text-sm">
             <p className="font-semibold text-foreground">{preset.title}</p>
             <p className="mt-1 text-muted-foreground">{preset.summary}</p>
-            <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Master</p>
+            <p className="mt-3 text-label text-muted-foreground">Master</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-5 font-mono text-[12px] [font-variant-ligatures:none]">
               {setup.master.map((m) => (
                 <li key={m}>{m}</li>
               ))}
             </ul>
-            <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Slave</p>
+            <p className="mt-2 text-label text-muted-foreground">Slave</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-5 font-mono text-[12px] [font-variant-ligatures:none]">
               {setup.slave.map((m) => (
                 <li key={m}>{m}</li>
               ))}
             </ul>
           </div>
-          <div className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/50 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Change the run</p>
+          <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
+            <p className="text-label text-muted-foreground">Change the run</p>
             {preset.controls.map((id) => {
               const spec = CONTROLS[id];
               return (
@@ -356,7 +356,7 @@ export default function AhbPipelineBurstVisualizer() {
             ) : null}
 
             <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Checker on this trace · select one to mark its attempts</p>
+              <p className="text-label text-muted-foreground">Checker on this trace · select one to mark its attempts</p>
               <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
                 {results.map((r) => {
                   const prop = AHB_PROPERTIES[r.id];
@@ -374,7 +374,7 @@ export default function AhbPipelineBurstVisualizer() {
                       )}
                     >
                       <span className="block font-mono font-semibold [font-variant-ligatures:none]">{prop.name}</span>
-                      <span className={cn("mt-0.5 inline-block rounded px-1 text-[10px] font-semibold uppercase tracking-wider", prop.kind === "protocol" ? "bg-violet-500/15 text-violet-800 dark:text-violet-200" : "bg-amber-500/20 text-amber-900 dark:text-amber-200")}>
+                      <span className={cn("mt-0.5 inline-block rounded px-1 text-label", prop.kind === "protocol" ? "bg-violet-500/15 text-violet-800 dark:text-violet-200" : "bg-amber-500/20 text-amber-900 dark:text-amber-200")}>
                         {prop.kind === "protocol" ? `Protocol ${prop.cite}` : `Flawed: ${prop.cite}`}
                       </span>
                       <span className={cn("mt-1 block font-semibold", s.tone)}>

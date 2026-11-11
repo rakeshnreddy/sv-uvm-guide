@@ -61,7 +61,7 @@ function FateBadge({ outcome }: { outcome: MessageOutcome }) {
       <span aria-hidden>{cue.glyph}</span>
       {cue.label}
       {outcome.demoted ? (
-        <span className="ml-1 rounded border border-amber-500/60 px-1 text-[10px] text-amber-800 dark:text-amber-200">↓ demoted to {outcome.finalSeverity}</span>
+        <span className="ml-1 rounded border border-amber-500/60 px-1 text-xs text-amber-800 dark:text-amber-200">↓ demoted to {outcome.finalSeverity}</span>
       ) : null}
     </span>
   );
@@ -136,7 +136,7 @@ export default function TelemetryEventBusVisualizer() {
     >
       <div className="space-y-3">
         <div>
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Start from a preset</p>
+          <p className="mb-1.5 text-label text-muted-foreground">Start from a preset</p>
           <SegmentedControl
             label="Report configuration preset"
             options={reportPresets.map((p) => ({ value: p.id, label: p.title }))}
@@ -149,10 +149,10 @@ export default function TelemetryEventBusVisualizer() {
           <p className="mt-1.5 text-xs text-muted-foreground">{preset ? preset.summary : "Custom combination."}</p>
         </div>
 
-        <fieldset className="grid gap-3 rounded-xl border border-border/70 bg-background/40 p-3 grid-cols-[repeat(auto-fit,minmax(min(100%,230px),1fr))]">
+        <fieldset className="grid gap-3 rounded-xl border border-border bg-card p-3 grid-cols-[repeat(auto-fit,minmax(min(100%,230px),1fr))]">
           <legend className="px-1 text-xs font-semibold text-foreground">Knobs</legend>
           <div>
-            <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">+UVM_VERBOSITY</p>
+            <p className="mb-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">+UVM_VERBOSITY</p>
             <SegmentedControl
               label="Global verbosity"
               mono
@@ -166,7 +166,7 @@ export default function TelemetryEventBusVisualizer() {
             />
           </div>
           <div>
-            <p className="mb-1 text-[11px] text-muted-foreground">Report catcher</p>
+            <p className="mb-1 text-xs text-muted-foreground">Report catcher</p>
             <SegmentedControl
               label="Report catcher"
               mono
@@ -180,7 +180,7 @@ export default function TelemetryEventBusVisualizer() {
             />
           </div>
           <div>
-            <p className="mb-1 text-[11px] text-muted-foreground">UVM_ERROR action under env</p>
+            <p className="mb-1 text-xs text-muted-foreground">UVM_ERROR action under env</p>
             <SegmentedControl
               label="UVM_ERROR action"
               mono
@@ -194,7 +194,7 @@ export default function TelemetryEventBusVisualizer() {
             />
           </div>
           <div>
-            <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">+UVM_MAX_QUIT_COUNT</p>
+            <p className="mb-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">+UVM_MAX_QUIT_COUNT</p>
             <SegmentedControl
               label="Max quit count"
               mono
@@ -208,8 +208,8 @@ export default function TelemetryEventBusVisualizer() {
           </div>
         </fieldset>
 
-        <figure className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-          <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        <figure className="overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+          <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">
             Reports issued, in time order (t in ns)
           </figcaption>
           <ol className="overflow-x-auto py-2 font-mono text-[12px] leading-6 [font-variant-ligatures:none]">
@@ -233,7 +233,7 @@ export default function TelemetryEventBusVisualizer() {
           <div className="overflow-x-auto rounded-xl border border-border/70">
             <table className="w-full min-w-[300px] text-left text-sm">
               <caption className="sr-only">What happened to each report</caption>
-              <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+              <thead className="bg-muted/40 text-label text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-3 py-2">t</th>
                   <th scope="col" className="px-3 py-2">Report</th>
@@ -249,7 +249,7 @@ export default function TelemetryEventBusVisualizer() {
                         {o.message.origin === "sv" ? "$error" : o.originalSeverity} [{o.message.id}]
                       </span>
                       <span className="block text-xs text-muted-foreground">{o.message.text}</span>
-                      {i === REAL_BUG_INDEX ? <span className="mt-0.5 inline-block rounded bg-rose-500/15 px-1 text-[10px] font-bold uppercase text-rose-800 dark:text-rose-200">real bug</span> : null}
+                      {i === REAL_BUG_INDEX ? <span className="mt-0.5 inline-block rounded bg-rose-500/15 px-1 text-label text-rose-800 dark:text-rose-200">real bug</span> : null}
                     </td>
                     <td className="px-3 py-2">
                       <FateBadge outcome={o} />
@@ -275,9 +275,9 @@ export default function TelemetryEventBusVisualizer() {
           </div>
 
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
-            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-              <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Simulator log</figcaption>
-              <pre className="overflow-x-auto p-3 font-mono text-[11.5px] leading-5 [font-variant-ligatures:none]">
+            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+              <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">Simulator log</figcaption>
+              <pre className="overflow-x-auto p-3 font-mono text-xs leading-5 [font-variant-ligatures:none]">
                 {run.outcomes
                   .filter((o) => o.line && (o.fate === "displayed" || o.fate === "sv-task"))
                   .map((o) => o.line)
@@ -285,9 +285,9 @@ export default function TelemetryEventBusVisualizer() {
                 {run.exitedAt ? "\n-- UVM_EXIT: uvm_root::die() prints the summary and ends the run --" : ""}
               </pre>
             </figure>
-            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-              <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Report summary</figcaption>
-              <pre className="overflow-x-auto p-3 font-mono text-[11.5px] leading-5 [font-variant-ligatures:none]">{run.summaryLines.join("\n")}</pre>
+            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+              <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">Report summary</figcaption>
+              <pre className="overflow-x-auto p-3 font-mono text-xs leading-5 [font-variant-ligatures:none]">{run.summaryLines.join("\n")}</pre>
             </figure>
           </div>
 
@@ -295,13 +295,13 @@ export default function TelemetryEventBusVisualizer() {
 
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
             {code.classes.length ? (
-              <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-                <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">The catcher</figcaption>
+              <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+                <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">The catcher</figcaption>
                 <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-5 [font-variant-ligatures:none]">{code.classes.join("\n")}</pre>
               </figure>
             ) : null}
-            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-              <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">The test and command line</figcaption>
+            <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+              <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">The test and command line</figcaption>
               <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-5 [font-variant-ligatures:none]">
                 {code.test.join("\n")}
                 {code.plusargs.length ? `\n\n// simulator command line\n${code.plusargs.join("\n")}` : ""}

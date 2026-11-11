@@ -255,8 +255,8 @@ function CallTrace() {
           />
           <PlaybackControls playback={playback} stepCount={trace.steps.length} stepNoun="Call" describeStep={(i) => trace.steps[i]?.what ?? ""} />
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
-            <div className="rounded-xl border border-border/70 bg-background/50 p-3 text-[15px]" aria-live="polite">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="rounded-xl border border-border bg-card p-3 text-[15px]" aria-live="polite">
+              <p className="mb-1 text-label text-muted-foreground">
                 t = {step.time} ns · step {playback.index + 1} of {trace.steps.length}
               </p>
               <p className="text-foreground">
@@ -268,8 +268,8 @@ function CallTrace() {
                 {step.why}
               </p>
             </div>
-            <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Call stack (one process)</p>
+            <div className="rounded-xl border border-border bg-card p-3">
+              <p className="mb-1 text-label text-muted-foreground">Call stack (one process)</p>
               <ol className="space-y-0.5 font-mono text-xs [font-variant-ligatures:none]" aria-label="Call stack">
                 {step.callStack.map((frame, i) => (
                   <li key={frame} style={{ paddingLeft: `${i * 10}px` }}>
@@ -280,7 +280,7 @@ function CallTrace() {
               </ol>
             </div>
           </div>
-          <div className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+          <div className="rounded-xl border border-border bg-card p-3 text-sm">
             <p className="font-semibold text-foreground">
               Call order: {trace.order.map((imp) => endpointFullName(TOPO, TOPO.endpoints.find((e) => e.id === imp)!)).join(" → ")}
             </p>
@@ -289,7 +289,7 @@ function CallTrace() {
               <code className="font-mono">connect()</code> calls are in. Treat the order as unspecified: no subscriber may depend on another having seen the item.
             </p>
             <label className="mt-3 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={mutate} onChange={(e) => setMutate(e.target.checked)} className="h-4 w-4 accent-rose-500" />
+              <input type="checkbox" checked={mutate} onChange={(e) => setMutate(e.target.checked)} className="size-5 shrink-0 accent-rose-500" />
               Bug: cov.write() clears <code className="font-mono">t.data</code> after sampling coverage
             </label>
             <p
@@ -406,7 +406,7 @@ function FifoTimeline({ sim, endOfTest }: { sim: ReturnType<typeof simulateAnaly
     .join(", ")}. FIFO peaks at ${sim.maxUsed}. Test ends at ${endOfTest} ns.`;
   const steps = sim.occupancy;
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <div className="overflow-x-auto">
         <svg viewBox="0 0 560 190" className="block h-auto w-full min-w-[300px]" role="img" aria-label={label}>
           {[0, 20, 40, 60, 80, 100, 120].map((t) => (
@@ -469,7 +469,7 @@ function FifoTimeline({ sim, endOfTest }: { sim: ReturnType<typeof simulateAnaly
           </text>
         </svg>
       </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         ◆ write() (zero time) · shaded steps: items waiting in the FIFO · boxes: chk checking an item (✓ done before the end, ✕ dashed: unfinished)
       </figcaption>
     </figure>

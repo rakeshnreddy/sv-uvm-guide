@@ -34,4 +34,17 @@ describe("visual-system labels", () => {
       expect(label.className, name).not.toMatch(/uppercase|tracking-|text-\[1[01]px\]/);
     }
   });
+
+  it("draws the VisualRecap card as a quiet glass figure frame with a tier tag and code on the code surface", () => {
+    render(<VisualRecap title="Recap title" rule="r" code="logic a;" mistake="m" inTestbench="t" />);
+    const card = screen.getByRole("region", { name: "Visual recap: Recap title" });
+    expect(card.className).toContain("glass-liquid");
+    expect(card.className).not.toMatch(/gradient|cyan|violet/);
+    expect(screen.getByText("Recap").className).toMatch(/text-tier-current/);
+    const code = screen.getByRole("region", { name: "Recap code: Recap title" });
+    expect(code).toHaveAttribute("tabindex", "0");
+    expect(code.className).toContain("bg-code-surface");
+    expect(code.className).not.toMatch(/slate/);
+    expect(code).toHaveTextContent("logic a;");
+  });
 });

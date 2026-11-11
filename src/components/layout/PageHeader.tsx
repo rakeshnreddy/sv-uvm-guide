@@ -27,6 +27,14 @@ export const PAGE_HEADER_LEAD_CLASS = "mt-3 max-w-[27.5em] text-lead text-muted-
 /** The meta row: 14/20 meta text with tabular figures, wrapping onto a second line on phones. */
 export const PAGE_HEADER_META_CLASS = "mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-ui tabular-nums text-subtle";
 
+/**
+ * A quiet text-link action in the header: 40 px tall, primary text with a 2 px accent underline. The
+ * header sits on the colour field's peak, where the light accent as text falls below 4.5:1 (DESIGN.md
+ * section 11), so the accent marks the link only as its underline (3:1 there, a unit test checks it).
+ */
+export const PAGE_HEADER_ACTION_LINK_CLASS =
+  "inline-flex min-h-10 items-center rounded-sm text-ui font-medium text-foreground underline decoration-primary decoration-2 underline-offset-4 transition-colors duration-150 ease-bench hover:decoration-foreground motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
 /** The actions: under the text on phones, top right from 640 px. */
 export const PAGE_HEADER_ACTIONS_CLASS = "flex shrink-0 flex-wrap items-center gap-2 sm:justify-end";
 

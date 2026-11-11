@@ -91,7 +91,7 @@ function ComparisonTable() {
   return (
     <div className="overflow-x-auto rounded-xl border border-border/70">
       <table className="w-full border-collapse text-left text-xs">
-        <caption className="px-3 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <caption className="px-3 pt-3 text-left text-label text-muted-foreground">
           Common data types (IEEE 1800-2023 Table 6-7, Table 6-8)
         </caption>
         <thead>
@@ -118,7 +118,7 @@ function ComparisonTable() {
               <td className="px-3 py-2">{widthText(r)}</td>
               <td className="px-3 py-2">{signedText(r)}</td>
               <td className="px-3 py-2 font-mono [font-variant-ligatures:none]">
-                {r.defaultText} <span className="font-sans text-[10px] text-muted-foreground">({r.clause})</span>
+                {r.defaultText} <span className="font-sans text-xs text-muted-foreground">({r.clause})</span>
               </td>
               <td className="px-3 py-2 text-muted-foreground">{r.note}</td>
             </tr>
@@ -165,7 +165,7 @@ const DataTypeComparisonChart: React.FC = () => {
         <section aria-label="Predict the value" className="space-y-3">
           <p className="text-sm font-semibold text-foreground">Predict the value</p>
           <SegmentedControl label="Declaration to test" mono options={drills.map((d) => ({ value: d.id, label: d.code.split("\n")[0] }))} value={drill.id} onChange={setDrillId} />
-          <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+          <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]">
             <code>{drill.code}</code>
           </pre>
           <PredictionPrompt

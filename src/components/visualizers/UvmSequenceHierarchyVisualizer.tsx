@@ -131,8 +131,8 @@ function TraceView({ events, deadlock, resetKey }: { events: HookEvent[]; deadlo
   return (
     <div className="space-y-3">
       <PlaybackControls playback={playback} stepCount={events.length} stepNoun="Call" describeStep={(i) => events[i]?.call ?? ""} />
-      <div className="rounded-xl border border-border/70 bg-background/60 p-3" aria-live="polite">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="rounded-xl border border-border bg-card p-3" aria-live="polite">
+        <p className="text-label text-muted-foreground">
           call {index + 1} of {events.length}
         </p>
         <p className="mt-1 font-mono text-[15px] font-medium text-foreground [font-variant-ligatures:none]">{ev.call}</p>
@@ -152,7 +152,7 @@ function TraceView({ events, deadlock, resetKey }: { events: HookEvent[]; deadlo
           );
         })}
       </div>
-      <ol className="max-h-80 overflow-auto rounded-xl border border-border/70 bg-slate-950/90 py-2 font-mono text-[12px] leading-6 text-slate-100 [font-variant-ligatures:none]" aria-label="Call log so far">
+      <ol className="max-h-80 overflow-auto rounded-xl border border-border/70 bg-code-surface py-2 font-mono text-[12px] leading-6 text-code-foreground [font-variant-ligatures:none]" aria-label="Call log so far">
         {events.slice(0, index + 1).map((e) => (
           <li
             key={e.index}
@@ -163,10 +163,10 @@ function TraceView({ events, deadlock, resetKey }: { events: HookEvent[]; deadlo
               e.index === index ? "border-cyan-400 bg-cyan-400/15" : "border-transparent",
               e.kind === "error" && "text-rose-300",
               e.kind === "parent-hook" && "text-amber-200",
-              (e.kind === "sequencer" || e.kind === "driver") && "text-slate-400",
+              (e.kind === "sequencer" || e.kind === "driver") && "text-code-muted",
             )}
           >
-            <span aria-hidden className="mr-1.5 inline-block min-w-[1.5rem] text-[10px] text-slate-400">
+            <span aria-hidden className="mr-1.5 inline-block min-w-[1.5rem] text-xs text-slate-400">
               {kindGlyph[e.kind]}
             </span>
             {e.call}
@@ -220,21 +220,21 @@ export function UvmSequenceHierarchyVisualizer() {
     >
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         <div className="min-w-0 space-y-1.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Start write_seq with</p>
+          <p className="text-label text-muted-foreground">Start write_seq with</p>
           <SegmentedControl label="How top_seq starts write_seq" mono options={STYLES.map((s) => ({ value: s, label: STYLE_LABEL[s] }))} value={writeStyle} onChange={setWriteStyle} />
         </div>
         <div className="min-w-0 space-y-1.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Start read_seq with</p>
+          <p className="text-label text-muted-foreground">Start read_seq with</p>
           <SegmentedControl label="How top_seq starts read_seq" mono options={STYLES.map((s) => ({ value: s, label: STYLE_LABEL[s] }))} value={readStyle} onChange={setReadStyle} />
         </div>
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
         <label className="flex min-h-10 items-center gap-2">
-          <input type="checkbox" className="h-4 w-4 accent-cyan-500" checked={itemDetail} onChange={(e) => setItemDetail(e.target.checked)} />
+          <input type="checkbox" className="size-5 shrink-0 accent-cyan-500" checked={itemDetail} onChange={(e) => setItemDetail(e.target.checked)} />
           Show the calls inside start_item() / finish_item()
         </label>
         <label className="flex min-h-10 items-center gap-2">
-          <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={rootLocks} onChange={(e) => setRootLocks(e.target.checked)} />
+          <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={rootLocks} onChange={(e) => setRootLocks(e.target.checked)} />
           Debug: top_seq calls lock() first
         </label>
       </div>

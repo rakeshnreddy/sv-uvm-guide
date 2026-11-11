@@ -416,12 +416,15 @@ export default function NotebookPageClient() {
           >
             Entries
           </h2>
-          {hydrated ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {formatCount(entries.length)} of {formatCount(NOTEBOOK_MAX_ENTRIES)} entries · up to{' '}
-              {formatCount(NOTEBOOK_BODY_MAX_CHARS)} characters each
-            </p>
-          ) : null}
+          {/* In the server HTML too (invisible until hydration), so the search field below never moves. */}
+          <p
+            data-testid="notebook-count"
+            aria-hidden={hydrated ? undefined : true}
+            className={cn('mt-1 text-xs text-muted-foreground', !hydrated && 'invisible')}
+          >
+            {formatCount(entries.length)} of {formatCount(NOTEBOOK_MAX_ENTRIES)} entries · up to{' '}
+            {formatCount(NOTEBOOK_BODY_MAX_CHARS)} characters each
+          </p>
 
           <label htmlFor={searchId} className="mt-4 block text-sm font-semibold text-foreground">
             Search notes
@@ -435,13 +438,18 @@ export default function NotebookPageClient() {
             className={cn(fieldClass, 'mt-2 h-10')}
           />
 
-          {!hydrated ? (
-            <p className="mt-4 text-sm text-muted-foreground">Loading the entries saved in this browser…</p>
-          ) : entries.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-              <p>Explanations you save in a lesson's “Teach it back” section appear here.</p>
-              <p className="mt-2">
-                <Link href="/curriculum" className={textLink}>
+          {!hydrated || entries.length === 0 ? (
+            // The empty state sits directly in the panel (no box inside the box). While loading it keeps the
+            // same two lines, the link hidden, so the panel's height does not change after hydration.
+            <div data-testid="notebook-empty" className="mt-4 text-sm text-muted-foreground">
+              {/* Two lines reserved: the empty-state sentence wraps to two in the panel, the loading one fits on one. */}
+              <p className="min-h-10">
+                {hydrated
+                  ? "Explanations you save in a lesson's “Teach it back” section appear here."
+                  : 'Loading the entries saved in this browser…'}
+              </p>
+              <p className={cn('mt-2', !hydrated && 'invisible')} aria-hidden={hydrated ? undefined : true}>
+                <Link href="/curriculum" className={textLink} tabIndex={hydrated ? undefined : -1}>
                   Browse the curriculum
                 </Link>
               </p>

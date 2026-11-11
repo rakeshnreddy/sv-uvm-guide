@@ -35,9 +35,9 @@ const probeLabels: Record<Probe, string> = {
 
 function LogView({ lines, label }: { lines: LogLine[]; label: string }) {
   return (
-    <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
-      <ol className="max-h-72 overflow-auto py-2 font-mono text-[11.5px] leading-5 [font-variant-ligatures:none]" aria-label={label}>
+    <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+      <figcaption className="border-b border-code-border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-code-muted">{label}</figcaption>
+      <ol className="max-h-72 overflow-auto py-2 font-mono text-xs leading-5 [font-variant-ligatures:none]" aria-label={label}>
         {lines.map((l, i) => (
           <li
             key={i}
@@ -63,7 +63,7 @@ function ProbeResult({ probe, run }: { probe: Probe; run: HangRun }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[300px] text-left text-xs">
           <caption className="sr-only">Process states at t = {run.endTime}</caption>
-          <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <thead className="text-xs uppercase tracking-wider text-muted-foreground">
             <tr>
               <th scope="col" className="py-1 pr-2">Process</th>
               <th scope="col" className="py-1 pr-2">State at t = {run.endTime}</th>
@@ -88,10 +88,10 @@ function ProbeResult({ probe, run }: { probe: Probe; run: HangRun }) {
     );
   }
   if (probe === "objections") {
-    return <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">{run.objectionTable.join("\n")}</pre>;
+    return <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]">{run.objectionTable.join("\n")}</pre>;
   }
   return (
-    <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+    <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]">
       {[
         `sqr.is_grabbed()      = ${run.sequencer.grabbedBy ? 1 : 0}`,
         `sqr.current_grabber() = ${run.sequencer.grabbedBy ? `uvm_test_top.env.agt.sqr.${run.sequencer.grabbedBy}` : "null"}`,
@@ -157,7 +157,7 @@ export const DebuggingSimulator = ({ scenario = "hang" }: DebuggingSimulatorProp
       </p>
 
       <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-        <input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+        <input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
         Rerun with <span className="font-mono [font-variant-ligatures:none]">+UVM_OBJECTION_TRACE</span>
       </label>
 
@@ -226,7 +226,7 @@ export const DebuggingSimulator = ({ scenario = "hang" }: DebuggingSimulatorProp
             <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
               {s.fixes.map((f) => (
                 <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                  <input type="radio" name={`hang-fix-${id}`} checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                  <input type="radio" name={`hang-fix-${id}`} checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                   <span>{f.label}</span>
                 </label>
               ))}
@@ -244,7 +244,7 @@ export const DebuggingSimulator = ({ scenario = "hang" }: DebuggingSimulatorProp
                 {fix.review}
               </p>
               {fix.correct ? (
-                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">{s.fixedCode.join("\n")}</pre>
+                <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">{s.fixedCode.join("\n")}</pre>
               ) : null}
               <details className="text-xs">
                 <summary className="cursor-pointer text-muted-foreground">Log of the rerun</summary>

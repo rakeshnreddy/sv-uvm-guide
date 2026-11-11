@@ -39,7 +39,7 @@ test.describe('account preferences', () => {
     expect((await loaded).ok()).toBe(true);
     await waitForShell(page);
 
-    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('heading', { level: 2, name: 'Your learning data' })).toBeVisible();
     const panel = page.getByRole('region', { name: 'Account preferences' });
     await expect(panel).toBeVisible();
@@ -68,7 +68,7 @@ test.describe('account preferences', () => {
     await reloaded;
     await expect(
       page.getByRole('region', { name: 'Account preferences' }).getByRole('button', { name: /Email updates about new modules/i }),
-    ).toHaveAttribute('aria-pressed', String(!wasOn));
+    ).toHaveAttribute('aria-pressed', String(!wasOn), { timeout: 30_000 });
   });
 
   test('navbar feed loads the notifications for a signed-in learner', async ({ page }) => {

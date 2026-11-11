@@ -78,7 +78,9 @@ test.describe('settings: learning data in this browser', () => {
     const appearance = page.getByRole('region', { name: 'Appearance' });
     // One light/dark control; the palette select is gone (DESIGN.md section 7).
     await expect(appearance.getByRole('combobox', { name: 'Select theme' })).toHaveCount(0);
-    await expect(appearance.getByRole('button', { name: 'Theme' })).toBeVisible();
+    // The settings page shows the three choices as a radio group; the headers keep the menu button.
+    await expect(appearance.getByRole('radiogroup', { name: 'Theme' })).toBeVisible();
+    await expect(appearance.getByRole('radio')).toHaveCount(3);
     await expect(appearance.getByRole('group', { name: 'Light, dark or system' })).toBeVisible();
     await expect(
       appearance.getByText('Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.'),

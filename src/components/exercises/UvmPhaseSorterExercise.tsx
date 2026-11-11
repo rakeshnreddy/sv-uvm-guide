@@ -160,6 +160,7 @@ function SortableRow({
 }
 
 function LaneList({
+  id,
   title,
   description,
   items,
@@ -169,6 +170,8 @@ function LaneList({
   onDirection,
   onInteract,
 }: {
+  /** A stable id for the lane's DndContext, so its generated aria-describedby ids match between server and client. */
+  id: string;
   title: string;
   description: string;
   items: Phase[];
@@ -193,10 +196,10 @@ function LaneList({
     setItems(arrayMove(items, i, j));
   };
   return (
-    <section aria-label={title} className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-3">
-      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+    <section aria-label={title} className="min-w-0 rounded-xl border border-border bg-card p-3">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       <p className="mb-2 text-xs text-muted-foreground">{description}</p>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <DndContext id={id} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <ol className="space-y-1.5">
             {items.map((p, i) => (
@@ -271,6 +274,7 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
       </p>
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
         <LaneList
+          id="uvm-phase-sorter-common"
           title="Lane 1 · common domain"
           description="Nine phases from build to final. run_phase is one task phase."
           items={common}
@@ -287,6 +291,7 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
           onInteract={logInteraction}
         />
         <LaneList
+          id="uvm-phase-sorter-schedule"
           title="Lane 2 · uvm schedule (beside run_phase)"
           description="Twelve runtime task phases. Every component goes through them together."
           items={schedule}
@@ -300,9 +305,9 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
       </div>
 
       <div className="flex flex-wrap justify-center gap-2">
-        <Button onClick={checkOrder}>Check Order</Button>
+        <Button onClick={checkOrder}>Check the order</Button>
         <Button variant="outline" onClick={retry}>
-          Shuffle Again
+          Shuffle again
         </Button>
       </div>
 

@@ -172,7 +172,7 @@ const VerificationMethodologiesDiagram = () => {
           ))}
         </div>
 
-        <div className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm" aria-live="polite">
+        <div className="rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
           <p className="font-semibold text-foreground">{active.name}</p>
           <p className="mt-1 text-foreground">
             <strong>Runs on: </strong>

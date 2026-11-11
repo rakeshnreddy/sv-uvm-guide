@@ -204,7 +204,7 @@ function SequenceView({ run, playbackKey }: { run: PowerRun; playbackKey: string
         <div className="min-w-0 space-y-3">
           <PowerDiagram snap={snap} />
           <div aria-live="polite" className="rounded-lg border border-border/70 bg-background/50 p-3 text-[15px]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-label text-muted-foreground">
               Step {snap.step} of {run.snapshots.length - 1}
               {snap.event ? ` · ${EVENT_LABELS[snap.event]}` : " · initial state"}
             </p>
@@ -221,7 +221,7 @@ function SequenceView({ run, playbackKey }: { run: PowerRun; playbackKey: string
         <div className="min-w-0 space-y-3">
           <CodeTrace label="power_intent.upf (illustrative)" lines={upf} activeKey={snap.upfKeys[snap.upfKeys.length - 1]} contextKeys={snap.upfKeys} />
           <section aria-label="Power-aware assertions" className="rounded-lg border border-border/70 p-3 text-sm">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Power-aware assertions (up to this step)</p>
+            <p className="mb-1 text-label text-muted-foreground">Power-aware assertions (up to this step)</p>
             <ul className="space-y-1">
               {CHECK_IDS.map((id) => {
                 const fail = failingSoFar(id);

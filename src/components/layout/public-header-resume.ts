@@ -46,3 +46,8 @@ export function longestContinueLabel(lessons: readonly { code: string }[]): stri
     return label.length > longest.length ? label : longest;
   }, CONTINUE_PREFIX);
 }
+
+/** The module code of that longest label, for the header's invisible sizer (shown as a signal tag). */
+export function longestContinueCode(lessons: readonly { code: string }[]): string {
+  return lessons.reduce((longest, lesson) => (lesson.code.length > longest.length ? lesson.code : longest), "");
+}

@@ -52,7 +52,7 @@ function NumberedTree({ node, prefix, numbers, parallel }: { node: ComponentNode
       <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 font-mono text-[12px] text-foreground [font-variant-ligatures:none]">
         <span
           className={cn(
-            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-sans text-[10px] font-bold",
+            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-sans text-xs font-bold",
             parallel ? "bg-amber-500/20 text-amber-900 dark:text-amber-100" : "bg-cyan-500/20 text-cyan-900 dark:text-cyan-100",
           )}
           aria-label={parallel ? "runs in parallel" : `call ${n}`}
@@ -60,7 +60,7 @@ function NumberedTree({ node, prefix, numbers, parallel }: { node: ComponentNode
           {parallel ? "∥" : n}
         </span>
         {node.name}
-        <span className="text-[10px] text-muted-foreground">{node.type}</span>
+        <span className="text-xs text-muted-foreground">{node.type}</span>
       </span>
       {node.children?.length ? (
         <ul className="ml-4 mt-1 space-y-1 border-l border-border/70 pl-3">
@@ -93,8 +93,8 @@ function PhaseOrderPicture() {
         ]}
       />
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
-        <div className="rounded-xl border border-border/70 bg-background/40 p-3">
-          <p className="mb-2 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">uvm_root (traversal root)</p>
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="mb-2 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">uvm_root (traversal root)</p>
           <ul className="space-y-1" aria-label={`Component tree numbered in ${info.method} call order`}>
             <NumberedTree node={EXAMPLE_TREE} prefix="" numbers={numbers} parallel={parallel} />
           </ul>
@@ -199,7 +199,7 @@ function SuperBuildExperiment() {
               type="button"
               onClick={() => setCallsSuper((v) => !v)}
               aria-label={callsSuper ? "Remove the super.build_phase call" : "Restore the super.build_phase call"}
-              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
+              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-xs text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
             >
               {callsSuper ? "remove super" : "restore super"}
             </button>
@@ -212,7 +212,7 @@ function SuperBuildExperiment() {
         resetKey={String(callsSuper)}
       >
         <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]" aria-live="polite">
-          <div className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+          <div className="rounded-xl border border-border bg-card p-3 text-sm">
             <p className="mb-2 font-mono text-[12px] [font-variant-ligatures:none]">uvm_test_top.env.agt</p>
             <ul className="space-y-1 font-mono text-[12px] [font-variant-ligatures:none]">
               {["mon", "drv", "sqr"].map((c) => {
@@ -227,19 +227,19 @@ function SuperBuildExperiment() {
           </div>
           <dl className="space-y-2 text-sm">
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">is_active</dt>
+              <dt className="text-label text-muted-foreground">is_active</dt>
               <dd className="font-mono [font-variant-ligatures:none]">
                 {outcome.isActive} {outcome.isActiveSource === "config_db" ? "(from config_db)" : "(default; the config_db setting was never read)"}
               </dd>
             </div>
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">num_txns</dt>
+              <dt className="text-label text-muted-foreground">num_txns</dt>
               <dd className="font-mono [font-variant-ligatures:none]">
                 {outcome.numTxns} {outcome.numTxnsSource === "config_db" ? "(auto-config applied)" : "(default; apply_config_settings never ran)"}
               </dd>
             </div>
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Why</dt>
+              <dt className="text-label text-muted-foreground">Why</dt>
               <dd>
                 {callsSuper
                   ? "super.build_phase ran apply_config_settings for this agent's `uvm_field_* members and uvm_agent's is_active lookup."

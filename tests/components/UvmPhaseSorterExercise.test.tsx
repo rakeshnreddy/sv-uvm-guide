@@ -21,7 +21,7 @@ const feedback = () => screen.getByTestId("exercise-feedback");
 describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
   it("scores 100% when both lanes are ordered and every direction is right", () => {
     render(<UvmPhaseSorterExercise initialItems={uvmPhases} initialDirections={solvedDirections} />);
-    fireEvent.click(screen.getByRole("button", { name: /check order/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check the order/i }));
     expect(within(feedback()).getByText("Score: 100%")).toBeInTheDocument();
     expect(within(feedback()).getByText(/Every phase falls into place/)).toBeInTheDocument();
   });
@@ -37,7 +37,7 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
 
   it("missing directions cost points and are diagnosed", () => {
     render(<UvmPhaseSorterExercise initialItems={uvmPhases} />);
-    fireEvent.click(screen.getByRole("button", { name: /check order/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check the order/i }));
     expect(within(feedback()).getByText(/A few phases are still out of order/)).toBeInTheDocument();
     expect(within(feedback()).getByText("Directions: 0/8 right")).toBeInTheDocument();
     expect(within(feedback()).getByText(/Choose a direction for every function phase/)).toBeInTheDocument();
@@ -45,7 +45,7 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
 
   it("diagnoses final_phase marked bottom-up", () => {
     render(<UvmPhaseSorterExercise initialItems={uvmPhases} initialDirections={{ ...solvedDirections, final: "bottom-up" }} />);
-    fireEvent.click(screen.getByRole("button", { name: /check order/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check the order/i }));
     expect(within(feedback()).getByText(/final_phase is top-down, like build_phase/)).toBeInTheDocument();
   });
 
@@ -55,7 +55,7 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
     const lane1 = screen.getByRole("region", { name: "Lane 1 · common domain" });
     const names = within(lane1).getAllByRole("listitem").map((li) => li.textContent);
     expect(names[0]).toMatch(/connect_phase/);
-    fireEvent.click(screen.getByRole("button", { name: /check order/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check the order/i }));
     expect(within(feedback()).getByText("Common domain: 8/9 in order")).toBeInTheDocument();
     const toggle = screen.getByRole("button", { name: "build_phase runs bottom-up" });
     fireEvent.click(toggle);
@@ -65,7 +65,7 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
 
   it("shuffle again clears the feedback and produces a deterministic new order", () => {
     render(<UvmPhaseSorterExercise />);
-    fireEvent.click(screen.getByRole("button", { name: /check order/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check the order/i }));
     expect(feedback()).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /shuffle again/i }));
     expect(screen.queryByTestId("exercise-feedback")).not.toBeInTheDocument();
@@ -82,5 +82,11 @@ describe("UvmPhaseSorterExercise (two lanes + direction)", () => {
     for (const control of screen.getAllByTestId("phase-controls")) expect(control).toHaveClass("ml-auto", "shrink-0");
     expect(screen.getByRole("button", { name: "end_of_elaboration_phase runs top-down" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Move end_of_elaboration_phase up" })).toBeInTheDocument();
+  });
+  it("gives each lane's drag context a stable id and an h3 lane heading", () => {
+    const { container } = render(<UvmPhaseSorterExercise />);
+    const describedBy = Array.from(container.querySelectorAll("[aria-describedby]")).map((el) => el.getAttribute("aria-describedby"));
+    expect(describedBy.some((id) => id?.includes("uvm-phase-sorter-common"))).toBe(true);
+    expect(screen.getByRole("heading", { level: 3, name: "Lane 1 · common domain" })).toBeInTheDocument();
   });
 });

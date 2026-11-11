@@ -13,8 +13,8 @@ const UvmAgentBuilderPage: React.FC = () => {
 
   const content = (
     <>
-      <LearnInLesson item={practice} />
-      <section className="mb-6">
+      <LearnInLesson item={practice} variant="row" />
+      <section className="mb-6 max-w-[30em]">
         <h2 className="text-h2 mb-2 text-foreground">Build a UVM agent</h2>
         <p className="text-muted-foreground mb-1">
           Choose whether the agent is active or passive, then place the components it should build. Use the buttons or drag and drop; order inside the agent does not matter.
@@ -28,9 +28,9 @@ const UvmAgentBuilderPage: React.FC = () => {
         <UvmAgentBuilderExercise />
       </div>
 
-      <section className="mt-6">
+      <section className="mt-6 max-w-[30em]">
         <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
-        <ul className="list-disc list-inside text-muted-foreground space-y-1">
+        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
           <li>Identify the core components of a UVM agent.</li>
           <li>Explain what changes between active and passive agents, and why.</li>
           <li>Connect the choice to the get_is_active() check inside build_phase.</li>

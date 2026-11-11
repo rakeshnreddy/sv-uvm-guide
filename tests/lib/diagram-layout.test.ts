@@ -10,7 +10,7 @@ import {
   routeEdges,
   SEQ_CHAR_W,
   SEQ_SELF_TEXT_DX,
-  wrapLabel,
+  wrapLabel, wrapLabelLines,
   type GridNode,
 } from '@/components/visual-system/diagram-layout';
 import type { DiagramNode } from '@/components/visual-system/BlockDiagram';
@@ -130,6 +130,32 @@ describe('wrapLabel', () => {
   it('wraps on words and folds overflow into the last line', () => {
     expect(wrapLabel('one two three four', 8)).toEqual(['one two', 'three', 'four']);
     expect(wrapLabel('a b c d e f', 1, 2)).toEqual(['a', 'b c d e f']);
+  });
+});
+
+describe('wrapLabelLines', () => {
+  it('keeps wrapping past the line cap and keeps the joining spaces from the last allowed line on', () => {
+    expect(wrapLabelLines('one two three four', 8)).toEqual(['one two', 'three', 'four']);
+    const lines = wrapLabelLines('a b c d e f', 1, 2);
+    expect(lines).toEqual(['a', 'b ', 'c ', 'd ', 'e ', 'f']);
+    // The drawing's text (the lines run together) is what the one-long-line version carried.
+    expect(lines.join('')).toBe(wrapLabel('a b c d e f', 1, 2).join(''));
+  });
+
+  it('breaks a single long word after "::" or "(" without adding or losing characters', () => {
+    const lines = wrapLabelLines('Tcreator::create_by_type(proxy, ...): the factory builds', 16, 4);
+    expect(lines.slice(0, 3)).toEqual(['Tcreator::', 'create_by_type(', 'proxy,']);
+    expect(lines.join('')).toBe(wrapLabel('Tcreator::create_by_type(proxy, ...): the factory builds', 16, 4).join(''));
+  });
+
+  it('wraps a long sequence call label instead of running it past the lifelines', () => {
+    const l = layoutSequence({
+      participants: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }, { id: 'c', label: 'c' }],
+      columnWidth: 130,
+      messages: [{ from: 'b', to: 'c', label: 'vpi_get(vpiSize, r) checked against UVM_HDL_MAX_WIDTH, then vpi_get_value(r, &value_s), vpiVectorVal' }],
+    });
+    const call = l.messages[0];
+    expect(Math.max(...call.lines.map((line) => line.trim().length)) * 6.3).toBeLessThanOrEqual(130);
   });
 });
 

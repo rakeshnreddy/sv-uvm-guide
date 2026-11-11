@@ -11,7 +11,7 @@ import { placementQuestions } from '@/components/assessment/placementQuizData';
 import HeroPrimaryAction from '@/components/home/HeroPrimaryAction';
 import HeroSection, { HERO_HEADLINE } from '@/components/home/HeroSection';
 import { MAIN_STANDARDS, getHomeStats, getLandingFacts, heroParagraph, landingDescription, plural } from '@/components/home/home-stats';
-import type { LandingLesson } from '@/components/home/landing-resume';
+import { RETURNING_ATTRIBUTE, type LandingLesson } from '@/components/home/landing-resume';
 import ProofStrip, { proofFacts } from '@/components/home/ProofStrip';
 import ReturningLearnerStrip, { continueNote, tierOfLesson } from '@/components/home/ReturningLearnerStrip';
 import RoutesStrip from '@/components/home/RoutesStrip';
@@ -154,12 +154,20 @@ describe('hero primary action', () => {
     expect(html).toContain('data-state="start"');
   });
 
-  it('becomes "Continue <code>" once the browser holds a lesson position, with the full title in its name', () => {
+  it('becomes "Continue: <tag> <lesson>" once the browser holds a lesson position, with the full title in its name', () => {
     window.localStorage.setItem(LESSONS_KEY, JSON.stringify({ v: 1, data: { lessons: { [F3C]: { firstVisitedAt: 1, lastVisitedAt: 2, visits: 1 } } } }));
     render(<HeroPrimaryAction lessons={lessons} />);
     const action = screen.getByTestId('hero-primary-action');
-    expect(action).toHaveTextContent(/^Continue F3C$/);
-    expect(action.querySelector('.font-mono')).toHaveTextContent('F3C');
+    const title = lessons.find((lesson) => lesson.href === F3C)?.title ?? '';
+    // DESIGN.md section 10: the lesson's name, not a bare module code.
+    expect(action).toHaveTextContent(`Continue:F3C${title}`);
+    const tag = action.querySelector('[data-signal-tag]');
+    expect(tag).toHaveTextContent('F3C');
+    expect(tag).toHaveClass('text-primary-foreground');
+    // The title truncates with an ellipsis on phones; the button widens for a returning learner from 640 px.
+    expect(action.querySelector('[data-hero-lesson-title]')).toHaveClass('min-w-0', 'truncate');
+    expect(action).toHaveClass('sm:[html[data-home-returning]_&]:w-96');
+    expect(RETURNING_ATTRIBUTE).toBe('data-home-returning');
     expect(action).toHaveAccessibleName(`Continue F3C: ${lessons.find((lesson) => lesson.href === F3C)?.title}`);
     expect(action).toHaveAttribute('href', F3C);
     expect(action).toHaveAttribute('data-state', 'continue');

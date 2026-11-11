@@ -118,7 +118,7 @@ function CostExplorer() {
       </div>
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <figure className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-3">
+        <figure className="min-w-0 rounded-xl border border-border bg-card p-3">
           <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
             {COST_STAGES.map((s, i) => {
               const h = barHeight(s.multiplier);
@@ -155,14 +155,14 @@ function CostExplorer() {
               Relative cost to fix (log scale, illustrative)
             </text>
           </svg>
-          <figcaption className="mt-1 text-[11px] text-muted-foreground">
+          <figcaption className="mt-1 text-xs text-muted-foreground">
             Each bar is ten times the one before it. x-axis: the stage where the bug is found.
           </figcaption>
         </figure>
 
-        <div className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/40 p-3 text-sm" aria-live="polite">
+        <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Found at</p>
+            <p className="text-label text-muted-foreground">Found at</p>
             <p className="text-lg font-semibold text-foreground">{stage.label}</p>
           </div>
           <p className="text-foreground">

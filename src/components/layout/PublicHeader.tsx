@@ -9,7 +9,8 @@ import { continueLessons } from "@/lib/continue-lesson-data";
 import { PUBLIC_NAV, SITE_NAME } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
-import { GLASS_HEADER_CLASS, HEADER_BAR_CLASS, headerBarFrameClass } from "./nav-styles";
+import HeaderGlassLayer from "./HeaderGlassLayer";
+import { GLASS_HEADER_CLASS } from "./nav-styles";
 import PublicHeaderControls from "./PublicHeaderControls";
 import { lessonPathsFromManifest } from "./public-header-resume";
 
@@ -60,11 +61,7 @@ export default function PublicHeader() {
     <>
       <SkipLink />
       <header data-testid="public-header" className={PUBLIC_HEADER_CLASS}>
-        <div aria-hidden="true" data-header-glass="" className="pointer-events-none absolute inset-0">
-          <div className={headerBarFrameClass("public")}>
-            <div className={HEADER_BAR_CLASS} data-header-bar="" />
-          </div>
-        </div>
+        <HeaderGlassLayer layout="public" />
         <div className={PUBLIC_HEADER_CONTAINER}>
           <Link href="/" aria-label={`${SITE_NAME} home`} className={PUBLIC_WORDMARK_CLASS}>
             <Logo />

@@ -195,7 +195,7 @@ function Strip({ value, label, marks }: { value: SvValue; label: string; marks?:
         const mark = marks?.[index];
         return (
           <span key={k} className={cn("flex w-5 flex-col items-center", index % 4 === 3 && k !== 0 && "ml-1")}>
-            <span className={cn("flex h-6 w-5 items-center justify-center rounded-[3px] border text-[11px] font-semibold", bitClass(b), mark && "border-dashed")}>{b}</span>
+            <span className={cn("flex h-6 w-5 items-center justify-center rounded-[3px] border text-xs font-semibold", bitClass(b), mark && "border-dashed")}>{b}</span>
             <span aria-hidden className="h-3 text-[9px] leading-3 text-muted-foreground">
               {mark ?? ""}
             </span>
@@ -327,7 +327,7 @@ function EqualityDetail({ a, b }: { a: SvValue; b: SvValue }) {
           ] as const
         ).map(([src, v, clause]) => (
           <span key={src} className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-2 py-1">
-            <Code>{src}</Code> <ValueChip value={v} /> <span className="font-mono text-[10px] text-muted-foreground">{clause}</span>
+            <Code>{src}</Code> <ValueChip value={v} /> <span className="font-mono text-xs text-muted-foreground">{clause}</span>
           </span>
         ))}
       </div>
@@ -511,7 +511,7 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
         </table>
       </div>
       <div role="group" className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 px-3 py-2" aria-label="if/else contrast">
-        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-800 dark:text-violet-200">if/else</span>
+        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-label text-violet-800 dark:text-violet-200">if/else</span>
         <Code>{`if (${cName}) y = ${aName}; else y = ${bName};`}</Code>
         <span aria-hidden>→</span>
         <Strip value={det.ifElse} label="if/else stores" />
@@ -785,7 +785,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
     >
       {(family === "bitwise" || family === "reduction") && spec.id !== "binary-nand" ? (
         <aside aria-label="Common misconception" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.05] p-3 text-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-300">✕ A classic misconception</p>
+          <p className="text-label text-danger">✕ A classic misconception</p>
           <p className="mt-1 text-foreground">
             There is no binary <Code>~&amp;</Code>. <Code>~&amp;a</Code> is the unary reduction NAND; a bitwise NAND is <Code>~(a &amp; b)</Code>.{" "}
             <button type="button" onClick={() => jumpTo("binary-nand")} className="inline-flex min-h-10 items-center text-xs font-medium text-cyan-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-cyan-300">
@@ -828,7 +828,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
           {hasRepl ? <ReplCountField value={replCount(spec, inputs)} onChange={(r) => setInputs((prev) => ({ ...prev, repl: r }))} /> : null}
           {family === "shift" ? (
             <label className="flex min-h-10 items-center gap-2 text-sm">
-              <input type="checkbox" className="h-4 w-4 accent-cyan-500" checked={inputs.signedA} onChange={(e) => setInputs((prev) => ({ ...prev, signedA: e.target.checked }))} />
+              <input type="checkbox" className="size-5 shrink-0 accent-cyan-500" checked={inputs.signedA} onChange={(e) => setInputs((prev) => ({ ...prev, signedA: e.target.checked }))} />
               declare <Code>a</Code> as <Code>logic signed</Code>
             </label>
           ) : null}
@@ -849,7 +849,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
           ) : null}
           {presets.length > 0 ? (
             <div role="group" aria-label="Presets" className="col-span-full flex flex-wrap items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Presets</span>
+              <span className="text-label text-muted-foreground">Presets</span>
               {presets.map((p) => (
                 <button
                   key={p.id}
@@ -889,7 +889,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
                 {!ruleInFeedback ? (
                   <p className="text-sm text-muted-foreground">
                     <strong className="text-foreground">Rule: </strong>
-                    {spec.rule} <span className="font-mono text-[11px]">({spec.clause})</span>
+                    {spec.rule} <span className="font-mono text-xs">({spec.clause})</span>
                   </p>
                 ) : null}
                 {activePreset ? (
@@ -945,7 +945,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
                 )}
                 {family === "inside" ? (
                   <aside aria-label="Common misconception" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.05] p-3 text-sm text-foreground">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-300">✕ A classic misconception</p>
+                    <p className="text-label text-danger">✕ A classic misconception</p>
                     <p className="mt-1">
                       <Code>inside</Code> is not case equality: it compares with <Code>==?</Code>, so x/z bits in a set member are wildcards.
                     </p>

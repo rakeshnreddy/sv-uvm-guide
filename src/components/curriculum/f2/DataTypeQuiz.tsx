@@ -100,7 +100,7 @@ const DataTypeQuiz: React.FC<DataTypeQuizProps> = ({ questions }) => {
             Each scenario hides one nuance of nets, variables and the 4-state value system. Every answer, right or wrong, tells you which rule decides it.
           </p>
           <div>
-            <div className="mb-2 flex w-full items-center justify-between text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="mb-2 flex w-full items-center justify-between text-label font-medium text-muted-foreground">
               <span>Progress</span>
               <span>
                 {Math.min(currentQuestion + 1, totalQuestions)}/{totalQuestions}

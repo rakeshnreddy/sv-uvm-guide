@@ -12,7 +12,7 @@ import {
   type ConceptTier,
 } from '@/lib/knowledge-graph-engine';
 import { ChoiceChips } from './ChoiceChips';
-import { MAP_TIERS } from './ModuleMap';
+import { MAP_TIERS, tierDisplayName } from './ModuleMap';
 
 type KindFilter = 'all' | ConceptKind;
 type TierFilter = 'all' | ConceptTier;
@@ -110,7 +110,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
         {shown.map((node) => (
           <li key={node.id} className="glass-quiet rounded-xl p-3 sm:p-4">
             <p className="text-xs font-medium text-muted-foreground">
-              {KIND_LABEL[node.kind ?? 'term']} · {node.tier}
+              {KIND_LABEL[node.kind ?? 'term']} · {tierDisplayName(node.tier)}
               {node.kind === 'term' && node.code ? ` · first taught in ${node.code}` : ''}
               {node.track === 'elective' ? ' · elective' : ''}
             </p>
@@ -118,7 +118,8 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
               {node.kind !== 'term' && node.href ? (
                 <Link
                   href={node.href}
-                  className="text-foreground underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline"
+                  // On phones a 40 px target: padding that negative margins cancel, so the row's layout does not change.
+                  className="text-foreground underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline max-sm:inline-block max-sm:-my-2 max-sm:py-2"
                 >
                   {node.name}
                 </Link>

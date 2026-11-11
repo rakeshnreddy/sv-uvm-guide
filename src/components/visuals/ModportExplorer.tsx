@@ -106,9 +106,9 @@ export const ModportExplorer = () => {
       <SegmentedControl label="Modport view" mono options={VIEWS} value={view} onChange={changeView} />
 
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
-        <div className="min-w-0 space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+        <div className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-3">
           <p className="break-words font-mono text-xs text-foreground [font-variant-ligatures:none]">{moduleHeader(decl, modport)}</p>
-          <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="flex items-center justify-between text-label text-muted-foreground">
             <span>{modport.user}</span>
             <span>{decl.name}</span>
           </div>
@@ -121,7 +121,7 @@ export const ModportExplorer = () => {
               >
                 <span
                   className={cn(
-                    "w-14 shrink-0 rounded px-1.5 py-0.5 text-center font-mono text-[10px] font-semibold",
+                    "w-14 shrink-0 rounded px-1.5 py-0.5 text-center font-mono text-xs font-semibold",
                     s.dir === "input" ? "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200" : "bg-amber-500/15 text-amber-900 dark:text-amber-100",
                   )}
                 >

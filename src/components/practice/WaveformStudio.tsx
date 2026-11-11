@@ -17,6 +17,9 @@ const ASSUMPTIONS = [
  * Practice tool: edit WaveJSON, see the waveform, and get AXI handshake
  * violations from the same checker that validates the B-AXI-1 figures.
  */
+/** The empty drawing box's reserved height: the first sample (AXI handshake) as WaveDrom draws it. */
+export const STUDIO_WAVEFORM_RESERVE_CLASS = 'empty:min-h-[200px]';
+
 export default function WaveformStudio() {
   const [sampleId, setSampleId] = useState(STUDIO_SAMPLES[0].id);
   const [text, setText] = useState(() => formatSource(STUDIO_SAMPLES[0].source));
@@ -126,7 +129,8 @@ export default function WaveformStudio() {
             <figcaption className="text-sm font-medium text-foreground">Waveform</figcaption>
             <WaveDromSurfaceStyle />
             <div data-wavedrom-surface="" data-testid="studio-waveform-surface" className="overflow-x-auto rounded-xl border border-border bg-code-surface p-4">
-              <div ref={outputRef} data-testid="studio-waveform" aria-hidden="true" />
+              {/* Until WaveDrom draws (after hydration) the box holds the first sample's height, 200 px, so nothing below moves. */}
+              <div ref={outputRef} data-testid="studio-waveform" aria-hidden="true" className={STUDIO_WAVEFORM_RESERVE_CLASS} />
             </div>
           </figure>
 

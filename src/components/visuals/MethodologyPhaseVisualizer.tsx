@@ -75,7 +75,7 @@ function ScheduleView({ title, steps, highlight }: { title: string; steps: Sched
     <span
       key={name}
       className={cn(
-        "inline-flex min-h-7 items-center rounded-full border px-2 py-0.5 font-mono text-[11px] [font-variant-ligatures:none]",
+        "inline-flex min-h-7 items-center rounded-full border px-2 py-0.5 font-mono text-xs [font-variant-ligatures:none]",
         custom ? "border-violet-500 bg-violet-500/15 font-semibold text-violet-900 dark:text-violet-100" : "border-border/70 bg-card text-foreground",
       )}
     >
@@ -85,7 +85,7 @@ function ScheduleView({ title, steps, highlight }: { title: string; steps: Sched
   );
   return (
     <div className={cn("rounded-xl border p-3", highlight ? "border-cyan-500/60" : "border-border/70")}>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</p>
+      <p className="mb-2 text-label text-muted-foreground">{title}</p>
       <ol className="flex flex-wrap items-center gap-1.5" aria-label={`${title} in execution order`}>
         {steps.map((s, i) => (
           <li key={i} className="flex items-center gap-1.5">
@@ -95,7 +95,7 @@ function ScheduleView({ title, steps, highlight }: { title: string; steps: Sched
               <span className="inline-flex flex-col gap-1 rounded-lg border border-dashed border-violet-500/60 p-1" aria-label="parallel branch">
                 {s.lanes.map((lane, j) => (
                   <span key={j} className="flex flex-wrap items-center gap-1">
-                    <span aria-hidden className="text-[10px] text-muted-foreground">
+                    <span aria-hidden className="text-xs text-muted-foreground">
                       ∥
                     </span>
                     {lane.map((n) => chip(n, n === s.custom))}
@@ -173,7 +173,7 @@ export default function MethodologyPhaseVisualizer() {
               type="button"
               onClick={() => setExecTask((v) => !v)}
               aria-label={execTask ? "Remove the exec_task override" : "Add the exec_task override"}
-              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
+              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-xs text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
             >
               {execTask ? "remove exec_task" : "add exec_task"}
             </button>
@@ -202,7 +202,7 @@ export default function MethodologyPhaseVisualizer() {
               ))}
             </ul>
           ) : null}
-          <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+          <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
             {`// soc_env: the method exec_task calls
 task load_fw_phase(uvm_phase phase);
   phase.raise_objection(this);

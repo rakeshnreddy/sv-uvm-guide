@@ -142,7 +142,7 @@ export function PackedArray2D({ packed, unpacked, highlight }: { packed: number[
   return (
     <div className="space-y-2" data-testid="packed-2d">
       <div className="overflow-x-auto">
-        <table className="min-w-[300px] border-separate border-spacing-1 font-mono text-[11px] [font-variant-ligatures:none]">
+        <table className="min-w-[300px] border-separate border-spacing-1 font-mono text-xs [font-variant-ligatures:none]">
           <caption className="pb-1 text-left font-sans text-xs text-muted-foreground">
             One row per unpacked element (left index varies slowest). Packed bits are drawn MSB first.
             {U > rows || P > cells ? ` Showing ${rows} of ${U} rows and ${cells} of ${P} bits per row.` : ""}
@@ -395,7 +395,7 @@ export function SystemVerilog3DVisualizer({ className, height = 420, initialScen
               <>
                 <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{declarationOf(current)}</p>
                 <ContainerControls key={mode} state={current} onRun={run} />
-                <div aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-3">
+                <div aria-live="polite" className="rounded-xl border border-border bg-card p-3">
                   {lastResult ? <OpResultPanel result={lastResult} elemType={current.elemType} /> : <p className="text-sm text-muted-foreground">Run an operation to see its code, result and rule.</p>}
                 </div>
               </>

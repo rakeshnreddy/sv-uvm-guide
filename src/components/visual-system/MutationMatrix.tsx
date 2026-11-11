@@ -271,7 +271,7 @@ export function MutationMatrix({
             prediction ? "border-amber-500/70 bg-amber-500/10 text-amber-900 dark:text-amber-100" : "border-dashed border-border/70 text-muted-foreground hover:bg-muted",
           )}
         >
-          <span aria-hidden className="text-[10px] font-bold uppercase tracking-wider">
+          <span aria-hidden className="text-label">
             {prediction ? "Predict" : "?"}
           </span>
           <span aria-hidden className="font-medium">
@@ -295,14 +295,14 @@ export function MutationMatrix({
           <span aria-hidden>{view.glyph} </span>
           {view.text}
         </span>
-        {cell.summary ? <span className="font-mono text-[11px] opacity-90 [font-variant-ligatures:none]">{cell.summary}</span> : null}
+        {cell.summary ? <span className="font-mono text-xs opacity-90 [font-variant-ligatures:none]">{cell.summary}</span> : null}
         {grade !== null ? (
-          <span className={cn("text-[11px] font-medium", grade ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+          <span className={cn("text-xs font-medium", grade ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
             <span aria-hidden>{grade ? "✓" : "✕"} </span>
             {grade ? "prediction right" : "prediction wrong"}
           </span>
         ) : null}
-        {notGraded ? <span className="text-[11px] font-medium text-muted-foreground">{notGraded}</span> : null}
+        {notGraded ? <span className="text-xs font-medium text-muted-foreground">{notGraded}</span> : null}
       </>
     );
     if (onCellSelect) {
@@ -340,7 +340,7 @@ export function MutationMatrix({
       >
         <table className="w-full border-collapse text-left text-xs">
           <caption className="sr-only">{label}</caption>
-          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <thead className="bg-muted/40 text-label text-muted-foreground">
             <tr>
               <th scope="col" className="sticky left-0 z-10 bg-card px-2 py-2 font-semibold">
                 {rowHeader}

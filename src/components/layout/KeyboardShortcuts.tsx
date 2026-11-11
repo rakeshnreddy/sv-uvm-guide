@@ -4,7 +4,7 @@ import React, { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
-import { outlineDockedNow } from "@/components/layout/Sidebar";
+import { toggleOutlineKeepingFocus } from "@/components/layout/Sidebar";
 import { currentLessonSlug } from "@/components/search/course-outline";
 import { focusLessonToc } from "@/components/search/focus-target";
 import { shellStore } from "@/components/search/shell-store";
@@ -73,7 +73,7 @@ export default function KeyboardShortcuts() {
           focusGlobalSearch();
           return true;
         case "outline":
-          shellStore.toggleOutline(outlineDockedNow(pathname));
+          toggleOutlineKeepingFocus(pathname);
           return true;
         case "help":
           shellStore.toggleHelp();

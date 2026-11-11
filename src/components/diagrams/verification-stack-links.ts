@@ -30,7 +30,7 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
   {
     id: 'test',
     componentId: 'test',
-    title: 'UVM Test & Component Basics',
+    title: 'UVM tests and component basics',
     description: 'How tests configure environments and orchestrate the verification flow.',
     stage: 'Test layer',
     focusAreas: [
@@ -45,7 +45,7 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
   {
     id: 'env',
     componentId: 'env',
-    title: 'Building UVM Environments',
+    title: 'Building UVM environments',
     description: 'Structure environments, connect agents, and funnel configuration.',
     stage: 'Environment layer',
     focusAreas: [
@@ -60,7 +60,7 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
   {
     id: 'agent',
     componentId: 'uvm_agent',
-    title: 'Agents, Sequencers & Drivers',
+    title: 'Agents, sequencers and drivers',
     description: 'Generate stimulus, arbitrate sequences, and drive DUT transactions.',
     stage: 'Agent layer',
     focusAreas: [
@@ -75,7 +75,7 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
   {
     id: 'analysis',
     componentId: 'scoreboard',
-    title: 'Scoreboards & Analysis',
+    title: 'Scoreboards and analysis',
     description: 'Compare expected versus observed behaviour and broadcast analysis data.',
     stage: 'Analysis layer',
     focusAreas: [
@@ -90,7 +90,7 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
   {
     id: 'coverage',
     componentId: 'coverage_collector',
-    title: 'Functional Coverage',
+    title: 'Functional coverage',
     description: 'Track scenario coverage and close verification gaps with intent-driven metrics.',
     stage: 'Closure layer',
     focusAreas: [

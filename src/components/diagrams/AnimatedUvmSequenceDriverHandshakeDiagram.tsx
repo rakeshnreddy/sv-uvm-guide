@@ -275,7 +275,7 @@ function lastKey(steps: SqrStep[], index: number, field: "seqCode" | "drvCode"):
 export function QueueChips({ queue, lockList }: { queue: QueueEntryView[]; lockList: string[] }) {
   return (
     <div className="space-y-1.5">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Arbitration queue (front → back)</p>
+      <p className="text-label text-muted-foreground">Arbitration queue (front → back)</p>
       {queue.length === 0 ? (
         <p className="text-xs text-muted-foreground">empty</p>
       ) : (
@@ -286,7 +286,7 @@ export function QueueChips({ queue, lockList }: { queue: QueueEntryView[]; lockL
               <li
                 key={`${e.kind}-${e.seqId}-${i}`}
                 className={cn(
-                  "rounded-md border px-1.5 py-0.5 font-mono text-[11px] [font-variant-ligatures:none]",
+                  "rounded-md border px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]",
                   e.kind === "LOCK" ? "border-amber-500/60 bg-amber-500/10" : "border-cyan-500/50 bg-cyan-500/10",
                   blocked && "border-dashed opacity-70",
                 )}
@@ -310,8 +310,8 @@ export function QueueChips({ queue, lockList }: { queue: QueueEntryView[]; lockL
 
 export function UvmLog({ lines, label = "UVM log" }: { lines: UvmLogLine[]; label?: string }) {
   return (
-    <figure className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-      <figcaption className="border-b border-white/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
+    <figure className="overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+      <figcaption className="border-b border-code-border px-3 py-1.5 text-label text-code-muted">{label}</figcaption>
       {lines.length === 0 ? (
         <p className="px-3 py-2 font-mono text-[12px] text-slate-400">(no warnings or errors yet)</p>
       ) : (
@@ -345,8 +345,8 @@ function MessageChart({ steps, index }: { steps: SqrStep[]; index: number }) {
   const rows = steps.slice(0, index + 1).filter((s) => s.message);
   const recent = rows.slice(-7);
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-      <div className="grid grid-cols-3 gap-1 border-b border-border/60 pb-1 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card p-3">
+      <div className="grid grid-cols-3 gap-1 border-b border-border/60 pb-1 text-center text-label text-muted-foreground">
         <span>Sequence</span>
         <span>Sequencer</span>
         <span>Driver</span>
@@ -364,7 +364,7 @@ function MessageChart({ steps, index }: { steps: SqrStep[]; index: number }) {
             const forward = b > a;
             const current = s.index === recent[recent.length - 1]?.index;
             return (
-              <li key={s.index} className="grid grid-cols-3 gap-1 text-[11px]">
+              <li key={s.index} className="grid grid-cols-3 gap-1 text-xs">
                 <span
                   style={{ gridColumn: lo === hi ? `${lo} / ${lo + 1}` : `${lo} / ${hi + 1}` }}
                   className={cn(
@@ -435,8 +435,8 @@ function HandshakeTrace({
 
       <PlaybackControls playback={playback} stepCount={steps.length} stepNoun="Handshake step" describeStep={(i) => steps[i]?.what ?? ""} />
 
-      <div className="rounded-xl border border-border/70 bg-background/60 p-3" aria-live="polite">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="rounded-xl border border-border bg-card p-3" aria-live="polite">
+        <p className="text-label text-muted-foreground">
           t = {step.time} ns · step {step.index + 1} of {steps.length}
         </p>
         <p className="mt-1 text-[15px] font-medium text-foreground">{step.what}</p>
@@ -448,7 +448,7 @@ function HandshakeTrace({
 
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
         <div className={cn("rounded-xl border p-3", step.actor === "seq" ? "border-cyan-500" : "border-border/70")}>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="text-label text-muted-foreground">
             <span className="mr-1 rounded-full border border-amber-500/60 px-1.5 text-[9px] text-amber-800 dark:text-amber-200">SEQ</span>
             burst_seq
           </p>
@@ -458,11 +458,11 @@ function HandshakeTrace({
             </span>
             {seqView.where}
           </p>
-          {seqLine ? <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{seqLine.trim()}</p> : null}
+          {seqLine ? <p className="mt-1 truncate font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{seqLine.trim()}</p> : null}
           <p className="mt-1 text-xs text-muted-foreground">response queue: {step.responses.A ?? 0}/8</p>
         </div>
         <div className={cn("rounded-xl border p-3", step.actor === "sqr" ? "border-cyan-500" : "border-border/70")}>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="mb-1 text-label text-muted-foreground">
             <span className="mr-1 rounded-full border border-amber-500/60 px-1.5 text-[9px] text-amber-800 dark:text-amber-200">SQR</span>
             sequencer
           </p>
@@ -472,7 +472,7 @@ function HandshakeTrace({
           </p>
         </div>
         <div className={cn("rounded-xl border p-3", step.actor === "drv" ? "border-cyan-500" : "border-border/70")}>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="text-label text-muted-foreground">
             <span className="mr-1 rounded-full border border-amber-500/60 px-1.5 text-[9px] text-amber-800 dark:text-amber-200">DRV</span>
             bus_driver
           </p>
@@ -482,7 +482,7 @@ function HandshakeTrace({
             </span>
             {step.driver.where}
           </p>
-          {drvLine ? <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{drvLine.trim()}</p> : null}
+          {drvLine ? <p className="mt-1 truncate font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{drvLine.trim()}</p> : null}
         </div>
       </div>
 

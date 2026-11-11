@@ -52,7 +52,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
     <div className="space-y-8">
       <section className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-lg shadow-primary/10">
         <header className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-foreground">Explore the verification stack</p>
+          <p className="text-label text-foreground">Explore the verification stack</p>
           <h3 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">
             See how each UVM layer hands work to the next
           </h3>
@@ -94,7 +94,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     aria-pressed={isActive}
                     aria-current={isActive ? 'step' : undefined}
                   >
-                    <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
+                    <span className="text-label text-foreground">
                       {node.stage ?? 'Layer'}
                     </span>
                     <div className="mt-1 flex items-center justify-between gap-2">
@@ -116,7 +116,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
             data-testid="uvm-node-detail"
           >
             <div>
-              <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
+              <span className="text-label text-foreground">
                 {activeNode.stage ?? 'Layer'}
               </span>
               <h3 className="mt-1 text-2xl font-semibold text-foreground">
@@ -144,7 +144,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
 
               {downstreamNodes.length > 0 && (
                 <div className="mt-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  <p className="text-label text-muted-foreground">
                     Leads into
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -181,7 +181,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
 
       <div className="space-y-3" data-testid="uvm-quick-summary">
         <div>
-          <h4 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          <h4 className="text-label text-muted-foreground">
             Need a quick summary?
           </h4>
           <p className="text-sm text-muted-foreground">

@@ -147,7 +147,7 @@ function PathDiagram({ env, regName, beat }: { env: RalEnv; regName: string; bea
         tokens={tokens}
         minWidth={300}
       />
-      <p className="mt-1 text-[11px] text-muted-foreground">
+      <p className="mt-1 text-xs text-muted-foreground">
         ◆ analysis port (mon.ap) · ● analysis imp (predictor.bus_in) · ■ DUT pin · solid arrow = data · dashed = call (do_predict) · dotted = backdoor
       </p>
     </div>
@@ -197,7 +197,7 @@ function PathExperiment() {
     <div className="space-y-4">
       <div className="overflow-x-auto rounded-xl border border-border/70">
         <table className="w-full min-w-[300px] border-collapse text-left text-xs">
-          <caption className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Three ways the mirror gets updated</caption>
+          <caption className="px-3 py-2 text-left text-label text-muted-foreground">Three ways the mirror gets updated</caption>
           <thead className="bg-muted/30 text-muted-foreground">
             <tr>
               <th scope="col" className="px-2 py-1.5">Mode</th>
@@ -211,7 +211,7 @@ function PathExperiment() {
             {PREDICTION_MODES.map((m) => (
               <tr key={m.id} className="border-t border-border/60 align-top">
                 <th scope="row" className="px-2 py-1.5 font-semibold text-foreground">{m.name}</th>
-                <td className="px-2 py-1.5 font-mono text-[11px] [font-variant-ligatures:none]">{m.code}</td>
+                <td className="px-2 py-1.5 font-mono text-xs [font-variant-ligatures:none]">{m.code}</td>
                 <td className="px-2 py-1.5">{m.updates}</td>
                 <td className="px-2 py-1.5">{m.seesOtherTraffic ? "✓ yes" : "✕ no"}</td>
                 <td className="px-2 py-1.5">{m.failure}</td>
@@ -277,7 +277,7 @@ function PathExperiment() {
                 beat.tone === "error" ? "border-rose-500/50 bg-rose-500/10" : beat.tone === "skip" ? "border-border/70 bg-muted/20" : "border-cyan-500/40 bg-cyan-500/[0.06]",
               )}
             >
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 Step {Math.min(playback.index, beats.length - 1) + 1} of {beats.length}
                 {beat.tone === "error" ? " · ✕ broken" : beat.tone === "skip" ? " · — not involved" : ""}
               </p>
@@ -405,7 +405,7 @@ function ConnectionDebug() {
                   aria-label={`Suspect line: ${line.text.trim()}`}
                   onClick={() => setSuspect(line.key as string)}
                   className={cn(
-                    "min-h-8 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                    "min-h-8 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                     suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                   )}
                 >
@@ -439,7 +439,7 @@ function ConnectionDebug() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {FIXES.map((f) => (
               <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="ral-predictor-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="ral-predictor-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="min-w-0 break-words font-mono text-[12px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}

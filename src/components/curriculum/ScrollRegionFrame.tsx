@@ -19,6 +19,18 @@ export function ScrollRegionFrame({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(true);
+  const [ordinal, setOrdinal] = useState<number | null>(null);
+
+  // Several boxes with the same name on one page ("Table") are numbered in page
+  // order ("Table 2"), so every region landmark has its own name.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const same = Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-region-label]")).filter(
+      (node) => node.dataset.scrollRegionLabel === label,
+    );
+    setOrdinal(same.length > 1 ? same.indexOf(el) + 1 : null);
+  }, [label]);
 
   useEffect(() => {
     const el = ref.current;
@@ -37,7 +49,8 @@ export function ScrollRegionFrame({
       ref={ref}
       role={overflows ? "region" : undefined}
       tabIndex={overflows ? 0 : undefined}
-      aria-label={overflows ? label : undefined}
+      aria-label={overflows ? (ordinal ? `${label} ${ordinal}` : label) : undefined}
+      data-scroll-region-label={label}
       className={className}
       data-scroll-region={overflows ? "scrolls" : "fits"}
     >

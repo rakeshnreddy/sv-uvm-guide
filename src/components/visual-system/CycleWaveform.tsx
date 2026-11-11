@@ -4,6 +4,8 @@ import React, { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { DiagramScrollFrame } from "./BlockDiagram";
+
 export type CycleValue = number | string | undefined;
 
 export interface CycleSignal {
@@ -112,7 +114,7 @@ export function CycleWaveform({
 
   return (
     <figure className={cn("glass-liquid p-2", className)}>
-      <div className="overflow-x-auto">
+      <DiagramScrollFrame label={title} initiallyScrolls={false}>
         <svg
           width={width}
           height={height}
@@ -297,8 +299,8 @@ export function CycleWaveform({
             ),
           )}
         </svg>
-      </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">{caption}</figcaption>
+      </DiagramScrollFrame>
+      <figcaption className="mt-1 text-xs text-muted-foreground">{caption}</figcaption>
       {/* sr-only on a wrapper: tables ignore the 1px width sr-only relies on and would overflow. */}
       <div className="sr-only">
       <table>

@@ -4,6 +4,8 @@ import React from "react";
 
 import { cn } from "@/lib/utils";
 
+import { DiagramScrollFrame } from "./BlockDiagram";
+
 type WaveValue = number | string | undefined;
 
 interface StepWaveformProps {
@@ -37,7 +39,7 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
 
   return (
     <figure className={cn("glass-liquid p-2", className)}>
-      <div className="overflow-x-auto">
+      <DiagramScrollFrame label={"Waveform"} initiallyScrolls={false}>
         <svg
           width={width}
           height={height}
@@ -131,8 +133,8 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
             step {snapshots.length}
           </text>
         </svg>
-      </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">{axisLabel}</figcaption>
+      </DiagramScrollFrame>
+      <figcaption className="mt-1 text-xs text-muted-foreground">{axisLabel}</figcaption>
     </figure>
   );
 }

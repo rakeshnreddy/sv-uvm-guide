@@ -295,7 +295,7 @@ export function BlockDiagram({
                   </>
                 )}
                 {node.badge ? (
-                  <text x={node.x + node.w - 8} y={node.y + 14} textAnchor="end" className="fill-amber-600 text-[9px] font-bold uppercase dark:fill-amber-300">
+                  <text x={node.x + node.w - 8} y={node.y + 14} textAnchor="end" className="fill-amber-600 text-[9px] font-bold dark:fill-amber-300">
                     {node.badge}
                   </text>
                 ) : null}
@@ -399,7 +399,7 @@ export function BlockDiagram({
         </svg>
       </DiagramScrollFrame>
       {legend.length ? (
-        <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid="diagram-legend">
+        <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="diagram-legend">
           {legend.map((text) => (
             <span key={text}>{text}</span>
           ))}

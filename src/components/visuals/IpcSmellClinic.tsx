@@ -62,7 +62,7 @@ export const IPC_SMELL_ASSUMPTIONS = [
   "The model has no localparam: the shared count N appears as its value 3 with a comment, and mon sends $time (10, 20, 30) where the lesson sends i * 10.",
 ];
 
-const sectionTitle = "text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground";
+const sectionTitle = "text-label text-muted-foreground";
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 
@@ -71,10 +71,10 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 /** Compact log: time and text, wrapping at phone width. */
 function RunLog({ result, label }: { result: SimResult; label: string }) {
   return (
-    <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">
-      <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+    <div className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">
+      <p className="mb-1 font-sans text-label text-code-muted">{label}</p>
       {result.log.length === 0 ? (
-        <span className="text-slate-400">(nothing printed)</span>
+        <span className="text-code-muted">(nothing printed)</span>
       ) : (
         <ol className="space-y-0.5" aria-label={label}>
           {result.log.map((l, i) => (
@@ -94,7 +94,7 @@ function EvidenceCard({ result, heading }: { result: SimResult; heading: string 
   const evidence = runEvidence(result);
   const waitingAlways = waitingAlwaysAtEnd(result);
   return (
-    <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
       <p className={sectionTitle}>{heading}</p>
       <dl className="grid gap-x-3 gap-y-1 grid-cols-[auto_minmax(0,1fr)]">
         <dt className="text-muted-foreground">End time</dt>
@@ -190,7 +190,7 @@ function TriageMode() {
         onCommit={(_, ok) => setScores((s) => ({ ...s, [roundIndex]: ok }))}
       >
         <div className="space-y-4">
-          <div className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+          <div className="rounded-xl border border-border bg-card p-3 text-sm">
             <p className={sectionTitle}>{info.clause}</p>
             <p className="mt-1 text-foreground">{info.rule}</p>
             {round.evidence.ending === "quiet" ? <p className="mt-1 text-xs text-muted-foreground">{QUIET_END_RULE}</p> : null}
@@ -416,13 +416,13 @@ function KataMode() {
         <div className="space-y-5">
           <OutcomeGroups groups={kataGroups(starter)} runCount={starter.exploration.runCount} capped={starter.exploration.capped} label="Starter outcomes across every order of the ready processes" />
 
-          <div className="space-y-3 rounded-xl border border-border/70 bg-background/50 p-3">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-3">
             <p className={sectionTitle}>Repair it: each fix on its own</p>
             <fieldset className="space-y-2">
               <legend className="sr-only">Fixes</legend>
               {toggles.map((t) => (
                 <label key={t.key} className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-border/70 px-3 py-2 text-sm">
-                  <input type="checkbox" className="h-4 w-4 accent-cyan-600" checked={fixes[t.key]} onChange={(e) => setFixes((f) => ({ ...f, [t.key]: e.target.checked }))} />
+                  <input type="checkbox" className="size-5 shrink-0 accent-cyan-600" checked={fixes[t.key]} onChange={(e) => setFixes((f) => ({ ...f, [t.key]: e.target.checked }))} />
                   <span>{t.label}</span>
                 </label>
               ))}

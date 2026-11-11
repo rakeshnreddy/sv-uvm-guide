@@ -34,8 +34,8 @@ interface CodeTraceProps {
  */
 export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineControl, label, className }: CodeTraceProps) {
   return (
-    <figure className={cn("overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100", className)}>
-      <figcaption className="border-b border-white/10 px-3 py-2 text-label text-slate-400">
+    <figure className={cn("overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground", className)}>
+      <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">
         {label}
       </figcaption>
       <ol className="overflow-x-auto py-2 font-mono text-[12px] leading-6 [font-variant-ligatures:none] sm:text-[13px]" aria-label={label}>
@@ -56,7 +56,7 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
                     : "border-transparent",
               )}
             >
-              <span className="w-7 shrink-0 select-none pt-px text-right text-[11px] text-slate-400" aria-hidden>
+              <span className="w-7 shrink-0 select-none pt-px text-right text-xs text-slate-400" aria-hidden>
                 {i + 1}
               </span>
               <span className="w-8 shrink-0" aria-hidden>

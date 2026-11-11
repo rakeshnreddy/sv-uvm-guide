@@ -42,7 +42,7 @@ export function RegionStrip({ marks, className }: { marks: RegionMark[]; classNa
               )}
               aria-label={`${REGION_LABELS[region]}${here.length ? `: ${here.map((m) => `${m.kind} ${m.label}`).join(", ")}` : ""}${collide ? " — read and write in the same region" : ""}`}
             >
-              <span className="text-[9px] font-semibold uppercase tracking-tight text-muted-foreground" aria-hidden>
+              <span className="text-label text-muted-foreground" aria-hidden>
                 {SHORT[region]}
               </span>
               {here.map((m) => (
@@ -50,7 +50,7 @@ export function RegionStrip({ marks, className }: { marks: RegionMark[]; classNa
                   key={`${m.kind}-${m.label}`}
                   aria-hidden
                   className={cn(
-                    "mt-1 text-[10px] font-semibold leading-tight [font-variant-ligatures:none]",
+                    "mt-1 text-xs font-semibold leading-tight [font-variant-ligatures:none]",
                     m.kind === "read" ? "text-violet-700 dark:text-violet-300" : "text-amber-700 dark:text-amber-300",
                   )}
                 >
@@ -63,7 +63,7 @@ export function RegionStrip({ marks, className }: { marks: RegionMark[]; classNa
           );
         })}
       </ol>
-      <p className="mt-1 text-[10px] text-muted-foreground">▼ DUT reads din · ◆ testbench write of din lands</p>
+      <p className="mt-1 text-xs text-muted-foreground">▼ DUT reads din · ◆ testbench write of din lands</p>
     </div>
   );
 }

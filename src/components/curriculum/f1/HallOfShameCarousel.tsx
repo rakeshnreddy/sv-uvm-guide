@@ -111,11 +111,11 @@ const HallOfShameCarousel = ({ items = HALL_OF_SHAME_INCIDENTS }: HallOfShameCar
       aria-roledescription="carousel"
       aria-label="Hall of Shame: cautionary bug stories"
       onKeyDown={onKeyDown}
-      className="not-prose relative my-8 w-full overflow-hidden rounded-3xl border border-white/10 bg-slate-950/90 p-4 text-white shadow-xl"
+      className="not-prose relative my-8 w-full overflow-hidden rounded-3xl border border-code-border bg-code-surface p-4 text-white shadow-xl"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-4">
         <div>
-          <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-rose-300">
+          <p className="flex items-center gap-2 text-label text-rose-300">
             <AlertTriangle className="h-4 w-4" aria-hidden />
             Cautionary tales, with sources
           </p>
@@ -138,20 +138,20 @@ const HallOfShameCarousel = ({ items = HALL_OF_SHAME_INCIDENTS }: HallOfShameCar
         <article
           aria-roledescription="slide"
           aria-label={`${item.title} (${index + 1} of ${count})`}
-          className="grid gap-6 rounded-2xl border border-white/10 bg-slate-900/80 p-4 shadow-inner sm:p-6 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]"
+          className="grid gap-6 rounded-2xl border border-code-border bg-slate-900/80 p-4 shadow-inner sm:p-6 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]"
         >
           <div className="min-w-0 space-y-4">
             {item.image ? (
-              <div className="relative h-48 w-full overflow-hidden rounded-2xl border border-white/10">
+              <div className="relative h-48 w-full overflow-hidden rounded-2xl border border-code-border">
                 <Image src={item.image} alt="" fill sizes="(min-width: 1024px) 40vw, 90vw" className="object-cover" />
               </div>
             ) : null}
             <h4 className="text-lg font-semibold text-rose-200">{item.title}</h4>
             <p className="text-sm leading-relaxed text-slate-200">{item.story}</p>
           </div>
-          <div className="flex min-w-0 flex-col gap-4 rounded-2xl border border-white/10 bg-slate-950/60 p-5 text-sm text-slate-200">
+          <div className="flex min-w-0 flex-col gap-4 rounded-2xl border border-code-border bg-slate-950/60 p-5 text-sm text-slate-200">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Impact</p>
+              <p className="text-label text-code-muted">Impact</p>
               <p className="text-base font-semibold text-white">{item.impact}</p>
             </div>
             {item.lesson ? (
@@ -171,7 +171,7 @@ const HallOfShameCarousel = ({ items = HALL_OF_SHAME_INCIDENTS }: HallOfShameCar
               </div>
             ) : null}
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Sources</p>
+              <p className="text-label text-code-muted">Sources</p>
               {item.sources && item.sources.length > 0 ? (
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">
                   {item.sources.map((s) => (
@@ -212,7 +212,7 @@ const HallOfShameCarousel = ({ items = HALL_OF_SHAME_INCIDENTS }: HallOfShameCar
           </button>
         ))}
       </div>
-      <p className="mt-2 text-center text-[11px] text-slate-400">Use the arrows, the dots, or ← / → while focus is inside. Nothing advances on its own.</p>
+      <p className="mt-2 text-center text-xs text-slate-400">Use the arrows, the dots, or ← / → while focus is inside. Nothing advances on its own.</p>
     </section>
   );
 };

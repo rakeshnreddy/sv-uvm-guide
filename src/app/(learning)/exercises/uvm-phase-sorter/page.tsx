@@ -13,8 +13,8 @@ const UvmPhaseSorterPage: React.FC = () => {
 
   const content = (
     <>
-      <LearnInLesson item={practice} />
-      <section className="mb-6">
+      <LearnInLesson item={practice} variant="row" />
+      <section className="mb-6 max-w-[30em]">
         <h2 className="text-h2 mb-2 text-foreground">Order the UVM phases</h2>
         <p className="text-muted-foreground mb-1">
           Put each lane in execution order: the common phases from build to final, and the twelve run-time phases that run beside run_phase.
@@ -29,14 +29,14 @@ const UvmPhaseSorterPage: React.FC = () => {
         <UvmPhaseSorterExercise />
       </div>
 
-      <section className="mt-6">
+      <section className="mt-6 max-w-[30em]">
         <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
-        <ul className="list-disc list-inside text-muted-foreground space-y-1">
+        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
           <li>Recall the standard UVM runtime phases.</li>
           <li>See that run_phase runs alongside the twelve runtime phases, while function phases run top-down or bottom-up.</li>
           <li>Practice organizing a key aspect of UVM testbench flow.</li>
         </ul>
-        <p className="text-muted-foreground mt-4">Use Check Order to grade both lanes and Shuffle Again to start over.</p>
+        <p className="text-muted-foreground mt-4">Use “Check the order” to grade both lanes and “Shuffle again” to start over.</p>
       </section>
     </>
   );

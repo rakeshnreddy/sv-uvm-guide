@@ -75,12 +75,12 @@ function Token({ placement, glyph, short }: { placement?: Placement; glyph: stri
         cue ? cue.className : "border-border/70 bg-background/60",
       )}
     >
-      <span aria-hidden className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 font-mono text-[11px] font-semibold">
+      <span aria-hidden className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 font-mono text-xs font-semibold">
         {glyph}
       </span>
       <span className="min-w-0 break-words">{short}</span>
       {placement && cue ? (
-        <span className="shrink-0 font-mono text-[11px] font-semibold">
+        <span className="shrink-0 font-mono text-xs font-semibold">
           <span aria-hidden>{cue.glyph} </span>
           {placement.multiplierText}
         </span>
@@ -119,7 +119,7 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
               <li
                 key={a.id}
                 className={cn(
-                  "rounded border px-1.5 py-0.5 text-[11px]",
+                  "rounded border px-1.5 py-0.5 text-xs",
                   enabled.has(a.id) ? "border-cyan-500/60 bg-cyan-500/10 text-foreground" : "border-dashed border-border/70 text-muted-foreground line-through",
                 )}
               >
@@ -129,7 +129,7 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
             ))}
           </ul>
         ) : (
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Post-silicon validation (always runs)</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">Post-silicon validation (always runs)</p>
         )}
         <div className="mt-2 flex min-h-8 flex-col items-start gap-1.5" aria-hidden>
           {tokens.map((p) => (
@@ -148,7 +148,7 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
         {lane("integration")}
         <div aria-hidden className="flex items-center gap-2 md:flex-col md:justify-center">
           <span className="h-0 flex-1 border-t-2 border-dashed border-foreground/50 md:h-auto md:w-0 md:border-l-2 md:border-t-0" />
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground">tape-out</span>
+          <span className="text-label text-foreground">tape-out</span>
           <span className="h-0 flex-1 border-t-2 border-dashed border-foreground/50 md:h-auto md:w-0 md:border-l-2 md:border-t-0" />
         </div>
         {lane("after-tape-out")}
@@ -194,7 +194,7 @@ function PositionList({ placed }: { placed: Placement[] }) {
   );
 }
 
-const sectionHeadingClass = "text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground";
+const sectionHeadingClass = "text-label text-muted-foreground";
 
 /**
  * The prediction prompt's feedback block (its polite live region), made
@@ -278,7 +278,7 @@ function RevealedRun({
           ref={summaryRef}
           tabIndex={-1}
           data-testid="shift-left-summary"
-          className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <p>{summary.sentence}</p>
           {note ? <p>{note}</p> : null}

@@ -22,12 +22,12 @@ export function TraceNarration({ step, simTimeLabel }: { step: TraceStep; simTim
     ? `${REGION_LABELS[step.sourceRegion]} event, executing in ${REGION_LABELS[step.region]}`
     : REGION_LABELS[step.region];
   return (
-    <div aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-4">
-      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+    <div aria-live="polite" className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center gap-2 text-label">
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 font-bold uppercase tracking-wider",
-            step.kind === "choice" ? "bg-amber-500/20 text-amber-800 dark:text-amber-200" : "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200",
+            "rounded px-1.5 py-0.5",
+            step.kind === "choice" ? "bg-warning-subtle text-warning" : "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200",
           )}
         >
           {kindLabels[step.kind]}

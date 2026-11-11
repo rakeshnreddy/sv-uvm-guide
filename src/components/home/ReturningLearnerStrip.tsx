@@ -177,7 +177,7 @@ export default function ReturningLearnerStrip({ lessons }: ReturningLearnerStrip
                 </span>
                 {due === 1 ? 'review due today' : 'reviews due today'}
               </p>
-              <Link href={REVIEW_HREF} className={cn(linkClass, 'self-start text-ui')}>
+              <Link href={REVIEW_HREF} className={cn(linkClass, 'inline-flex min-h-10 items-center self-start text-ui')}>
                 Open the review queue
               </Link>
             </>

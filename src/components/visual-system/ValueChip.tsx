@@ -30,7 +30,7 @@ export function ValueChip({ name, value, changed = false, className }: ValueChip
       {name ? <span className="text-xs opacity-90">{name}</span> : null}
       <span className="font-semibold">{shown}</span>
       {changed ? (
-        <span aria-hidden className="text-[10px] text-cyan-600 dark:text-cyan-300">
+        <span aria-hidden className="text-xs text-cyan-600 dark:text-cyan-300">
           ▲
         </span>
       ) : null}

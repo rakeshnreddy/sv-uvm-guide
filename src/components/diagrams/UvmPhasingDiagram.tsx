@@ -266,7 +266,7 @@ function ObjectionTimeline({ result }: { result: RunResult }) {
     .join(" ");
 
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="rounded-xl border border-border bg-card p-2">
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} 170`} role="img" aria-label={`run_phase objection count over simulation time. ${summary}`} className="block h-auto w-full min-w-[300px]">
           <defs>
@@ -338,7 +338,7 @@ function ObjectionTimeline({ result }: { result: RunResult }) {
           )}
         </svg>
       </div>
-      <figcaption className="mt-1 flex flex-wrap gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs text-muted-foreground">
         <span>x-axis: simulation time</span>
         <span>▲ raise · ▼ drop</span>
         <span>hatched: drain time</span>
@@ -370,7 +370,7 @@ export default function UvmPhasingDiagram() {
         type="button"
         onClick={onClick}
         aria-label={aria}
-        className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
+        className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-xs text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
       >
         {label}
       </button>
@@ -450,7 +450,7 @@ export default function UvmPhasingDiagram() {
           </p>
           <details className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
             <summary className="cursor-pointer font-medium text-foreground">Objection trace (simplified +UVM_OBJECTION_TRACE / +UVM_PHASE_TRACE)</summary>
-            <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-xs leading-5 text-code-foreground [font-variant-ligatures:none]">
               {log.join("\n")}
             </pre>
           </details>

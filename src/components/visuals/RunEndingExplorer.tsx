@@ -62,7 +62,7 @@ function TraceBody({ result, prepared, playback, lines, watch, onReveal, closing
         <ThreadTable step={step} lines={lines} />
         <div className="min-w-0 space-y-3">
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Counters after this step</p>
+            <p className="mb-2 text-label text-muted-foreground">Counters after this step</p>
             <div className="flex flex-wrap gap-2">
               {watch.map((name) => (
                 <ValueChip key={name} name={name} value={formatVal(step.vars[name])} changed={previous !== undefined && previous.vars[name] !== step.vars[name]} />
@@ -107,7 +107,7 @@ function SeverityAndEnd() {
     if (!line.key || line.key !== ctlKey) return null;
     return (
       <span className="flex max-w-[11rem] flex-wrap items-center justify-end gap-1 font-sans">
-        <label className="flex items-center gap-1 text-[11px] text-slate-300">
+        <label className="flex items-center gap-1 text-xs text-slate-300">
           <span className="sr-only">Statement at t = {run.controlTime} ns</span>
           <select
             value={control}
@@ -121,8 +121,8 @@ function SeverityAndEnd() {
             ))}
           </select>
         </label>
-        <label className="flex min-h-8 items-center gap-1 text-[11px] text-slate-300">
-          <input type="checkbox" checked={count} onChange={(e) => setCount(e.target.checked)} className="h-4 w-4 accent-cyan-400" />
+        <label className="flex min-h-8 items-center gap-1 text-xs text-slate-300">
+          <input type="checkbox" checked={count} onChange={(e) => setCount(e.target.checked)} className="size-5 shrink-0 accent-cyan-400" />
           n_fail++ in the failing branch
         </label>
       </span>

@@ -13,8 +13,8 @@ const ScoreboardConnectorPage: React.FC = () => {
 
   const content = (
     <>
-      <LearnInLesson item={practice} />
-      <section className="mb-6">
+      <LearnInLesson item={practice} variant="row" />
+      <section className="mb-6 max-w-[30em]">
         <h2 className="text-h2 mb-2 text-foreground">Wire the checking side of an agent environment</h2>
         <p className="text-muted-foreground mb-1">
           The env holds an agent, a predictor, a scoreboard with an expected and an actual analysis FIFO, and a coverage subscriber.
@@ -30,9 +30,9 @@ const ScoreboardConnectorPage: React.FC = () => {
         <ScoreboardConnectorExercise />
       </div>
 
-      <section className="mt-6">
+      <section className="mt-6 max-w-[30em]">
         <h3 className="text-h3 mb-2 text-foreground">Learning objectives</h3>
-        <ul className="list-disc list-inside text-muted-foreground space-y-1">
+        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
           <li>Choose the caller and the argument of connect() for analysis connections, including imps named &quot;analysis_export&quot;.</li>
           <li>Explain why a missing analysis connection passes elaboration silently, and what it does to the scoreboard.</li>
           <li>Predict the order of analysis write() calls and explain why the scoreboard reads its inputs through analysis FIFOs.</li>

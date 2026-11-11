@@ -94,7 +94,8 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
         <Link
           href={module.href}
           aria-current={here ? 'location' : undefined}
-          className={cn('rounded-sm underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline motion-reduce:transition-none [overflow-wrap:anywhere]', focusRing)}
+          // On phones a 40 px target: padding that negative margins cancel, so the card's layout does not change.
+          className={cn('rounded-sm underline-offset-4 transition-colors duration-150 ease-bench hover:text-primary hover:underline motion-reduce:transition-none [overflow-wrap:anywhere] max-sm:inline-block max-sm:-my-2 max-sm:py-2', focusRing)}
         >
           <span className="sr-only">{module.code}: </span>
           {module.displayTitle}

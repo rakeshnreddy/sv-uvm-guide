@@ -174,19 +174,19 @@ function StepCard({ index, title, why, clause, badge, children }: { index: numbe
   return (
     <li className={cn("rounded-xl border bg-background/50 p-3", !badge ? "border-border/70" : trap ? "border-amber-500/60" : "border-cyan-500/60")}>
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Step {index}</span>
+        <span className="text-label text-muted-foreground">Step {index}</span>
         <span className="text-sm font-semibold text-foreground">{title}</span>
         {badge ? (
           <span
             className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+              "rounded px-1.5 py-0.5 text-label",
               trap ? "bg-amber-500/20 text-amber-900 dark:text-amber-100" : "bg-cyan-500/15 text-cyan-900 dark:text-cyan-100",
             )}
           >
             {trap ? "⚠ trap" : "key step"}
           </span>
         ) : null}
-        <span className="ml-auto rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{clause}</span>
+        <span className="ml-auto rounded border border-border/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{clause}</span>
       </div>
       {children ? <div className="mt-2 space-y-2 overflow-x-auto">{children}</div> : null}
       <p className="mt-2 text-sm text-muted-foreground">
@@ -465,14 +465,14 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
 
       {scenario.variants.length > 1 ? (
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Code variant</p>
+          <p className="text-label text-muted-foreground">Code variant</p>
           <SegmentedControl label="Code variant" options={scenario.variants.map((v) => ({ value: v.id, label: v.label }))} value={variant.id} onChange={setVariantId} mono />
         </div>
       ) : null}
 
       {editors.length > 0 ? (
         <fieldset className="grid gap-3 rounded-xl border border-border/70 p-3 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
-          <legend className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Operands</legend>
+          <legend className="px-1 text-label text-muted-foreground">Operands</legend>
           {editors.map((ed) => {
             const decl = decls.find((d) => d.name === ed.name);
             if (!decl) return null;

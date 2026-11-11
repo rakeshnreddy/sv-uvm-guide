@@ -81,7 +81,7 @@ function FlagSelect({
       aria-label={`Flag for ${field.name}`}
       value={choiceId(choices, field.flags)}
       onChange={(e) => onChange((choices.find((c) => c.id === e.target.value) ?? choices[0]).flags)}
-      className="h-10 max-w-[11rem] rounded border border-slate-600 bg-slate-900 px-1 font-mono text-[11px] text-slate-100"
+      className="h-10 max-w-[11rem] rounded border border-slate-600 bg-slate-900 px-1 font-mono text-xs text-slate-100"
     >
       {choices.map((c) => (
         <option key={c.id} value={c.id}>
@@ -114,8 +114,8 @@ function classLines(fields: FieldSpec[], userDoCompare?: string[]): CodeTraceLin
 
 function CodePanel({ label, lines }: { label: string; lines: string[] }) {
   return (
-    <figure aria-label={label} className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
+    <figure aria-label={label} className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+      <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">{label}</figcaption>
       <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-5 [font-variant-ligatures:none]">{lines.join("\n")}</pre>
     </figure>
   );
@@ -170,7 +170,7 @@ function CompareMode() {
           <div className="overflow-x-auto rounded-xl border border-border/70">
             <table className="w-full min-w-[260px] text-left font-mono text-xs [font-variant-ligatures:none]">
               <caption className="sr-only">Expected and actual packet values</caption>
-              <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <thead className="bg-muted/40 text-label text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-2 py-1.5">field</th>
                   <th scope="col" className="px-2 py-1.5">EXP (lhs)</th>
@@ -201,7 +201,7 @@ function CompareMode() {
           </div>
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
             <div>
-              <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">set_threshold()</p>
+              <p className="mb-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">set_threshold()</p>
               <SegmentedControl
                 label="Comparer threshold"
                 mono
@@ -214,7 +214,7 @@ function CompareMode() {
               />
             </div>
             <div>
-              <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">set_show_max()</p>
+              <p className="mb-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">set_show_max()</p>
               <SegmentedControl
                 label="Comparer show_max"
                 mono
@@ -239,7 +239,7 @@ function CompareMode() {
           <div className="overflow-x-auto rounded-xl border border-border/70">
             <table className="w-full min-w-[300px] text-left text-xs">
               <caption className="sr-only">How the comparer walked the fields</caption>
-              <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <thead className="bg-muted/40 text-label text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-2 py-1.5">Field (declaration order)</th>
                   <th scope="col" className="px-2 py-1.5">Outcome</th>
@@ -268,7 +268,7 @@ function CompareMode() {
             </table>
           </div>
           <CodePanel label="Log" lines={[...warnings, ...result.printed].length ? [...warnings, ...result.printed] : ["(no MISCMP messages)"]} />
-          <p aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+          <p aria-live="polite" className="rounded-xl border border-border bg-card p-3 text-sm">
             <strong>compare() returned {result.returned}</strong>, get_result() = {result.result}
             {result.miscompares.length > result.printed.filter((p) => p.includes("Miscompare for")).length
               ? `; get_miscompares() holds all ${result.miscompares.length}, but show_max limits what is printed.`
@@ -313,8 +313,8 @@ function HeapPicture({ impl }: { impl: CopyImpl }) {
     </li>
   );
   return (
-    <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Heap after the last line</p>
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+      <p className="text-label text-muted-foreground">Heap after the last line</p>
       <ul className="space-y-1.5" aria-label="Handles and objects after p2.cfg.burst_len = 8">
         {row("p1", r.p1.id, r.p1.cfg)}
         {row("p2", r.p2.id, r.p2.cfg)}
@@ -406,7 +406,7 @@ function PrintMode() {
         <div className="space-y-3">
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
             <div>
-              <p className="mb-1 text-[11px] text-muted-foreground">Default printer</p>
+              <p className="mb-1 text-xs text-muted-foreground">Default printer</p>
               <SegmentedControl
                 label="Default printer"
                 mono
@@ -419,13 +419,13 @@ function PrintMode() {
                 ]}
               />
             </div>
-            <label className="text-[11px] text-muted-foreground">
+            <label className="text-xs text-muted-foreground">
               tag flag
               <span className="mt-1 block">
                 <FlagSelect field={tag} choices={PRINT_TAG_CHOICES} onChange={(f) => update("tag", f)} />
               </span>
             </label>
-            <label className="text-[11px] text-muted-foreground">
+            <label className="text-xs text-muted-foreground">
               cfg flag
               <span className="mt-1 block">
                 <FlagSelect field={cfg} choices={OBJ_FLAG_CHOICES} onChange={(f) => update("cfg", f)} />

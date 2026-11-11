@@ -256,7 +256,7 @@ function GrantTimeline({ run, scenario }: { run: SequencerRun; scenario: Sequenc
   for (let tt = 0; tt <= maxT; tt += stepT) ticks.push(tt);
   const desc = run.decisions.map((d) => `${d.item} granted at ${d.time} ns`).join("; ");
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/70 bg-background/50 p-2">
+    <div className="overflow-x-auto rounded-xl border border-border bg-card p-2">
       <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full min-w-[300px]" role="img" aria-label={`Grant timeline: ${desc}`}>
         {scenario.sequences.map((s, row) => {
           const y = top + row * rowH;
@@ -399,7 +399,7 @@ function DecisionList({ run }: { run: SequencerRun }) {
   return (
     <ol className="space-y-2" aria-label="Arbitration decisions">
       {run.decisions.map((d) => (
-        <li key={d.index} className="rounded-xl border border-border/70 bg-background/50 p-3">
+        <li key={d.index} className="rounded-xl border border-border bg-card p-3">
           <p className="text-sm font-semibold text-foreground">
             Grant #{d.index} · t = {d.time} ns → <span className="font-mono">{d.item}</span>
             {d.draw ? <span className="ml-2 text-xs font-normal text-muted-foreground">(draw {d.draw.value} of 0..{d.draw.max})</span> : null}
@@ -428,7 +428,7 @@ function SeedCheck({ scenario, decision }: { scenario: SequencerScenario; decisi
   const N = 400;
   const counts = useMemo(() => sampleDecisionWinners(scenario, decision.index, N), [scenario, decision.index]);
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 p-3">
+    <div className="rounded-xl border border-border bg-card p-3">
       <p className="text-sm font-semibold text-foreground">
         Model check: grant #{decision.index} over {N} seeds
       </p>
@@ -521,7 +521,7 @@ const SequencerArbitrationSandbox: React.FC = () => {
       </p>
 
       <div className="space-y-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">set_arbitration()</p>
+        <p className="text-label text-muted-foreground">set_arbitration()</p>
         <SegmentedControl
           label="Arbitration mode"
           mono

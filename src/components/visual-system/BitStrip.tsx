@@ -316,7 +316,7 @@ export function BitStrip({
         ) : null}
         <span
           className={cn(
-            "flex h-6 w-4 items-center justify-center rounded-[3px] border text-[11px] font-semibold",
+            "flex h-6 w-4 items-center justify-center rounded-[3px] border text-xs font-semibold",
             isUndefined ? undefinedBitClassName : bitClassName(bit),
             // The dotted undefined texture wins over the extension dash; the + glyph still marks extension.
             ext && !isUndefined && "border-dashed",
@@ -370,7 +370,7 @@ export function BitStrip({
         <span key={run.start} className="inline-flex max-w-full flex-col gap-0.5">
           <span className="flex flex-wrap gap-x-1 gap-y-1">{renderNibbles(run.start, run.end)}</span>
           {seg && tone ? (
-            <span aria-hidden className={cn("border-t-2 pt-0.5 text-center font-sans text-[10px] font-medium leading-3", toneClasses[tone])}>
+            <span aria-hidden className={cn("border-t-2 pt-0.5 text-center font-sans text-xs font-medium leading-3", toneClasses[tone])}>
               {seg.label} <span className="font-mono opacity-80">[{seg.hi === seg.lo ? seg.hi : `${seg.hi}:${seg.lo}`}]</span>
             </span>
           ) : null}

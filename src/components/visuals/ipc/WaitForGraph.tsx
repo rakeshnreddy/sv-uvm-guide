@@ -63,7 +63,7 @@ export function WaitForGraph({ graph, label, className }: WaitForGraphProps) {
   const markers = { waits: `${baseId}-waits`, held: `${baseId}-held`, cycle: `${baseId}-cycle` };
 
   return (
-    <figure className={cn("rounded-xl border border-border/70 bg-background/40 p-2", hasCycle && "border-rose-500/60", className)}>
+    <figure className={cn("rounded-xl border border-border bg-card p-2", hasCycle && "border-rose-500/60", className)}>
       <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label={`${label}: ${summary}.${hasCycle ? " The graph has a closed cycle." : ""}`} className="w-full max-w-[420px] text-foreground">
         <defs>
           {(
@@ -147,7 +147,7 @@ export function WaitForGraph({ graph, label, className }: WaitForGraphProps) {
           );
         })}
       </svg>
-      <figcaption className="space-y-1 px-1 pt-1 text-[11px] text-muted-foreground">
+      <figcaption className="space-y-1 px-1 pt-1 text-xs text-muted-foreground">
         <span className="block">
           <span aria-hidden className="text-amber-700 dark:text-amber-300">→</span> process waits for a semaphore (queued in get(), §15.3.3);{" "}
           <span aria-hidden>⇢</span> held by*: the key was taken by that process. *{HOLDER_EDGE_NOTE} (§15.3: put() takes only a count).{" "}

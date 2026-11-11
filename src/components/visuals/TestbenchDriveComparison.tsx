@@ -40,10 +40,10 @@ export default function TestbenchDriveComparison() {
   const results = useMemo(() => styles.map((s) => ({ ...s, ...analyse(s.id) })), []);
 
   return (
-    <section aria-label="Testbench drive comparison" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
+    <section aria-label="Testbench drive comparison" className="glass-liquid not-prose my-8 space-y-4 p-3 sm:p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Compare</p>
+          <p className="text-label text-muted-foreground">Compare</p>
           <h3 className="text-lg font-semibold text-foreground">Three ways to drive a DUT input at the clock edge</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Before the edge, <code className="font-mono">din = 3</code> and <code className="font-mono">q = 1</code>. On the edge the DUT runs{" "}
@@ -107,7 +107,7 @@ export default function TestbenchDriveComparison() {
                   <h4 className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{r.title}</h4>
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                      "rounded-full px-2 py-0.5 text-xs font-bold",
                       r.exploration.deterministic ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-200" : "bg-rose-500/20 text-rose-800 dark:text-rose-200",
                     )}
                   >
@@ -117,13 +117,13 @@ export default function TestbenchDriveComparison() {
                 <CodeTrace label={`${r.title} bench`} lines={r.lines} contextKeys={["tb1", "dut1"]} className="text-[12px]" />
                 <RegionStrip marks={r.marks} />
                 <div className="text-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Flop captures</p>
+                  <p className="text-label text-muted-foreground">Flop captures</p>
                   <div className="mt-1 flex flex-wrap gap-2">
                     {qValues.map((v, i) => (
                       <ValueChip key={i} name="q" value={v} />
                     ))}
                   </div>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Testbench read of q</p>
+                  <p className="mt-2 text-label text-muted-foreground">Testbench read of q</p>
                   <div className="mt-1 flex flex-wrap gap-2">
                     {seenValues.map((v, i) => (
                       <ValueChip key={i} name="seen" value={v} />

@@ -42,11 +42,11 @@ function WorldView({ world }: { world: World }) {
         const names = handlesTo(o.objId);
         const global = globalOf(o.objId);
         return (
-          <li key={o.objId} className="rounded-xl border border-border/70 bg-background/50 p-3">
+          <li key={o.objId} className="rounded-xl border border-border bg-card p-3">
             <p className="font-mono text-xs [font-variant-ligatures:none]">
               <span className="font-semibold">{o.type}@{o.objId}</span>
               {names.length ? <span className="text-muted-foreground"> ◀ {names.join(", ")}</span> : null}
-              {global ? <span className="ml-2 rounded border border-cyan-500/60 px-1 text-[10px] text-cyan-800 dark:text-cyan-200">global singleton</span> : null}
+              {global ? <span className="ml-2 rounded border border-cyan-500/60 px-1 text-xs text-cyan-800 dark:text-cyan-200">global singleton</span> : null}
             </p>
             {o.type === "uvm_queue#(int)" ? (
               <p className="mt-1 font-mono text-xs [font-variant-ligatures:none]">
@@ -57,7 +57,7 @@ function WorldView({ world }: { world: World }) {
             ) : (
               <table className="mt-1 w-full min-w-[220px] text-left font-mono text-xs [font-variant-ligatures:none]">
                 <caption className="sr-only">Entries of {o.type}@{o.objId}</caption>
-                <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                <thead className="text-label text-muted-foreground">
                   <tr>
                     <th scope="col" className="pr-3">key</th>
                     <th scope="col">value</th>
@@ -219,7 +219,7 @@ function ProgramRunner({ mode }: { mode: ContainerMode }) {
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
         <CodeTrace label="Program" lines={lines} activeKey={finished ? undefined : `s${count}`} contextKeys={program.stmts.slice(0, count).map((_, i) => `s${i}`)} />
         <div className="min-w-0 space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">State after {count} statement{count === 1 ? "" : "s"}</p>
+          <p className="text-label text-muted-foreground">State after {count} statement{count === 1 ? "" : "s"}</p>
           <WorldView world={world} />
         </div>
       </div>
@@ -247,7 +247,7 @@ function ProgramRunner({ mode }: { mode: ContainerMode }) {
 
       {executed.length ? (
         <div>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Results</p>
+          <p className="mb-1 text-label text-muted-foreground">Results</p>
           <ol className="space-y-2" aria-live="polite">
             {[...executed, ...extra].map((step, i) => (
               <StepResult key={i} step={step} highlight={i === program.predictAt} />
@@ -296,8 +296,8 @@ export default function UvmContainerVisualizer() {
       <ProgramRunner key={mode} mode={mode} />
       <div className="overflow-x-auto rounded-xl border border-border/70">
         <table className="w-full min-w-[300px] text-left text-xs">
-          <caption className="px-3 pt-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Policy support in uvm-core 2020.3.1</caption>
-          <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <caption className="px-3 pt-2 text-left text-label text-muted-foreground">Policy support in uvm-core 2020.3.1</caption>
+          <thead className="text-label text-muted-foreground">
             <tr>
               <th scope="col" className="px-3 py-1.5">Container</th>
               <th scope="col" className="px-3 py-1.5">copy()</th>

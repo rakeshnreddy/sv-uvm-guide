@@ -283,7 +283,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
               row
             </th>
             {chips.map((c) => (
-              <th key={c.index} scope="col" className="w-8 pb-0.5 text-[10px] font-normal text-muted-foreground">
+              <th key={c.index} scope="col" className="w-8 pb-0.5 text-xs font-normal text-muted-foreground">
                 bit {c.index}
               </th>
             ))}
@@ -291,7 +291,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
         </thead>
         <tbody>
           <tr>
-            <th scope="row" className="pr-2 text-left text-[11px] font-normal text-muted-foreground">
+            <th scope="row" className="pr-2 text-left text-xs font-normal text-muted-foreground">
               {leftName}
             </th>
             {chips.map((c) => (
@@ -301,7 +301,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
             ))}
           </tr>
           <tr>
-            <th scope="row" className="pr-2 text-left text-[11px] font-normal text-muted-foreground">
+            <th scope="row" className="pr-2 text-left text-xs font-normal text-muted-foreground">
               {rightName}
             </th>
             {chips.map((c) => (
@@ -311,7 +311,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
             ))}
           </tr>
           <tr>
-            <th scope="row" className="pr-2 text-left text-[11px] font-semibold text-foreground">
+            <th scope="row" className="pr-2 text-left text-xs font-semibold text-foreground">
               {verdictName}
             </th>
             {chips.map((c) => (
@@ -390,7 +390,7 @@ function StatusBadge({ status, config }: { status: ItemVerdict["status"]; config
 
 function NoMatchStamp() {
   return (
-    <span className="inline-flex -rotate-2 items-center rounded border-2 border-rose-500/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+    <span className="inline-flex -rotate-2 items-center rounded border-2 border-rose-500/70 px-1.5 py-0.5 text-label text-danger">
       x means no match
     </span>
   );
@@ -405,7 +405,7 @@ function TermDetail({ term, why, result, expressionName, showChips }: { term: Te
       <p className="text-sm text-muted-foreground">
         {code(term.text)} <span aria-hidden>→</span> <span className="sr-only">gives</span>
         {term.unsupported ? (
-          <span className="ml-1 inline-flex h-5 items-center rounded border border-dashed border-amber-500/70 bg-amber-500/10 px-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-200">
+          <span className="ml-1 inline-flex h-5 items-center rounded border border-dashed border-amber-500/70 bg-amber-500/10 px-1.5 text-label text-warning">
             not comparable
           </span>
         ) : (
@@ -515,7 +515,7 @@ function Ticket({ result }: { result: DecisionResult }) {
   if (result.report) {
     return (
       <div role="note" aria-label="Violation ticket" className="space-y-1 rounded-xl border-2 border-dashed border-rose-500/70 bg-rose-500/[0.06] p-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-300">
+        <p className="text-label text-danger">
           <span aria-hidden>✕ </span>Violation report · {result.report.clause}
         </p>
         <p className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{result.report.title}</p>
@@ -528,7 +528,7 @@ function Ticket({ result }: { result: DecisionResult }) {
   }
   return (
     <div role="note" aria-label="No violation" className="space-y-1 rounded-xl border border-emerald-500/50 bg-emerald-500/[0.06] p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
+      <p className="text-label text-success">
         <span aria-hidden>✓ </span>Nothing reported
       </p>
     </div>
@@ -716,7 +716,7 @@ function QualifierLab({ preset }: { preset?: string }) {
     >
       <div className="space-y-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor={selectId} className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <label htmlFor={selectId} className="text-label text-muted-foreground">
             Preset
           </label>
           <select
@@ -739,7 +739,7 @@ function QualifierLab({ preset }: { preset?: string }) {
         <ControlFold>
           <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Statement form</p>
+              <p className="text-label text-muted-foreground">Statement form</p>
               <SegmentedControl<DecisionForm>
                 label="Statement form"
                 mono
@@ -749,13 +749,13 @@ function QualifierLab({ preset }: { preset?: string }) {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Qualifier</p>
+              <p className="text-label text-muted-foreground">Qualifier</p>
               <SegmentedControl<Qualifier> label="Qualifier" mono value={config.qualifier} onChange={(qualifier) => update({ qualifier })} options={QUALIFIERS.map((q) => ({ value: q, label: q }))} />
             </div>
           </div>
 
           <label className="inline-flex min-h-10 items-center gap-2 text-sm text-foreground">
-            <input type="checkbox" checked={config.catchAll} onChange={(e) => update({ catchAll: e.target.checked })} className="h-4 w-4 accent-cyan-600" />
+            <input type="checkbox" checked={config.catchAll} onChange={(e) => update({ catchAll: e.target.checked })} className="size-5 shrink-0 accent-cyan-600" />
             {isIfChain(config.form) ? "final else" : "default item"}
             <span className="text-xs text-muted-foreground">({isIfChain(config.form) ? "runs when no condition matches" : "runs when no item matches"})</span>
           </label>
@@ -850,7 +850,7 @@ function CompareColumn({ title, result, told, expressionName, showOr, onFoldTogg
   const unknownSelect = hasUnknown(result.config.select);
   const form = result.config.form;
   return (
-    <section aria-label={`${title} column`} className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+    <section aria-label={`${title} column`} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
       <header>
         <h4 className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{title}</h4>
       </header>
@@ -952,13 +952,13 @@ function CompareLab({ preset }: { preset?: string }) {
     >
       <div className="space-y-3">
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Item set</p>
+          <p className="text-label text-muted-foreground">Item set</p>
           <SegmentedControl label="Item set" value={set.id} onChange={chooseSet} options={COMPARE_SETS.map((s) => ({ value: s.id, label: s.title }))} />
         </div>
         <QuickValues name={set.selectName} options={set.selectOptions} current={select} tried={tried} progress={progress} onPick={pickValue} />
         <ControlFold>
           <div className="space-y-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Left column</p>
+            <p className="text-label text-muted-foreground">Left column</p>
             <SegmentedControl<CompareLeftKind>
               label="Left column"
               mono

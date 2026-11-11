@@ -150,7 +150,7 @@ export default function FormalVsSimulationVisualizer() {
     >
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
         <div className="min-w-0 space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">RTL under test</p>
+          <p className="text-label text-muted-foreground">RTL under test</p>
           <SegmentedControl
             label="RTL under test"
             value={dut}
@@ -163,7 +163,7 @@ export default function FormalVsSimulationVisualizer() {
           <CodeTrace label="fifo.sv (occupancy logic)" lines={rtlLines} activeKey={dut === "late_full" ? "full" : undefined} />
         </div>
         <div className="min-w-0 space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Shared property library: toggle assumptions</p>
+          <p className="text-label text-muted-foreground">Shared property library: toggle assumptions</p>
           <CodeTrace
             label="fifo_props.sv"
             lines={propertyLines}
@@ -175,7 +175,7 @@ export default function FormalVsSimulationVisualizer() {
                   aria-label={`${line.key}: ${enabled.includes(line.key as AssumptionId) ? "enabled" : "disabled"}. Toggle assumption`}
                   onClick={() => toggle(line.key as AssumptionId)}
                   className={cn(
-                    "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                    "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                     enabled.includes(line.key as AssumptionId) ? "border-sky-400 bg-sky-400/20 text-sky-100" : "border-slate-500 text-slate-400 hover:bg-white/10",
                   )}
                 >
@@ -272,7 +272,7 @@ export default function FormalVsSimulationVisualizer() {
                     <p className={cn("text-sm font-medium", replay.kind === "dut_bug" ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300")}>
                       Replay verdict: {replay.kind === "dut_bug" ? "✕ real DUT bug" : replay.kind === "spurious" ? "! spurious counterexample" : "no failure"}. {replay.why}
                     </p>
-                    <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Generated replay sequence">
+                    <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label="Generated replay sequence">
                       <code>{replaySequenceLines(cexVerdict.trace).join("\n")}</code>
                     </pre>
                   </div>

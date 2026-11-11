@@ -330,6 +330,16 @@ describe.each(MODES)("%s mode colour and glass contrast", (_name, { vars }) => {
     }
   });
 
+  it("link text over the field: the accent holds 4.5:1 in dark mode; in light mode header actions use primary text, and their accent underline reaches 3:1", () => {
+    for (const [field, blend] of fieldBlends(vars)) {
+      const accent = rgbContrast(rgbOf(vars.primary), blend);
+      if (_name === "dark") expect(accent, `primary over ${field}`).toBeGreaterThanOrEqual(4.5);
+      // PAGE_HEADER_ACTION_LINK_CLASS: text-foreground with a decoration-primary underline (a non-text cue).
+      expect(accent, `primary underline over ${field}`).toBeGreaterThanOrEqual(3);
+      expect(rgbContrast(rgbOf(vars.foreground), blend), `foreground link text over ${field}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("text on the glass fill holds 4.5:1 over the strongest field colour", () => {
     const glass = hsla(vars["glass-bg"]);
     for (const [field, blend] of fieldBlends(vars)) {

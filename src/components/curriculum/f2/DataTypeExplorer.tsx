@@ -204,7 +204,7 @@ const DataTypeExplorer: React.FC = () => {
         <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
           <div className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 {descriptor.family === "Net" ? "Resolved value" : "Stored value"}, bit {descriptor.width - 1} first
               </p>
               <span className="text-xs text-muted-foreground">Activate a bit to cycle {states === 2 ? "0 and 1" : "0, 1, x and z"}</span>

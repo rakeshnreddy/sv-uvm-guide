@@ -66,8 +66,8 @@ const verdictSr: Record<Verdict, string> = { correct: "Correct: ", partial: "Par
 const choiceButton =
   "min-h-10 rounded-lg border px-3 py-2 text-left text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 const monoText = "font-mono [font-variant-ligatures:none]";
-const codePanel = "overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]";
-const smallCaps = "text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground";
+const codePanel = "overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]";
+const smallCaps = "text-label text-muted-foreground";
 
 function ChoiceButton({
   option,
@@ -143,14 +143,14 @@ function LogBlock({ lines, label, revealed, testId, id }: { lines: string[]; lab
   const accepts = summaryMatcherAccepts(lines);
   return (
     <div className={cn(codePanel, "min-w-0")} data-testid={testId} id={id}>
-      {label ? <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p> : null}
+      {label ? <p className="mb-1 font-sans text-label text-code-muted">{label}</p> : null}
       <ol className="space-y-0.5">
         {lines.map((line, i) => {
           const matches = revealed && SUMMARY_LINE_PATTERN.test(line);
           return (
             <li key={`${i}-${line}`} className="flex flex-wrap items-baseline gap-x-2">
               <span className="whitespace-pre-wrap break-words">{line}</span>
-              {matches ? <span className="font-sans text-[11px] text-emerald-300">✓ matches ^PASS=\d+ FAIL=0$</span> : null}
+              {matches ? <span className="font-sans text-xs text-emerald-300">✓ matches ^PASS=\d+ FAIL=0$</span> : null}
             </li>
           );
         })}
@@ -412,7 +412,7 @@ function OwnerBox({ owner, name, detail, highlight }: { owner: "design" | "testb
   return (
     <div className={cn("min-w-0 border px-3 py-2 text-xs", style.className, highlight && "ring-2 ring-cyan-500")}>
       <p className="flex items-center gap-1 font-semibold">
-        <span className="rounded border border-current px-1 text-[10px]">{style.tag}</span>
+        <span className="rounded border border-current px-1 text-xs">{style.tag}</span>
         <span className={monoText}>{name}</span>
       </p>
       <p className={cn("mt-0.5", monoText)}>{detail}</p>
@@ -437,7 +437,7 @@ function ClassAnchor({ testId, note }: AnchorProps) {
         <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,140px),1fr))]">
           {["test_smoke", "test_burst"].map((t) => (
             <div key={t} className="min-w-0 space-y-1">
-              <p className="text-center text-[11px] text-muted-foreground">
+              <p className="text-center text-xs text-muted-foreground">
                 <span aria-hidden>▼ </span>new()
               </p>
               <OwnerBox owner="testbench" name={t} detail="drv = new();" />
@@ -476,7 +476,7 @@ function SharedAnchor({ testId, note, focus }: AnchorProps & { focus: "package" 
             <p className={cn("text-muted-foreground", monoText)}>valid, ready, data</p>
           </div>
         </div>
-        <p className="text-center text-[11px] text-muted-foreground">
+        <p className="text-center text-xs text-muted-foreground">
           <span aria-hidden>▼ </span>
           {focus === "package" ? "import types_pkg::*; on both sides" : "both sides connect to bus_if"}
         </p>
@@ -882,7 +882,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
 
         {answer.primary ? null : (
           <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid={`${prefix}-predict`}>
-            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+            <span className="rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
             <span>{copy.predictHint}</span>
           </p>
         )}
@@ -904,7 +904,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
         {step2Open && card.followUp ? (
           <div ref={followUpRef} role="group" aria-labelledby={followUpLabelId} className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3" data-testid={`${prefix}-followup`}>
             <p id={followUpLabelId} className="mb-2 text-sm font-semibold text-foreground">
-              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Step 2</span>
+              <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Step 2</span>
               {card.followUp.question}
             </p>
             <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
@@ -931,7 +931,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
         */}
         <div
           data-testid={revealed ? `${prefix}-sorter-feedback` : undefined}
-          className={cn(revealed && "space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm")}
+          className={cn(revealed && "space-y-2 rounded-xl border border-border bg-card p-3 text-sm")}
         >
           {/* Empty once the card is revealed; hidden then so it adds no gap above the verdict. */}
           <div aria-live="polite" hidden={revealed} data-testid={`${prefix}-live`}>

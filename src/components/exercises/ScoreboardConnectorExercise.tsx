@@ -287,7 +287,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
       >
         {ENDPOINT_GROUPS.map((c) => (
           <fieldset key={c.id} className="min-w-0 rounded-lg border border-border p-2">
-            <legend className="px-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+            <legend className="px-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
               {componentRef(c.id)} · {c.cls}
             </legend>
             <div className="flex flex-col gap-1">
@@ -311,12 +311,12 @@ const ScoreboardConnectorExercise: React.FC = () => {
                         {GLYPH[portKindOf(ep)]}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{ep.handle}</span>
-                        <span className="block truncate text-[10px] text-muted-foreground">
+                        <span className="block [overflow-wrap:anywhere]">{ep.handle}</span>
+                        <span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">
                           {ep.role} · {ep.typeName}
                         </span>
                       </span>
-                      {isSel ? <span className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">caller</span> : null}
+                      {isSel ? <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-300">caller</span> : null}
                     </button>
                   );
                 })}
@@ -360,7 +360,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
               type="button"
               onClick={() => removeConnection(line.key as string)}
               aria-label={`Remove ${line.text}`}
-              className="rounded-md border border-slate-500 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+              className="rounded-md border border-slate-500 px-2 py-0.5 text-xs text-slate-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
             >
               remove
             </button>
@@ -386,7 +386,7 @@ function AttemptVerdict({ attempt }: { attempt: ScbAttempt }) {
         {attempt.headline} <code className="break-all font-mono font-normal [font-variant-ligatures:none]">{attempt.code}</code>
       </p>
       {attempt.result.log ? (
-        <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950/90 p-2 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">
+        <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-code-surface p-2 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">
           {attempt.result.log}
         </pre>
       ) : attempt.result.kind === "compile_error" ? (
@@ -482,7 +482,7 @@ function AfterSuccess({ learner }: { learner: TlmConnection[] }) {
                   {c.index}. {c.call}
                 </span>{" "}
                 <span className="text-muted-foreground">{c.effect}</span>
-                <span className="block break-all font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{c.fullName}</span>
+                <span className="block break-all font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{c.fullName}</span>
               </li>
             ))}
           </ol>

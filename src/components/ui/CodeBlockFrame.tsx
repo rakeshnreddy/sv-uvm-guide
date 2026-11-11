@@ -30,7 +30,7 @@ const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-code-surface";
 /** 32 px to the eye; the before: box makes the target 40 px tall. */
 export const CODE_BLOCK_COPY_CLASS = cn(
-  "relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-label text-code-muted transition-colors duration-150 ease-bench",
+  "relative inline-flex print:hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-label text-code-muted transition-colors duration-150 ease-bench",
   "before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']",
   "hover:bg-code-border hover:text-code-foreground",
   focusRing,
@@ -40,12 +40,21 @@ export const CODE_BLOCK_BODY_CLASS = cn(
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
 /** The collapsed window: 28 rem, scrolling inside. */
-export const CODE_BLOCK_COLLAPSED_CLASS = "max-h-[28rem]";
+export const CODE_BLOCK_COLLAPSED_CLASS = "max-h-[28rem] print:max-h-none";
 export const CODE_BLOCK_TOGGLE_CLASS = cn(
-  "flex h-10 w-full items-center justify-center border-t border-code-border text-ui font-medium text-code-muted transition-colors duration-150 ease-bench",
+  "flex h-10 w-full items-center justify-center border-t border-code-border text-ui print:hidden font-medium text-code-muted transition-colors duration-150 ease-bench",
   "hover:bg-code-border hover:text-code-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
 );
+
+/**
+ * The scroll region's name. Where a page has several blocks with the same base name
+ * ("SystemVerilog code"), each one is numbered in page order ("SystemVerilog code, example 2"),
+ * so every region landmark has its own name.
+ */
+export function codeRegionLabel(base: string, ordinal: number | null): string {
+  return ordinal ? `${base}, example ${ordinal}` : base;
+}
 
 export const showAllLinesLabel = (lineCount: number) => `Show all ${lineCount} lines`;
 export const SHOW_FEWER_LINES_LABEL = "Show fewer lines";
@@ -127,6 +136,7 @@ export function CodeBlockFrame({
 }: CodeBlockFrameProps) {
   const bodyId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const collapsible = lineCount > collapseAfter;
   const [expanded, setExpanded] = useState(false);
@@ -158,12 +168,26 @@ export function CodeBlockFrame({
   const getText = useCallback(() => listingText(bodyRef.current), []);
   // Over 40 lines always overflows the 28 rem window, so a collapsed block is always a Tab stop.
   const focusable = scrolls || collapsed;
-  const regionLabel = `${fileName ?? label} code`;
+  const regionBase = `${fileName ?? label} code`;
+  const [ordinal, setOrdinal] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const same = Array.from(document.querySelectorAll<HTMLElement>("[data-code-block]")).filter(
+      (node) => node.dataset.codeRegionBase === regionBase,
+    );
+    setOrdinal(same.length > 1 ? same.indexOf(el) + 1 : null);
+  }, [regionBase]);
+
+  const regionLabel = codeRegionLabel(regionBase, ordinal);
 
   return (
     <div
+      ref={frameRef}
       data-testid="code-block"
       data-code-block=""
+      data-code-region-base={regionBase}
       data-language={language || undefined}
       data-collapsed={collapsible ? String(collapsed) : undefined}
       className={cn(CODE_BLOCK_FRAME_CLASS, className)}

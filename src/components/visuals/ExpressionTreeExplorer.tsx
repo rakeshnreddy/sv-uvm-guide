@@ -167,7 +167,7 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
                 aria-pressed={selected === n.id}
                 aria-label={shown ? nodeSummary(n) : `${n.label}: not evaluated yet`}
                 className={cn(
-                  "absolute flex flex-col items-center justify-center rounded-lg border px-1 font-mono text-[11px] leading-tight text-foreground transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
+                  "absolute flex flex-col items-center justify-center rounded-lg border px-1 font-mono text-xs leading-tight text-foreground transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
                   bowl ? bowlTone[bowl.kind].node : "border-border bg-card",
                   isRoot && "border-2",
                   !shown && "opacity-40",
@@ -179,7 +179,7 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
                 <span className="max-w-full truncate font-semibold">
                   {n.parenthesized ? `(${n.label})` : n.label}
                 </span>
-                <span className="max-w-full truncate text-[10px] text-muted-foreground">
+                <span className="max-w-full truncate text-xs text-muted-foreground">
                   {shown ? `${n.annotation.width}b · ${shortValue(n.annotation.value)}` : "…"}
                 </span>
                 {bowl ? (
@@ -211,7 +211,7 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
 function Decls({ decls, label = "Declarations" }: { decls: string[]; label?: string }) {
   if (decls.length === 0) return null;
   return (
-    <div className="rounded-lg bg-slate-950/90 px-3 py-2 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label={label} role="group">
+    <div className="rounded-lg bg-code-surface px-3 py-2 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label={label} role="group">
       {decls.map((d) => (
         <div key={d} className="break-words">
           {d}
@@ -332,7 +332,7 @@ function PrecedenceRound({ preset }: { preset: PrecedencePreset }) {
         <div className="space-y-3">
           <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
             <p className="mb-3 text-sm font-semibold text-foreground" id={`q-${preset.id}`}>
-              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+              <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
               Tap the operator the parser applies last: the root of the tree.
             </p>
             <SourceWithOperators
@@ -364,7 +364,7 @@ function PrecedenceRound({ preset }: { preset: PrecedencePreset }) {
         </div>
       ) : (
         <>
-          <pre className="overflow-x-auto rounded-lg bg-slate-950/90 px-3 py-2 font-mono text-sm text-slate-100 [font-variant-ligatures:none]">{shownSource}</pre>
+          <pre className="overflow-x-auto rounded-lg bg-code-surface px-3 py-2 font-mono text-sm text-code-foreground [font-variant-ligatures:none]">{shownSource}</pre>
           <PredictionPrompt
             question="Which grouping does the parser build?"
             resetKey={preset.id + preset.source}
@@ -523,7 +523,7 @@ function WidthRound({ analysis, onContrast }: { analysis: WidthAnalysis; onContr
   return (
     <div className="space-y-4">
       <Decls decls={analysis.declarations} />
-      <pre className="overflow-x-auto rounded-lg bg-slate-950/90 px-3 py-2 font-mono text-sm text-slate-100 [font-variant-ligatures:none]">{analysis.statement}</pre>
+      <pre className="overflow-x-auto rounded-lg bg-code-surface px-3 py-2 font-mono text-sm text-code-foreground [font-variant-ligatures:none]">{analysis.statement}</pre>
       <PredictionPrompt
         question={<>How wide is the bowl in which <code className="font-mono">{focus}</code> is added?</>}
         options={widthOptions(analysis).map((o) => ({ id: o.id, label: o.label, correct: o.correct, feedback: o.feedback }))}
@@ -548,18 +548,18 @@ function BowlView({ bowl, map, focusBowl }: { bowl: Bowl; map: BowlMap; focusBow
       aria-label={`Bowl ${bowl.id}: ${bowl.width} bits, ${tone.name}${bowl.reason ? `, ${bowl.reason}` : ""}`}
     >
       <p className="text-xs font-semibold text-foreground">
-        <span className={cn("mr-1.5 rounded px-1 text-[10px] font-bold", tone.tag)}>{bowl.id}</span>
+        <span className={cn("mr-1.5 rounded px-1 text-xs font-bold", tone.tag)}>{bowl.id}</span>
         {bowl.width}-bit bowl · {tone.name}
       </p>
-      {bowl.reason ? <p className="text-[11px] text-muted-foreground">{bowl.reason}</p> : null}
+      {bowl.reason ? <p className="text-xs text-muted-foreground">{bowl.reason}</p> : null}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {bowl.members.map((m) => (
-          <span key={m.text} className="rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[11px] [font-variant-ligatures:none]">
+          <span key={m.text} className="rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]">
             {m.text} <span className="text-muted-foreground">({m.width})</span>
           </span>
         ))}
         {bowl.target ? (
-          <span className="rounded-md border-2 border-cyan-600/70 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold [font-variant-ligatures:none]">
+          <span className="rounded-md border-2 border-cyan-600/70 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold [font-variant-ligatures:none]">
             target {bowl.target.text} <span className="text-muted-foreground">({bowl.target.width})</span>
           </span>
         ) : null}

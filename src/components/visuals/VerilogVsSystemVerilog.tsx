@@ -89,7 +89,8 @@ const KEYWORD_OPTIONS: PredictionOption[] = [
   },
 ];
 
-const codeClass = "overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]";
+const codeClass =
+  "overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-code text-code-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** F1C: Verilog-2001 vs SystemVerilog, side by side, plus the keyword-compatibility trap. */
 export default function VerilogVsSystemVerilog() {
@@ -124,16 +125,16 @@ export default function VerilogVsSystemVerilog() {
         </div>
 
         <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]" aria-live="polite">
-          <div className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-3">
+          <div className="min-w-0 rounded-xl border border-border bg-card p-3">
             <p className="mb-2 text-sm font-semibold text-foreground">Verilog (IEEE 1364-2001)</p>
-            <pre className={codeClass}>
+            <pre className={codeClass} tabIndex={0} role="region" aria-label="Verilog example">
               <code>{current.verilog.code}</code>
             </pre>
             <p className="mt-2 text-sm text-muted-foreground">{current.verilog.desc}</p>
           </div>
           <div className="min-w-0 rounded-xl border border-cyan-500/40 bg-cyan-500/[0.04] p-3">
             <p className="mb-2 text-sm font-semibold text-foreground">SystemVerilog (IEEE 1800)</p>
-            <pre className={codeClass}>
+            <pre className={codeClass} tabIndex={0} role="region" aria-label="SystemVerilog example">
               <code>{current.sv.code}</code>
             </pre>
             <p className="mt-2 text-sm text-muted-foreground">{current.sv.desc}</p>
@@ -142,7 +143,7 @@ export default function VerilogVsSystemVerilog() {
 
         <div className="space-y-2">
           <p className="text-sm font-semibold text-foreground">Backward compatible? Try a legacy file.</p>
-          <pre className={codeClass}>
+          <pre className={codeClass} tabIndex={0} role="region" aria-label="Legacy Verilog file">
             <code>{"// legacy.v: legal Verilog-2001\nmodule legacy;\n  reg [7:0] logic;   // 'logic' was an ordinary name\nendmodule"}</code>
           </pre>
           <p className="text-xs text-muted-foreground">

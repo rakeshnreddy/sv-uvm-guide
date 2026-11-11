@@ -641,6 +641,49 @@ export function wrapLabel(text: string, maxChars: number, maxLines = 3): string[
   return lines.length ? lines : [""];
 }
 
+/** Characters a long word may break after ("Tcreator::" | "create_by_type(" | "proxy,"). */
+const WORD_BREAK_AFTER = new Set([":", "(", ",", "/", "."]);
+
+/**
+ * Splits one wrapped line that is still wider than `maxChars`. Every piece keeps the characters it
+ * had, spaces included, so the pieces run together into exactly the line they came from.
+ */
+function splitWideLine(line: string, maxChars: number): string[] {
+  const out: string[] = [];
+  let rest = line;
+  while (rest.length > maxChars) {
+    const space = rest.lastIndexOf(" ", maxChars);
+    if (space > 0) {
+      out.push(rest.slice(0, space + 1));
+      rest = rest.slice(space + 1);
+      continue;
+    }
+    let cut = 0;
+    for (let i = Math.min(maxChars, rest.length - 1); i > 0; i -= 1) {
+      if (WORD_BREAK_AFTER.has(rest[i - 1])) {
+        cut = i;
+        break;
+      }
+    }
+    if (cut === 0) cut = rest.indexOf(" ") + 1;
+    if (cut <= 0) break;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  out.push(rest);
+  return out;
+}
+
+/**
+ * Like wrapLabel, but no line is left wider than `maxChars` when it can be broken: the long last
+ * line of a label over `maxLines` lines keeps wrapping, and a single long word breaks after "::",
+ * "(" or ",". Each piece keeps its own spaces, so the text the drawing carries (the lines run
+ * together) reads exactly as wrapLabel's lines did.
+ */
+export function wrapLabelLines(text: string, maxChars: number, maxLines = 3): string[] {
+  return wrapLabel(text, maxChars, maxLines).flatMap((line) => splitWideLine(line, maxChars));
+}
+
 export function layoutSequence(spec: SequenceSpec): SequenceLayout {
   const colW = spec.columnWidth ?? 160;
   const problems: string[] = [];
@@ -675,7 +718,7 @@ export function layoutSequence(spec: SequenceSpec): SequenceLayout {
       const b = m.to ? xOf(m.to, i, "note end") : a;
       const lo = Math.min(a, b) - SEQ_BOX_W / 2 + 6;
       const hi = Math.max(a, b) + SEQ_BOX_W / 2 - 6;
-      const lines = wrapLabel(m.label, Math.max(14, Math.floor((hi - lo - 16) / 6.2)), 4);
+      const lines = wrapLabelLines(m.label, Math.max(14, Math.floor((hi - lo - 16) / 6.2)), 4);
       const height = 14 * lines.length + 12;
       const over = m.to && m.to !== m.from ? `${nameOf(m.from)} to ${nameOf(m.to)}` : nameOf(m.from);
       const placed: PlacedMessage = { index: i, step: null, kind, label: m.label, lines, tone, y, x1: lo, x2: hi, height, text: `Note over ${over}: ${m.label}` };
@@ -685,7 +728,7 @@ export function layoutSequence(spec: SequenceSpec): SequenceLayout {
     step += 1;
     const x1 = xOf(m.from, i, "sender");
     if (kind === "self") {
-      const lines = wrapLabel(m.label, 24, 3);
+      const lines = wrapLabelLines(m.label, 24, 3);
       const height = Math.max(34, 14 * lines.length + 16);
       const prefix = spec.numbered === false ? 0 : `${step}. `.length;
       const chars = Math.max(...lines.map((line, k) => line.length + (k === 0 ? prefix : 0)));
@@ -697,7 +740,7 @@ export function layoutSequence(spec: SequenceSpec): SequenceLayout {
     const x2 = xOf(m.to, i, "receiver");
     if (m.to === m.from) problems.push(`Message ${i + 1} goes from "${m.from}" to itself; use kind "self".`);
     const span = Math.max(Math.abs(x2 - x1) - 16, 60);
-    const lines = wrapLabel(m.label, Math.max(10, Math.floor(span / 6.4)), 3);
+    const lines = wrapLabelLines(m.label, Math.max(10, Math.floor(span / 6.4)), 3);
     const height = 14 * lines.length + 14;
     const verb = kind === "return" ? "returns to" : kind === "async" ? "sends (no wait) to" : "calls";
     // `y` of a placed arrow is the arrow line itself; its label lines sit above it.

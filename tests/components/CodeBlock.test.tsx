@@ -147,6 +147,24 @@ describe("CodeBlock chrome", () => {
     expect(block).toHaveAttribute("data-collapsed", "false");
   });
 
+  it("numbers code regions that share a name, so each landmark has its own", () => {
+    render(
+      <>
+        <CodeBlock code={longListing(41)} />
+        <CodeBlock code={longListing(42)} />
+        <CodeBlock code={longListing(41)} language="bash" />
+      </>,
+    );
+    const names = screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"));
+    expect(names).toEqual(["SystemVerilog code, example 1", "SystemVerilog code, example 2", "Bash code"]);
+  });
+
+  it("keeps the copy button and the line toggle out of print", () => {
+    render(<CodeBlock code={longListing(41)} />);
+    expect(screen.getByRole("button", { name: /Copy/ })).toHaveClass("print:hidden");
+    expect(screen.getByRole("button", { name: "Show all 41 lines" })).toHaveClass("print:hidden");
+  });
+
   it("has no toggle at 40 lines or fewer", () => {
     render(<CodeBlock code={longListing(40)} />);
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();

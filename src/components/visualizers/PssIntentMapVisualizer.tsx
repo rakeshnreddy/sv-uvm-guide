@@ -144,7 +144,7 @@ export function PssIntentMapVisualizer() {
             {res.feasible && diagram ? (
               <>
                 <BlockDiagram title={`Resolved schedule for ${scenario.topAction}: ${res.instances.map((i) => `${i.id}${i.inferred ? " inferred" : ""}`).join(", ")}`} {...diagram} minWidth={300} />
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Columns run left to right in time; boxes in the same column run in parallel. Solid arrows carry a mem_buf_s from producer to consumer. Highlighted boxes tagged INFERRED were added by the tool.
                 </p>
               </>
@@ -158,7 +158,7 @@ export function PssIntentMapVisualizer() {
               {res.instances.map((inst) => (
                 <li key={inst.id} className="rounded-md border border-border/60 bg-background/50 px-3 py-2">
                   <code className="font-mono [font-variant-ligatures:none]">{inst.id}</code>
-                  {inst.inferred ? <span className="ml-2 rounded border border-dashed border-cyan-500 px-1 text-[10px] font-bold uppercase">inferred</span> : null}
+                  {inst.inferred ? <span className="ml-2 rounded border border-dashed border-cyan-500 px-1 text-label">inferred</span> : null}
                   <span className="text-muted-foreground"> — {inst.why}</span>
                 </li>
               ))}
@@ -176,12 +176,12 @@ export function PssIntentMapVisualizer() {
               ]}
             />
             <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
-              <pre data-testid="generated-code" className="min-w-0 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+              <pre data-testid="generated-code" className="min-w-0 overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
                 <code>{code.join("\n")}</code>
               </pre>
               {target === "SV" ? (
                 <div className="min-w-0 space-y-2 text-sm">
-                  <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+                  <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]">
                     <code>{SCOREBOARD_LINES.join("\n")}</code>
                   </pre>
                   <p className="text-muted-foreground">

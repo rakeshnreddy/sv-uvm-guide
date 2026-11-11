@@ -80,7 +80,7 @@ export const TIMING_ASSUMPTIONS = [
 
 const code = (text: React.ReactNode) => <code className="rounded bg-muted px-1 font-mono text-[0.95em] [font-variant-ligatures:none]">{text}</code>;
 
-const sectionLabel = "text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground";
+const sectionLabel = "text-label text-muted-foreground";
 
 function LiveLine({ text }: { text: string }) {
   return (
@@ -180,7 +180,7 @@ function edgeGlyph(e: "posedge" | "negedge" | null) {
 function EdgeTable({ from, to }: { from: Bit4; to: Bit4 }) {
   return (
     <div className="overflow-x-auto">
-      <table aria-label="Table 9-2: edge by value before (rows) and after (columns)" className="w-full table-fixed border-collapse text-center text-[11px] leading-tight">
+      <table aria-label="Table 9-2: edge by value before (rows) and after (columns)" className="w-full table-fixed border-collapse text-center text-xs leading-tight">
         <caption className="mb-1 text-left text-xs text-muted-foreground">Table 9-2 (IEEE 1800-2023 §9.4.2): rows are the LSB before, columns the LSB after.</caption>
         <thead>
           <tr>
@@ -299,7 +299,7 @@ function DrillEditor({ drill, onChange }: { drill: EventDrill; onChange: (d: Eve
         <BitButton name="en" bit={drill.en} onChange={(en) => onChange({ ...drill, en })} />
       </div>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={drill.withIffOr} onChange={(e) => onChange({ ...drill, withIffOr: e.target.checked })} className="h-4 w-4 accent-cyan-500" />
+        <input type="checkbox" checked={drill.withIffOr} onChange={(e) => onChange({ ...drill, withIffOr: e.target.checked })} className="size-5 shrink-0 accent-cyan-500" />
         Add {code(controlText(drill, "iff-or"))}
       </label>
       <p className="text-xs text-muted-foreground">Activate a bit to cycle it through 0, 1, x and z. Any change asks for a new prediction.</p>
@@ -331,7 +331,7 @@ function EventPrediction({ drill, resetKey, onReveal }: { drill: EventDrill; res
     <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
       <fieldset disabled={revealed}>
         <legend className="mb-3 text-sm font-semibold text-foreground">
-          <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+          <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
           Tick every event control that wakes for this change.
         </legend>
         <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
@@ -351,7 +351,7 @@ function EventPrediction({ drill, resetKey, onReveal }: { drill: EventDrill; res
                   type="checkbox"
                   checked={isTicked}
                   onChange={() => setTicked((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]))}
-                  className="mt-1 h-4 w-4 accent-amber-500"
+                  className="mt-px size-5 shrink-0 accent-amber-500"
                 />
                 <span className="flex-1 font-mono [font-variant-ligatures:none]">{v.text}</span>
                 {revealed ? <span className="text-xs font-semibold">{v.fires ? "wakes" : "no wake"}</span> : null}

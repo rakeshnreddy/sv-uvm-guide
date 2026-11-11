@@ -191,7 +191,7 @@ export function ProtocolAnalogyExplorer() {
           />
         )}
 
-        <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+        <div className="rounded-xl border border-border bg-card p-3">
           <div className="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-muted-foreground">
             <span>Master (customer)</span>
             <span>Slave (store)</span>
@@ -220,7 +220,7 @@ export function ProtocolAnalogyExplorer() {
                 </span>
                 {current.breaksDown}
               </p>
-              <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{current.source}</p>
+              <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{current.source}</p>
             </>
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -262,7 +262,7 @@ export function ProtocolAnalogyExplorer() {
           </div>
         </div>
 
-        <aside className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm text-foreground" aria-label="VALID and READY in the analogy">
+        <aside className="rounded-xl border border-border bg-card p-3 text-sm text-foreground" aria-label="VALID and READY in the analogy">
           <p>
             <span className="font-semibold">VALID and READY: </span>
             {HANDSHAKE_ANALOGY.analogy}
@@ -273,7 +273,7 @@ export function ProtocolAnalogyExplorer() {
             </span>
             {HANDSHAKE_ANALOGY.breaksDown}
           </p>
-          <p className="mt-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{HANDSHAKE_ANALOGY.source}</p>
+          <p className="mt-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{HANDSHAKE_ANALOGY.source}</p>
         </aside>
       </VisualFrame>
     </div>

@@ -201,7 +201,7 @@ function Cell({ a, b, view }: { a: number; b: number; view: CellView }) {
     <li
       aria-label={label}
       className={cn(
-        "flex h-14 min-w-0 flex-col items-center justify-center rounded-lg border-2 font-mono text-[11px] transition-colors duration-200 motion-reduce:transition-none sm:h-16 sm:text-xs [font-variant-ligatures:none]",
+        "flex h-14 min-w-0 flex-col items-center justify-center rounded-lg border-2 font-mono text-xs transition-colors duration-200 motion-reduce:transition-none sm:h-16 sm:text-xs [font-variant-ligatures:none]",
         view.kind === "space" && "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
         view.kind === "legal" && "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
         view.kind === "prob" && "border-cyan-500 bg-cyan-500/10 text-cyan-900 dark:text-cyan-100",
@@ -285,7 +285,7 @@ export default function ConstraintSolverVisualizer() {
             <CodeTrace label={`${current.title}: generated from the model`} lines={lines} />
 
             <div className="rounded-lg border border-border/70 bg-muted/20 p-4" aria-live="polite">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-1 text-label text-muted-foreground">
                 Step {step + 1} of {current.steps.length}
               </p>
               <p className="text-sm text-foreground">{current.steps[step].text}</p>
@@ -312,7 +312,7 @@ export default function ConstraintSolverVisualizer() {
           </div>
 
           <div className="min-w-0">
-            <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">State space (A × B)</p>
+            <p className="mb-3 text-center text-label text-muted-foreground">State space (A × B)</p>
             <ul aria-label={`State space at step ${step + 1}`} className="mx-auto grid max-w-[18rem] grid-cols-4 gap-2">
               {[0, 1, 2, 3].flatMap((a) => [0, 1, 2, 3].map((b) => <Cell key={cellKey(a, b)} a={a} b={b} view={current.steps[step].cell(a, b)} />))}
             </ul>

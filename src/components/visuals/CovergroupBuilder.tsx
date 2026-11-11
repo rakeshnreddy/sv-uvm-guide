@@ -495,14 +495,14 @@ function BinsTab({ initialPreset }: { initialPreset: BuilderPresetId }) {
                 )}
               >
                 <span className="font-mono text-sm font-semibold">{v}</span>
-                <span aria-hidden className="max-w-full truncate font-mono text-[10px] [font-variant-ligatures:none]">
+                <span aria-hidden className="max-w-full truncate font-mono text-xs [font-variant-ligatures:none]">
                   {cell.glyph} {cell.text}
                 </span>
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-muted-foreground">● counted bin · ◌ default bin (not counted) · ⊘ ignore_bins · ✕ illegal_bins (run-time error) · — no bin (not counted)</p>
+        <p className="text-xs text-muted-foreground">● counted bin · ◌ default bin (not counted) · ⊘ ignore_bins · ✕ illegal_bins (run-time error) · — no bin (not counted)</p>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -525,7 +525,7 @@ function BinsTab({ initialPreset }: { initialPreset: BuilderPresetId }) {
         <div className="min-w-0">
           <CodeTrace label="Generated covergroup" lines={lines} activeKey={lastHit ? `bin:${lastHit.declName}` : undefined} />
         </div>
-        <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
           <div aria-live="polite">
             <p className="font-mono text-[12px] font-semibold text-foreground [font-variant-ligatures:none]">
               cp_data: {item.covered} / {item.total} counted bins = {item.excluded ? "excluded (no countable bins)" : `${Math.round(item.percent * 10) / 10}%`}
@@ -556,7 +556,7 @@ function BinsTab({ initialPreset }: { initialPreset: BuilderPresetId }) {
                   : `○ hole (${b.hits}/${item.atLeast})`;
               return (
                 <li key={b.key} className="flex flex-wrap items-baseline gap-x-2 text-xs">
-                  <span className={cn("rounded border px-1 font-mono text-[10px] [font-variant-ligatures:none]", badge.className)}>
+                  <span className={cn("rounded border px-1 font-mono text-xs [font-variant-ligatures:none]", badge.className)}>
                     {badge.glyph} {badge.label}
                   </span>
                   <span className="font-mono text-foreground [font-variant-ligatures:none]">{b.name}</span>
@@ -569,7 +569,7 @@ function BinsTab({ initialPreset }: { initialPreset: BuilderPresetId }) {
             })}
           </ul>
           {history.length > 0 ? (
-            <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+            <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
               samples: {history.slice(-24).join(", ")}
               {history.length > 24 ? " …" : ""}
             </p>

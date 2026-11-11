@@ -147,7 +147,7 @@ function MixedStepView({ run, playback }: { run: QueueProgramRun; playback: Play
         stepNoun="Queue step"
         describeStep={(k) => (k === 0 ? "start" : run.steps[k - 1].result.code)}
       />
-      <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+      <div className="space-y-2 rounded-xl border border-border bg-card p-3">
         <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{step ? step.result.code : "int q[$] = '{1, 2, 3};"}</p>
         <ElementStrip name="q" values={values} changed={step?.result.changedIndices} />
         {step?.result.returned ? (
@@ -159,7 +159,7 @@ function MixedStepView({ run, playback }: { run: QueueProgramRun; playback: Play
           step.shifts.length ? (
             <ul aria-label="Index shifts" className="flex flex-wrap gap-1.5">
               {step.shifts.map((sh) => (
-                <li key={`${sh.from}-${sh.to}`} className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] text-amber-900 [font-variant-ligatures:none] dark:text-amber-100">
+                <li key={`${sh.from}-${sh.to}`} className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 font-mono text-xs text-amber-900 [font-variant-ligatures:none] dark:text-amber-100">
                   {formatElem(sh.value)}: [{sh.from}] → [{sh.to}]
                 </li>
               ))}
@@ -268,12 +268,12 @@ export function QueueOperationLab({ initialScenario }: QueueOperationLabProps = 
   const results = (
     <div className="space-y-3">
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Final · int q[$]</p>
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="mb-2 text-label text-muted-foreground">Final · int q[$]</p>
           <ElementStrip name="q" values={comparison.unboundedFinal} />
         </div>
         <div className="rounded-xl border border-amber-500/50 bg-amber-500/[0.05] p-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="mb-2 text-label text-muted-foreground">
             Final · int bq[$:{n}] · {comparison.warnings} warning{comparison.warnings === 1 ? "" : "s"}
           </p>
           <ElementStrip name="bq" values={comparison.boundedFinal} bound={n} />
@@ -292,7 +292,7 @@ export function QueueOperationLab({ initialScenario }: QueueOperationLabProps = 
             <p className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-semibold text-muted-foreground">Step {i + 1}</span>
               <code className="font-mono text-foreground [font-variant-ligatures:none]">{opSuffix(s.op).replace(/^\./, "")}</code>
-              {i === comparison.firstDivergence ? <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-100">◆ first divergence</span> : null}
+              {i === comparison.firstDivergence ? <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-label text-amber-900 dark:text-amber-100">◆ first divergence</span> : null}
               {!s.diverged ? <span className="text-muted-foreground">= same contents</span> : <span className="text-amber-800 dark:text-amber-200">≠ contents differ</span>}
             </p>
             <ElementStrip name="q" values={s.unbounded.after.values} changed={s.unbounded.changedIndices} />
@@ -357,7 +357,7 @@ export function QueueOperationLab({ initialScenario }: QueueOperationLabProps = 
 
         <CodeTrace label="Program (runs on both queues)" lines={codeLines} />
 
-        <details className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+        <details className="rounded-xl border border-border bg-card p-3 text-sm">
           <summary className="cursor-pointer font-medium text-foreground">Edit the program</summary>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">

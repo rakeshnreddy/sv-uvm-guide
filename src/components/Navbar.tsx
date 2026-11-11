@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Bell, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
 
+import HeaderGlassLayer from "@/components/layout/HeaderGlassLayer";
 import NavDisclosure from "@/components/layout/NavDisclosure";
 import { currentChild, navLinkCurrent, topItemCurrent, yourLearningLinks } from "@/components/layout/nav-current";
 import {
@@ -12,13 +13,11 @@ import {
   DIALOG_BACKDROP_CLASS,
   FRAME_BESIDE_SLOT_CLASS,
   GLASS_HEADER_CLASS,
-  HEADER_BAR_CLASS,
   MENU_SURFACE_CLASS,
   MOBILE_GROUP_HEADING_CLASS,
   OUTLINE_SLOT_CLASS,
   PAGE_FRAME_CLASS,
   barLinkClass,
-  headerBarFrameClass,
   mobileRowClass,
 } from "@/components/layout/nav-styles";
 import { useDismiss } from "@/components/layout/use-dismiss";
@@ -543,11 +542,7 @@ const Navbar = () => {
     <>
       <header className={cn("sticky top-0 z-40 h-16 w-full text-foreground print:hidden", GLASS_HEADER_CLASS)}>
         {/* The glass bar: a background layer inside the 64 px row, never a wrapper around its controls. */}
-        <div aria-hidden="true" data-header-glass="" className="pointer-events-none absolute inset-0">
-          <div className={headerBarFrameClass(docked ? "docked" : "frame")}>
-            <div className={HEADER_BAR_CLASS} data-header-bar="" />
-          </div>
-        </div>
+        <HeaderGlassLayer layout={docked ? "docked" : "frame"} />
         <div className="relative flex h-full w-full">
           {docked && (
             <div className={OUTLINE_SLOT_CLASS} data-header-slot="outline">

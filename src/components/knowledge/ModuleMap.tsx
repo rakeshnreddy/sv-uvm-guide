@@ -12,8 +12,10 @@ import {
   type ConceptNode,
   type ConceptTier,
   type MapKey,
+  TIER_NAMES,
 } from '@/lib/knowledge-graph-engine';
 import { milestoneName } from '@/lib/learning-paths';
+import { TIER_LINKS } from '@/lib/site-links';
 import type { TierNumber } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 import { ChoiceChips } from './ChoiceChips';
@@ -39,12 +41,18 @@ interface ModuleMapProps {
   onSelect: (node: ConceptNode) => void;
 }
 
+/** A concept tier as the rest of the site names it ("Tier 1: Foundations"), from the navigation config. */
+export function tierDisplayName(tier: ConceptTier): string {
+  return TIER_LINKS[TIER_NAMES.indexOf(tier)]?.label ?? tier;
+}
+
 /**
  * The module map: one tier at a time, lanes as columns, modules in manifest
  * order. Selecting a module marks its direct prerequisites (▲ first) and the
  * modules that build on it (▼ next) and opens its details below. Arrow keys
  * move between modules (roving tabindex); Enter or Space selects.
  */
+
 export default function ModuleMap({ graph, tier, onTierChange, selectedId, onSelect }: ModuleMapProps) {
   const lanes = useMemo(() => mapLanes(graph, tier), [graph, tier]);
   const tierModules = useMemo(() => lanes.flatMap((lane) => lane.modules), [lanes]);
@@ -188,14 +196,14 @@ export function ModuleDetails({ graph, module, onSelect }: ModuleDetailsProps) {
       className="min-h-10 w-full rounded-lg border border-border px-3 py-1.5 text-left text-sm transition-colors duration-150 ease-bench hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {node.name}
-      {node.tier !== module.tier && <span className="text-muted-foreground"> ({node.tier})</span>}
+      {node.tier !== module.tier && <span className="text-muted-foreground"> ({tierDisplayName(node.tier)})</span>}
     </button>
   );
 
   return (
     <section aria-labelledby={headingId} className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-5">
       <p className="text-xs font-medium text-subtle">
-        {module.tier} · {module.lane}
+        {tierDisplayName(module.tier)} · {module.lane}
         {module.track === 'elective' ? ' · elective' : ''}
       </p>
       <h3 id={headingId} className="mt-1 text-h3 text-foreground">

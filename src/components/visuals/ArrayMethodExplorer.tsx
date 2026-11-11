@@ -48,7 +48,7 @@ const ASSUMPTIONS = [
 function DataStrip({ array, highlight, label }: { array: MethodArray; highlight: number[]; label: string }) {
   return (
     <div role="group" aria-label={`${label}: ${array.values.map((v, i) => `${array.kind === "assoc" ? `"${array.keys[i]}"` : `[${i}]`} ${v}`).join(", ")}`} className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      <span className="mr-1 text-label text-muted-foreground">{label}</span>
       {array.values.map((v, i) => (
         <span key={i} className={cn("rounded-md", highlight.includes(i) && "outline outline-2 outline-offset-1 outline-cyan-500")}>
           <ValueChip name={array.kind === "assoc" ? `"${array.keys[i]}"` : `[${i}]`} value={v} />
@@ -187,9 +187,9 @@ export default function ArrayMethodExplorer() {
           question={<span className="[font-variant-ligatures:none]">{prediction.question.replace(/`/g, "")}</span>}
           options={prediction.options}
         >
-          <div className="space-y-3 rounded-xl border border-border/70 bg-background/60 p-3 text-sm" aria-live="polite">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
             <p className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Returns</span>
+              <span className="text-label text-muted-foreground">Returns</span>
               <code className="rounded-md border border-indigo-400/60 bg-indigo-500/10 px-2 py-0.5 font-mono text-xs text-indigo-800 [font-variant-ligatures:none] dark:text-indigo-100">
                 {outcome.returnType}
               </code>

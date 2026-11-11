@@ -190,7 +190,7 @@ export function ReorderList({ items, order, onChange, label, lockedIds = [], mar
                 ) : null}
               </div>
               {isLocked ? (
-                <span className="shrink-0 rounded border border-dashed border-border px-2 py-1 text-[11px] font-medium text-muted-foreground">Fixed position</span>
+                <span className="shrink-0 rounded border border-dashed border-border px-2 py-1 text-xs font-medium text-muted-foreground">Fixed position</span>
               ) : (
                 <div className="flex shrink-0 gap-1">
                   <button

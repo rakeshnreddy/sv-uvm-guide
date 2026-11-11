@@ -7,7 +7,7 @@ type AgentBuilderTestApi = {
 test.describe('Exercise Feedback Flow', () => {
   test('UVM phase sorter provides feedback and retry', async ({ page }) => {
     await page.goto('/exercises/uvm-phase-sorter');
-    await page.getByRole('button', { name: 'Check Order' }).click();
+    await page.getByRole('button', { name: 'Check the order' }).click();
     const feedback = page.getByTestId('exercise-feedback');
     await expect(feedback).toContainText('Score:');
     await page.getByRole('button', { name: /shuffle again/i }).click();

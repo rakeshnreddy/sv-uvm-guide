@@ -368,7 +368,7 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
         ) : null}
 
         {mode === "debug" ? (
-          <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+          <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
             <p>
               <strong>Spec:</strong> <Rich text={debugCase.spec} />
             </p>
@@ -422,7 +422,7 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
         {mode !== "debug" && !revealed && parsed.ok ? (
           <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3">
             <p className="text-sm font-semibold text-foreground">
-              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+              <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
               Mark what each attempt reports. Each button cycles ? → ✓ {statusText.PASS} → ✕ {statusText.FAIL} → ○ {statusText.VACUOUS} → … {statusText.PENDING}
               {parsed.spec.disable ? ` → ⊘ ${statusText.DISABLED}` : ""}.
             </p>
@@ -572,7 +572,7 @@ function AttemptExplanation({ attempt, predicted, spec }: { attempt: SvaAttempt;
         <ol className="mt-2 space-y-1 text-foreground" aria-label={`Step-by-step match for attempt A${attempt.start}`}>
           {attempt.steps.map((s, i) => (
             <li key={i} className="flex flex-wrap items-baseline gap-x-2">
-              <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">{edgeLabel(s)}</span>
+              <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">{edgeLabel(s)}</span>
               <span aria-hidden className={s.kind === "fail" ? "text-rose-600 dark:text-rose-400" : s.kind === "match" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
                 {stepGlyph[s.kind]}
               </span>
@@ -709,7 +709,7 @@ function LogicRadios({ legend, name, value, onChange }: { legend: string; name: 
               aria-label={`${legend} ${o.label}`}
               checked={value !== undefined && String(value) === o.value}
               onChange={() => onChange(toLogic(o.value))}
-              className="accent-amber-500"
+              className="size-5 shrink-0 accent-amber-500"
             />
             {o.label}
           </label>
@@ -891,7 +891,7 @@ function SvaSamplingLab() {
           <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3">
             <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-foreground">
-                <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+                <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
                 Edge {cursor}: what does <code>a_q_was_low</code> report?
               </legend>
               <div className="flex flex-wrap gap-2">
@@ -909,7 +909,7 @@ function SvaSamplingLab() {
                       value={v}
                       checked={draft.verdict === v}
                       onChange={() => setDraft((p) => ({ ...p, verdict: v }))}
-                      className="accent-amber-500"
+                      className="size-5 shrink-0 accent-amber-500"
                     />
                     {v === "PASS" ? "pass" : v === "FAIL" ? "fail" : "disabled"}
                   </label>

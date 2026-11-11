@@ -46,7 +46,7 @@ export function PredictionPrompt({ question, options, children, resetKey, onComm
     <div className={cn("rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4", className)}>
       <fieldset disabled={revealed}>
         <legend className="mb-3 text-sm font-semibold text-foreground">
-          <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">
+          <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">
             Predict
           </span>
           {question}
@@ -58,7 +58,7 @@ export function PredictionPrompt({ question, options, children, resetKey, onComm
               <label
                 key={option.id}
                 className={cn(
-                  "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-background/50 p-3 text-sm transition-colors",
+                  "flex min-h-10 cursor-pointer items-start gap-2 rounded-lg border border-border bg-card p-3 text-sm transition-colors",
                   selected === option.id && !revealed && "border-amber-500/70 bg-amber-500/10",
                   revealed && option.correct && "border-emerald-500/70 bg-emerald-500/10",
                   revealed && isChosen && !option.correct && "border-rose-500/70 bg-rose-500/10",
@@ -71,7 +71,7 @@ export function PredictionPrompt({ question, options, children, resetKey, onComm
                   value={option.id}
                   checked={selected === option.id}
                   onChange={() => setSelected(option.id)}
-                  className="mt-1 accent-amber-500"
+                  className="mt-px size-5 shrink-0 accent-amber-500"
                 />
                 <span className="flex-1">{option.label}</span>
                 {revealed && option.correct ? <span aria-label="correct answer">✓</span> : null}

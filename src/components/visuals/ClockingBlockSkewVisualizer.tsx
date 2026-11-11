@@ -142,7 +142,7 @@ function Timeline({ scenario, run, showClockvar }: TimelineProps) {
   ].join(" ");
 
   return (
-    <figure className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-2">
+    <figure className="min-w-0 rounded-xl border border-border bg-card p-2">
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={ariaLabel} className="block w-full min-w-[520px]">
           <defs>
@@ -279,7 +279,7 @@ function Timeline({ scenario, run, showClockvar }: TimelineProps) {
           ))}
         </svg>
       </div>
-      <figcaption className="mt-1 text-[11px] text-muted-foreground">
+      <figcaption className="mt-1 text-xs text-muted-foreground">
         x-axis: simulation time in {clock.unit}. ▼ input sample, ◆ synchronous drive lands (Re-NBA), ✓ DUT flop captures din. Hatched = X. The cyan edge is
         the one you predict.
       </figcaption>
@@ -380,7 +380,7 @@ export default function ClockingBlockSkewVisualizer() {
             <p className="text-xs font-semibold text-foreground">Drive statement at edge {scenario.driveEdge}</p>
             <SegmentedControl label="Drive statement form" mono options={DRIVE_FORMS.map((o) => ({ value: o.id, label: o.label }))} value={driveForm} onChange={setDriveForm} />
             <label className="flex items-center gap-2">
-              <input type="checkbox" className="accent-amber-500" checked={hasDefaultClocking} onChange={(e) => setHasDefaultClocking(e.target.checked)} />
+              <input type="checkbox" className="size-5 shrink-0 accent-amber-500" checked={hasDefaultClocking} onChange={(e) => setHasDefaultClocking(e.target.checked)} />
               Declare <code className="font-mono [font-variant-ligatures:none]">cb</code> as <code className="font-mono">default clocking</code>
             </label>
           </div>

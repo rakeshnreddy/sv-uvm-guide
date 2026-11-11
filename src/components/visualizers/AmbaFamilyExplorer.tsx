@@ -42,7 +42,7 @@ const supportTone: Record<Support, string> = {
 function SupportBadge({ support, compact = false }: { support: Support; compact?: boolean }) {
   const cue = SUPPORT_CUES[support];
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold", supportTone[support])}>
+    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold", supportTone[support])}>
       <span aria-hidden>{cue.glyph}</span>
       {compact ? <span>{support === "n/a" ? "n/a" : cue.word.toLowerCase()}</span> : cue.word}
     </span>
@@ -52,7 +52,7 @@ function SupportBadge({ support, compact = false }: { support: Support; compact?
 function LaneStrip({ protocol }: { protocol: AmbaProtocol }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Channels and phases, initiator view</p>
+      <p className="text-label text-muted-foreground">Channels and phases, initiator view</p>
       <ul className="mt-2 flex flex-wrap gap-2" aria-label={`${protocol.name} channels and phases`}>
         {protocol.lanes.map((lane) => (
           <li
@@ -78,12 +78,12 @@ function LaneStrip({ protocol }: { protocol: AmbaProtocol }) {
 
 function ProtocolCard({ protocol }: { protocol: AmbaProtocol }) {
   return (
-    <article className="space-y-4 rounded-xl border border-border/70 bg-background/60 p-3 sm:p-4" aria-label={`${protocol.name} profile`}>
+    <article className="space-y-4 rounded-xl border border-border bg-card p-3 sm:p-4" aria-label={`${protocol.name} profile`}>
       <header>
         <h4 className="text-base font-semibold text-foreground">
           {protocol.name} <span className="font-normal text-muted-foreground">· {protocol.fullName}</span>
         </h4>
-        <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{protocol.spec}</p>
+        <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{protocol.spec}</p>
         <p className="mt-2 text-sm text-foreground">{protocol.summary}</p>
       </header>
 
@@ -100,7 +100,7 @@ function ProtocolCard({ protocol }: { protocol: AmbaProtocol }) {
                   {fact.support ? <SupportBadge support={fact.support} /> : null}
                   <span className="min-w-0 flex-1">{fact.text}</span>
                 </div>
-                <p className="mt-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{fact.source}</p>
+                <p className="mt-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{fact.source}</p>
               </dd>
             </div>
           );
@@ -123,7 +123,7 @@ function ProtocolCard({ protocol }: { protocol: AmbaProtocol }) {
 function CompareTable() {
   const keys = FACT_KEYS.filter((k) => k !== "channels");
   return (
-    <details className="rounded-xl border border-border/70 bg-background/40 p-3">
+    <details className="rounded-xl border border-border bg-card p-3">
       <summary className="cursor-pointer text-sm font-semibold text-foreground">Compare all {AMBA_PROTOCOLS.length} protocols side by side</summary>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[760px] border-collapse text-xs">
@@ -263,7 +263,7 @@ export function AmbaFamilyExplorer() {
 
         <div className="space-y-3 border-t border-border/60 pt-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Transfer</p>
+            <p className="text-label text-muted-foreground">Transfer</p>
             <h4 className="text-base font-semibold text-foreground">Which protocol fits this block?</h4>
           </div>
           <SegmentedControl

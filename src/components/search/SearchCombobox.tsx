@@ -368,7 +368,8 @@ export default function SearchCombobox({
             })}
           </ul>
           {listVisible && (
-            <p aria-hidden="true" className="border-t border-glass-border px-3 py-2 text-xs text-muted-foreground">
+            // Only where there is a keyboard and a fine pointer: on touch phones these keys do not exist.
+            <p aria-hidden="true" data-search-key-hint="" className="hidden border-t border-glass-border px-3 py-2 text-xs text-muted-foreground [@media(hover:hover)_and_(pointer:fine)]:block">
               ↑ ↓ to choose · Enter to open · Esc to close
             </p>
           )}

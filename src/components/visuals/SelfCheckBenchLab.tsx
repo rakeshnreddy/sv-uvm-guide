@@ -326,12 +326,12 @@ function ExpChip({ exp, state }: { exp: Expectation; state: ChipState }) {
       )}
       aria-label={`${label}${CHIP_SPOKEN[state]}`}
     >
-      <span className="text-[11px] font-sans font-bold uppercase tracking-wider opacity-80">
+      <span className="text-label font-sans opacity-80">
         {tag}
         {state === "pushed" ? <span aria-hidden> ▲</span> : null}
       </span>
       <span className="font-semibold">{formatDec(exp.sum)}</span>
-      <span className="text-[11px] opacity-80">
+      <span className="text-xs opacity-80">
         {formatDec(exp.a)}+{formatDec(exp.b)}
       </span>
     </li>
@@ -344,9 +344,9 @@ export function QueueStrip({ step }: { step: Step }) {
   const poppedState: ChipState | null = edge && popped ? (passWithoutMatch(edge.checker) ? "popped-x" : edge.checker.kind === "pass" ? "popped-pass" : "popped-fail") : null;
   const pushedIds = new Set(edge?.pushed.map((e) => e.id) ?? []);
   return (
-    <div className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-2">
+    <div className="min-w-0 rounded-xl border border-border bg-card p-2">
       <style>{CHIP_KEYFRAMES}</style>
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="mb-1 text-label text-muted-foreground">
         exp_q[$] <span className="normal-case tracking-normal">· oldest first · after this {edge ? "edge" : "step"} · {step.queueAfter.length} waiting</span>
       </p>
       <ol aria-label={`exp_q after this step, oldest first: ${step.queueAfter.length ? step.queueAfter.map((e) => formatDec(e.sum)).join(", ") : "empty"}`} className="flex min-h-12 items-stretch gap-2 overflow-x-auto pb-1">
@@ -385,8 +385,8 @@ function LogPanel({ lines, label = "Simulation log", shownPane }: { lines: LogLi
     if (box) box.scrollTop = box.scrollHeight;
   }, [count, shownPane]);
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-      <p className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+    <div className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+      <p className="border-b border-code-border px-3 py-2 text-label text-code-muted">{label}</p>
       <div
         ref={ref}
         role="region"
@@ -395,7 +395,7 @@ function LogPanel({ lines, label = "Simulation log", shownPane }: { lines: LogLi
         className="max-h-56 overflow-auto px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
       >
         <ol aria-label={label} className="font-mono text-[12px] leading-6 [font-variant-ligatures:none]">
-          {lines.length === 0 ? <li className="text-slate-400">(nothing printed yet)</li> : null}
+          {lines.length === 0 ? <li className="text-code-muted">(nothing printed yet)</li> : null}
           {lines.map((l, i) => (
             <li
               key={i}
@@ -554,7 +554,7 @@ function AnatomyDiagram({ step, selectedId, onSelect, hidden }: { step: Step; se
         minWidth={420}
         spreadAnchors
       />
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {hidden === "outputs"
           ? "The lit block is the part of the bench acting at this step. The DUT's and the checker's blocks, and the tokens, open when you predict. Select a block to jump to its code."
           : hidden === "queue"
@@ -773,11 +773,11 @@ function StepLab({ preset: initialPreset, bug, focus, ask }: { preset: PresetId;
     >
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">+TEST=</p>
+          <p className="text-label text-muted-foreground">+TEST=</p>
           <SegmentedControl label="Test" mono options={PRESETS.map((p) => ({ value: p, label: p }))} value={preset} onChange={setPreset} />
         </div>
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">DUT</p>
+          <p className="text-label text-muted-foreground">DUT</p>
           <SegmentedControl
             label="DUT"
             mono
@@ -797,7 +797,7 @@ function StepLab({ preset: initialPreset, bug, focus, ask }: { preset: PresetId;
           </button>
           {showAdvanced ? (
             <label className="flex min-h-10 items-center gap-2 text-xs text-foreground">
-              <input type="checkbox" checked={effectiveHold} disabled={preset === "hold"} onChange={(e) => setHoldCheck(e.target.checked)} className="accent-cyan-500" />
+              <input type="checkbox" checked={effectiveHold} disabled={preset === "hold"} onChange={(e) => setHoldCheck(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
               kata hold check (registers <span className="font-mono">test_hold</span>){preset === "hold" ? " — required by +TEST=hold" : ""}
             </label>
           ) : null}
@@ -954,7 +954,7 @@ function MatrixLab({ scope }: { scope?: "plan" }) {
             </GatedPrompt>
             {holdGateOpen ? (
               <label className="flex min-h-10 items-center gap-2 text-sm text-foreground">
-                <input type="checkbox" checked={holdCheck} onChange={(e) => setHoldCheck(e.target.checked)} className="accent-cyan-500" />
+                <input type="checkbox" checked={holdCheck} onChange={(e) => setHoldCheck(e.target.checked)} className="size-5 shrink-0 accent-cyan-500" />
                 Add the kata&apos;s hold check to the checker (and register <span className="font-mono">test_hold</span>)
               </label>
             ) : null}
@@ -996,7 +996,7 @@ function MatrixLab({ scope }: { scope?: "plan" }) {
       </div>
 
       {revealed && selected && selectedCell ? (
-        <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+        <div className="space-y-3 rounded-xl border border-border bg-card p-3">
           <p
             ref={detailHeadingRef}
             tabIndex={-1}
@@ -1155,7 +1155,7 @@ function DebugClinic() {
             <div className="mt-2">
               {/* The edge selectors also give keyboard users a way to pan this scroller. */}
               <BenchWaveform key={waveMount} run={run} cursor={waveEdge ?? run.firstFailEdge ?? undefined} showOutputs explainCause={found} onSelectEdge={setWaveEdge} />
-              <p aria-live="polite" className="mt-1 font-mono text-[11px] text-foreground [font-variant-ligatures:none]">
+              <p aria-live="polite" className="mt-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">
                 {readout
                   ? `Edge ${readout.edge} (${formatTime(readout.time)}): rst_n=${formatBit(readout.sampled.rst_n)} in_valid=${formatBit(readout.sampled.in_valid)} a=${formatDec(readout.sampled.a)} b=${formatDec(readout.sampled.b)} out_valid=${formatBit(readout.sampled.out_valid)} sum=${formatDec(readout.sampled.sum)}`
                   : null}
@@ -1193,7 +1193,7 @@ function DebugClinic() {
                   setFixId(null);
                 }}
                 className={cn(
-                  "inline-flex min-h-10 items-center rounded-md border px-2 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:min-h-0 sm:py-0.5",
+                  "inline-flex min-h-10 items-center rounded-md border px-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:min-h-0 sm:py-0.5",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -1229,7 +1229,7 @@ function DebugClinic() {
                     setPickedFixId(f.id);
                     setFixId(null);
                   }}
-                  className="mt-1 accent-cyan-500"
+                  className="size-5 shrink-0 mt-px accent-cyan-500"
                 />
                 <span className="font-mono text-[13px] [font-variant-ligatures:none]">{f.label}</span>
               </label>

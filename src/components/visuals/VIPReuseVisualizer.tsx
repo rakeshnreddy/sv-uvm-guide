@@ -175,7 +175,7 @@ export default function VIPReuseVisualizer() {
                     type="checkbox"
                     checked={!config.callsSuperBuild}
                     onChange={(e) => setConfig((c) => ({ ...c, callsSuperBuild: !e.target.checked }))}
-                    className="h-4 w-4 accent-cyan-500"
+                    className="size-5 shrink-0 accent-cyan-500"
                   />
                   Forget super.build_phase(phase)
                 </label>
@@ -184,7 +184,7 @@ export default function VIPReuseVisualizer() {
                     type="checkbox"
                     checked={!config.guardedConnect}
                     onChange={(e) => setConfig((c) => ({ ...c, guardedConnect: !e.target.checked }))}
-                    className="h-4 w-4 accent-cyan-500"
+                    className="size-5 shrink-0 accent-cyan-500"
                   />
                   Drop the is_active guard in connect_phase
                 </label>

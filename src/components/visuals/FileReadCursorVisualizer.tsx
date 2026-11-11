@@ -112,7 +112,7 @@ function MultiPrediction({ questions, resetKey, children }: { questions: MultiQu
   return (
     <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3 sm:p-4">
       <p className="mb-3 text-sm font-semibold text-foreground">
-        <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+        <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
         Commit to an answer before you step through the run.
       </p>
       <div className="space-y-4">
@@ -139,7 +139,7 @@ function MultiPrediction({ questions, resetKey, children }: { questions: MultiQu
                       name={`${groupId}-${q.id}`}
                       checked={answers[q.id] === o.id}
                       onChange={() => setAnswers((a) => ({ ...a, [q.id]: o.id }))}
-                      className="mt-1 accent-amber-500"
+                      className="size-5 shrink-0 mt-px accent-amber-500"
                     />
                     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-[13px] [font-variant-ligatures:none]">{o.label}</span>
                     {revealed && o.correct ? <span aria-label="correct answer">✓</span> : null}
@@ -249,7 +249,7 @@ function Tape({
       >
         {CELL_GLYPH(ch)}
         {cursor ? (
-          <span aria-hidden className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] text-amber-600 dark:text-amber-300">
+          <span aria-hidden className="absolute -top-3 left-1/2 -translate-x-1/2 text-xs text-amber-600 dark:text-amber-300">
             ▼
           </span>
         ) : null}
@@ -257,7 +257,7 @@ function Tape({
     );
   };
   return (
-    <figure className="rounded-xl border border-border/70 bg-background/40 p-3" data-testid={testId}>
+    <figure className="rounded-xl border border-border bg-card p-3" data-testid={testId}>
       <figcaption className="mb-2 flex flex-wrap items-baseline justify-between gap-2 text-xs text-muted-foreground">
         <span className="font-mono font-semibold text-foreground">{name}</span>
         {isLine ? (
@@ -278,13 +278,13 @@ function Tape({
               {r === rows.length - 1 && showEofCell ? (
                 <span
                   className={cn(
-                    "relative inline-flex h-8 items-center justify-center rounded border border-dashed border-slate-400/70 px-1.5 text-[10px] font-bold tracking-wider text-muted-foreground",
+                    "relative inline-flex h-8 items-center justify-center rounded border border-dashed border-slate-400/70 px-1.5 text-xs font-bold tracking-wider text-muted-foreground",
                     pos === text.length && "ring-2 ring-amber-500 ring-offset-1 ring-offset-background",
                   )}
                 >
                   EOF
                   {pos === text.length ? (
-                    <span aria-hidden className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] text-amber-600 dark:text-amber-300">
+                    <span aria-hidden className="absolute -top-3 left-1/2 -translate-x-1/2 text-xs text-amber-600 dark:text-amber-300">
                       ▼
                     </span>
                   ) : null}
@@ -294,7 +294,7 @@ function Tape({
           ) : null,
         )}
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="mt-2 text-xs text-muted-foreground">
         {isLine ? null : "▼ read cursor · "}
         <span className="font-semibold underline">underlined</span>: consumed by this call · <span className="line-through">struck</span>: consumed earlier · dashed red: left unread after a mismatch · ␠ space · ⏎ newline
       </p>
@@ -304,10 +304,10 @@ function Tape({
 
 function LogPanel({ lines, label = "Transcript", testId = "log" }: { lines: string[]; label?: string; testId?: string }) {
   return (
-    <figure className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
-      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
+    <figure className="overflow-hidden rounded-xl border border-border/70 bg-code-surface text-code-foreground">
+      <figcaption className="border-b border-code-border px-3 py-2 text-label text-code-muted">{label}</figcaption>
       <ol className="space-y-0.5 px-3 py-2 font-mono text-[12px] leading-5 [font-variant-ligatures:none]" data-testid={testId}>
-        {lines.length === 0 ? <li className="text-slate-400">(nothing printed yet)</li> : null}
+        {lines.length === 0 ? <li className="text-code-muted">(nothing printed yet)</li> : null}
         {lines.map((l, i) => (
           <li key={i} className={cn("whitespace-pre-wrap break-words", /^<(Error|Fatal)/.test(l) && "text-rose-300")}>
             {/^<(Error|Fatal)/.test(l) ? <span aria-hidden>✕ </span> : null}
@@ -322,7 +322,7 @@ function LogPanel({ lines, label = "Transcript", testId = "log" }: { lines: stri
 function Narration({ what, why, stepLabel }: { what: string; why: string; stepLabel: string }) {
   return (
     <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-sm" aria-live="polite" data-testid="narration">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{stepLabel}</p>
+      <p className="text-label text-muted-foreground">{stepLabel}</p>
       <p className="mt-1 text-[15px] font-medium text-foreground">{what}</p>
       {why ? <p className="mt-1 text-muted-foreground">{why}</p> : null}
     </div>
@@ -333,7 +333,7 @@ function ReturnChip({ value }: { value: string | null }) {
   if (value === null) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/70 bg-amber-500/10 px-2.5 py-0.5 font-mono text-sm text-amber-900 dark:text-amber-100" data-testid="return-chip">
-      <span className="text-[10px] font-bold uppercase tracking-wider">returned</span>
+      <span className="text-label">returned</span>
       <span className="font-semibold">{value}</span>
     </span>
   );
@@ -624,7 +624,7 @@ function DebugCasePanel({ caseId }: { caseId: DebugCaseId }) {
       <LogPanel lines={buggy.log} label="The log (from the model)" testId="debug-log" />
       <div>
         <p className="mb-2 text-sm font-medium text-foreground">Click the line you suspect.</p>
-        <ol aria-label="Generated bench code: choose the suspect line" className="overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 py-1 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">
+        <ol aria-label="Generated bench code: choose the suspect line" className="overflow-hidden rounded-xl border border-border/70 bg-code-surface py-1 font-mono text-[12px] text-code-foreground [font-variant-ligatures:none]">
           {buggy.source.map((line, i) => (
             <li key={i}>
               {line.key ? (
@@ -641,14 +641,14 @@ function DebugCasePanel({ caseId }: { caseId: DebugCaseId }) {
                     suspect === i ? (fb?.correct ? "border-emerald-400 bg-emerald-400/15" : "border-rose-400 bg-rose-400/15") : "border-transparent",
                   )}
                 >
-                  <span aria-hidden className="w-6 shrink-0 text-right text-[11px] text-slate-400">
+                  <span aria-hidden className="w-6 shrink-0 text-right text-xs text-slate-400">
                     {i + 1}
                   </span>
                   <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">{line.text}</code>
                 </button>
               ) : (
                 <div className="flex min-h-6 items-center gap-2 border-l-2 border-transparent px-2 text-slate-300">
-                  <span aria-hidden className="w-6 shrink-0 text-right text-[11px] text-slate-400">
+                  <span aria-hidden className="w-6 shrink-0 text-right text-xs text-slate-400">
                     {i + 1}
                   </span>
                   <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">{line.text}</code>
@@ -678,7 +678,7 @@ function DebugCasePanel({ caseId }: { caseId: DebugCaseId }) {
             <div className="grid gap-2">
               {c.fixes.map((f) => (
                 <label key={f.id} className={cn("flex min-h-10 cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-background/50 p-2.5 text-sm", fixId === f.id && "border-cyan-500/70 bg-cyan-500/10")}>
-                  <input type="radio" name={fixGroup} checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                  <input type="radio" name={fixGroup} checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                   <span>{f.label}</span>
                 </label>
               ))}
@@ -754,7 +754,7 @@ function PlusargsMode({ preset }: { preset?: string }) {
             ))}
           </div>
         </div>
-        <div className="rounded-xl border border-border/70 bg-background/40 p-3">
+        <div className="rounded-xl border border-border bg-card p-3">
           <p className="mb-2 text-xs font-semibold text-muted-foreground">Command line, searched left to right</p>
           <ol className="flex flex-wrap gap-2" aria-label="Plusargs on the command line" data-testid="tokens">
             {tokens.length === 0 ? <li className="text-sm text-muted-foreground">(no plusargs)</li> : null}
@@ -849,12 +849,12 @@ function PlusargScan({ tokens, lookupId, numericType }: { tokens: string[]; look
                   ))}
                 </div>
               ) : null}
-              <p className="mt-1 text-[11px] text-muted-foreground">{s === undefined ? "not examined: an earlier plusarg matched" : !examined ? "not yet compared" : s.matches ? "✓ match" : "✕ no match"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{s === undefined ? "not examined: an earlier plusarg matched" : !examined ? "not yet compared" : s.matches ? "✓ match" : "✕ no match"}</p>
             </li>
           );
         })}
       </ol>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         <span className="underline">underlined</span>: matched prefix · <span className="line-through">struck</span>: first mismatch · shaded amber: the remainder that gets converted
       </p>
       {atResult ? (

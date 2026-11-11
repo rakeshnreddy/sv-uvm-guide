@@ -54,7 +54,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
           aria-label={`Δ ${current.delta}, model count. ${DELTA_NOTE}`}
           title={DELTA_NOTE}
         >
-          <span className="font-semibold text-foreground">Δ {current.delta}</span> <span className="text-[11px] text-muted-foreground">model count</span>
+          <span className="font-semibold text-foreground">Δ {current.delta}</span> <span className="text-xs text-muted-foreground">model count</span>
         </p>
       </div>
 
@@ -68,7 +68,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
             return (
               <li key={event.index} className="min-w-0">
                 {event.movedBefore ? (
-                  <p className="my-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <p className="my-1 flex items-center gap-2 text-xs text-muted-foreground">
                     <span aria-hidden className="h-px flex-1 bg-border" />
                     <span className="shrink-0">↺ events move back · Δ {event.delta}</span>
                     <span aria-hidden className="h-px flex-1 bg-border" />
@@ -91,7 +91,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
                   <span className="min-w-0 flex-1">
                     <span className="block break-words font-mono text-[13px] text-foreground [font-variant-ligatures:none]">{event.label}</span>
                     {event.choice ? (
-                      <span className="mt-0.5 inline-block rounded bg-amber-500/20 px-1 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Scheduler choice</span>
+                      <span className="mt-0.5 inline-block rounded bg-warning-subtle px-1 text-label text-warning">Scheduler choice</span>
                     ) : null}
                     {event.printed.map((line, i) => (
                       <span key={i} className="mt-0.5 block whitespace-pre-wrap break-words font-mono text-[12px] text-emerald-700 dark:text-emerald-300 [font-variant-ligatures:none]">
@@ -99,7 +99,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
                       </span>
                     ))}
                   </span>
-                  <span aria-hidden className="shrink-0 font-mono text-[11px] text-muted-foreground">Δ {event.delta}</span>
+                  <span aria-hidden className="shrink-0 font-mono text-xs text-muted-foreground">Δ {event.delta}</span>
                 </button>
               </li>
             );
@@ -107,7 +107,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
         </ol>
       </section>
 
-      <div aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-3">
+      <div aria-live="polite" className="rounded-xl border border-border bg-card p-3">
         <p className="text-label text-muted-foreground">
           {current.index === 0 ? "Entering the slot" : `Event ${current.index} of ${folded.events.length - 1}`} · {kindName[current.kind]}
         </p>

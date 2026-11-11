@@ -196,7 +196,7 @@ export function HeapView({ scenario, state, changed = [], caption, className }: 
 
   return (
     <figure className={cn("min-w-0 space-y-2", className)}>
-      <div className="overflow-x-auto rounded-xl border border-border/70 bg-background/60">
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <svg viewBox={`0 0 ${VIEW_W} ${height}`} role="img" aria-label={summary} className="mx-auto block w-full min-w-[300px] max-w-[600px] text-foreground">
           <defs>
             <marker id={`${uid}-arrow`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
@@ -309,12 +309,12 @@ export function HeapView({ scenario, state, changed = [], caption, className }: 
           })}
         </svg>
       </div>
-      <figcaption className="text-[11px] text-muted-foreground">
+      <figcaption className="text-xs text-muted-foreground">
         {caption ?? "Amber pills are handle variables, boxes are objects, arrows are handles. ▲ marks what this step changed; dashed grey boxes marked ⊘ GC have no handle left."}
       </figcaption>
       <details className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs" open>
         <summary className="cursor-pointer font-medium text-foreground">Handles and targets, in words</summary>
-        <ul className="mt-1 space-y-0.5 font-mono text-[11.5px] text-foreground [font-variant-ligatures:none]" aria-label="Handles and targets">
+        <ul className="mt-1 space-y-0.5 font-mono text-xs text-foreground [font-variant-ligatures:none]" aria-label="Handles and targets">
           {lines.map((l) => (
             <li key={l}>{l}</li>
           ))}
@@ -365,7 +365,7 @@ function HeapTrace({ preset }: { preset: HeapPreset }) {
       <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))]">
         <div className="min-w-0 space-y-3">
           <CodeTrace label="Test code (generated from the model)" lines={codeLines} activeKey={step.stmtId} />
-          <details className="rounded-xl border border-border/70 bg-background/40 px-3 py-2 text-sm">
+          <details className="rounded-xl border border-border bg-card px-3 py-2 text-sm">
             <summary className="cursor-pointer font-medium text-foreground">Class declarations</summary>
             <CodeTrace label="Classes" lines={classLines} className="mt-2" />
           </details>
@@ -378,7 +378,7 @@ function HeapTrace({ preset }: { preset: HeapPreset }) {
               step.error && !masked ? "border-rose-500/60 bg-rose-500/10" : "border-border/70 bg-background/60",
             )}
           >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-label text-muted-foreground">
               Step {step.index + 1} of {run.trace.length}
               {step.iteration ? ` · loop iteration ${step.iteration}` : ""}
             </p>
@@ -407,11 +407,11 @@ function HeapTrace({ preset }: { preset: HeapPreset }) {
               </PredictionPrompt>
             </div>
           ))}
-          <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
+          <div className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]" aria-label="Simulation log">
             {masked ? (
-              <span className="text-slate-400">(hidden until you predict)</span>
+              <span className="text-code-muted">(hidden until you predict)</span>
             ) : step.state.log.length === 0 ? (
-              <span className="text-slate-400">(no output yet)</span>
+              <span className="text-code-muted">(no output yet)</span>
             ) : (
               step.state.log.map((l, i) => <div key={i}>{l}</div>)
             )}
@@ -431,7 +431,7 @@ function HeapTrace({ preset }: { preset: HeapPreset }) {
         <div className="space-y-2">
           {Object.keys(step.state.statics).length > 0 ? (
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Static (one per class)</span>
+              <span className="text-label text-muted-foreground">Static (one per class)</span>
               {Object.entries(step.state.statics).map(([key, value]) => {
                 const changed = step.changed.includes(`static:${key}`);
                 return (
@@ -549,7 +549,7 @@ function StoredHandleBug() {
       fidelity="model"
       assumptions={OBJECT_MODEL_ASSUMPTIONS}
     >
-      <div className="rounded-xl border border-rose-500/50 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Scoreboard log">
+      <div className="rounded-xl border border-rose-500/50 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]" aria-label="Scoreboard log">
         {MONITOR_SAMPLES.map((expected, i) => {
           const stored = buggyGrade.stored?.[i];
           const ok = stored === expected;
@@ -577,7 +577,7 @@ function StoredHandleBug() {
                 aria-label={`Suspect line: ${line.text.trim()}`}
                 onClick={() => setSuspect(line.key as string)}
                 className={cn(
-                  "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                  "min-h-7 rounded-md border px-2 py-0.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                   suspect === line.key ? "border-amber-400 bg-amber-400/20 text-amber-100" : "border-slate-500 text-slate-300 hover:bg-white/10",
                 )}
               >
@@ -619,7 +619,7 @@ function StoredHandleBug() {
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
             {fixes.map((f) => (
               <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
-                <input type="radio" name="stored-handle-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                <input type="radio" name="stored-handle-fix" checked={fixId === f.id} onChange={() => setFixId(f.id)} className="size-5 shrink-0 mt-px accent-cyan-500" />
                 <span className="font-mono text-[13px] [font-variant-ligatures:none]">{f.label}</span>
               </label>
             ))}

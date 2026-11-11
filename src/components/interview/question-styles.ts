@@ -58,7 +58,8 @@ export const QUESTION_LIST_CLASS = [
   '[&_[data-practised-mark]_[data-check]]:mr-1 [&_[data-practised-mark]_[data-check]]:inline-block [&_[data-practised-mark]_[data-check]]:size-3.5 [&_[data-practised-mark]_[data-check]]:align-[-0.125em] [&_[data-practised-mark]_[data-check]]:text-success',
   // The toggle: the secondary button; pressed, it shows the check and says "Practised".
   '[&_[data-practised-tools]]:border-t [&_[data-practised-tools]]:border-border [&_[data-practised-tools]]:pt-6',
-  '[&_[data-practised-toggle]]:inline-flex [&_[data-practised-toggle]]:min-h-10 [&_[data-practised-toggle]]:items-center [&_[data-practised-toggle]]:gap-2 [&_[data-practised-toggle]]:rounded-lg',
+  // One width in both states (the longer label's, "Mark as practised"), so the button never shrinks under the pointer.
+  '[&_[data-practised-toggle]]:inline-flex [&_[data-practised-toggle]]:min-h-10 [&_[data-practised-toggle]]:min-w-[9rem] [&_[data-practised-toggle]]:items-center [&_[data-practised-toggle]]:justify-center [&_[data-practised-toggle]]:gap-2 [&_[data-practised-toggle]]:rounded-lg',
   '[&_[data-practised-toggle]]:border [&_[data-practised-toggle]]:border-border [&_[data-practised-toggle]]:bg-muted [&_[data-practised-toggle]]:px-3 [&_[data-practised-toggle]]:text-ui [&_[data-practised-toggle]]:font-medium [&_[data-practised-toggle]]:text-foreground',
   '[&_[data-practised-toggle]]:transition-colors [&_[data-practised-toggle]]:duration-150 [&_[data-practised-toggle]]:ease-bench motion-reduce:[&_[data-practised-toggle]]:transition-none [&_[data-practised-toggle]:hover]:bg-card',
   '[&_[data-practised-toggle]:focus-visible]:outline-none [&_[data-practised-toggle]:focus-visible]:ring-2 [&_[data-practised-toggle]:focus-visible]:ring-ring [&_[data-practised-toggle]:focus-visible]:ring-offset-2 [&_[data-practised-toggle]:focus-visible]:ring-offset-background',

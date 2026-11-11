@@ -160,8 +160,8 @@ export default function BindDirectiveVisualizer() {
               ))}
             </p>
           )}
-          <div className="rounded-xl border border-border/70 bg-background/50 p-3">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="rounded-xl border border-border bg-card p-3">
+            <p className="mb-2 text-label text-muted-foreground">
               {result.errors.length > 0 ? "Hierarchy when elaboration stopped" : "Elaborated hierarchy"}
             </p>
             <ul aria-label="Elaborated hierarchy" className="space-y-1 font-mono text-xs [font-variant-ligatures:none]">

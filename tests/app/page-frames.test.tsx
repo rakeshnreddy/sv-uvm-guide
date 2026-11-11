@@ -40,7 +40,7 @@ afterEach(() => {
 const PAGES: [string, React.ComponentType, string, string][] = [
   ['/curriculum', CurriculumPage, 'content', 'Curriculum'],
   ['/practice', PracticeHub, 'content', 'Practice hub'],
-  ['/dashboard/review', FlashcardReviewPage, 'reading', 'Review'],
+  ['/dashboard/review', FlashcardReviewPage, 'content', 'Review'],
   ['/resources', ResourcesPage, 'content', 'Resources'],
   ['/projects', ProjectsPage, 'reading', 'Projects'],
   ['/history', HistoryPage, 'reading', 'History'],

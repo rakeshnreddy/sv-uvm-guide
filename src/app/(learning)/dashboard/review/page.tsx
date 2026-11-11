@@ -21,17 +21,20 @@ export const metadata: Metadata = {
  */
 export default function FlashcardReviewPage() {
   return (
-    <PageShell width="reading">
+    // The content width, like every page under the same tab strip; only the reading column below is capped.
+    <PageShell width="content">
       <LearnerPageHeader
         current="review"
         title={<>{siteLabel(REVIEW_HREF)} flashcards</>}
         lead="Cards you rate in a lesson come back here when they are due, oldest first, then a few new cards from decks you have opened."
       />
-      <p className="mb-6 max-w-[30em] text-ui text-muted-foreground">
-        Flip a card, then rate it: each button shows when the card would come back. Again starts the card over, and Hard,
-        Good and Easy keep lengthening the gap.
-      </p>
-      <ReviewPageClient />
+      <div className="max-w-3xl">
+        <p className="mb-6 max-w-[30em] text-ui text-muted-foreground">
+          Flip a card, then rate it: each button shows when the card would come back. Again starts the card over, and
+          Hard, Good and Easy keep lengthening the gap.
+        </p>
+        <ReviewPageClient />
+      </div>
     </PageShell>
   );
 }

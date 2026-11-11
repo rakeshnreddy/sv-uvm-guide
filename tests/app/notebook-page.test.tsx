@@ -127,6 +127,13 @@ describe('/dashboard/notebook', () => {
       // Nothing is read from storage during the server render.
       expect(html).toContain('Loading the entries saved in this browser');
       expect(html).not.toContain('TLM FIFO');
+      // The count line and the empty state's link line are in the server HTML (invisible), so nothing moves on hydration.
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      expect(host.querySelector('[data-testid="notebook-count"]')).toHaveClass('invisible');
+      const empty = host.querySelector('[data-testid="notebook-empty"]') as HTMLElement;
+      expect(empty.children).toHaveLength(2);
+      expect(empty.className).not.toMatch(/border/);
     });
   });
 

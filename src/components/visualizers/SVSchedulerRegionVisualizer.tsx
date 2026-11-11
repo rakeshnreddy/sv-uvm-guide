@@ -175,7 +175,7 @@ function LandingMap({
           >
             <div className="w-32 shrink-0">
               <p className="text-sm font-semibold text-foreground">{REGION_LABELS[region]}</p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {familyCue[guide.family]} · {REGION_CLAUSES[region]}
               </p>
             </div>
@@ -197,7 +197,7 @@ function LandingMap({
                       aria-current={isCurrent ? "step" : undefined}
                       aria-label={`Go to step ${l.stepIndex + 1}: ${l.label}, delta ${l.delta}${isFuture ? ", not executed yet" : ""}`}
                       className={cn(
-                        "inline-flex min-h-10 max-w-full items-center gap-1 rounded-md border px-2 py-1 text-left font-mono text-[11px] transition-colors motion-reduce:transition-none [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "inline-flex min-h-10 max-w-full items-center gap-1 rounded-md border px-2 py-1 text-left font-mono text-xs transition-colors motion-reduce:transition-none [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         isCurrent
                           ? "border-cyan-500 bg-cyan-500/15 text-foreground"
                           : isFuture
@@ -207,7 +207,7 @@ function LandingMap({
                     >
                       {isCurrent ? <span aria-hidden>▶</span> : null}
                       {/* Model time is written "Δ 2" (visual-language §3). */}
-                      <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">Δ {l.delta}</span>
+                      <span className="shrink-0 rounded bg-muted px-1 text-xs text-muted-foreground">Δ {l.delta}</span>
                       <span className="min-w-0 break-words">{l.label}</span>
                     </button>
                   );
@@ -224,7 +224,7 @@ function LandingMap({
 /** What is queued on every rung at the current step: the facts a learner needs to say where the loop goes next. */
 function QueueChips({ step, className }: { step: TraceStep; className?: string }) {
   return (
-    <ol aria-label="Queued events by region" className={cn("space-y-1 rounded-lg border border-border/70 bg-background/40 p-2 text-[11px]", className)}>
+    <ol aria-label="Queued events by region" className={cn("space-y-1 rounded-lg border border-border/70 bg-background/40 p-2 text-xs", className)}>
       {REGION_ORDER.filter((r) => r !== "preponed").map((region) => {
         const items = step.queues[region];
         return (
@@ -491,7 +491,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
             ) : (
               <RegionNames />
             )}
-            <p className={cn("text-[11px] text-muted-foreground", revealed && "text-center")}>
+            <p className={cn("text-xs text-muted-foreground", revealed && "text-center")}>
               {!revealed
                 ? "Solid boxes repeat until empty; dashed boxes are read-only. Predict first, then step through."
                 : step.kind === "move"
@@ -523,7 +523,7 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
           <div className="space-y-3">
             <TraceNarration step={narratedStep} simTimeLabel={`${timeLabel} (fixed)`} />
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Values after this step</p>
+              <p className="mb-2 text-label text-muted-foreground">Values after this step</p>
               <div className="flex flex-wrap gap-2">
                 {scenario.watch.map((s) => (
                   <ValueChip key={s} name={s} value={step.values[s]} changed={step.changed.includes(s)} />
@@ -620,14 +620,14 @@ export const SVSchedulerRegionVisualizer = ({ scenario: initial = "comb-after-nb
         ) : null}
 
         {revealed && run.log.length > 0 ? (
-          <div role="group" className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
-            {step.log.length === 0 ? <span className="text-slate-400">(no output yet)</span> : step.log.map((l, i) => <div key={i}>{l}</div>)}
+          <div role="group" className="rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]" aria-label="Simulation log">
+            {step.log.length === 0 ? <span className="text-code-muted">(no output yet)</span> : step.log.map((l, i) => <div key={i}>{l}</div>)}
           </div>
         ) : null}
 
         {revealed ? (
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Region map of this slot</p>
+            <p className="mb-2 text-label text-muted-foreground">Region map of this slot</p>
             <LandingMap grouped={grouped} currentStep={shownIndex} onSeek={gated.seek} shownThrough={pending ? limit : undefined} />
             <p className="mt-2 text-xs text-muted-foreground">
               Δ is {DELTA_DEFINITION}, within this time slot (IEEE 1800-2023 defines no delta count). Select an entry to jump to that step; dashed entries have not executed

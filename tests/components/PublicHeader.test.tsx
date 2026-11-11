@@ -85,13 +85,22 @@ describe('<PublicHeader />', () => {
     expect(resume).toHaveClass('border-border', 'bg-muted', 'text-primary', 'h-10');
   });
 
-  it('draws no scrim behind the bar, so the colour field and scrolled content show through the glass', () => {
+  it('covers the gutters around the bar with a faded page-colour backing that paints nothing under the glass', () => {
     render(<PublicHeader />);
     const layer = screen.getByRole('banner').querySelector('[data-header-glass]') as HTMLElement;
-    // The background layer holds only the bar's frame, with the bar inside it.
-    expect(layer.children).toHaveLength(1);
-    expect(layer.firstElementChild?.querySelector('[data-header-bar]')).not.toBeNull();
-    expect(layer.innerHTML).not.toMatch(/--background/);
+    // The backing first, then the bar's frame with the bar inside it.
+    expect(layer.children).toHaveLength(2);
+    const backing = layer.firstElementChild as HTMLElement;
+    expect(backing).toHaveAttribute('data-header-backing');
+    expect(backing).toHaveClass('absolute', 'inset-0', 'overflow-hidden');
+    expect(backing.className).toMatch(/mask-image/);
+    expect(backing.className).not.toMatch(/backdrop|blur/);
+    // A cut-out in the bar's own frame and shape: the page colour is a spread shadow outside it.
+    const cutout = backing.firstElementChild?.firstElementChild as HTMLElement;
+    expect(cutout).toHaveClass('rounded-2xl', 'shadow-[0_0_0_100vmax_hsl(var(--background))]');
+    expect(cutout.className).not.toMatch(/\bbg-/);
+    expect(backing.firstElementChild?.className).toBe(layer.lastElementChild?.className);
+    expect(layer.lastElementChild?.querySelector('[data-header-bar]')).not.toBeNull();
   });
 
   it('sends "Start learning" to the first lesson of the course', () => {
