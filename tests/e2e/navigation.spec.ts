@@ -118,7 +118,8 @@ test.describe('Advanced Navigation Features', () => {
     await expect(help).toHaveCount(0);
 
     await page.keyboard.press('Alt+Digit3');
-    await expect(page).toHaveURL('/dashboard');
+    // The e2e server is `next dev`, which compiles /dashboard on this first visit; allow for a cold compile.
+    await expect(page).toHaveURL('/dashboard', { timeout: 30_000 });
   });
 
   test('should list the shortcuts in a help dialog opened with "?" (G30-SRCH-05)', async ({ page }) => {
