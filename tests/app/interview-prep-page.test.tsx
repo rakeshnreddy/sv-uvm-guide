@@ -9,6 +9,8 @@ import InterviewPrepPage from '@/app/(learning)/interview-prep/page';
 import InterviewBankPage, { generateMetadata, generateStaticParams } from '@/app/(learning)/interview-prep/[bank]/page';
 import { interviewLevelOptions, loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
 import sitemap, { interviewBankPaths } from '@/app/sitemap';
+import { bankRowLine } from '@/components/interview/BankNav';
+import { INTERVIEW_BANK_OUTCOMES } from '@/lib/practice-links';
 
 const banks = loadInterviewBanks();
 
@@ -56,6 +58,26 @@ describe('/interview-prep index', () => {
       expect(tag).toHaveAttribute('href', bank.lessons[0].href);
       expect(tag?.querySelector('[data-signal-tag]')).toHaveTextContent(bank.lessons[0].code);
     });
+  });
+
+  it("shows each bank's authored outcome line in full: never clamped, so no row ends in an ellipsis", () => {
+    render(<InterviewPrepPage />);
+    banks.forEach((bank) => {
+      const line = document.getElementById(bank.anchor)!.querySelector('[data-bank-outcome]') as HTMLElement;
+      expect(line, bank.anchor).toHaveTextContent(INTERVIEW_BANK_OUTCOMES[bank.topic]);
+      expect(line.className).not.toMatch(/line-clamp|truncate/);
+    });
+    expect(bankRowLine({ topic: 'no-such-topic', description: 'Interview preparation for simulation debug, from logs to triage.' })).toBe(
+      'Simulation debug, from logs to triage.',
+    );
+  });
+
+  it('gives the level chips the 3:1 control boundary, like the other form controls', () => {
+    render(<InterviewPrepPage />);
+    for (const radio of within(screen.getByRole('group', { name: 'Level' })).getAllByRole('radio')) {
+      expect(radio.closest('label')).toHaveClass('border-input');
+      expect(radio.closest('label')?.className).not.toMatch(/(^| )border-border( |$)/);
+    }
   });
 
   it('renders every count variant, so the filter can show the one for the chosen level without scripts', () => {

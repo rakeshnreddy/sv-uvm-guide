@@ -39,11 +39,14 @@ export interface LessonNextBlockProps {
   className?: string;
 }
 
+/** The Next block: a liquid glass panel (DESIGN.md section 12), radius 16, padded 20 to 24. */
+export const LESSON_NEXT_PANEL_CLASS = "glass-liquid mt-16 p-5 sm:p-6 print:hidden";
+
 const QUIET_ACTION_CLASS = cn(secondaryAction, "w-full justify-start text-left sm:w-auto");
 
 /**
  * The end of a lesson (SPEC-phases-2-4.md, "Lesson page"; DESIGN.md section
- * 10, "Next step at the end of every lesson"): a band under a hairline with
+ * 10, "Next step at the end of every lesson"): a liquid glass panel with
  * "Lesson done", then the next lesson as the one accent action and, beside it
  * and quieter, the module's lab and "Review flashcards" when the lesson has a
  * deck. The previous lesson is a text link under the next one.
@@ -54,7 +57,7 @@ export default function LessonNextBlock({ context, moduleId, lessonSlug, lab, ha
     <section
       aria-labelledby="lesson-next-heading"
       data-testid="lesson-next"
-      className={cn("mt-16 border-t border-border pt-10 print:hidden", className)}
+      className={cn(LESSON_NEXT_PANEL_CLASS, className)}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
         <h2 id="lesson-next-heading" className="text-h2 text-foreground">

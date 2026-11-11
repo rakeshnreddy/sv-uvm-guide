@@ -37,12 +37,26 @@ describe("<LessonOrientation />", () => {
     expect(position.closest("[data-page-header-meta]")).toHaveTextContent("7 min read");
   });
 
-  it("is unboxed: PageHeader's hairline, no card or background", () => {
-    renderHeader(["T2_Intermediate", IUVM3B, "sequencer-driver-handshake"]);
+  it("sits in one liquid glass block with the trail, instead of PageHeader's hairline (DESIGN.md section 12)", () => {
+    const context = getLessonContext(["T2_Intermediate", IUVM3B, "sequencer-driver-handshake"])!;
+    render(
+      <LessonOrientation context={context} title="Lesson title" readingMinutes={7} trail={<nav aria-label="Breadcrumb">trail</nav>} />,
+    );
+    const block = screen.getByTestId("lesson-header-block");
+    expect(block).toHaveClass("glass-liquid");
+    expect(block).toHaveAttribute("data-lesson-header-glass");
+    // The trail comes first, inside the block.
+    expect(block.firstElementChild).toBe(screen.getByRole("navigation", { name: "Breadcrumb" }));
     const header = screen.getByTestId("lesson-header");
-    expect(header).toHaveClass("border-b", "border-border", "pb-6");
-    expect(header.className).not.toMatch(/\bbg-card\b|rounded|shadow/);
+    expect(block).toContainElement(header);
+    expect(header).toHaveClass("border-b-0", "pb-0", "mb-0");
+    expect(header).not.toHaveClass("border-b", "pb-6", "mb-8");
     expect(header.querySelector("h1")).toHaveClass("text-h1", "text-foreground");
+    // Text on glass is primary or secondary, never the subtle role: the meta row steps up.
+    expect(block.className).toContain("[&_[data-page-header-meta]]:text-muted-foreground");
+    // It bleeds by exactly its side padding at every width, so its text sits on the article's left edge.
+    expect(block).toHaveClass("-mx-2", "px-2", "sm:-mx-6", "sm:p-6");
+    expect(block).not.toHaveClass("p-4");
   });
 
   it("puts the tier and module codes in the eyebrow without repeating the trail's titles", () => {
@@ -189,7 +203,7 @@ describe("lessonLab", () => {
 describe("<LessonNextBlock />", () => {
   const slug = ["T2_Intermediate", IUVM3B, "sequence-arbitration"];
 
-  it("is a band with Lesson done, the next lesson as the one accent action, and the quieter lab and flashcards", () => {
+  it("is a glass panel with Lesson done, the next lesson as the one accent action, and the quieter lab and flashcards", () => {
     render(
       <LessonNextBlock
         context={getLessonContext(slug)!}
@@ -200,7 +214,9 @@ describe("<LessonNextBlock />", () => {
       />,
     );
     const block = screen.getByRole("region", { name: "Next" });
-    expect(block).toHaveClass("border-t", "border-border");
+    // A liquid glass panel (DESIGN.md section 12), not a band under a hairline.
+    expect(block).toHaveClass("glass-liquid", "mt-16");
+    expect(block).not.toHaveClass("border-t");
     expect(within(block).getByRole("button", { name: "Lesson done" })).toHaveAttribute("aria-pressed", "false");
     const filled = Array.from(block.querySelectorAll("a")).filter((link) => link.className.includes("bg-primary"));
     expect(filled).toHaveLength(1);

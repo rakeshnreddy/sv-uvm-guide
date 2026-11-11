@@ -278,6 +278,16 @@ describe('/dashboard', () => {
     expect(labs).toHaveTextContent(`In progress (1)`);
     expect(labs).toHaveTextContent(`1 of ${basics.steps.length} steps done`);
 
+    // "Labs, quizzes and notes": seven cards, six in pairs and the streak across both columns, so no row holds one card.
+    const activity = Array.from(screen.getByTestId('dashboard-activity-grid').children);
+    expect(activity).toHaveLength(7);
+    expect(activity[6]).toHaveAttribute('aria-labelledby', 'dashboard-streak-heading');
+    expect(activity[6]).toHaveClass('md:col-span-2');
+    expect(activity.slice(0, 6).filter((card) => /col-span/.test(card.className))).toHaveLength(0);
+    // Cards stretch to their row (no items-start) and each fills it, its closing link at the bottom.
+    expect(screen.getByTestId('dashboard-activity-grid')).not.toHaveClass('items-start');
+    for (const card of activity) expect(card).toHaveClass('flex', 'flex-col', '[&>div>a:last-child]:mt-auto');
+
     const review = screen.getByRole('region', { name: 'Reviews due' });
     expect(review).toHaveTextContent('1 flashcard is due today.');
     expect(review).toHaveTextContent('2 cards in your review queue.');

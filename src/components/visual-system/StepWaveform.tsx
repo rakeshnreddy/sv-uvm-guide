@@ -36,7 +36,7 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
   const height = signals.length * ROW_H + 18;
 
   return (
-    <figure className={cn("rounded-xl border border-border/70 bg-background/40 p-2", className)}>
+    <figure className={cn("glass-liquid p-2", className)}>
       <div className="overflow-x-auto">
         <svg
           width={width}

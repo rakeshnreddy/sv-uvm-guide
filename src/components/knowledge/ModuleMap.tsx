@@ -2,7 +2,6 @@
 
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { SegmentedControl } from '@/components/visual-system';
 import { useKnowledgeContext } from '@/contexts/KnowledgeContext';
 import {
   analyzeDependencies,
@@ -15,13 +14,16 @@ import {
   type MapKey,
 } from '@/lib/knowledge-graph-engine';
 import { milestoneName } from '@/lib/learning-paths';
+import type { TierNumber } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
+import { ChoiceChips } from './ChoiceChips';
 
-export const MAP_TIERS: readonly { value: ConceptTier; label: string }[] = [
-  { value: 'Foundational', label: 'Tier 1' },
-  { value: 'Intermediate', label: 'Tier 2' },
-  { value: 'Advanced', label: 'Tier 3' },
-  { value: 'Expert', label: 'Tier 4' },
+/** The four tiers as the hub's chips name them, with the tier number that colours each chip. */
+export const MAP_TIERS: readonly { value: ConceptTier; label: string; tier: TierNumber }[] = [
+  { value: 'Foundational', label: 'Tier 1', tier: 1 },
+  { value: 'Intermediate', label: 'Tier 2', tier: 2 },
+  { value: 'Advanced', label: 'Tier 3', tier: 3 },
+  { value: 'Expert', label: 'Tier 4', tier: 4 },
 ];
 
 const MAP_KEYS = new Set<string>(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']);
@@ -81,7 +83,7 @@ export default function ModuleMap({ graph, tier, onTierChange, selectedId, onSel
 
   return (
     <div className="space-y-4">
-      <SegmentedControl label="Tier shown on the map" options={[...MAP_TIERS]} value={tier} onChange={onTierChange} />
+      <ChoiceChips label="Tier shown on the map" options={MAP_TIERS} value={tier} onChange={onTierChange} data-testid="map-tier-chips" />
 
       <p id={hintId} className="text-sm text-muted-foreground">
         Columns are the lanes of {tierLabel}; modules run top to bottom in curriculum order. Arrow keys move between modules,

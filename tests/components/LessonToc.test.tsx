@@ -59,32 +59,55 @@ describe("<LessonToc />", () => {
     expect(screen.getByRole("link", { name: "Quick Take", hidden: true })).not.toHaveTextContent("Expert");
   });
 
-  it("collapses layer groups until the reader opens one or reads inside it", () => {
+  it("keeps every layer open in the column, so following the reader never reflows it; the reader can still close one", () => {
+    placeHeadings({ "quick-take": -900, "build-your-mental-model": -400, "the-problem": 60 });
     render(<LessonToc entries={entries} />);
-    const toggle = screen.getByRole("button", { name: "Sections in Build Your Mental Model" });
+    const column = screen.getByTestId("lesson-toc-column");
+    for (const name of ["Sections in Build Your Mental Model", "Sections in Push Further"]) {
+      expect(within(column).getByRole("button", { name }), name).toHaveAttribute("aria-expanded", "true");
+    }
+    const toggle = within(column).getByRole("button", { name: "Sections in Build Your Mental Model" });
     const children = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(children).not.toHaveAttribute("hidden");
+
+    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(children).toHaveAttribute("hidden");
-
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(children).not.toHaveAttribute("hidden");
-    fireEvent.click(toggle);
-    expect(children).toHaveAttribute("hidden");
   });
 
-  it("follows the reader: the section past the reading line is current and its layer is open", () => {
+  it("opens only the layer holding the current section in the sheet, until the reader opens another", () => {
+    placeHeadings({ "quick-take": -900, "build-your-mental-model": -400, "the-problem": 60, "expert-clause-1614-corner-cases": 1200 });
+    render(<LessonToc entries={entries} />);
+    fireEvent.click(screen.getByRole("button", { name: /^On this page/ }));
+    const sheet = screen.getByRole("dialog", { name: "On this page" });
+    expect(within(sheet).getByRole("button", { name: "Sections in Build Your Mental Model" })).toHaveAttribute("aria-expanded", "true");
+    const other = within(sheet).getByRole("button", { name: "Sections in Push Further" });
+    expect(other).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById(other.getAttribute("aria-controls")!)).toHaveAttribute("hidden");
+    fireEvent.click(other);
+    expect(other).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("follows the reader: the section past the reading line is current", () => {
     placeHeadings({ "quick-take": -900, "build-your-mental-model": -400, "the-problem": 60, "expert-clause-1614-corner-cases": 1200 });
     render(<LessonToc entries={entries} />);
     const current = screen.getByRole("link", { name: "The problem", hidden: true });
     expect(current).toHaveAttribute("aria-current", "location");
-    // The current entry is a raised row with a 2 px accent edge, not an accent fill.
-    expect(current).toHaveClass("bg-muted", "border-l-2", "border-primary", "font-medium", "text-foreground");
+    // The current entry is a raised row with a 2 px accent edge, not an accent fill, and
+    // keeps the weight of the other rows, so its label never rewraps and moves the rows under it.
+    expect(current).toHaveClass("bg-muted", "border-l-2", "border-primary", "text-foreground");
+    expect(current).not.toHaveClass("font-medium");
     expect(current.className).not.toMatch(/bg-primary/);
-    expect(screen.getByRole("button", { name: "Sections in Build Your Mental Model" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "Sections in Push Further" })).toHaveAttribute("aria-expanded", "false");
     // The bar names the section being read.
     expect(screen.getByRole("button", { name: /^On this page/ })).toHaveAccessibleName("On this page: The problem");
+  });
+
+  it("draws the Expert tag as an outlined tag in the tier 4 colour, beside the word", () => {
+    render(<LessonToc entries={entries} />);
+    const tag = within(screen.getByRole("link", { name: "Expert: Push Further", hidden: true })).getByText("Expert");
+    expect(tag).toHaveClass("border", "border-tier-4-border", "text-tier-4", "rounded");
   });
 
   it("names the section count in the bar before the first heading is reached", () => {

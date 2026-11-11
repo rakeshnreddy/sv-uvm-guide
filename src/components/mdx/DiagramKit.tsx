@@ -37,7 +37,7 @@ import { cn } from "@/lib/utils";
  */
 
 function Caption({ children }: { children: React.ReactNode }) {
-  return <figcaption className="mt-2 text-sm text-muted-foreground">{children}</figcaption>;
+  return <figcaption className="mt-2 text-sm text-subtle">{children}</figcaption>;
 }
 
 interface ArchitectureDiagramProps {

@@ -240,9 +240,13 @@ describe('returning-learner strip', () => {
     window.localStorage.setItem(LESSONS_KEY, JSON.stringify({ v: 1, data: { lessons: { [F3C]: { firstVisitedAt: now - 1000, lastVisitedAt: now - 500, visits: 2 } } } }));
     render(<ReturningLearnerStrip lessons={lessons} />);
     const line = screen.getByTestId('returning-trace');
-    expect(line).toHaveClass('h-5');
+    // Fixed heights: two 20 px rows below 640 px (the tier's name and the count, each whole, then the trace), one row from 640 px.
+    expect(line).toHaveClass('h-11', 'grid-rows-[20px_20px]', 'sm:flex', 'sm:h-5');
+    expect(within(line).getByTestId('returning-trace-count')).toHaveClass('col-start-2', 'row-start-1', 'whitespace-nowrap');
+    expect(line.querySelector('[data-part="tier"]')).toHaveClass('min-w-0', 'truncate');
     const trace = within(line).getByRole('img');
     expect(trace).toHaveAttribute('data-size', 'mini');
+    expect(trace).toHaveClass('col-span-2', 'row-start-2');
     expect(trace).toHaveAttribute('data-tier', '1');
     const tier1Modules = buildCurriculumTotals(curriculumData)[0].modules.length;
     expect(trace).toHaveAccessibleName(`Tier 1: Foundations: 0 of ${tier1Modules} modules done, 1 more opened`);

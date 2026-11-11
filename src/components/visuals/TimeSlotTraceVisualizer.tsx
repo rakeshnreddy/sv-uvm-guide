@@ -61,13 +61,27 @@ interface TimeSlotTraceVisualizerProps {
   scenarios?: TraceScenarioId[];
   /** 'ladder' (default): the nine-region ladder. 'folded': one region-free box of ◆ update and ▶ evaluation events (§4.5). */
   regionView?: "ladder" | "folded";
+  /**
+   * Where the step controls sit: 'bottom' (default, as in the lessons, under
+   * the waveform) or 'top' (first in the model's body, where a page that says
+   * "Press Play" shows them without scrolling; the landing page uses it).
+   */
+  controlsPlacement?: "top" | "bottom";
 }
+
+/** The site's label style (sentence case, no tracking), for the labels inside the model. */
+export const TRACE_LABEL_CLASS = "text-label text-muted-foreground";
 
 /**
  * Synchronised view of one time slot: code, region ladder (or the folded
  * event box), values, waveform and narration all render the same model step.
  */
-export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blocking", scenarios, regionView = "ladder" }: TimeSlotTraceVisualizerProps) {
+export default function TimeSlotTraceVisualizer({
+  scenario: initial = "shift-blocking",
+  scenarios,
+  regionView = "ladder",
+  controlsPlacement = "bottom",
+}: TimeSlotTraceVisualizerProps) {
   const presets = useMemo(() => {
     const ids: string[] = scenarios ?? [...schedulerScenarioPresets.map((p) => p.id), initial];
     return allTracePresets.filter((p) => ids.includes(p.id));
@@ -130,7 +144,7 @@ export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blo
   const code = <CodeTrace label="Code under simulation" lines={lines} activeKey={activeKey} contextKeys={contextKeys} />;
   const values = (
     <div>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Values after this step</p>
+      <p className={cn("mb-2", TRACE_LABEL_CLASS)}>Values after this step</p>
       <div className="flex flex-wrap gap-2">
         {scenario.watch.map((s) => (
           <ValueChip key={s} name={s} value={step.values[s]} changed={step.changed.includes(s)} />
@@ -164,8 +178,18 @@ export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blo
       )
     ) : null;
 
+  const controls = (
+    <PlaybackControls
+      playback={playback}
+      stepCount={stepCount}
+      stepNoun={folded ? "Event" : "Scheduler step"}
+      describeStep={(i) => (folded ? `${slot.events[i]?.glyph ?? ""} ${slot.events[i]?.label ?? ""}`.trim() : (run.trace[i]?.what ?? ""))}
+    />
+  );
+
   const body = (
     <div className="space-y-4">
+      {controlsPlacement === "top" ? controls : null}
       {modelNote ? <p className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground">Model limit: {modelNote}</p> : null}
       {orderChooser}
 
@@ -237,12 +261,7 @@ export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blo
         </div>
       ) : null}
 
-      <PlaybackControls
-        playback={playback}
-        stepCount={stepCount}
-        stepNoun={folded ? "Event" : "Scheduler step"}
-        describeStep={(i) => (folded ? `${slot.events[i]?.glyph ?? ""} ${slot.events[i]?.label ?? ""}`.trim() : (run.trace[i]?.what ?? ""))}
-      />
+      {controlsPlacement === "bottom" ? controls : null}
     </div>
   );
 
@@ -250,7 +269,7 @@ export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blo
     <section aria-label="Time slot trace" className="not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Step through one clock edge</p>
+          <p className={TRACE_LABEL_CLASS}>Step through one clock edge</p>
           <h3 className="text-lg font-semibold text-foreground">{scenario.title}</h3>
           <p className="mt-1 text-sm text-muted-foreground">{preset.summary}</p>
         </div>

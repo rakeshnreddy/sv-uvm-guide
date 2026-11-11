@@ -72,7 +72,8 @@ export const ProjectBasedEvaluator = () => {
       <Textarea
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        className="w-full h-64 text-sm font-mono p-2 rounded bg-background border"
+        surface="card"
+        className="min-h-64 font-mono text-sm"
         placeholder="Paste your project code here..."
       />
 

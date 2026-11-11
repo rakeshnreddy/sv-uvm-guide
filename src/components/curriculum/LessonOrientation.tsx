@@ -17,8 +17,22 @@ export interface LessonOrientationProps {
   title: string;
   summary?: string;
   readingMinutes: number;
+  /** The breadcrumb trail (LessonTrail), drawn at the top of the header block. */
+  trail?: React.ReactNode;
   className?: string;
 }
+
+/**
+ * The header block (DESIGN.md section 12): liquid glass over the tier field,
+ * with the backdrop blur from 1280 px (globals.css, data-lesson-header-glass).
+ * At every width it bleeds into the gutter by exactly its side padding, so the
+ * title lines up with the lesson text below: on phones the block sits 8 px from
+ * the screen edge (like the header bar and the contents bar) with 8 px inside,
+ * so its text lands on the 16 px gutter; from 640 px it bleeds 24 px. Text on
+ * it is primary or secondary, never the subtle role, so the meta row steps up.
+ */
+export const LESSON_HEADER_GLASS_CLASS =
+  "glass-liquid -mx-2 mb-8 min-w-0 px-2 py-4 sm:-mx-6 sm:p-6 [&_[data-page-header-meta]]:text-muted-foreground";
 
 /** The "Before you start" label: 14/20 at 500 in the secondary colour. */
 const ROW_LABEL_CLASS = "shrink-0 text-ui font-medium text-muted-foreground";
@@ -100,12 +114,12 @@ function BeforeYouStartRow({ context }: { context: LessonContext }) {
 
 /**
  * The lesson header (G30-PAGE-01, G30-PAGE-V01; SPEC-phases-2-4.md, "Lesson
- * page"), unboxed on PageHeader: the tier and module tags, the title, the
+ * page") on PageHeader: the trail, the tier and module tags, the title, the
  * lead, one meta row (reading time, "Lesson k of n", "Builds toward" with the
- * module's milestones as signal tags), then "Before you start". A hairline
- * closes it. The trail sits above it (LessonTrail).
+ * module's milestones as signal tags), then "Before you start", all in one
+ * liquid glass block (DESIGN.md section 12) instead of PageHeader's hairline.
  */
-export default function LessonOrientation({ context, title, summary, readingMinutes, className }: LessonOrientationProps) {
+export default function LessonOrientation({ context, title, summary, readingMinutes, trail, className }: LessonOrientationProps) {
   const { lesson, module, milestones } = context;
 
   const meta = (
@@ -130,15 +144,18 @@ export default function LessonOrientation({ context, title, summary, readingMinu
   );
 
   return (
-    <PageHeader
-      data-testid="lesson-header"
-      className={cn("min-w-0", className)}
-      eyebrow={<LessonEyebrow context={context} title={title} />}
-      title={title}
-      lead={summary}
-      meta={meta}
-    >
-      <BeforeYouStartRow context={context} />
-    </PageHeader>
+    <div data-lesson-header-glass="" data-testid="lesson-header-block" className={cn(LESSON_HEADER_GLASS_CLASS, className)}>
+      {trail}
+      <PageHeader
+        data-testid="lesson-header"
+        className="mb-0 min-w-0 border-b-0 pb-0"
+        eyebrow={<LessonEyebrow context={context} title={title} />}
+        title={title}
+        lead={summary}
+        meta={meta}
+      >
+        <BeforeYouStartRow context={context} />
+      </PageHeader>
+    </div>
   );
 }

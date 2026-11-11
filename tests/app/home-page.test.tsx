@@ -10,6 +10,7 @@ import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-ba
 import { placementQuestions } from '@/components/assessment/placementQuizData';
 import { getLandingFacts, landingDescription, type LandingFacts } from '@/components/home/home-stats';
 import { returningLearnerScript } from '@/components/home/landing-resume';
+import { HERO_SCENARIO_ID, LIVE_MODEL_HREF } from '@/components/home/scheduler-frame';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { getPracticePages } from '@/lib/practice-links';
@@ -30,8 +31,8 @@ function resolveLocal(specifier: string, from: string): string | null | undefine
   return undefined;
 }
 
-/** Every local source file reachable from the entries (static and dynamic imports), and every package they import. */
-function localImportGraph(entries: readonly string[]): { files: string[]; packages: string[] } {
+/** Every local source file reachable from the entries (static and dynamic imports, or static only), and every package they import. */
+function localImportGraph(entries: readonly string[], { dynamic = true }: { dynamic?: boolean } = {}): { files: string[]; packages: string[] } {
   const root = process.cwd();
   const seen = new Set<string>();
   const packages = new Set<string>();
@@ -40,6 +41,7 @@ function localImportGraph(entries: readonly string[]): { files: string[]; packag
     seen.add(file);
     if (!/\.(tsx?|jsx?|mjs)$/.test(file)) return;
     for (const match of fs.readFileSync(file, 'utf8').matchAll(IMPORT_PATTERN)) {
+      if (!dynamic && match[2]) continue;
       const specifier = match[1] ?? match[2] ?? match[3];
       const resolved = resolveLocal(specifier, file);
       if (resolved === null) packages.add(specifier);
@@ -84,6 +86,12 @@ vi.mock('@/components/home/ReturningLearnerStrip', () => ({
   __esModule: true,
   default: () => <section aria-label="Returning" />,
 }));
+vi.mock('@/components/home/SeeItRunSection', () => ({
+  __esModule: true,
+  default: ({ scenario, frame, lesson }: { scenario: string; frame: { stepIndex: number }; lesson: { href: string } }) => (
+    <section aria-label="See it run" data-scenario={scenario} data-frame-step={frame.stepIndex} data-lesson={lesson.href} />
+  ),
+}));
 vi.mock('@/components/home/RoutesStrip', () => ({
   __esModule: true,
   default: () => <section aria-label="Routes" />,
@@ -106,13 +114,14 @@ afterEach(() => {
 });
 
 describe('home page', () => {
-  it('keeps the sections in the main landmark, in order: hero, proof, returning learner, routes, practise', () => {
+  it('keeps the sections in the main landmark, in order: hero, proof, returning learner, see it run, routes, practise', () => {
     render(<HomePage />);
     const main = screen.getByRole('main');
     expect(within(main).getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual([
       'Hero',
       'Proof',
       'Returning',
+      'See it run',
       'Routes',
       'Practise',
     ]);
@@ -135,6 +144,14 @@ describe('home page', () => {
     expect(script?.innerHTML).toBe(returningLearnerScript());
   });
 
+  it('runs the hero\'s scenario in "See it run", from its first step, linked to the lesson that holds the live model', () => {
+    render(<HomePage />);
+    const section = screen.getByRole('region', { name: 'See it run' });
+    expect(section).toHaveAttribute('data-scenario', HERO_SCENARIO_ID);
+    expect(section).toHaveAttribute('data-frame-step', '0');
+    expect(section).toHaveAttribute('data-lesson', LIVE_MODEL_HREF);
+  });
+
   it('builds its meta description from the same counts', () => {
     expect(generateMetadata().description).toBe(landingDescription(expectedFacts));
   });
@@ -148,6 +165,25 @@ describe('home page', () => {
     }
   });
 
+  it('reaches the live scheduler model only through the in-view boundary\'s dynamic import', () => {
+    // The initial page: static imports only. The visualizer and its model must not be in it.
+    const initial = localImportGraph(['src/app/(public)/layout.tsx', 'src/app/(public)/page.tsx'], { dynamic: false });
+    expect(initial.files).toContain('src/components/home/SeeItRunLive.tsx');
+    expect(initial.files).not.toContain('src/components/visuals/TimeSlotTraceVisualizer.tsx');
+    // The hero's static frame reads the model, the encodings and the code-line helper on the server; none of the
+    // visualizer's interactive parts are reachable without the dynamic import (the network log in the batch report shows
+    // the chunk arriving only on scroll).
+    for (const part of ['visual-system/usePlayback.ts', 'visual-system/PlaybackControls.tsx', 'visual-system/StepWaveform.tsx', 'visuals/scheduler/RegionLadder.tsx']) {
+      expect(initial.files).not.toContain(`src/components/${part}`);
+    }
+    // The one way in is the import() in SeeItRunLive, which runs when the slot scrolls into view.
+    const live = fs.readFileSync(path.join(process.cwd(), 'src/components/home/SeeItRunLive.tsx'), 'utf8');
+    expect(live).toMatch(/import\(\s*['"]@\/components\/visuals\/TimeSlotTraceVisualizer['"]\s*\)/);
+    expect(live).not.toMatch(/^import[^;]*TimeSlotTraceVisualizer/m);
+  });
+
+  // This walk follows dynamic imports too, so it covers the live model behind the in-view boundary as well as
+  // the initial page: no animation library is loaded on the landing page at all, before or after scrolling.
   it('loads no animation library anywhere in the public layout\'s import graph (landing, privacy and terms)', () => {
     const graph = localImportGraph([
       'src/app/(public)/layout.tsx',
@@ -158,6 +194,7 @@ describe('home page', () => {
     // The walk reaches the header, its controls and the lazily loaded search dialog.
     expect(graph.files).toContain('src/components/layout/PublicHeaderControls.tsx');
     expect(graph.files).toContain('src/components/search/SearchDialog.tsx');
+    expect(graph.files).toContain('src/components/visuals/TimeSlotTraceVisualizer.tsx');
     const animation = graph.packages.filter((pkg) => /^(framer-motion|motion|gsap|react-spring)(\/|$)/.test(pkg));
     expect(animation).toEqual([]);
   });

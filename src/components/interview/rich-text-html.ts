@@ -14,6 +14,8 @@
  */
 import { splitInlineCode, toRichBlocks, type InlinePart, type RichBlock } from '@/app/(learning)/interview-prep/interview-banks';
 
+import { highlightedCodeHtml } from './code-highlight-html';
+
 const ESCAPES: Readonly<Record<string, string>> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 /** Escapes text for an element body or a double-quoted attribute value. */
@@ -50,10 +52,14 @@ export function inlineTextHtml(text: string): string {
   return inlineHtml(splitInlineCode(text));
 }
 
-/** A code block: it scrolls sideways inside itself, so it is a named, focusable region. */
+/**
+ * A code block: it scrolls sideways inside itself, so it is a named, focusable
+ * region. Code in a language with a grammar carries the lesson code blocks'
+ * syntax colours (code-highlight-html.ts); its text is the source unchanged.
+ */
 export function codeBlockHtml(code: string, language = 'text'): string {
   const label = language === 'text' ? 'Code example' : `${languageName(language)} code example`;
-  return `<pre tabindex="0" role="region" data-scroll="" aria-label="${escapeHtml(label)}"><code>${escapeHtml(code)}</code></pre>`;
+  return `<pre tabindex="0" role="region" data-scroll="" aria-label="${escapeHtml(label)}"><code>${highlightedCodeHtml(code, language)}</code></pre>`;
 }
 
 function blockHtml(block: RichBlock): string {

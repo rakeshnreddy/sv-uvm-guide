@@ -48,6 +48,8 @@ export interface InteractiveSlotProps<Name extends string> {
   height: number;
   /** Expected height in px on phones. */
   mobileHeight?: number;
+  /** Expected height in px from 1024 to 1279 px (the narrow three-column band); defaults to `height`. */
+  midHeight?: number;
   cache: LazyComponentCache<Name>;
   componentProps: InteractiveProps;
 }
@@ -64,6 +66,7 @@ export function InteractiveSlot<Name extends string>({
   title,
   height,
   mobileHeight,
+  midHeight,
   cache,
   componentProps,
 }: InteractiveSlotProps<Name>) {
@@ -82,7 +85,7 @@ export function InteractiveSlot<Name extends string>({
     snapshot && attempt === 0 ? (
       <ServerMarkup html={snapshot} />
     ) : (
-      <InteractivePlaceholder title={title} height={height} mobileHeight={mobileHeight} />
+      <InteractivePlaceholder title={title} height={height} mobileHeight={mobileHeight} midHeight={midHeight} />
     );
 
   return (

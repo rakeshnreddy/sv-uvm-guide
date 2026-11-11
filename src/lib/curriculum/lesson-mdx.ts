@@ -7,6 +7,7 @@ import type { PluggableList } from "unified";
 
 import type { ConceptNode } from "@/lib/knowledge-graph-engine";
 
+import { rehypeLessonText } from "./rehype-lesson-text";
 import { remarkCallouts } from "./remark-callouts";
 import { remarkConceptLinks } from "./remark-concept-links";
 import { remarkHeadingIds, type TocEntry } from "./remark-heading-ids";
@@ -57,4 +58,13 @@ export function lessonRemarkPlugins({ toc, hasFlashcards, hasHandsOn = false, co
   ];
   if (concepts.length > 0) plugins.push([remarkConceptLinks, { concepts }]);
   return plugins;
+}
+
+/**
+ * The rehype side of the pipeline: build-time tags for the lesson text
+ * hierarchy (DESIGN.md section 12), lead-in labels and the "Expert" tag. They
+ * add attributes and wrapper spans only, never text.
+ */
+export function lessonRehypePlugins(): PluggableList {
+  return [rehypeLessonText];
 }

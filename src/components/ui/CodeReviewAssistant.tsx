@@ -206,6 +206,7 @@ export const CodeReviewAssistant = () => {
           placeholder="Leave a comment"
           value={comment}
           onChange={handleCommentChange}
+          surface="card"
           className="mb-2"
         />
         {commentError && (

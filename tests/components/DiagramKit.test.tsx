@@ -185,3 +185,31 @@ describe('MDX diagram kit', () => {
     expect(screen.getByTestId('diagram-data-error')).toHaveTextContent(/"ready" has 5 values but the diagram has 4 edges/);
   });
 });
+
+describe('diagram frames are quiet liquid glass (DESIGN.md section 12)', () => {
+  const nodes = [
+    { id: 'm', label: 'master', col: 0, row: 0 },
+    { id: 's', label: 'slave', col: 1, row: 0 },
+  ];
+  it.each([
+    ['ArchitectureDiagram', () => <ArchitectureDiagram title="A" caption="c" nodes={nodes} edges={[{ from: 'm', to: 's' }]} />],
+    ['TimingDiagram', () => <TimingDiagram title="T" caption="c" edges={2} signals={[{ name: 'clk', kind: 'clock' }]} />],
+    [
+      'SequenceDiagram',
+      () => (
+        <SequenceDiagram
+          title="S"
+          caption="c"
+          participants={[{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }]}
+          messages={[{ from: 'a', to: 'b', label: 'go' }]}
+        />
+      ),
+    ],
+  ])('%s', (_name, draw) => {
+    const { container } = render(draw());
+    const frame = container.querySelector('.glass-liquid');
+    expect(frame).not.toBeNull();
+    expect(frame).toContainElement(container.querySelector('svg'));
+    expect(container.innerHTML).not.toContain('bg-background/40');
+  });
+});

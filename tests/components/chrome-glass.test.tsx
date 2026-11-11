@@ -283,14 +283,16 @@ const entries: TocEntry[] = [
 ];
 
 describe("contents bar and sheet", () => {
-  it("makes the bar below 1280 px a rounded glass bar 8 px in from the main column; the column stays plain", () => {
+  it("makes the bar below 1280 px a rounded glass bar 8 px in from the main column; the column is quiet liquid glass", () => {
     render(<LessonToc entries={entries} />);
     const bar = screen.getByTestId("lesson-contents-bar");
     expect(bar).toHaveClass("glass", "rounded-xl", "mx-2", "h-11", "xl:hidden");
     expect(bar).not.toHaveClass("lg:mx-4");
+    // DESIGN.md section 12: the column is a quiet panel, never a blurred layer, and holds no other glass.
     const column = screen.getByTestId("lesson-toc-column");
-    expect(column.className).not.toMatch(/glass/);
-    expect(column.querySelector(".glass, .glass-quiet")).toBeNull();
+    expect(column).toHaveClass("glass-liquid");
+    expect(column.className.split(" ")).not.toContain("glass");
+    expect(column.querySelector(".glass, .glass-quiet, .glass-liquid")).toBeNull();
   });
 
   it("lines the bar up with the header's bar when the outline is hidden at lg", () => {

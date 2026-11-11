@@ -22,7 +22,7 @@ import {
   generateLessonMetadata,
   loadCurriculumLesson,
 } from "@/lib/curriculum/lesson-loader";
-import { LESSON_PRACTICE_SLOT, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
+import { LESSON_PRACTICE_SLOT, lessonRehypePlugins, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
 import { resolveCurriculumRequest } from "@/lib/curriculum/lesson-urls";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { getDeckCards } from "@/lib/flashcard-decks";
@@ -117,7 +117,8 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   const { content } = await compileMDX({
     source: mdxContent,
     components,
-    options: { mdxOptions: { remarkPlugins } },
+    // Lead-in labels and the "Expert" tag are tagged at build time (DESIGN.md section 12).
+    options: { mdxOptions: { remarkPlugins, rehypePlugins: lessonRehypePlugins() } },
   });
 
   const hasToc = toc.length > 0;
@@ -130,7 +131,6 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     <PageShell width="content" innerClassName="pb-16" data-testid="lesson-page" data-tier={tierAttribute}>
       <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} lessonPath={lessonPath} />
       {hasToc ? <HeaderReadingProgress /> : null}
-      <LessonTrail slug={normalizedSlug} className="mb-4" />
       {/*
         Below 1280 px one column: the header, the 44 px "On this page" bar
         (sticky under the site header, display: contents on its wrapper so it
@@ -140,8 +140,9 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       */}
       <div className={cn(hasToc && "xl:grid xl:grid-cols-[minmax(0,1fr)_15rem] xl:gap-x-12")}>
         <LessonOrientation
-          className={cn(hasToc && "mb-0 xl:mb-8", "xl:col-start-1 xl:row-start-1")}
+          className={cn(hasToc && "mb-3 xl:mb-8", "xl:col-start-1 xl:row-start-1")}
           context={context}
+          trail={<LessonTrail slug={normalizedSlug} className="mb-4" />}
           title={topic.title}
           summary={summary}
           readingMinutes={readingMinutes}

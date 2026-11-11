@@ -37,6 +37,14 @@ interface ReturningLearnerStripProps {
 /** Literal, so Tailwind sees it; the attribute is RETURNING_ATTRIBUTE (a test keeps them equal). */
 export const STRIP_CLASS = 'hidden [html[data-home-returning]_&]:block data-[ready]:block';
 
+/**
+ * The trace line. Below 640 px, two fixed rows of 20 px: the tier's name and
+ * the count on the first (each whole), the miniature trace on the second.
+ * From 640 px, one row of 20 px: name, trace, count.
+ */
+export const TRACE_LINE_CLASS =
+  'grid h-11 min-w-0 basis-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[20px_20px] items-center gap-x-3 gap-y-1 text-ui text-muted-foreground sm:flex sm:h-5 lg:basis-auto';
+
 const linkClass =
   'rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
@@ -120,17 +128,20 @@ export default function ReturningLearnerStrip({ lessons }: ReturningLearnerStrip
         <h2 id="returning-heading" className={SECTION_HEADING_CLASS}>
           Pick up where you left off
         </h2>
-        {/* One line, always in the box (its own line below 1024 px), so the trace arriving after hydration moves nothing. */}
-        <p data-testid="returning-trace" className="flex h-5 min-w-0 basis-full items-center gap-3 text-ui text-muted-foreground lg:basis-auto">
+        {/*
+         * Always in the box at a fixed height (its own line below 1024 px), so the trace arriving after hydration moves
+         * nothing. Below 640 px it is two rows (TRACE_LINE_CLASS), so the tier's name and the count both fit whole.
+         */}
+        <p data-testid="returning-trace" className={TRACE_LINE_CLASS}>
           {tier && trace ? (
             <>
-              <span aria-hidden="true" className="min-w-0 truncate">
+              <span aria-hidden="true" data-part="tier" className="min-w-0 truncate">
                 {tier.label}
               </span>
-              <ProgressTraceView trace={trace} size="mini" />
+              <ProgressTraceView trace={trace} size="mini" className="col-span-2 row-start-2 justify-self-start" />
               {/* The trace's totals in words; hidden from assistive technology, since the trace's name says it. */}
               {traceText ? (
-                <span aria-hidden="true" data-testid="returning-trace-count" className="shrink-0 tabular-nums">
+                <span aria-hidden="true" data-testid="returning-trace-count" className="col-start-2 row-start-1 shrink-0 whitespace-nowrap tabular-nums">
                   {traceText}
                 </span>
               ) : null}

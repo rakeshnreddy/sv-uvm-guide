@@ -322,6 +322,9 @@ function useCourseOutline() {
  * It has no fill of its own (bg-transparent, not glass), so the page's colour field continues behind
  * the top of the column; only its right hairline marks the edge.
  */
+/** The docked outline's background layer: liquid glass 4 px inside the sticky nav, behind its rows. */
+export const OUTLINE_PANEL_LAYER_CLASS = "glass-liquid pointer-events-none absolute inset-1 -z-10";
+
 function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -336,10 +339,13 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
   };
 
   return (
-    <div id={DOCKED_OUTLINE_ID} className={cn("hidden shrink-0 border-r border-border bg-transparent lg:block", DOCKED_OUTLINE_WIDTH)}>
-      <nav aria-label="Course outline" className="sticky top-16 flex max-h-[calc(100vh-4rem)] flex-col">
+    <div id={DOCKED_OUTLINE_ID} className={cn("hidden shrink-0 border-r border-transparent bg-transparent lg:block", DOCKED_OUTLINE_WIDTH)}>
+      <nav aria-label="Course outline" className="sticky top-16 isolate flex max-h-[calc(100vh-4rem)] flex-col">
+        {/* The liquid glass panel (DESIGN.md section 12): a background layer only, so the column's box and the header's alignment do not change. */}
+        <div aria-hidden="true" data-outline-panel="" className={OUTLINE_PANEL_LAYER_CLASS} />
         <div className="flex items-center justify-between gap-2 pb-1 pl-3 pr-2 pt-2">
-          <p className="text-label text-subtle">Course outline</p>
+          {/* Text on glass is primary or secondary, never the subtle role (DESIGN.md section 11). */}
+          <p className="text-label text-muted-foreground">Course outline</p>
           <button
             type="button"
             onClick={hide}

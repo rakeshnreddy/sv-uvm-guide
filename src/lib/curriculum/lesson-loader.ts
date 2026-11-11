@@ -11,6 +11,7 @@ import {
   normalizeSlug,
   type Topic,
 } from "@/lib/curriculum-data";
+import { SOCIAL_IMAGE } from "@/lib/social-image";
 
 import { parseLessonFrontmatter, type LessonFrontmatter } from "./lesson-frontmatter";
 
@@ -89,6 +90,8 @@ export function generateLessonMetadata(lesson: CurriculumLesson): Metadata {
       title,
       description,
       url: canonical,
+      // A page's openGraph replaces the root one, image included, so the site card is named again.
+      images: [SOCIAL_IMAGE],
     },
   };
 }

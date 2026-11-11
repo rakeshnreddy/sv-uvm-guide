@@ -249,15 +249,25 @@ describe('docked course outline on a lesson page', () => {
     });
   });
 
-  it('is not glass: the docked outline is a plain column with no fill of its own', () => {
+  it('draws quiet liquid glass as a background layer only, so the column box does not change (DESIGN.md section 12)', () => {
     render(<Sidebar />);
     const docked = document.getElementById('course-outline-docked')!;
+    // The column itself keeps its box: no fill, a 1 px edge (now transparent) and its width.
     expect(docked.className).not.toMatch(/glass/);
-    expect(docked.querySelector('.glass, .glass-quiet')).toBeNull();
-    // Transparent, so the colour field continues behind the top of the column; the hairline stays.
-    expect(docked).toHaveClass('bg-transparent', 'border-r', 'border-border');
+    expect(docked).toHaveClass('bg-transparent', 'border-r', 'border-transparent', 'w-64', 'xl:w-72');
     expect(docked.className).not.toMatch(/\bbg-(background|card|muted)\b/);
-    expect(screen.getByRole('navigation', { name: 'Course outline' })).toHaveClass('sticky', 'top-16');
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    expect(nav).toHaveClass('sticky', 'top-16', 'isolate');
+    // The panel: an absolutely placed, decorative layer behind the rows, never a blurred layer.
+    const panel = nav.querySelector('[data-outline-panel]')!;
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(panel).toHaveClass('glass-liquid', 'absolute', 'pointer-events-none', '-z-10');
+    expect(panel.className.split(' ')).not.toContain('glass');
+    expect(nav.querySelectorAll('.glass, .glass-quiet, .glass-liquid')).toHaveLength(1);
+    // Text on glass is primary or secondary, never the subtle role.
+    const label = within(nav).getByText('Course outline');
+    expect(label).toHaveClass('text-muted-foreground');
+    expect(label).not.toHaveClass('text-subtle');
   });
 
   it('renders module codes as signal tags inside the module links', () => {

@@ -96,12 +96,23 @@ const GROUP_OF: Record<RegionId, RegionGroupId> = {
 };
 
 export function buildSchedulerFrame(scenarioId: TraceScenarioId = HERO_SCENARIO_ID, statementId: string = HERO_STATEMENT_ID): SchedulerFrame {
+  const run = simulateTimeSlot(getTracePreset(scenarioId).build());
+  const stepIndex = run.trace.findIndex((step) => step.kind === 'statement' && step.stmtId === statementId);
+  if (stepIndex < 0) throw new Error(`Scenario ${scenarioId} never executes statement ${statementId}`);
+  return buildSchedulerFrameAt(scenarioId, stepIndex);
+}
+
+/**
+ * The frame at a step index (0 is the slot's start, the step the live
+ * visualizer opens on). The "See it run" section's fallback uses step 0, so
+ * what shows before the interactive mounts is what it shows once it has.
+ */
+export function buildSchedulerFrameAt(scenarioId: TraceScenarioId, stepIndex: number): SchedulerFrame {
   const preset = getTracePreset(scenarioId);
   const scenario = preset.build();
   const run = simulateTimeSlot(scenario);
-  const stepIndex = run.trace.findIndex((step) => step.kind === 'statement' && step.stmtId === statementId);
-  if (stepIndex < 0) throw new Error(`Scenario ${scenarioId} never executes statement ${statementId}`);
   const step = run.trace[stepIndex];
+  if (!step) throw new Error(`Scenario ${scenarioId} has no step ${stepIndex}`);
   const executingRegion = executingRegionOf(step);
 
   const groups: FrameRegionGroup[] = [];

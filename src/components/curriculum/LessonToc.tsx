@@ -64,6 +64,27 @@ export const CONTENTS_SHEET_PANEL_CLASS = cn(
   "absolute inset-x-2 bottom-2 mx-auto flex max-h-[85vh] max-w-3xl flex-col rounded-2xl text-popover-foreground focus:outline-none",
 );
 
+/**
+ * The "Expert" tag (DESIGN.md section 12): an outlined tag in the tier 4
+ * colour, always beside the word itself, so colour is never the only cue.
+ */
+export const EXPERT_TAG_CLASS = "mt-0.5 shrink-0 rounded border border-tier-4-border px-1.5 py-px text-label text-tier-4";
+
+/**
+ * Whether a group is open in the column from 1280 px: the reader's choice when
+ * they made one, otherwise open. The column reserves the space of every group
+ * up front, so following the reader never moves its rows (no layout shift).
+ */
+export function isColumnGroupOpen(groupId: string, choices: Readonly<Record<string, boolean>>): boolean {
+  return choices[groupId] ?? true;
+}
+
+/**
+ * The column from 1280 px: a liquid glass panel (DESIGN.md section 12),
+ * radius 16, 12 px inside.
+ */
+export const TOC_COLUMN_PANEL_CLASS = "glass-liquid p-3";
+
 function isModifiedClick(event: React.MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
@@ -93,8 +114,10 @@ function TocLink({
         "flex min-w-0 flex-1 items-start gap-2 rounded-lg border-l-2 px-2 text-sm leading-snug transition-colors duration-150 ease-bench motion-reduce:transition-none",
         roomy ? "min-h-[2.5rem] py-2.5" : "py-1.5",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        // The current row changes surface, marker and colour, never weight: a
+        // heavier label can wrap differently and move the rows under it.
         active
-          ? "border-primary bg-muted font-medium text-foreground"
+          ? "border-primary bg-muted text-foreground"
           : cn(
               "border-transparent hover:bg-muted hover:text-foreground",
               entry.depth === 2 ? "text-foreground" : "text-muted-foreground",
@@ -102,9 +125,7 @@ function TocLink({
       )}
     >
       {entry.expert ? (
-        <span className="mt-0.5 shrink-0 rounded border border-border px-1.5 py-px text-label text-muted-foreground">
-          Expert
-        </span>
+        <span className={EXPERT_TAG_CLASS}>Expert</span>
       ) : null}{" "}
       <span className="min-w-0 break-words">{label}</span>
     </a>
@@ -114,8 +135,8 @@ function TocLink({
 interface TocListProps {
   groups: readonly TocGroup[];
   activeId: string | null;
-  holdingId: string | null;
-  choices: Readonly<Record<string, boolean>>;
+  /** Whether a group is open. */
+  isOpen: (groupId: string) => boolean;
   onToggleGroup: (groupId: string, open: boolean) => void;
   onNavigate?: (event: React.MouseEvent<HTMLAnchorElement>, entry: TocEntry) => void;
   /** Keeps the child-list ids of the column and the sheet apart. */
@@ -125,14 +146,13 @@ interface TocListProps {
 
 /**
  * The entries: one row per layer (H2), its sections (H3) nested in a list that
- * collapses. A group is open while it holds the section being read, or when
- * the reader opened it.
+ * collapses. Which groups are open is the caller's choice (`isOpen`).
  */
-function TocList({ groups, activeId, holdingId, choices, onToggleGroup, onNavigate, idPrefix, roomy }: TocListProps) {
+function TocList({ groups, activeId, isOpen, onToggleGroup, onNavigate, idPrefix, roomy }: TocListProps) {
   return (
     <ol className="space-y-0.5">
       {groups.map(({ entry, children }) => {
-        const open = isGroupOpen(entry.id, holdingId, choices);
+        const open = isOpen(entry.id);
         const childListId = `${idPrefix}-${entry.id}`;
         return (
           <li key={entry.id} data-toc-group={entry.id}>
@@ -250,9 +270,12 @@ function ContentsSheet({ id, onClose, children }: ContentsSheetProps) {
  * "On this page" (G30-PAGE-02; SPEC-phases-2-4.md, "Lesson page"): the
  * lesson's H2 layers and H3 sections as anchor links. It follows the reader:
  * the entry for the section being read carries aria-current="location" and is
- * scrolled into view inside the panel, and only the layer holding it is open
- * (the reader can open or close any layer). Expert entries carry a quiet
- * "Expert" tag, text rather than colour.
+ * scrolled into view inside the panel. In the sheet only the layer holding it
+ * is open. In the column from 1280 px every layer starts open, so the column
+ * never reflows while the reader scrolls (opening and closing groups as the
+ * current layer changed moved the rows under them: a layout shift of 0.04 to
+ * 0.07 per lesson); the reader can still close or open any layer. Expert
+ * entries carry the "Expert" tag, the word itself in the tier 4 colour.
  *
  * Below 1280 px it is a 44 px sticky bar under the header, "On this page:
  * <current section>" with the reading progress line on its bottom edge, that
@@ -267,6 +290,8 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
   const activeId = useActiveHeading(ids);
   const holdingId = groupHolding(groups, activeId);
   const [choices, setChoices] = useState<Record<string, boolean>>({});
+  // The column's own choices: every group open unless the reader closed it. Never reset by scrolling.
+  const [columnChoices, setColumnChoices] = useState<Record<string, boolean>>({});
   const [open, setOpen] = useState(false);
   const outlineCollapsed = useShellState((state) => state.outlineCollapsed);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -300,6 +325,9 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
   const toggleGroup = useCallback((groupId: string, value: boolean) => {
     setChoices((previous) => ({ ...previous, [groupId]: value }));
   }, []);
+  const toggleColumnGroup = useCallback((groupId: string, value: boolean) => {
+    setColumnChoices((previous) => ({ ...previous, [groupId]: value }));
+  }, []);
 
   const openSheet = () => {
     // Focus the bar first, so it is where focus returns when the sheet closes
@@ -327,7 +355,18 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
   if (entries.length === 0) return null;
 
   const current = activeId ? entries.find((entry) => entry.id === activeId) : undefined;
-  const listProps = { groups, activeId, holdingId, choices, onToggleGroup: toggleGroup };
+  const sheetListProps = {
+    groups,
+    activeId,
+    isOpen: (groupId: string) => isGroupOpen(groupId, holdingId, choices),
+    onToggleGroup: toggleGroup,
+  };
+  const columnListProps = {
+    groups,
+    activeId,
+    isOpen: (groupId: string) => isColumnGroupOpen(groupId, columnChoices),
+    onToggleGroup: toggleColumnGroup,
+  };
 
   return (
     <nav aria-label="On this page" data-lesson-toc="" className={cn(LESSON_TOC_NAV_CLASS, open && MODAL_LAYER, className)}>
@@ -352,16 +391,16 @@ export default function LessonToc({ entries, className }: LessonTocProps) {
 
       {open ? (
         <ContentsSheet id={sheetId} onClose={closeSheet}>
-          <TocList {...listProps} idPrefix={`${idBase}-sheet`} roomy onNavigate={navigateFromSheet} />
+          <TocList {...sheetListProps} idPrefix={`${idBase}-sheet`} roomy onNavigate={navigateFromSheet} />
         </ContentsSheet>
       ) : null}
 
-      <div className="hidden xl:block" data-testid="lesson-toc-column">
-        <p aria-hidden="true" className="px-2 pb-2 text-label text-subtle">
+      <div className={cn("hidden xl:block", TOC_COLUMN_PANEL_CLASS)} data-testid="lesson-toc-column">
+        <p aria-hidden="true" className="px-2 pb-2 text-label text-muted-foreground">
           On this page
         </p>
-        <div ref={columnRef} className="max-h-[calc(100vh-8.5rem)] overflow-y-auto overscroll-contain pb-4 pr-1">
-          <TocList {...listProps} idPrefix={`${idBase}-column`} roomy={false} />
+        <div ref={columnRef} className="max-h-[calc(100vh-10.5rem)] overflow-y-auto overscroll-contain pr-1">
+          <TocList {...columnListProps} idPrefix={`${idBase}-column`} roomy={false} />
         </div>
       </div>
     </nav>

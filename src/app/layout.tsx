@@ -27,6 +27,14 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "website",
+    // The image is the static opengraph-image.png beside this file (with its .alt.txt), which Next.js adds itself.
+  },
+  // The large card shows twitter-image.png (also a static file here); favicon.ico, icon.svg, icon1.png,
+  // icon2.png and apple-icon.png are the app icons. scripts/generate-brand-images.mjs makes all of them.
+  // No twitter title or description: X then takes each page's own og:title and og:description, so a
+  // lesson shares as that lesson rather than as the site.
+  twitter: {
+    card: "summary_large_image",
   },
 };
 

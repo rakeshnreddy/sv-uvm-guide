@@ -21,6 +21,32 @@ export const calloutKinds = {
 
 type CalloutKind = keyof typeof calloutKinds;
 
+/**
+ * The colour role of a callout (DESIGN.md section 12): note or info is the
+ * accent, tip is success, pitfall or warning the warning colour, danger the
+ * danger colour, and standard or reference the --reference role. GitHub's
+ * IMPORTANT (purple there) is the reference role; CAUTION is danger. Any other
+ * kind is a note.
+ */
+export type CalloutRole = "note" | "tip" | "warning" | "danger" | "reference";
+
+const CALLOUT_ROLES: Readonly<Record<string, CalloutRole>> = {
+  note: "note",
+  info: "note",
+  tip: "tip",
+  warning: "warning",
+  pitfall: "warning",
+  danger: "danger",
+  caution: "danger",
+  standard: "reference",
+  reference: "reference",
+  important: "reference",
+};
+
+export function calloutRole(kind: string): CalloutRole {
+  return CALLOUT_ROLES[kind.trim().toLowerCase()] ?? "note";
+}
+
 const MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/;
 
 function transformBlockquote(node: AstNode): void {
@@ -43,7 +69,9 @@ function transformBlockquote(node: AstNode): void {
   node.data = {
     hName: "aside",
     hProperties: {
-      className: ["callout", `callout-${kind.toLowerCase()}`],
+      // glass-liquid: the lesson panels' liquid glass (globals.css), tinted by the role.
+      className: ["callout", `callout-${kind.toLowerCase()}`, "glass-liquid"],
+      "data-callout-role": calloutRole(kind),
       role: "note",
       "aria-label": calloutKinds[kind],
     },

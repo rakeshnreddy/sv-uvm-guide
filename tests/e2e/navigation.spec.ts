@@ -96,18 +96,19 @@ test.describe('Advanced Navigation Features', () => {
     await expect(results.getByRole('option', { name: /Mailboxes/ }).first()).toHaveAttribute('href', MAILBOXES);
 
     await searchInput.press('Enter');
-    await expect(page).toHaveURL(MAILBOXES);
-    await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('Mailboxes');
+    // The e2e server is `next dev`, which compiles each page on its first visit; allow for a cold compile.
+    await expect(page).toHaveURL(MAILBOXES, { timeout: 30_000 });
+    await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('Mailboxes', { timeout: 30_000 });
   });
 
   test('should navigate with Alt+1 and Alt+2, which also fire on macOS (G30-SRCH-04)', async ({ page }) => {
     await page.goto('/practice');
     await waitForShell(page);
     await page.keyboard.press('Alt+Digit1');
-    await expect(page).toHaveURL('/curriculum');
+    await expect(page).toHaveURL('/curriculum', { timeout: 30_000 });
     await waitForShell(page);
     await page.keyboard.press('Alt+Digit2');
-    await expect(page).toHaveURL('/practice');
+    await expect(page).toHaveURL('/practice', { timeout: 30_000 });
   });
 
   test('should go to the dashboard with Alt+3, and list it in the shortcuts help', async ({ page }) => {
@@ -249,10 +250,11 @@ test.describe('Lesson page shell', () => {
 
   test('moves between lessons with "[" and "]" (G30-SRCH-06)', async ({ page }) => {
     await page.keyboard.press(']');
-    await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/semaphores');
+    // A cold `next dev` compiles the next lesson on this first visit.
+    await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/semaphores', { timeout: 30_000 });
     await waitForShell(page);
     await page.keyboard.press('[');
-    await expect(page).toHaveURL(MAILBOXES);
+    await expect(page).toHaveURL(MAILBOXES, { timeout: 30_000 });
   });
 
   test('jumps to the lesson\'s "On this page" list with "t" (G30-SRCH-06)', async ({ page }) => {
@@ -298,7 +300,7 @@ test.describe('Phone layout (390 px)', () => {
     expect(await dashboard.evaluate((link) => getComputedStyle(link).boxShadow)).not.toBe('none');
 
     await dashboard.press('Enter');
-    await expect(page).toHaveURL('/dashboard');
+    await expect(page).toHaveURL('/dashboard', { timeout: 30_000 });
   });
 });
 

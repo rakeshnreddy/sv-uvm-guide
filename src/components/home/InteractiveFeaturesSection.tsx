@@ -7,8 +7,12 @@ import { siteLink } from '@/lib/nav-labels';
 import { INTERVIEW_PREP_HREF, LABS_HREF, PRACTICE_SECTION_HREF } from '@/lib/site-links';
 
 import type { LandingFacts } from './home-stats';
+import PractiseThumbnail, { type PractiseThumbnailKind } from './PractiseThumbnail';
+import type { PractiseThumbnails } from './practise-thumbnails';
 
 export interface PractiseItem {
+  /** Which drawing the card shows (PractiseThumbnail). */
+  kind: PractiseThumbnailKind;
   /** The destination's label and href, from src/lib/site-links.ts. */
   label: string;
   href: string;
@@ -22,24 +26,28 @@ export interface PractiseItem {
 export function practiseItems(facts: LandingFacts): PractiseItem[] {
   return [
     {
+      kind: 'labs',
       ...siteLink(LABS_HREF),
       count: facts.labCount,
       unit: facts.labCount === 1 ? 'lab' : 'labs',
       line: 'Build a testbench step by step from starter code. Your progress is saved in this browser.',
     },
     {
+      kind: 'exercises',
       ...siteLink(PRACTICE_SECTION_HREF.exercises),
       count: facts.exerciseCount,
       unit: facts.exerciseCount === 1 ? 'exercise' : 'exercises',
       line: 'Short graded drills that check your answer straight away and explain what is wrong.',
     },
     {
+      kind: 'interactiveModels',
       ...siteLink(PRACTICE_SECTION_HREF.interactiveModels),
       count: facts.interactiveModelCount,
       unit: facts.interactiveModelCount === 1 ? 'model' : 'models',
       line: 'Predict, then run a tested model of the language or methodology rule.',
     },
     {
+      kind: 'interviewPrep',
       ...siteLink(INTERVIEW_PREP_HREF),
       count: facts.interviewQuestionCount,
       unit: facts.interviewQuestionCount === 1 ? 'question' : 'questions',
@@ -49,17 +57,20 @@ export function practiseItems(facts: LandingFacts): PractiseItem[] {
 }
 
 /**
- * "What you can practise": four quiet-glass cards, each one link named by the
- * destination's label in src/lib/site-links.ts, one plain line and its count
- * from the data as a small mono meta. A server component: it ships no client code and takes
- * its counts as props, so it never imports the lab registry.
+ * "What you can practise": four quiet-glass cards, each with a small drawing
+ * made from the product's own data (PractiseThumbnail, hidden from assistive
+ * technology), one link named by the destination's label in
+ * src/lib/site-links.ts, one plain line and its count from the data as a
+ * small mono meta. A server component: it ships no client code and takes its
+ * counts and drawings as props, so it never imports the lab registry.
  */
-export default function InteractiveFeaturesSection({ facts }: { facts: LandingFacts }) {
+export default function InteractiveFeaturesSection({ facts, thumbnails }: { facts: LandingFacts; thumbnails?: PractiseThumbnails }) {
   return (
     <Section id="what-you-can-practise" title="What you can practise">
       <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {practiseItems(facts).map((item) => (
           <Card key={item.href} as="li" variant="glassQuietInteractive" padding="default" className="flex min-w-0 flex-col">
+            {thumbnails ? <PractiseThumbnail kind={item.kind} thumbnails={thumbnails} /> : null}
             <h3 className="text-h4">
               <Link href={item.href} className="text-foreground after:absolute after:inset-0 focus-visible:outline-none">
                 {item.label}

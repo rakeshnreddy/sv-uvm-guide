@@ -34,7 +34,7 @@ export function continueReasonNote(position: ContinuePosition<ContinueLessonEntr
 
 /**
  * Literal, so Tailwind sees it. The section is in the server HTML but hidden;
- * two inline scripts on the curriculum page mark <html> before first paint:
+ * inline scripts on the curriculum page mark <html> before first paint:
  * RETURNING_ATTRIBUTE (returningLearnerScript) when this browser holds a
  * lesson visit, ROUTE_FOLLOWED_ATTRIBUTE (routeFollowedScript) when it follows
  * a route. Either shows the box at its final size before React hydrates.
@@ -52,8 +52,51 @@ const ROUTE_ROW_BEFORE_READY = 'hidden [html[data-route-followed]_&]:block';
 const ROUTE_ROW_UNDER_COLUMNS = 'mt-5 border-t border-border pt-4';
 const ROUTE_ROW_UNDER_COLUMNS_BEFORE_READY =
   'mt-4 [html[data-home-returning]_&]:mt-5 [html[data-home-returning]_&]:border-t [html[data-home-returning]_&]:border-border [html[data-home-returning]_&]:pt-4';
-/** The route row's height, held before and after hydration so its content fills it in place. */
-const ROUTE_ROW_HEIGHT = 'min-h-[6.5rem] sm:min-h-[4.25rem]';
+/**
+ * The "Recently visited" column before hydration (literal, so Tailwind sees it).
+ * Below md it sits under Continue: a 16 px heading, 4 px, then one 24 px row
+ * per lesson (two lessons to a row from sm). The resume-recent script sets
+ * RECENT_COUNT_ATTRIBUTE to the number it will list, so the column holds
+ * exactly that height, and none at all (no gap under Continue) for zero.
+ * Without the attribute (storage blocked) it keeps room for three. From md it
+ * sits beside Continue and reserves nothing. A test keeps the attribute name
+ * equal to the script's.
+ */
+export const RECENT_COLUMN_BEFORE_READY = [
+  'min-h-[5.75rem] sm:min-h-[4.25rem] md:min-h-0',
+  '[html[data-resume-recent="0"]_&]:hidden',
+  '[html[data-resume-recent="1"]_&]:min-h-[2.75rem] sm:[html[data-resume-recent="1"]_&]:min-h-[2.75rem]',
+  '[html[data-resume-recent="2"]_&]:min-h-[4.25rem] sm:[html[data-resume-recent="2"]_&]:min-h-[2.75rem]',
+  'md:[html[data-resume-recent]_&]:min-h-0',
+].join(' ');
+
+/**
+ * The route row's content height, held before and after hydration so its
+ * content fills it in place. It sits on an inner box, so the rule and padding
+ * above it (when the lesson columns are there) add to it in both states alike.
+ * Below sm: the 16 px label, 4 px, the step line, 8 px and the action at its
+ * two-line height (106 px); from sm the step line and the action share a row (68 px).
+ */
+const ROUTE_ROW_HEIGHT = 'min-h-[6.625rem] sm:min-h-[4.25rem]';
+
+/**
+ * The actions in the box keep one height whatever their label: on a phone a
+ * label may wrap to a second line (never a third), so below sm the action is
+ * always two lines tall (58 px) and the box never changes height when the
+ * labels arrive. From sm a label fits one line.
+ */
+const RESUME_ACTION_HEIGHT = 'min-h-[58px] sm:min-h-[44px]';
+const RESUME_ACTION_LABEL = 'line-clamp-2 [overflow-wrap:anywhere]';
+
+/**
+ * The Continue column (literal, so Tailwind sees it): label, the reason note
+ * and the action. The note is one line ("The lesson you opened last."), or two
+ * when the lesson follows one marked done, which the resume-recent script marks
+ * on <html> (RESUME_DONE_ATTRIBUTE) before first paint. Below sm: 110 px, or
+ * 130 px; from sm: 96 px, or 116 px.
+ */
+export const CONTINUE_COLUMN_CLASS =
+  'min-w-0 min-h-[6.875rem] sm:min-h-24 [html[data-resume-done]_&]:min-h-[8.125rem] sm:[html[data-resume-done]_&]:min-h-[7.25rem]';
 
 export const RESUME_SUBTITLE_LESSONS = 'Based on the lessons you opened in this browser.';
 export const RESUME_SUBTITLE_ROUTE = 'Based on the route you follow in this browser.';
@@ -137,19 +180,19 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, posi
             ready ? 'grid' : LESSON_COLUMNS_BEFORE_READY,
           )}
         >
-          <div className="min-h-24 min-w-0">
+          <div className={CONTINUE_COLUMN_CLASS} data-testid="curriculum-resume-continue">
             {position && (
               <>
                 <p className={eyebrow}>Continue the course</p>
-                <p className="mt-1 min-h-5 text-ui text-muted-foreground [overflow-wrap:anywhere]">{continueReasonNote(position)}</p>
+                <p className="mt-1 line-clamp-2 min-h-5 text-ui text-muted-foreground [overflow-wrap:anywhere]">{continueReasonNote(position)}</p>
                 {/* The view's one filled action (DESIGN.md section 10: Continue comes first). */}
                 <Link
                   href={position.lesson.href}
                   data-testid="curriculum-continue"
                   aria-label={continueAccessibleName(position.lesson)}
-                  className={`${primaryAction} mt-3 max-w-full`}
+                  className={cn(primaryAction, RESUME_ACTION_HEIGHT, 'mt-3 max-w-full')}
                 >
-                  <span className="[overflow-wrap:anywhere]">
+                  <span className={RESUME_ACTION_LABEL}>
                     {continueLabel(position.lesson)}: {position.lesson.title}
                   </span>
                   <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -158,56 +201,65 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, posi
             )}
           </div>
 
-          <div className="min-h-[5.75rem] min-w-0 sm:min-h-[4.25rem] md:min-h-0">
-            {recent.length > 0 && (
-              <>
-                <h3 id="recent-lessons-heading" className={eyebrow}>
-                  Recently visited
-                </h3>
-                <ul aria-labelledby="recent-lessons-heading" className="mt-1 grid grid-cols-1 gap-x-6 text-ui sm:grid-cols-2 md:grid-cols-1">
-                  {recent.map((lesson) => (
-                    <li key={lesson.key} className="flex min-h-6 min-w-0 items-center">
-                      <Link href={lesson.href} className={cn(textLink, 'truncate')} title={labelWithCode(lesson.moduleCode, lesson.title)}>
-                        {labelWithCode(lesson.moduleCode, lesson.title)}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
+          {/* After hydration the column is there only when it lists a lesson: no reserved gap under Continue. */}
+          {(!ready || recent.length > 0) && (
+            <div data-testid="curriculum-resume-recent" className={cn('min-w-0', !ready && RECENT_COLUMN_BEFORE_READY)}>
+              {recent.length > 0 && (
+                <>
+                  <h3 id="recent-lessons-heading" className={eyebrow}>
+                    Recently visited
+                  </h3>
+                  <ul aria-labelledby="recent-lessons-heading" className="mt-1 grid grid-cols-1 gap-x-6 text-ui sm:grid-cols-2 md:grid-cols-1">
+                    {recent.map((lesson) => (
+                      <li key={lesson.key} className="flex min-h-6 min-w-0 items-center">
+                        <Link href={lesson.href} className={cn(textLink, 'truncate')} title={labelWithCode(lesson.moduleCode, lesson.title)}>
+                          {labelWithCode(lesson.moduleCode, lesson.title)}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
-      {!ready && <div aria-hidden="true" className={cn(ROUTE_ROW_BEFORE_READY, ROUTE_ROW_UNDER_COLUMNS_BEFORE_READY, ROUTE_ROW_HEIGHT)} />}
+      {!ready && (
+        <div aria-hidden="true" className={cn(ROUTE_ROW_BEFORE_READY, ROUTE_ROW_UNDER_COLUMNS_BEFORE_READY)}>
+          <div className={ROUTE_ROW_HEIGHT} />
+        </div>
+      )}
       {route && (
-        <div data-testid="curriculum-resume-route" className={cn(hasLessonVisit ? ROUTE_ROW_UNDER_COLUMNS : 'mt-4', ROUTE_ROW_HEIGHT)}>
-          <p className={eyebrow}>Next on your {route.name} route</p>
-          {routeLesson && routeStep ? (
-            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <p className="text-ui text-muted-foreground">
-                Step {routeStep.number} of {route.steps.length}: {routeStep.title}
-                {routeIsContinue ? '. It is the lesson to continue.' : ''}
+        <div data-testid="curriculum-resume-route" className={hasLessonVisit ? ROUTE_ROW_UNDER_COLUMNS : 'mt-4'}>
+          <div className={ROUTE_ROW_HEIGHT}>
+            <p className={eyebrow}>Next on your {route.name} route</p>
+            {routeLesson && routeStep ? (
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <p className="text-ui text-muted-foreground">
+                  Step {routeStep.number} of {route.steps.length}: {routeStep.title}
+                  {routeIsContinue ? '. It is the lesson to continue.' : ''}
+                </p>
+                {!routeIsContinue && (
+                  <Link href={routeLesson.href} className={cn(position ? secondaryAction : primaryAction, RESUME_ACTION_HEIGHT, 'max-w-full')}>
+                    <span className={RESUME_ACTION_LABEL}>
+                      {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
+                      {labelWithCode(routeLesson.moduleCode, routeLesson.title)}
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <p className="mt-1 text-ui text-foreground">
+                You have opened every lesson on this route.{' '}
+                <a href="#routes" className={inlineLink}>
+                  Choose another route
+                </a>
+                .
               </p>
-              {!routeIsContinue && (
-                <Link href={routeLesson.href} className={`${position ? secondaryAction : primaryAction} max-w-full`}>
-                  <span className="[overflow-wrap:anywhere]">
-                    {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
-                    {labelWithCode(routeLesson.moduleCode, routeLesson.title)}
-                  </span>
-                  <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
-                </Link>
-              )}
-            </div>
-          ) : (
-            <p className="mt-1 text-ui text-foreground">
-              You have opened every lesson on this route.{' '}
-              <a href="#routes" className={inlineLink}>
-                Choose another route
-              </a>
-              .
-            </p>
-          )}
+            )}
+          </div>
         </div>
       )}
     </section>

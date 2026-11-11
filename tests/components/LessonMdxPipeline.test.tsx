@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LessonPractice } from "@/components/curriculum/LessonPractice";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
 import { getDeckCards } from "@/lib/flashcard-decks";
-import { LESSON_PRACTICE_SLOT, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
+import { LESSON_PRACTICE_SLOT, lessonRehypePlugins, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { getAllLabs } from "@/lib/lab-registry";
 import { getPracticeForModule, type LessonPracticeEntry } from "@/lib/practice-links";
@@ -48,6 +48,7 @@ async function renderLesson(source: string, lessonSlug: string[], deckId?: strin
     options: {
       mdxOptions: {
         remarkPlugins: lessonRemarkPlugins({ toc, hasFlashcards: Boolean(deckId), hasHandsOn: practice.length > 0 }),
+        rehypePlugins: lessonRehypePlugins(),
       },
     },
   });
@@ -99,7 +100,8 @@ describe("the lesson page's MDX pipeline", () => {
       IUVM3B_DECK,
     );
     expect(html).toContain('<h2 id="quick-take">Quick Take</h2>');
-    expect(html).toContain('<h3 id="expert-scale">Expert: scale</h3>');
+    // The "Expert:" prefix becomes the outlined tag; the heading's text is unchanged (DESIGN.md section 12).
+    expect(html).toContain('<h3 id="expert-scale"><span data-expert-tag="">Expert<span data-expert-colon="">:</span></span> scale</h3>');
     expect(html.indexOf('id="reinforce-the-essentials"')).toBeGreaterThan(html.indexOf('id="practice--reinforce"'));
     expect(html.indexOf('id="teach-it-back"')).toBeLessThan(html.indexOf('id="references--next-topics"'));
     expect(html.match(/<section/g)).toHaveLength(2);
@@ -173,5 +175,46 @@ describe("the lesson page's MDX pipeline", () => {
     ]);
     expect(toc[0]?.id).toBe("quick-take");
     for (const entry of toc) expect(html, entry.id).toContain(`id="${entry.id}"`);
+  });
+
+  it("tags lead-in labels, callout roles and the Expert tag as the page does (DESIGN.md section 12)", async () => {
+    // Passages from F1A, F1B and B-AXI-2, as written.
+    const source = [
+      "## Quick Take",
+      "",
+      "- **What it is:** The economic case for verification. A **bug** is any difference between what the chip does and what it should do.",
+      "- **Why it matters:** A logic bug found after tape-out can force a respin.",
+      "",
+      "> [!IMPORTANT]",
+      "> **NRE versus recurring cost:** the mask set is paid once per design revision (NRE).",
+      "",
+      "> [!TIP]",
+      "> **In interviews:** when asked \"How would you verify X?\", walk through these six questions.",
+      "",
+      "| Burst | Rule |",
+      "|---|---|",
+      "| **WRAP:** | must start aligned |",
+      "",
+      "## Push Further",
+      "",
+      "### Expert: what an interconnect may legally change",
+      "",
+      "**X-masking.** A DUT register that reset never assigned still holds `'x`.",
+    ].join("\n");
+    const { html } = await renderLesson(source, IUVM3B);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(Array.from(doc.querySelectorAll("strong[data-lead-in]")).map((node) => node.textContent)).toEqual([
+      "What it is:",
+      "Why it matters:",
+      "NRE versus recurring cost:",
+      "In interviews:",
+    ]);
+    expect(doc.querySelectorAll("td strong")).toHaveLength(1);
+    expect(doc.querySelector("td strong[data-lead-in]")).toBeNull();
+    const callouts = Array.from(doc.querySelectorAll("aside.callout"));
+    expect(callouts.map((node) => node.getAttribute("data-callout-role"))).toEqual(["reference", "tip"]);
+    for (const aside of callouts) expect(aside.classList.contains("glass-liquid")).toBe(true);
+    const expert = doc.querySelector("h3[id] [data-expert-tag]");
+    expect(expert?.closest("h3")?.textContent).toBe("Expert: what an interconnect may legally change");
   });
 });

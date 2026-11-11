@@ -59,7 +59,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
       </div>
 
       <section aria-label={`This time slot, t = ${timeText}`} className="rounded-xl border-2 border-dashed border-border/80 p-2 sm:p-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">This time slot · t = {timeText}</p>
+        <p className="mb-2 text-label text-muted-foreground">This time slot · t = {timeText}</p>
         <ol className="space-y-1">
           {folded.events.map((event) => {
             const isCurrent = event.index === current.index;
@@ -108,7 +108,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
       </section>
 
       <div aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="text-label text-muted-foreground">
           {current.index === 0 ? "Entering the slot" : `Event ${current.index} of ${folded.events.length - 1}`} · {kindName[current.kind]}
         </p>
         {current.movedBefore ? <p className="mt-2 text-sm text-muted-foreground [font-variant-ligatures:none]">↺ {current.movedBefore}</p> : null}
@@ -131,7 +131,7 @@ export function FoldedSlotView({ folded, index, watch, onSelect, className }: Fo
       </div>
 
       <div>
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Values after this event</p>
+        <p className="mb-2 text-label text-muted-foreground">Values after this event</p>
         <div className="flex flex-wrap gap-2">
           {watch.map((s) => (
             <ValueChip key={s} name={s} value={current.values[s]} changed={changed.includes(s)} />

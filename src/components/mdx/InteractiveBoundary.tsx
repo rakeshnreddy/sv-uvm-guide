@@ -9,8 +9,12 @@ export const INTERACTIVE_FAILED_TEXT = "This interactive failed to load";
 export const INTERACTIVE_LOADING_TEXT = "Loading interactive";
 export const INTERACTIVE_RETRY_LABEL = "Retry";
 
-/** The box shared by the placeholder and the error state: a quiet surface, no shadow, 12 px radius. */
-export const INTERACTIVE_STATE_CLASS = "not-prose my-8 rounded-xl border border-border bg-card p-5 sm:p-6";
+/**
+ * The box shared by the placeholder and the error state: the same liquid glass
+ * panel and padding as VisualFrame (DESIGN.md section 12), so an interactive
+ * keeps its frame (radius, fill, top edge) when its code arrives and swaps in.
+ */
+export const INTERACTIVE_STATE_CLASS = "glass-liquid not-prose my-8 p-3 sm:p-4 md:p-6";
 
 export interface InteractivePlaceholderProps {
   title: string;
@@ -18,8 +22,17 @@ export interface InteractivePlaceholderProps {
   height: number;
   /** Expected height in px on phones; defaults to `height`. */
   mobileHeight?: number;
+  /**
+   * Expected height in px from 1024 to 1279 px, where the lesson's three
+   * columns leave the article narrowest; defaults to `height`.
+   */
+  midHeight?: number;
   className?: string;
 }
+
+/** The placeholder's min-height: phone height, then the 640 px-up height, then the 1024 to 1279 px band. */
+export const INTERACTIVE_MIN_HEIGHT_CLASS =
+  "min-h-[var(--interactive-height-sm)] sm:min-h-[var(--interactive-height)] lg:max-xl:min-h-[var(--interactive-height-md)]";
 
 /**
  * Stands in for an interactive while its code loads (on a client-side
@@ -28,21 +41,18 @@ export interface InteractivePlaceholderProps {
  * It is `aria-busy`, not a live region: a lesson with five interactives would
  * otherwise announce "Loading interactive" five times while the learner reads.
  */
-export function InteractivePlaceholder({ title, height, mobileHeight, className }: InteractivePlaceholderProps) {
+export function InteractivePlaceholder({ title, height, mobileHeight, midHeight, className }: InteractivePlaceholderProps) {
   const style = {
     "--interactive-height": `${height}px`,
     "--interactive-height-sm": `${mobileHeight ?? height}px`,
+    "--interactive-height-md": `${midHeight ?? height}px`,
   } as React.CSSProperties;
   return (
     <div
       aria-busy="true"
       data-interactive-placeholder=""
       style={style}
-      className={cn(
-        INTERACTIVE_STATE_CLASS,
-        "min-h-[var(--interactive-height-sm)] sm:min-h-[var(--interactive-height)]",
-        className,
-      )}
+      className={cn(INTERACTIVE_STATE_CLASS, INTERACTIVE_MIN_HEIGHT_CLASS, className)}
     >
       <p className="text-ui font-medium text-foreground">{title}</p>
       <p className="mt-1 text-ui text-muted-foreground">{INTERACTIVE_LOADING_TEXT}</p>

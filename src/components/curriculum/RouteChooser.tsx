@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Check, ChevronDown, MapPin } from 'lucide-react';
 
 import { SignalTag } from '@/components/ui/SignalTag';
+import { useHydrated } from '@/lib/learner-store/react';
 import { labelWithCode } from '@/lib/curriculum-overview';
 import type { ResolvedMilestone, ResolvedRoute, ResolvedStep } from '@/lib/learning-paths';
 import {
@@ -30,6 +31,40 @@ export interface RouteChooserProps {
 }
 
 export const ROUTE_STEPS_ID = 'route-steps';
+
+/**
+ * Before hydration the followed route is not known to React, only to the
+ * route-followed script, which marks <html data-route-followed="<id>"> before
+ * first paint. These classes (literal, so Tailwind sees them) draw that
+ * route's card as followed from the first paint: the raised surface and accent
+ * marker, the checked box and, above all, the "Steps on this route" toggle, so
+ * the strip paints at its final height and nothing moves when React takes
+ * over. A test keeps the attribute name equal to the script's.
+ */
+export const ROUTE_PRE_PAINT: Record<RouteId, { card: string; box: string; check: string; toggle: string }> = {
+  junior: {
+    card: '[html[data-route-followed=junior]_&]:bg-muted [html[data-route-followed=junior]_&]:shadow-[inset_2px_0_0_hsl(var(--primary))]',
+    box: '[html[data-route-followed=junior]_&]:border-primary [html[data-route-followed=junior]_&]:bg-primary',
+    check: 'hidden [html[data-route-followed=junior]_&]:block',
+    toggle: 'hidden [html[data-route-followed=junior]_&]:inline-flex',
+  },
+  practitioner: {
+    card: '[html[data-route-followed=practitioner]_&]:bg-muted [html[data-route-followed=practitioner]_&]:shadow-[inset_2px_0_0_hsl(var(--primary))]',
+    box: '[html[data-route-followed=practitioner]_&]:border-primary [html[data-route-followed=practitioner]_&]:bg-primary',
+    check: 'hidden [html[data-route-followed=practitioner]_&]:block',
+    toggle: 'hidden [html[data-route-followed=practitioner]_&]:inline-flex',
+  },
+  expert: {
+    card: '[html[data-route-followed=expert]_&]:bg-muted [html[data-route-followed=expert]_&]:shadow-[inset_2px_0_0_hsl(var(--primary))]',
+    box: '[html[data-route-followed=expert]_&]:border-primary [html[data-route-followed=expert]_&]:bg-primary',
+    check: 'hidden [html[data-route-followed=expert]_&]:block',
+    toggle: 'hidden [html[data-route-followed=expert]_&]:inline-flex',
+  },
+};
+
+/** The steps toggle's box, shared by the button and its pre-paint stand-in so the two are the same size. */
+const STEPS_TOGGLE_CLASS =
+  'mt-1 inline-flex min-h-[40px] items-center gap-1 self-start rounded-lg px-1 text-ui font-medium text-primary underline-offset-4';
 
 /** The modules a route works through, in order, without the "skim first" review steps. */
 function routeModules(route: ResolvedRoute): ResolvedStep['modules'] {
@@ -101,9 +136,12 @@ function RouteStripItem({
   filled,
   stepsOpen,
   onToggleSteps,
+  prePaint,
 }: {
   route: ResolvedRoute;
   selected: boolean;
+  /** Before hydration: draw the card as followed when the route-followed script names this route. */
+  prePaint: boolean;
   onToggle: () => void;
   /** This route holds the view's one filled accent action. */
   filled: boolean;
@@ -115,6 +153,7 @@ function RouteStripItem({
   const tier = routeStartTier(route);
   const opening = routeOpeningModules(route);
   const lessons = route.sequence.length;
+  const early = prePaint ? ROUTE_PRE_PAINT[route.id] : undefined;
   return (
     <article
       id={anchor}
@@ -126,6 +165,7 @@ function RouteStripItem({
         tier && 'tier-edge',
         // The followed route: the raised surface with a 2 px accent marker on the leading edge, as for every current item.
         selected && 'bg-muted shadow-[inset_2px_0_0_hsl(var(--primary))]',
+        early?.card,
       )}
     >
       {/* Secondary text, never the subtle colour, on glass (DESIGN.md section 11). */}
@@ -165,9 +205,11 @@ function RouteStripItem({
             className={cn(
               'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border',
               selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+              early && cn('text-primary-foreground', early.box),
             )}
           >
             {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+            {early && <Check className={cn('h-3 w-3', early.check)} strokeWidth={3} />}
           </span>
           Follow the {route.name} route
         </button>
@@ -180,14 +222,19 @@ function RouteStripItem({
           aria-controls={ROUTE_STEPS_ID}
           onClick={onToggleSteps}
           data-testid="route-steps-toggle"
-          className={cn(
-            'mt-1 inline-flex min-h-[40px] items-center gap-1 self-start rounded-lg px-1 text-ui font-medium text-primary underline-offset-4 hover:underline',
-            focusRing,
-          )}
+          className={cn(STEPS_TOGGLE_CLASS, 'hover:underline', focusRing)}
         >
           <ChevronDown className={cn('h-4 w-4 transition-transform motion-reduce:transition-none', stepsOpen && 'rotate-180')} aria-hidden="true" />
           {routeStepsToggleLabel(route)}
         </button>
+      )}
+      {early && (
+        // The toggle's stand-in until hydration: the same box and words, shown only for the route the script names.
+        // Not a control yet (aria-hidden, not focusable); the button replaces it in place.
+        <span aria-hidden="true" data-testid="route-steps-toggle-pre-paint" className={cn(STEPS_TOGGLE_CLASS, early.toggle)}>
+          <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          {routeStepsToggleLabel(route)}
+        </span>
       )}
     </article>
   );
@@ -482,6 +529,9 @@ export function MilestoneLadder({ milestones, routes }: { milestones: ResolvedMi
  */
 export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute, progress }: RouteChooserProps) {
   const [stepsOpen, setStepsOpen] = useState(false);
+  // False in the server render and the hydrating render, when the followed route is not yet known to React;
+  // it turns true in the same render that reads the stored route, so the stand-ins and the real card swap at once.
+  const hydrated = useHydrated();
 
   // "/curriculum#route-<id>" follows that route and opens its steps; "#route-steps" opens the steps of the followed one.
   useEffect(() => {
@@ -540,6 +590,7 @@ export function RouteChooser({ routes, milestones, selectedRoute, onSelectRoute,
               filled={route.id === 'junior' && !resumeShown}
               stepsOpen={stepsOpen}
               onToggleSteps={toggleSteps}
+              prePaint={!hydrated}
             />
           </li>
         ))}

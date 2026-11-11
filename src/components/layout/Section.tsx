@@ -80,7 +80,7 @@ export function Section({
           </Heading>
           {description ? <p className={SECTION_DESCRIPTION_CLASS}>{description}</p> : null}
         </div>
-        {action ? <div className="shrink-0 text-ui">{action}</div> : null}
+        {action ? <div className="min-w-0 max-w-full text-ui sm:shrink-0">{action}</div> : null}
       </div>
       {children ? <div className={SECTION_BODY_CLASS}>{children}</div> : null}
     </section>

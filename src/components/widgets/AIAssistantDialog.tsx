@@ -215,6 +215,7 @@ export default function AIAssistantDialog({ onClose }: AIAssistantDialogProps) {
               onChange={(event) => setInputValue(event.target.value)}
               onKeyDown={handleInputKeyDown}
               placeholder="Ask about SystemVerilog or UVM…"
+              surface="card"
               className="max-h-28 flex-grow resize-none"
               minRows={1}
               aria-label="Message to AI tutor"

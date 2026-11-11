@@ -232,7 +232,7 @@ export function BlockDiagram({
       : { role: "group", "aria-label": title };
 
   return (
-    <figure className={cn("rounded-xl border border-border/70 bg-background/40 p-2", className)}>
+    <figure className={cn("glass-liquid p-2", className)}>
       <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH}>
         <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth }} className="block h-auto w-full" {...a11y}>
           {role === "img" ? <title id={`${id}-title`}>{title}</title> : null}

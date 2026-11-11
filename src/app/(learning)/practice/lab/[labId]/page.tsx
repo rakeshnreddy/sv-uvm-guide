@@ -7,6 +7,7 @@ import { PracticePager } from "@/components/practice/PracticePager";
 import { readLabFilesForBuild } from "@/lib/lab-assets";
 import { toLabPolicyInput } from "@/lib/lab-progress-policy";
 import { getAllLabs, getLabById, toLearnerLabDto } from "@/lib/lab-registry";
+import { SOCIAL_IMAGE } from "@/lib/social-image";
 import {
   getLabBackLink,
   getLabLessons,
@@ -44,7 +45,8 @@ export function generateMetadata({ params }: LabPageProps): Metadata {
     title: lab.title,
     description: lab.description,
     alternates: { canonical },
-    openGraph: { title: lab.title, description: lab.description, url: canonical },
+    // A page's openGraph replaces the root one, image included, so the site card is named again.
+    openGraph: { title: lab.title, description: lab.description, url: canonical, images: [SOCIAL_IMAGE] },
   };
 }
 

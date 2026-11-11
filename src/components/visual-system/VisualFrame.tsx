@@ -38,6 +38,12 @@ export function toSentenceCaseLabel(text: string): string {
 }
 
 /**
+ * The frame: a liquid glass panel (DESIGN.md section 12), radius 16. The
+ * controls and code inside keep their own solid surfaces.
+ */
+export const VISUAL_FRAME_CLASS = "glass-liquid not-prose my-8 space-y-4 p-3 sm:p-4 md:p-6";
+
+/**
  * Standard shell for every curriculum visual: header, fidelity declaration,
  * and consistent spacing that stays compact on phones.
  */
@@ -45,7 +51,7 @@ export function VisualFrame({ label, eyebrow, title, summary, fidelity, assumpti
   return (
     <section
       aria-label={label}
-      className={cn("not-prose my-8 space-y-4 rounded-2xl border border-border/70 bg-card/40 p-3 sm:p-4 md:p-6", className)}
+      className={cn(VISUAL_FRAME_CLASS, className)}
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">

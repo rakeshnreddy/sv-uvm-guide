@@ -44,7 +44,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
 
   return (
     <div className={cn("space-y-2", className)}>
-      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="rounded-xl border border-border/70 bg-background/40 p-2">
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="glass-liquid p-2">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           style={{ minWidth }}

@@ -2,7 +2,6 @@
 
 import React, { useId, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { SegmentedControl } from '@/components/visual-system';
 import { matchesQuery } from '@/lib/curriculum-overview';
 import {
   conceptSearchText,
@@ -12,6 +11,7 @@ import {
   type ConceptNode,
   type ConceptTier,
 } from '@/lib/knowledge-graph-engine';
+import { ChoiceChips } from './ChoiceChips';
 import { MAP_TIERS } from './ModuleMap';
 
 type KindFilter = 'all' | ConceptKind;
@@ -82,7 +82,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
           className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
-      <SegmentedControl<KindFilter>
+      <ChoiceChips<KindFilter>
         label="Kind of concept"
         value={kind}
         onChange={resetLimit(setKind)}
@@ -93,7 +93,7 @@ export default function ConceptList({ graph, onShowOnMap }: ConceptListProps) {
           { value: 'term', label: `Key terms (${counts.term})` },
         ]}
       />
-      <SegmentedControl<TierFilter>
+      <ChoiceChips<TierFilter>
         label="Tier"
         value={tier}
         onChange={resetLimit(setTier)}

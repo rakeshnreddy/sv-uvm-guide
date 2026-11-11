@@ -8,10 +8,11 @@ import { ScrollRegionFrame } from "./ScrollRegionFrame";
  * Lesson tables (and other wide content) can be wider than a phone screen. Each one sits
  * in its own horizontal scroll box that keyboard users can focus and scroll with
  * the arrow keys, and that screen readers announce by name. The page itself
- * never scrolls sideways.
+ * never scrolls sideways. The box is a liquid glass panel (DESIGN.md section
+ * 12), radius 16; globals.css styles the table inside it.
  */
-const regionClass =
-  "my-6 max-w-full overflow-x-auto rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+export const SCROLL_REGION_CLASS =
+  "glass-liquid my-6 max-w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /**
  * A box that scrolls its content sideways. While the content overflows it is a
@@ -19,7 +20,7 @@ const regionClass =
  */
 export function ScrollRegion({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <ScrollRegionFrame label={label} className={regionClass}>
+    <ScrollRegionFrame label={label} className={SCROLL_REGION_CLASS}>
       {children}
     </ScrollRegionFrame>
   );

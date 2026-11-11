@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { InterviewBank, InterviewLevelOption } from '@/app/(learning)/interview-prep/interview-banks';
 import { pageTabClass } from '@/components/layout/PageHeader';
 import { LessonTagLink } from '@/components/practice/PracticeRows';
+import { getInterviewBankOutcome } from '@/lib/practice-links';
 import { cn } from '@/lib/utils';
 
 import { LevelCount } from './LevelFilter';
@@ -18,7 +19,7 @@ import { TabStripScroll } from './TabStripScroll';
 
 type BankSummary = Pick<
   InterviewBank,
-  'slug' | 'href' | 'name' | 'shortName' | 'anchor' | 'description' | 'lessons' | 'levelCounts' | 'questionCount'
+  'slug' | 'href' | 'name' | 'shortName' | 'anchor' | 'description' | 'lessons' | 'levelCounts' | 'questionCount' | 'topic'
 >;
 
 export function bankCounts(bank: Pick<InterviewBank, 'levelCounts' | 'questionCount'>): Record<string, number> {
@@ -73,6 +74,15 @@ export function bankSummaryLine(description: string): string {
 }
 
 /**
+ * The line under a bank's name on the index: its authored outcome line
+ * (INTERVIEW_BANK_OUTCOMES, one short sentence written to fit the row whole),
+ * or its topics from the description for a bank without one.
+ */
+export function bankRowLine(bank: Pick<InterviewBank, 'topic' | 'description'>): string {
+  return getInterviewBankOutcome(bank.topic) ?? bankSummaryLine(bank.description);
+}
+
+/**
  * The index rows: the teaching lesson's signal tag (a link to it), the bank's
  * name stretched over the row as the link to its page, its topics, and the
  * count for the chosen level. Each row keeps the bank's old section id, so
@@ -107,7 +117,10 @@ export function BankRows({ banks, levels }: { banks: readonly BankSummary[]; lev
                   {bank.name}
                 </Link>
               </h3>
-              <p className="mt-1 line-clamp-2 text-ui text-muted-foreground">{bankSummaryLine(bank.description)}</p>
+              {/* Never clamped: the outcome lines are written short, so no row ends in an ellipsis. */}
+              <p className="mt-1 text-ui text-muted-foreground" data-bank-outcome="">
+                {bankRowLine(bank)}
+              </p>
             </div>
             <div className="col-start-2 row-start-1 flex min-h-6 flex-col items-end justify-center text-right text-label text-muted-foreground sm:col-start-3">
               <LevelCount counts={bankCounts(bank)} levels={levels} />

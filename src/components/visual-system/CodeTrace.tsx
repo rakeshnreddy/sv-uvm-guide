@@ -35,7 +35,7 @@ interface CodeTraceProps {
 export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineControl, label, className }: CodeTraceProps) {
   return (
     <figure className={cn("overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100", className)}>
-      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+      <figcaption className="border-b border-white/10 px-3 py-2 text-label text-slate-400">
         {label}
       </figcaption>
       <ol className="overflow-x-auto py-2 font-mono text-[12px] leading-6 [font-variant-ligatures:none] sm:text-[13px]" aria-label={label}>

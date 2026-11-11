@@ -49,6 +49,9 @@ const ROLES = [
   "field-4",
   "primary-sheen-top",
   "primary-sheen-bottom",
+  // Lesson text (DESIGN.md section 12).
+  "reference",
+  "prose-body",
 ];
 
 /** Section 11 tokens that are not plain HSL triplets; copied like the roles. */
@@ -64,11 +67,12 @@ const GLASS_TOKENS = [
   "glass-blur",
   "primary-sheen-highlight",
   "primary-sheen-hover",
+  "glass-sheen",
 ];
 
 const CODE_CHROME = ["code-surface", "code-foreground", "code-muted", "code-border"];
 
-const TEXT_ROLES = ["foreground", "muted-foreground", "subtle-foreground", "primary", "success", "warning", "danger-text"];
+const TEXT_ROLES = ["foreground", "muted-foreground", "subtle-foreground", "primary", "success", "warning", "danger-text", "reference"];
 const SURFACES = ["background", "card", "muted"];
 
 const { dark, light } = modes();
@@ -364,3 +368,164 @@ describe.each(MODES)("%s mode colour and glass contrast", (_name, { vars }) => {
     }
   });
 });
+
+/*
+ * Lesson text and glass panels (DESIGN.md section 12). Every text colour of the
+ * lesson hierarchy on every surface it sits on, in both modes and all four
+ * tiers: the page, the quiet liquid glass fill (with its sheen, and over the
+ * strongest field colour where a panel can overlap the field), a callout's
+ * 10% role tint on that fill, and a table header's 10% tier fill. Body text
+ * holds 10:1, everything else 4.5:1. The mixes are sRGB, as globals.css
+ * writes them (color-mix(in srgb, …)).
+ */
+const MIX_HEADING = 0.55;
+const MIX_LABEL = 0.78;
+const CALLOUT_ROLES = ["info", "success", "warning", "danger-text", "reference"];
+
+function mixOf(vars: Record<string, string>, a: string, share: number, b: string): Rgb {
+  return over(rgbOf(vars[a]), share, rgbOf(vars[b]));
+}
+
+/** The quiet liquid fill over a base: the glass fill, then (at the top edge, the worst case) the sheen. */
+function liquidFills(vars: Record<string, string>, base: Rgb): Rgb[] {
+  const glass = hsla(vars["glass-bg"]);
+  const sheen = hsla(vars["glass-sheen"]);
+  const fill = over(rgbOf(glass.triplet), glass.alpha, base);
+  return [fill, over(rgbOf(sheen.triplet), sheen.alpha, fill)];
+}
+
+/** Every surface lesson text can sit on outside callouts and tables: the page and the liquid fill over it. */
+function lessonSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
+  const page = rgbOf(vars.background);
+  const [fill, sheen] = liquidFills(vars, page);
+  return [
+    ["page", page],
+    ["liquid", fill],
+    ["liquid sheen", sheen],
+  ];
+}
+
+/** A callout's surfaces: its role at 10% over the liquid fill (with and without the sheen) and over the page. */
+function calloutSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
+  return CALLOUT_ROLES.flatMap((role) =>
+    lessonSurfaces(vars).map(([name, base]) => [`${role} callout on ${name}`, over(rgbOf(vars[role]), 0.1, base)] as [string, Rgb]),
+  );
+}
+
+describe("lesson text tokens (DESIGN.md section 12)", () => {
+  it("adds the --reference role with the section 12 values", () => {
+    expect(dark.vars.reference).toBe("268 85% 78%");
+    expect(light.vars.reference).toBe("262 55% 46%");
+  });
+
+  it.each(MODES)("%s --prose-body is the foreground mixed 88% with the secondary colour", (_name, { vars }) => {
+    const expected = mixOf(vars, "foreground", 0.88, "muted-foreground");
+    const actual = rgbOf(vars["prose-body"]);
+    actual.forEach((channel, i) => expect(Math.abs(channel - expected[i]), `channel ${i}`).toBeLessThanOrEqual(0.01));
+  });
+
+  it("writes the mixes in globals.css as the test computes them", () => {
+    expect(css).toContain("--lesson-heading: color-mix(in srgb, hsl(var(--tier-current)) 55%, hsl(var(--foreground)));");
+    expect(css).toContain("--lesson-label: color-mix(in srgb, hsl(var(--tier-current)) 78%, hsl(var(--foreground)));");
+    expect(css).toContain("--tw-prose-body: hsl(var(--prose-body));");
+    expect(css).toMatch(/\.prose aside\.callout \{[^}]*--liquid-tint: hsl\(var\(--callout\) \/ 0\.1\);/);
+    expect(css).toMatch(/thead th \{\s*background-color: hsl\(var\(--tier-current\) \/ 0\.1\);/);
+  });
+
+  it("draws a callout's leading edge as a straight inset bar, not a left border that bends round the radius", () => {
+    const rule = /\.prose aside\.callout \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("box-shadow: inset 2px 0 0 hsl(var(--callout)), inset 0 1px 0 hsl(var(--glass-highlight))");
+    expect(rule).not.toMatch(/border-left/);
+    // Forced colours drop shadows, so the edge comes back as a border there.
+    expect(css).toMatch(/@media \(forced-colors: active\)\s*\{[^@]*\.prose aside\.callout \{\s*border-left: 3px solid CanvasText;/);
+  });
+
+  it("gives glass-liquid the fill, hairline, top edge and sheen, radius 16, no blur, and the fallbacks", () => {
+    const rule = /\.glass-liquid \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("background-color: hsl(var(--glass-bg));");
+    expect(rule).toContain("border: 1px solid hsl(var(--glass-border));");
+    expect(rule).toContain("inset 0 1px 0 hsl(var(--glass-highlight))");
+    expect(rule).toContain("hsl(var(--glass-sheen))");
+    expect(rule).toContain("border-radius: 1rem;");
+    expect(rule).not.toMatch(/backdrop-filter/);
+    expect(css).toMatch(/@media \(prefers-reduced-transparency: reduce\)\s*\{\s*\.glass-liquid\s*\{[^}]*background-color:\s*hsl\(var\(--card\)\)/);
+    expect(css).toMatch(/@media \(forced-colors: active\)\s*\{\s*\.glass-liquid\s*\{[^}]*background-color:\s*Canvas/);
+    // Glass never sits on glass: a liquid panel inside another loses its fill.
+    expect(css).toMatch(/\.glass-liquid \.glass-liquid \{[^}]*background-color: transparent;/);
+  });
+
+  it("blurs the lesson header block only from 1280 px, with the fallbacks", () => {
+    expect(css).toMatch(/@media \(min-width: 1280px\)\s*\{\s*\.glass-liquid\[data-lesson-header-glass\]\s*\{[^}]*backdrop-filter: var\(--glass-blur\)/);
+    expect(css).toMatch(/@supports not [^{]*\{\s*\.glass-liquid\[data-lesson-header-glass\]\s*\{[^}]*background-color: hsl\(var\(--card\)\)/);
+    expect(css).toMatch(/@media \(prefers-reduced-transparency: reduce\)\s*\{\s*\.glass-liquid\[data-lesson-header-glass\]\s*\{[^}]*backdrop-filter: none/);
+  });
+});
+
+describe.each(MODES)("%s mode lesson text contrast", (_name, { vars }) => {
+  it("body text holds 10:1 on the page, the liquid fill and every callout", () => {
+    const body = rgbOf(vars["prose-body"]);
+    for (const [surface, rgb] of [...lessonSurfaces(vars), ...calloutSurfaces(vars), ["card", rgbOf(vars.card)] as [string, Rgb]]) {
+      expect(rgbContrast(body, rgb), `body on ${surface}`).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it("bold terms, inline code chips, links and secondary text hold 4.5:1 on the page, the liquid fill and every callout", () => {
+    const chipOn = (base: Rgb) => over(rgbOf(vars.foreground), 0.06, base);
+    for (const [surface, rgb] of [...lessonSurfaces(vars), ...calloutSurfaces(vars)]) {
+      expect(rgbContrast(rgbOf(vars.foreground), rgb), `bold on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars.foreground), chipOn(rgb)), `code chip on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars.primary), rgb), `link on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars["muted-foreground"]), rgb), `secondary on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("each callout's label holds 4.5:1 on its own tint", () => {
+    for (const role of CALLOUT_ROLES) {
+      for (const [surface, base] of lessonSurfaces(vars)) {
+        const label = rgbOf(vars[role]);
+        expect(rgbContrast(label, over(label, 0.1, base)), `${role} label on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("captions (the subtle role) hold 4.5:1 on the page and the liquid fill", () => {
+    for (const [surface, rgb] of lessonSurfaces(vars)) {
+      expect(rgbContrast(rgbOf(vars["subtle-foreground"]), rgb), `caption on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("primary and secondary text on a liquid panel over the strongest field colour hold 4.5:1 (contents panel, outline, header block)", () => {
+    for (const [field, blend] of fieldBlends(vars)) {
+      for (const fill of liquidFills(vars, blend)) {
+        for (const role of ["foreground", "muted-foreground"]) {
+          expect(rgbContrast(rgbOf(vars[role]), fill), `${role} on liquid over ${field}`).toBeGreaterThanOrEqual(4.5);
+        }
+        expect(rgbContrast(rgbOf(vars["tier-4"]), fill), `Expert tag on liquid over ${field}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it.each(TIERS)("%s: layer and section headings, lead-in labels, list markers and table headers hold 4.5:1 wherever they sit", (tier) => {
+    const tierRgb = rgbOf(vars[tier]);
+    const heading = mixOf(vars, tier, MIX_HEADING, "foreground");
+    const label = mixOf(vars, tier, MIX_LABEL, "foreground");
+    for (const [surface, rgb] of lessonSurfaces(vars)) {
+      expect(rgbContrast(tierRgb, rgb), `${tier} layer heading or marker on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(heading, rgb), `${tier} section heading on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(label, rgb), `${tier} lead-in on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(label, over(tierRgb, 0.1, rgb)), `${tier} table header on its fill over ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const [surface, rgb] of calloutSurfaces(vars)) {
+      expect(rgbContrast(heading, rgb), `${tier} section heading in ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(label, rgb), `${tier} lead-in in ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(tierRgb, rgb), `${tier} list marker in ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("the Expert tag (tier 4) holds 4.5:1 on the page, the liquid fill and a raised row", () => {
+    for (const [surface, rgb] of [...lessonSurfaces(vars), ["raised row", rgbOf(vars.muted)] as [string, Rgb]]) {
+      expect(rgbContrast(rgbOf(vars["tier-4"]), rgb), `Expert tag on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+

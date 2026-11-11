@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { BankTabs, bankCounts, bankSummaryLine } from '@/components/interview/BankNav';
+import { codeTokenCss } from '@/components/interview/code-highlight-html';
 import { InterviewPageController } from '@/components/interview/InterviewPageController';
 import { DisclosureTools, LevelCount, LevelFilter, LevelFilterSetup } from '@/components/interview/LevelFilter';
 import { HidePractisedToggle, PractisedAllHiddenNote, PractisedCount, PractisedSetup } from '@/components/interview/PractisedMarkup';
@@ -57,6 +58,8 @@ export default function InterviewBankPage({ params }: { params: { bank: string }
     <PageShell width="reading">
       <LevelFilterSetup levels={levels} />
       <PractisedSetup levels={levels} scope={bank.slug} />
+      {/* The syntax colours of the code in the answers: one small stylesheet from the lesson code blocks' colour table. */}
+      <style data-code-tokens="" dangerouslySetInnerHTML={{ __html: codeTokenCss() }} />
       <PageHeader
         breadcrumbs={[siteLink(INTERVIEW_PREP_HREF), { label: bank.name }]}
         eyebrow={

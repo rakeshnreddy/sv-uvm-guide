@@ -204,7 +204,7 @@ function DashboardCard({
   children: React.ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className={cn(card, className)}>
+    <section aria-labelledby={id} className={cn(card, ACTIVITY_CARD_FILL_CLASS, className)}>
       <h3 id={id} className="text-h4 text-foreground">
         {title}
       </h3>
@@ -672,40 +672,61 @@ function ExercisesCard({ summaries }: { summaries: readonly ExerciseSummary[] })
   );
 }
 
-function StreakCard({ streak, days }: { streak: number; days: readonly ActivityDay[] }) {
+/**
+ * The "Labs, quizzes and notes" grid: one column on phones, two from md. It
+ * holds seven cards, so the last (the streak) spans both columns and no row
+ * is left with one card beside an empty cell. Cards stretch to the height of
+ * their row, so the two in a row end together.
+ */
+export const ACTIVITY_GRID_CLASS = 'grid grid-cols-1 gap-5 md:grid-cols-2';
+export const STREAK_CARD_SPAN_CLASS = 'md:col-span-2';
+/**
+ * On each card in that grid (a heading, then one body div): the body fills the
+ * stretched card, and a link that ends it ("Open your notebook", "Browse the
+ * labs") sits at the bottom, so the links in a row line up.
+ */
+export const ACTIVITY_CARD_FILL_CLASS =
+  'flex flex-col [&>div]:flex [&>div]:flex-1 [&>div]:flex-col [&>div>a:last-child]:mt-auto [&>div>a:last-child]:self-start';
+
+function StreakCard({ streak, days, className }: { streak: number; days: readonly ActivityDay[]; className?: string }) {
   const busiest = Math.max(1, ...days.map((day) => day.total));
   return (
-    <DashboardCard id="dashboard-streak-heading" title="Streak and the last 7 days">
-      <p className="text-sm text-foreground">
-        <strong className="font-mono text-xl font-medium tabular-nums">{streak}</strong> {streak === 1 ? 'day' : 'days'} in a
-        row
-      </p>
-      <p className="mt-1 text-sm text-muted-foreground">
-        A day counts when you open a lesson, finish a lab step, review flashcards, take a quiz or write a note, by
-        this device&apos;s clock.
-      </p>
-      <ol aria-label="Activity in the last 7 days" className="mt-4 grid max-w-md grid-cols-7 gap-1.5">
-        {days.map((day) => {
-          const date = dayDate(day.dayKey);
-          const height = day.total > 0 ? Math.max(8, Math.round((day.total / busiest) * 100)) : 0;
-          return (
-            <li key={day.dayKey} className="flex min-w-0 flex-col items-center gap-1">
-              <span aria-hidden="true" className="flex h-12 w-full items-end overflow-hidden rounded bg-muted">
-                <span className="block w-full rounded-sm bg-success" style={{ height: `${height}%` }} />
-              </span>
-              <span aria-hidden="true" className="font-mono text-xs font-medium tabular-nums text-foreground">
-                {day.total}
-              </span>
-              <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
-                {weekdayShort.format(date)}
-              </span>
-              <span className="sr-only">
-                {weekdayLong.format(date)}: {plural(day.total, 'activity', 'activities')}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+    <DashboardCard id="dashboard-streak-heading" title="Streak and the last 7 days" className={className}>
+      {/* Across both columns: the count and its rule on the left, the 7-day strip on the right. */}
+      <div className="md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] md:items-end md:gap-x-8">
+        <div>
+          <p className="text-sm text-foreground">
+            <strong className="font-mono text-xl font-medium tabular-nums">{streak}</strong> {streak === 1 ? 'day' : 'days'}{' '}
+            in a row
+          </p>
+          <p className="mt-1 max-w-[40em] text-sm text-muted-foreground">
+            A day counts when you open a lesson, finish a lab step, review flashcards, take a quiz or write a note, by
+            this device&apos;s clock.
+          </p>
+        </div>
+        <ol aria-label="Activity in the last 7 days" className="mt-4 grid max-w-md grid-cols-7 gap-1.5 md:mt-0 md:max-w-none">
+          {days.map((day) => {
+            const date = dayDate(day.dayKey);
+            const height = day.total > 0 ? Math.max(8, Math.round((day.total / busiest) * 100)) : 0;
+            return (
+              <li key={day.dayKey} className="flex min-w-0 flex-col items-center gap-1">
+                <span aria-hidden="true" className="flex h-12 w-full items-end overflow-hidden rounded bg-muted">
+                  <span className="block w-full rounded-sm bg-success" style={{ height: `${height}%` }} />
+                </span>
+                <span aria-hidden="true" className="font-mono text-xs font-medium tabular-nums text-foreground">
+                  {day.total}
+                </span>
+                <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
+                  {weekdayShort.format(date)}
+                </span>
+                <span className="sr-only">
+                  {weekdayLong.format(date)}: {plural(day.total, 'activity', 'activities')}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
     </DashboardCard>
   );
 }
@@ -888,15 +909,23 @@ export default function DashboardPageClient({
     rest = (
       <>
         <Section id="dashboard-activity" title="Labs, quizzes and notes" className="mt-12">
-          {/* items-start: each card is as tall as what it says, never stretched to its neighbour with empty glass. */}
-          <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2">
+          {/*
+            Six cards in pairs, each stretched to its row with its closing link at the bottom, then the streak
+            across both columns (its 7-day strip beside its text), so no row holds a single card
+            (ACTIVITY_GRID_CLASS, ACTIVITY_CARD_FILL_CLASS, STREAK_CARD_SPAN_CLASS).
+          */}
+          <div className={ACTIVITY_GRID_CLASS} data-testid="dashboard-activity-grid">
             <LabsCard summaries={labProgress} />
             <QuizzesCard taken={Object.keys(knownQuizzes).length} weak={weak} lessons={lessons} />
             <ExercisesCard summaries={exerciseList} />
             <PlacementCard attempt={attempt} routeName={attemptRoute?.name ?? null} stale={stale} />
             <NotebookCard entries={notebook} />
-            <StreakCard streak={dailyStreak(activity.days, now)} days={last7Days(activity.days, now)} />
-            <InterviewPractisedTile total={interviewQuestionTotal} />
+            <InterviewPractisedTile total={interviewQuestionTotal} className={ACTIVITY_CARD_FILL_CLASS} />
+            <StreakCard
+              streak={dailyStreak(activity.days, now)}
+              days={last7Days(activity.days, now)}
+              className={STREAK_CARD_SPAN_CLASS}
+            />
           </div>
         </Section>
         <DataCard meta={meta} remind={backupReminder(meta, true, now)} />

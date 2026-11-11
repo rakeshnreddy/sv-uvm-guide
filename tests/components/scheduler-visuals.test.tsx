@@ -53,6 +53,26 @@ describe("TimeSlotTraceVisualizer", () => {
     fireEvent.keyDown(within(group).getByRole("button", { name: /next scheduler step/i }), { key: "ArrowRight" });
     expect(slider.getAttribute("aria-valuetext")).not.toBe(before);
   });
+
+  it("puts the controls under the waveform by default and first in the model with controlsPlacement='top'", () => {
+    const { unmount } = render(<TimeSlotTraceVisualizer scenario="shift-nba" scenarios={["shift-nba"]} />);
+    const controlsFollow = (group: Element, other: Element) => Boolean(other.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const valuesLabel = () => screen.getByText("Values after this step");
+    expect(controlsFollow(screen.getByRole("group", { name: /playback controls/i }), valuesLabel())).toBe(true);
+    unmount();
+    render(<TimeSlotTraceVisualizer scenario="shift-nba" scenarios={["shift-nba"]} controlsPlacement="top" />);
+    expect(screen.getAllByRole("group", { name: /playback controls/i })).toHaveLength(1);
+    expect(controlsFollow(screen.getByRole("group", { name: /playback controls/i }), valuesLabel())).toBe(false);
+  });
+
+  it("sets its labels in sentence case, never uppercase tracked", () => {
+    render(<TimeSlotTraceVisualizer scenario="shift-nba" scenarios={["shift-nba"]} />);
+    for (const text of ["Step through one clock edge", "Values after this step", "Code under simulation"]) {
+      const label = screen.getAllByText(text).find((element) => element.tagName !== "OL")!;
+      expect(label).toHaveClass("text-label");
+      expect(label.className).not.toMatch(/uppercase|tracking-/);
+    }
+  });
 });
 
 describe("RaceConditionDebugger", () => {

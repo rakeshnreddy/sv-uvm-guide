@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import {
   createLazyComponentCache,
   InteractiveSlot,
+  type InteractiveSlotProps,
   type InteractiveComponent,
   type InteractiveLoader,
   type InteractiveModule,
@@ -139,25 +140,32 @@ const loaders = {
 export const lazyMdxComponentCache = createLazyComponentCache<LazyMdxInteractiveName>(loaders);
 
 /**
+ * The slot's props, with the third reserved height for 1024 to 1279 px
+ * (`midHeight`, see MID_BAND in lazy-mdx-interactives.ts), which the
+ * placeholder applies as its min-height in that band.
+ */
+export type LazyMdxSlotProps = InteractiveSlotProps<LazyMdxInteractiveName> & { midHeight: number };
+
+export function lazyMdxSlotProps(name: LazyMdxInteractiveName, props: MdxInteractiveProps): LazyMdxSlotProps {
+  const { title, height, midHeight, mobileHeight } = lazyMdxInteractivePlaceholder(name, props);
+  return {
+    name,
+    title,
+    height,
+    midHeight,
+    mobileHeight,
+    cache: lazyMdxComponentCache,
+    componentProps: interactiveComponentProps(props),
+  };
+}
+
+/**
  * An MDX interactive by name: loaded on demand, inside an error boundary with
  * Retry, and held in place by its server HTML or a placeholder of its expected
  * height while its code loads (see InteractiveSlot). An instance can state its
- * own placeholder height with `placeholderHeight` / `placeholderMobileHeight`;
- * those two props are not passed on to the interactive.
+ * own placeholder heights with `placeholderHeight`, `placeholderMidHeight` and
+ * `placeholderMobileHeight`; those props are not passed on to the interactive.
  */
-export function LazyMdxInteractive({
-  name,
-  ...props
-}: MdxInteractiveProps & { name: LazyMdxInteractiveName }) {
-  const { title, height, mobileHeight } = lazyMdxInteractivePlaceholder(name, props);
-  return (
-    <InteractiveSlot
-      name={name}
-      title={title}
-      height={height}
-      mobileHeight={mobileHeight}
-      cache={lazyMdxComponentCache}
-      componentProps={interactiveComponentProps(props)}
-    />
-  );
+export function LazyMdxInteractive({ name, ...props }: MdxInteractiveProps & { name: LazyMdxInteractiveName }) {
+  return <InteractiveSlot {...lazyMdxSlotProps(name, props)} />;
 }

@@ -4,6 +4,7 @@ import { ArrowRight } from 'lucide-react';
 
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
 import { tierChip } from '@/components/curriculum/overview-ui';
+import { recentScriptLessons, resumeRecentScript } from '@/components/curriculum/resume-recent-script';
 import { routeFollowedScript } from '@/components/curriculum/route-followed-script';
 import { returningLearnerScript } from '@/components/home/landing-resume';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -69,11 +70,19 @@ export default function CurriculumPage() {
   const routes = resolveRoutes(curriculumData, { labs });
   const milestones = resolveMilestones(labs);
   const stackLessons = verificationStackLinks.filter((link) => link.href !== '#');
+  const lessonsInOrder = continueLessons();
 
   return (
     <PageShell width="content">
-      {/* Mark <html> before first paint when this browser holds a lesson visit or follows a route, so "Pick up where you left off" keeps its place. */}
-      <script dangerouslySetInnerHTML={{ __html: returningLearnerScript() + routeFollowedScript() }} />
+      {/*
+        Mark <html> before first paint: a lesson visit, the followed route and how many recent lessons will be
+        listed, so "Pick up where you left off" and the followed route's card paint at their final size.
+      */}
+      <script
+        dangerouslySetInnerHTML={{
+          __html: returningLearnerScript() + routeFollowedScript() + resumeRecentScript(recentScriptLessons(lessonsInOrder)),
+        }}
+      />
       <PageHeader
         title={siteLabel(CURRICULUM_HREF)}
         lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route, or browse every module below."
@@ -81,7 +90,7 @@ export default function CurriculumPage() {
         <TierJumpLinks tiers={tiers} />
       </PageHeader>
 
-      <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />
+      <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={lessonsInOrder} />
 
       <Section
         id="verification-stack"
