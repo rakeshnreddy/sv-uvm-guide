@@ -4,7 +4,9 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 
 import { LearnerDataControls } from '@/components/learner/LearnerDataControls';
-import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
 import { siteLabel } from '@/lib/nav-labels';
 import { SETTINGS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
@@ -13,7 +15,6 @@ import { estimateLearnerDataBytes } from '@/lib/learner-store/backup';
 import { LEARNER_DATA_CHANGED_EVENT } from '@/lib/learner-store/keys';
 import { subscribeLearnerStore } from '@/lib/learner-store/record';
 import { useAccountSession } from '@/lib/persistence/target';
-import { cn } from '@/lib/utils';
 
 // Loaded only once the session is authenticated: anonymous visitors of this static page never download the
 // account code or its notification and preference libraries.
@@ -22,8 +23,6 @@ const AccountPreferencesPanel = dynamic(() => import('./AccountPreferencesPanel'
   loading: () => <p className="text-sm text-muted-foreground">Loading your preferences…</p>,
 });
 
-const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
-const sectionHeading = 'text-h2 text-foreground';
 const body = 'text-sm text-muted-foreground';
 
 /** How long to wait after a write before measuring usage again. */
@@ -71,25 +70,19 @@ export default function SettingsPageClient() {
   const bytes = useLearnerDataBytes();
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
-      <header className="space-y-4">
-        <div>
-          <h1 className="text-h1 text-foreground">{siteLabel(SETTINGS_HREF)}</h1>
-          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
-            Your theme, and the learning data saved in this browser.
-          </p>
-        </div>
-        <LearnerSectionNav current="settings" />
-      </header>
+    <PageShell width="reading">
+      <LearnerPageHeader
+        current="settings"
+        title={siteLabel(SETTINGS_HREF)}
+        lead="Your theme, and the learning data saved in this browser."
+      />
 
-      <section aria-labelledby="settings-appearance-heading" className={card}>
-        <h2 id="settings-appearance-heading" className={sectionHeading}>
-          Appearance
-        </h2>
-        <p className={cn(body, 'mt-2 max-w-3xl')}>
-          Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.
-        </p>
-        <div role="group" aria-labelledby="settings-theme-label" className="mt-4 min-w-0">
+      <Section
+        id="appearance"
+        title="Appearance"
+        description="Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser."
+      >
+        <div role="group" aria-labelledby="settings-theme-label" className="min-w-0">
           <p id="settings-theme-label" className="text-sm font-medium text-foreground">
             Light, dark or system
           </p>
@@ -97,16 +90,13 @@ export default function SettingsPageClient() {
             <ThemeSwitcher />
           </div>
         </div>
-        <p className="mt-4 text-xs text-subtle">
+        <p className="mt-4 max-w-[30em] text-xs text-subtle">
           Motion follows your operating system: turn on its reduce-motion setting and animations here are reduced too.
         </p>
-      </section>
+      </Section>
 
-      <section id="data" aria-labelledby="settings-data-heading" className={cn(card, 'scroll-mt-24')}>
-        <h2 id="settings-data-heading" className={sectionHeading}>
-          Your learning data
-        </h2>
-        <div className="mt-2 max-w-3xl space-y-3">
+      <Section id="data" title="Your learning data">
+        <div className="max-w-[30em] space-y-3">
           <p className="text-sm text-foreground">
             Your lesson progress, the lessons you opened and the days you studied, flashcard reviews, notebook
             (including Teach-it-back answers), lab code, quiz and placement results, exercise scores and chosen route
@@ -127,9 +117,13 @@ export default function SettingsPageClient() {
           </p>
         </div>
         <LearnerDataControls className="mt-6" />
-      </section>
+      </Section>
 
-      {status === 'authenticated' ? <AccountPreferencesPanel /> : null}
-    </div>
+      {status === 'authenticated' ? (
+        <div className="mt-12">
+          <AccountPreferencesPanel />
+        </div>
+      ) : null}
+    </PageShell>
   );
 }

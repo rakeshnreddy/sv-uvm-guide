@@ -71,6 +71,13 @@ function formatReviewDay(dueAt: number, now: number): string {
  * ids, and skips states whose card no longer exists. One card at a time; the
  * learner rates exactly the card shown.
  */
+/**
+ * The review body's least height: the "Nothing to review yet" panel and the
+ * storage note (about 234 px on phones, 194 px from 640 px), so the footer does
+ * not jump when the loading line is replaced after hydration.
+ */
+export const REVIEW_BODY_MIN_HEIGHT_CLASS = 'min-h-[15rem] sm:min-h-[12.5rem]';
+
 export default function ReviewPageClient() {
   const hydrated = useHydrated();
   const data = useRecord(flashcardRecord);
@@ -185,9 +192,11 @@ export default function ReviewPageClient() {
 
   if (!hydrated || now === null) {
     return (
-      <p role="status" className="text-sm text-muted-foreground">
-        Loading your review queue…
-      </p>
+      <div data-testid="review-body" aria-busy="true" className={REVIEW_BODY_MIN_HEIGHT_CLASS}>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading your review queue…
+        </p>
+      </div>
     );
   }
 
@@ -219,7 +228,7 @@ export default function ReviewPageClient() {
 
   // The live regions keep one place in the tree whichever view is shown, so screen readers announce what they receive.
   const frame = (body: React.ReactNode) => (
-    <div className="flex flex-col gap-4">
+    <div data-testid="review-body" className={cn('flex flex-col gap-4', REVIEW_BODY_MIN_HEIGHT_CLASS)}>
       {body}
       <div>
         <p role="status" aria-live="polite" className={cn('text-sm text-foreground', reviewMessage ? '' : 'sr-only')}>

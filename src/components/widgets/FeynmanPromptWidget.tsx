@@ -349,7 +349,8 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({ conceptTitle,
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
+    // border-box: add the borders back, or the box loses them on every autosize.
+    textarea.style.height = `${textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight}px`;
   }, [draft]);
 
   const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {

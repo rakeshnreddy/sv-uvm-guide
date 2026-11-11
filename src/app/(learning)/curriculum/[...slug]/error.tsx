@@ -36,24 +36,25 @@ export default function LessonError({ error, reset }: LessonErrorProps) {
   };
 
   return (
-    <section aria-labelledby="lesson-error-title" className="mx-auto w-full max-w-3xl py-6" data-testid="lesson-error">
-      <div className="rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
+    <section aria-labelledby="lesson-error-title" className="w-full max-w-3xl" data-testid="lesson-error">
+      {/* Unboxed, like every page header: the title at the frame's left edge, the hairline under the actions. */}
+      <div>
         <p className="text-label text-subtle">Error</p>
         <h1 id="lesson-error-title" className="mt-2 text-h1 text-foreground">
           This lesson could not be shown
         </h1>
-        <p className="mt-3 text-lead text-muted-foreground">
+        <p className="mt-3 max-w-[27.5em] text-lead text-muted-foreground">
           Something went wrong while loading this page. Try again. If it keeps happening, the links below lead to the rest
           of the curriculum.
         </p>
         {error.digest ? (
-          <p className="mt-1 break-all text-sm text-muted-foreground">
+          <p className="mt-2 break-all text-ui text-muted-foreground">
             Error reference:{" "}
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{error.digest}</code>
           </p>
         ) : null}
 
-        <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-8">
           <button
             type="button"
             onClick={retry}

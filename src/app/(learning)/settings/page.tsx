@@ -1,7 +1,5 @@
 import type { Metadata } from 'next';
 
-import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
-import { learnerBreadcrumbs } from '@/components/learner/LearnerSectionNav';
 import { siteLabel } from '@/lib/nav-labels';
 import { SETTINGS_HREF } from '@/lib/site-links';
 
@@ -16,13 +14,7 @@ export const metadata: Metadata = {
 // hydration, and account preferences load only for a signed-in learner.
 export const dynamic = 'error';
 
+/** The page header, with the Dashboard › Settings trail, is part of SettingsPageClient. */
 export default function SettingsPage() {
-  return (
-    <>
-      <div className="mx-auto w-full max-w-6xl">
-        <Breadcrumbs items={learnerBreadcrumbs('settings')} className="-mt-2 mb-4" />
-      </div>
-      <SettingsPageClient />
-    </>
-  );
+  return <SettingsPageClient />;
 }

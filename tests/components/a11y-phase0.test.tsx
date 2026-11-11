@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import CurriculumNotFound, { BLOCK_LINK_CLASS } from "@/components/curriculum/CurriculumNotFound";
 import { lessonScrollRegionComponents, ScrollRegion } from "@/components/curriculum/ScrollRegion";
+import { MdxCodeBlock } from "@/components/mdx/MdxCodeBlock";
 import { Input } from "@/components/ui/Input";
 import { SelectTrigger, Select, SelectValue } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
@@ -140,7 +141,8 @@ describe("lesson code blocks and tables scroll in a focusable, labelled region",
     const toc: TocEntry[] = [];
     const { content } = await compileMDX({
       source,
-      components: { ...lessonScrollRegionComponents, [LESSON_PRACTICE_SLOT]: () => null },
+      // As on the lesson page: the registry's `pre` (MdxCodeBlock), then the scroll-region overrides.
+      components: { pre: MdxCodeBlock, ...lessonScrollRegionComponents, [LESSON_PRACTICE_SLOT]: () => null },
       // The lesson page's own Markdown plugins (GitHub tables among them).
       options: { mdxOptions: { remarkPlugins: lessonRemarkPlugins({ toc, hasFlashcards: false, hasHandsOn: false }) } },
     });
@@ -155,9 +157,9 @@ describe("lesson code blocks and tables scroll in a focusable, labelled region",
     const region = host.querySelector('[role="region"]');
     expect(region).not.toBeNull();
     expect(region).toHaveAttribute("tabindex", "0");
-    expect(region).toHaveAttribute("aria-label", "Code sample");
-    expect(region?.className).toContain("overflow-x-auto");
-    expect(region?.className).toContain("focus-visible:ring-2");
+    expect(region).toHaveAttribute("aria-label", "SystemVerilog code");
+    expect(region).toHaveAttribute("data-scroll-region", "scrolls");
+    expect(region?.closest("[data-code-block]")).not.toBeNull();
     const pre = region?.querySelector("pre");
     expect(pre?.querySelector("code")?.textContent).toContain("a_very_long_name");
     expect(pre?.className).toContain("w-max");

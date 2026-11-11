@@ -13,9 +13,24 @@ describe('/interview-prep page', () => {
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     const bankHeadings = screen.getAllByRole('heading', { level: 2 });
     expect(bankHeadings.map((heading) => heading.textContent)).toEqual(banks.map((bank) => bank.title));
-    bankHeadings.forEach((heading, index) => expect(heading).toHaveAttribute('id', banks[index].anchor));
+    bankHeadings.forEach((heading, index) => {
+      // Each bank is a shared Section: the anchor is the section's id, so #anchor links land on it.
+      const section = heading.closest('section');
+      expect(section).toHaveAttribute('id', banks[index].anchor);
+      expect(section).toHaveAttribute('data-section');
+      expect(heading).toHaveAttribute('id', `${banks[index].anchor}-heading`);
+    });
     const levelCount = banks.reduce((sum, bank) => sum + bank.levels.length, 0);
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(levelCount);
+  });
+
+  it('holds each bank description to the running-text measure', () => {
+    render(<InterviewPrepPage />);
+    for (const bank of banks.filter((entry) => entry.description)) {
+      const section = document.getElementById(bank.anchor) as HTMLElement;
+      const description = within(section).getByText(bank.description);
+      expect(description).toHaveClass('max-w-[30em]');
+    }
   });
 
   it('jumps to each bank from the bank list', () => {

@@ -120,6 +120,8 @@ describe('/dashboard/review page shell', () => {
     const reviewLink = html.match(/<a[^>]*href="\/dashboard\/review"[^>]*>/)?.[0] ?? '';
     expect(reviewLink).toContain('aria-current="page"');
     expect(html).toContain('Loading your review queue');
+    // The loading line reserves the empty panel's height, so the footer does not jump after hydration.
+    expect(html).toMatch(/<div data-testid="review-body" aria-busy="true" class="min-h-\[15rem\] sm:min-h-\[12\.5rem\]">/);
   });
 });
 
@@ -131,6 +133,8 @@ describe('ReviewPageClient', () => {
     expect(screen.getByRole('link', { name: 'Browse the curriculum' })).toHaveAttribute('href', '/curriculum');
     expect(screen.getByText('Saved in this browser')).toBeInTheDocument();
     expect(loader.calls).toEqual([]);
+    // The loaded body keeps the same least height as the loading line.
+    expect(screen.getByTestId('review-body')).toHaveClass('min-h-[15rem]', 'sm:min-h-[12.5rem]');
   });
 
   it('lists due cards oldest first, then new cards, with a link back to the lesson', async () => {

@@ -126,17 +126,18 @@ test.describe('lesson orientation at 1280 px', () => {
     // Poll: lazily loaded interactives above References can swap in a beat after load and move it.
     await expect.poll(async () => (await top(flashcards)) < (await top(references))).toBe(true);
     await expect.poll(async () => (await top(teachBack)) < (await top(references))).toBe(true);
-    await expect(page.getByRole('navigation', { name: 'On this page' }).getByRole('link', { name: 'Reinforce the essentials' })).toHaveAttribute(
-      'href',
-      '#reinforce-the-essentials',
-    );
+    // The contents list has the entry. Its layer group ("Practice & Reinforce") stays collapsed until the
+    // reader reaches it or opens it, so the entry is matched in the DOM rather than by its accessible role.
+    const entry = page.getByRole('navigation', { name: 'On this page' }).locator('a[href="#reinforce-the-essentials"]');
+    await expect(entry).toHaveCount(1);
+    await expect(entry).toHaveText('Reinforce the essentials');
   });
 });
 
 test.describe('lesson orientation at 390 px', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('"On this page" is a collapsed disclosure and the page does not scroll sideways', async ({ page }) => {
+  test('the "On this page" contents bar opens the contents as a sheet that Escape closes, and the page does not scroll sideways', async ({ page }) => {
     await page.goto(VIRTUAL_SEQUENCES);
     const toggle = page.getByRole('button', { name: /^On this page/ });
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');

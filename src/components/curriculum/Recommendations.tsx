@@ -52,9 +52,10 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, read
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">Based on the lessons you opened in this browser.</p>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* Plain columns inside the one card: no cards inside cards. */}
+      <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2">
         {route && (
-          <div className="min-w-0 rounded-xl border border-border bg-card p-4">
+          <div className="min-w-0">
             <p className={eyebrow}>Next on your {route.name} route</p>
             {routeLesson && routeStep ? (
               <>
@@ -82,7 +83,7 @@ export function Recommendations({ routes, selectedRoute, progress, lessons, read
         )}
 
         {showCourseNext && last && (
-          <div className="min-w-0 rounded-xl border border-border bg-card p-4">
+          <div className="min-w-0">
             <p className={eyebrow}>Continue the course</p>
             {courseNext ? (
               <>

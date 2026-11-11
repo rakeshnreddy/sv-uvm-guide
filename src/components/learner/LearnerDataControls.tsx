@@ -65,7 +65,7 @@ const destructiveAction = `inline-flex min-h-[44px] items-center justify-center 
 
 const groupClass = "min-w-0 space-y-3 rounded-xl border border-border bg-background p-4 sm:p-5";
 const headingClass = "text-h4 text-foreground";
-const bodyClass = "text-sm text-muted-foreground";
+const bodyClass = "max-w-[30em] text-sm text-muted-foreground";
 const actionsClass = "flex flex-col gap-3 sm:flex-row sm:flex-wrap";
 
 const toneClass: Record<Tone, string> = {

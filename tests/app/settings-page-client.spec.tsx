@@ -116,6 +116,8 @@ describe('SettingsPageClient', () => {
         'Choose Light, Dark or System. System follows your device setting. Your choice is saved in this browser.',
       );
       expect(appearance).not.toHaveTextContent(/colour theme/i);
+      // The motion note is running text, so it is held to the 68-character measure.
+      expect(within(appearance).getByText(/^Motion follows your operating system/)).toHaveClass('max-w-[30em]');
       // One light/dark control; the palette select is gone (DESIGN.md section 7).
       expect(within(themeGroup).queryByRole('combobox', { name: 'Select theme' })).not.toBeInTheDocument();
       // The shared theme menu button: Light, Dark and System as radio items.

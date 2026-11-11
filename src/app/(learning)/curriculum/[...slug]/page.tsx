@@ -3,14 +3,17 @@ import { compileMDX } from "next-mdx-remote/rsc";
 import { notFound, permanentRedirect, redirect } from "next/navigation";
 import React from "react";
 
-import { LessonCompletionToggle } from "@/components/curriculum/LessonCompletionToggle";
+import LessonNextBlock, { lessonLab } from "@/components/curriculum/LessonNextBlock";
 import LessonOrientation from "@/components/curriculum/LessonOrientation";
-import LessonPager from "@/components/curriculum/LessonPager";
 import { LessonPractice, type LessonPracticeProps } from "@/components/curriculum/LessonPractice";
 import LessonToc from "@/components/curriculum/LessonToc";
 import LessonTrail from "@/components/curriculum/LessonTrail";
 import LessonVisitTracker from "@/components/curriculum/LessonVisitTracker";
+import { HeaderReadingProgress, LESSON_ARTICLE_ID } from "@/components/curriculum/ReadingProgress";
 import { lessonScrollRegionComponents } from "@/components/curriculum/ScrollRegion";
+import { PageShell } from "@/components/layout/PageShell";
+import { BeforeYouStart, type BeforeYouStartProps } from "@/components/mdx/BeforeYouStart";
+import { PROSE_CLASS } from "@/components/ui/Prose";
 import { getMdxComponents } from "@/generated/mdx-component-registry";
 import { lessonHref } from "@/lib/curriculum-overview";
 import { getLessonContext } from "@/lib/curriculum/lesson-context";
@@ -87,6 +90,10 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     ...getMdxComponents(frontmatter.components, { lessonSlug: normalizedSlug }),
     // Wide code blocks and tables scroll in a focusable, labelled box (WCAG 2.1.1, 1.3.1).
     ...lessonScrollRegionComponents,
+    // The header's "Before you start" row carries the same manifest data, so a
+    // bare <BeforeYouStart /> (this lesson) would repeat it a screen later. One
+    // that names another lesson still renders.
+    BeforeYouStart: (props: BeforeYouStartProps) => (props.lesson ? <BeforeYouStart {...props} /> : null),
     [LESSON_PRACTICE_SLOT]: (props: Pick<LessonPracticeProps, "level">) => (
       <LessonPractice
         level={props.level}
@@ -112,43 +119,50 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     options: { mdxOptions: { remarkPlugins } },
   });
 
+  const hasToc = toc.length > 0;
+
   return (
-    <div className="mx-auto w-full max-w-6xl pb-16">
+    <PageShell width="content" innerClassName="pb-16" data-testid="lesson-page">
       <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} lessonPath={lessonPath} />
-      <LessonTrail slug={normalizedSlug} />
+      {hasToc ? <HeaderReadingProgress /> : null}
+      <LessonTrail slug={normalizedSlug} className="mb-4" />
       {/*
-        One column below xl, with "On this page" as a disclosure above the lesson
-        (the course outline docks beside lessons from lg). From xl, "On this
-        page" is a sticky column on the right. The module's lessons are in
-        "Jump to" and in the course outline.
+        Below 1280 px one column: the header, the 44 px "On this page" bar
+        (sticky under the site header, display: contents on its wrapper so it
+        sticks for the whole lesson), the article and the Next block. From 1280
+        px "On this page" is a sticky column on the right. The module's lessons
+        are in "Jump to" and in the course outline.
       */}
-      <div className={cn("mt-6 grid grid-cols-1 gap-6", toc.length > 0 && "xl:grid-cols-[minmax(0,1fr)_16rem] xl:gap-x-8")}>
+      <div className={cn(hasToc && "xl:grid xl:grid-cols-[minmax(0,1fr)_15rem] xl:gap-x-12")}>
         <LessonOrientation
-          className="xl:col-start-1 xl:row-start-1"
+          className={cn(hasToc && "mb-0 xl:mb-8", "xl:col-start-1 xl:row-start-1")}
           context={context}
           title={topic.title}
           summary={summary}
           readingMinutes={readingMinutes}
         />
-        {toc.length > 0 ? (
-          <div className="min-w-0 xl:col-start-2 xl:row-span-3 xl:row-start-1">
-            <div className="xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto xl:pb-4">
-              <LessonToc entries={toc} />
-            </div>
+        {hasToc ? (
+          <div className="contents xl:col-start-2 xl:row-span-3 xl:row-start-1 xl:block">
+            <LessonToc entries={toc} />
           </div>
         ) : null}
-        <div className="min-w-0 xl:col-start-1 xl:row-start-2">
-          <article
-            id="lesson-content"
-            data-testid="lesson-content"
-            className="prose prose-base max-w-none break-words rounded-2xl border border-border bg-card p-4 shadow-card prose-headings:scroll-mt-28 prose-code:before:content-none prose-code:after:content-none sm:p-6"
-          >
-            {content}
-          </article>
-          <LessonCompletionToggle className="mt-6" moduleId={sectionSlug} lessonSlug={topicSlug} />
-        </div>
-        <LessonPager className="xl:col-start-1 xl:row-start-3" context={context} />
+        <article
+          id={LESSON_ARTICLE_ID}
+          data-testid="lesson-content"
+          data-lesson-article=""
+          className={cn(PROSE_CLASS, "break-words prose-headings:scroll-mt-28", hasToc && "mt-8 xl:mt-0", "xl:col-start-1 xl:row-start-2")}
+        >
+          {content}
+        </article>
+        <LessonNextBlock
+          className="xl:col-start-1 xl:row-start-3"
+          context={context}
+          moduleId={sectionSlug}
+          lessonSlug={topicSlug}
+          lab={lessonLab(practice)}
+          hasFlashcards={Boolean(flashcardDeck && flashcardDeck.cards.length > 0)}
+        />
       </div>
-    </div>
+    </PageShell>
   );
 }

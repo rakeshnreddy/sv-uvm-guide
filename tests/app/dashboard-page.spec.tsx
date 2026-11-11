@@ -177,6 +177,8 @@ describe('/dashboard', () => {
     expect(html).toContain('aria-label="Your learning"');
     expect(html).toContain('Stored only in this browser');
     expect(html).toContain('Reading what this browser has saved');
+    // The body reserves the empty state's height while it loads, so the footer does not jump after hydration.
+    expect(html).toMatch(/<div data-testid="dashboard-body" aria-busy="true" class="min-h-\[22rem\] sm:min-h-\[16rem\]">/);
     // The server render shows none of the stored data, so hydration always matches.
     expect(html).not.toContain('Nothing recorded in this browser yet');
     expect(html).not.toContain('Clocking blocks');

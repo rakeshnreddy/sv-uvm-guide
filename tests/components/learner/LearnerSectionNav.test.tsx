@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  LearnerPageHeader,
   LearnerSectionNav,
   LEARNER_SECTION_LINKS,
   learnerBreadcrumbs,
@@ -45,26 +46,27 @@ describe('LearnerSectionNav', () => {
     }
   });
 
-  it('wraps on narrow screens and shows a focus ring on every link', () => {
+  it('is the page header tab strip: 40 px tabs that scroll sideways on phones, with a focus ring on every link', () => {
     render(<LearnerSectionNav current="review" className="mb-6" />);
 
     const nav = screen.getByRole('navigation', { name: 'Your learning' });
-    expect(nav).toHaveClass('min-w-0', 'mb-6');
-    expect(nav.querySelector('ul')).toHaveClass('flex', 'flex-wrap');
+    expect(nav).toHaveClass('overflow-x-auto', 'mb-6');
+    expect(nav.querySelector('ul')).toHaveClass('flex', 'min-w-max', 'gap-6');
     for (const link of within(nav).getAllByRole('link')) {
       expect(link.className).toContain('focus-visible:ring-2');
-      expect(link.className).toContain('min-h-[2.75rem]');
+      expect(link).toHaveClass('h-10');
     }
   });
 
-  it('marks the current page with the raised surface and an accent underline, not an accent fill', () => {
+  it('marks the current page with primary text and the accent underline, not an accent fill', () => {
     render(<LearnerSectionNav current="review" />);
 
     const current = screen.getByRole('link', { name: 'Review' });
-    expect(current).toHaveClass('bg-muted', 'border-b-2', 'border-b-primary', 'text-foreground');
+    expect(current).toHaveClass('border-b-2', 'border-primary', 'text-foreground');
     expect(current.className).not.toMatch(/(^|\s)bg-primary(\s|$)/);
     expect(current.className).not.toContain('text-primary-foreground');
-    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveClass('bg-muted');
+    const other = screen.getByRole('link', { name: 'Dashboard' });
+    expect(other).toHaveClass('border-transparent', 'text-muted-foreground');
   });
 
   it('renders on the server without hooks', () => {
@@ -87,5 +89,29 @@ describe('LearnerSectionNav', () => {
     expect(learnerBreadcrumbs('assessment')).toEqual([{ label: 'Dashboard', href: '/dashboard' }, { label: 'Self-assessment' }]);
     expect(learnerBreadcrumbs('settings')[1]).toEqual({ label: 'Settings' });
     expect(learnerBreadcrumbs('notebook')[1]).toEqual({ label: 'Notebook' });
+  });
+
+  it('gives every learner page one header: the trail below the dashboard, the h1, the lead and the tabs on the hairline', () => {
+    render(<LearnerPageHeader current="notebook" title="Notebook" lead="Your notes." />);
+
+    const header = screen.getByTestId('learner-page-header');
+    expect(header).toHaveAttribute('data-page-header');
+    expect(header).toHaveClass('border-b', 'pb-0');
+    expect(within(header).getByRole('heading', { level: 1, name: 'Notebook' })).toBeInTheDocument();
+    // The desktop trail (the phone back link after it repeats the parent).
+    const trail = within(header).getByRole('navigation', { name: 'Breadcrumb' }).querySelector('ol') as HTMLElement;
+    expect(within(trail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
+    const tabs = within(header).getByRole('navigation', { name: 'Your learning' });
+    expect(within(tabs).getByRole('link', { name: 'Notebook' })).toHaveAttribute('aria-current', 'page');
+    // The tabs come after the title.
+    expect(
+      within(header).getByRole('heading', { level: 1 }).compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('gives the dashboard, the top of the family, no breadcrumb', () => {
+    render(<LearnerPageHeader current="dashboard" title="Dashboard" />);
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
   });
 });

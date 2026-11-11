@@ -11,6 +11,7 @@ import {
 } from "@/components/mdx/lazy-mdx-interactives";
 import { BeforeYouStart, type BeforeYouStartProps } from "@/components/mdx/BeforeYouStart";
 import MdxImage from "@/components/mdx/Image";
+import { MdxCodeBlock } from "@/components/mdx/MdxCodeBlock";
 import { LabLink } from "@/components/mdx/LabLink";
 import { NextLesson, type NextLessonProps } from "@/components/mdx/NextLesson";
 import { InfoPage } from "@/components/templates/InfoPage";
@@ -114,6 +115,9 @@ export const mdxComponents = {
   SequenceDiagram,
   BeforeYouStart,
   NextLesson,
+  // Fenced code blocks: highlighted on the server, on the code surface, with a
+  // language label, copy button and a 28 rem window for listings over 40 lines.
+  pre: MdxCodeBlock,
   ...lazyMdxComponents,
 };
 

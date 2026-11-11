@@ -2,6 +2,8 @@ import React from 'react';
 import Link from 'next/link';
 
 import { getInterviewPracticeItems, loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
+import { PageHeader, pageTabClass } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { siteLabel } from '@/lib/nav-labels';
 import type { LabManifest } from '@/lib/lab-manifest';
 import { getAllLabs, labBadgeProps, labCheckSummary } from '@/lib/lab-registry';
@@ -163,6 +165,34 @@ function labNotes(lab: LabManifest): string[] {
   return [`${labCheckSummary(lab)}. Progress is saved in this browser.`];
 }
 
+export interface PracticeSectionJumpLink {
+  href: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * The jump links to the hub's sections, as PageHeader's tab strip: one 40 px
+ * item per section with its item count in the mono face. None is current; they
+ * are in-page anchors. Scrolls sideways on phones rather than wrapping.
+ */
+export function PracticeSectionNav({ links }: { links: readonly PracticeSectionJumpLink[] }) {
+  return (
+    <nav aria-label="Practice sections" className="overflow-x-auto">
+      <ul className="flex min-w-max gap-6">
+        {links.map((link) => (
+          <li key={link.href}>
+            <a href={link.href} className={cn(pageTabClass(false), 'gap-2')}>
+              {link.label}
+              <span className="font-mono text-label tabular-nums text-subtle">{link.count}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
 const PracticeHub = () => {
   const labs = getAllLabs();
   const labItems = getPracticeLabItems(labs);
@@ -202,34 +232,14 @@ const PracticeHub = () => {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-6xl pb-16">
-      <header className="border-b border-border pb-6">
-        <h1 className="text-h1 text-foreground">{siteLabel(PRACTICE_HREF)}</h1>
-        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
-          Sharpen your SystemVerilog and UVM skills with labs, exercises, interactive models, tools and interview questions.
-          Items are listed in curriculum order, and each one names the lesson that teaches it.
-        </p>
-        <nav aria-label="Practice sections" className="mt-5">
-          <ul className="flex flex-wrap gap-2">
-            {jumpLinks.map((link) => (
-              <li key={link.href}>
-                <a
-                  href={link.href}
-                  className={cn(
-                    'inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 text-sm font-medium text-foreground transition-colors duration-150 ease-bench hover:border-input hover:bg-card',
-                    focusRing,
-                  )}
-                >
-                  {link.label}
-                  <span className="font-mono text-xs font-medium tabular-nums text-subtle">{link.count}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </header>
+    <PageShell width="content">
+      <PageHeader
+        title={siteLabel(PRACTICE_HREF)}
+        lead="Labs, exercises, interactive models, tools and interview questions, in curriculum order. Each one names the lesson that teaches it."
+        tabs={<PracticeSectionNav links={jumpLinks} />}
+      />
 
-      <section aria-labelledby={labsSection.id} className="mt-12">
+      <section aria-labelledby={labsSection.id}>
         <h2 id={labsSection.id} className={sectionHeadingClass}>
           {labsSection.label}
         </h2>
@@ -277,7 +287,7 @@ const PracticeHub = () => {
           <PracticeCardGrid items={interviewItems} details={interviewDetails} />
         </div>
       </section>
-    </div>
+    </PageShell>
   );
 };
 

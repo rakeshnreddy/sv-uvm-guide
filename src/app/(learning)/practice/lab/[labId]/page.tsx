@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
+import { PageShell } from "@/components/layout/PageShell";
 import { PracticePager } from "@/components/practice/PracticePager";
 import { readLabFilesForBuild } from "@/lib/lab-assets";
 import { toLabPolicyInput } from "@/lib/lab-progress-policy";
@@ -62,10 +62,11 @@ export default async function LabPage({ params }: LabPageProps) {
   const href = `/practice/lab/${lab.id}`;
 
   return (
-    <>
-      {/* Practice › Labs › <lab>, and the pager to the labs before and after this one in curriculum order. */}
-      <Breadcrumbs items={practiceBreadcrumbs({ title: lab.title.replace(/\s+/g, " ").trim(), kind: "lab" })} className="-mt-2 mb-4" />
+    // A dense tool: the wide width (1280 px) from the page frame's left edge.
+    <PageShell width="wide">
+      {/* Practice › Labs › <lab> above the title, and the pager to the labs before and after this one in curriculum order. */}
       <LabClientPage
+        breadcrumbs={practiceBreadcrumbs({ title: lab.title.replace(/\s+/g, " ").trim(), kind: "lab" })}
         lab={toLearnerLabDto(lab)}
         policy={toLabPolicyInput(lab)}
         files={files}
@@ -75,6 +76,6 @@ export default async function LabPage({ params }: LabPageProps) {
         prerequisites={{ items, doAfter }}
       />
       <PracticePager pager={requirePracticePager(href)} className="mt-12" />
-    </>
+    </PageShell>
   );
 }

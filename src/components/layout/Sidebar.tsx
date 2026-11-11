@@ -79,18 +79,33 @@ const toggleClass = cn(
   focusRing,
 );
 
+/** The elements that each draw one row of the outline: links, toggles, headings and labels. */
+const OUTLINE_ROW_SELECTOR = "a, button, h2, h3, h4, h5, p";
+
 /**
  * Scrolls `container` so its current item (aria-current="page") is in view,
- * a third of the way down, without scrolling the page. Does nothing when the
- * item is already visible.
+ * about a third of the way down, without scrolling the page. The scroll
+ * position snaps to the top of a whole row, so the row at the top edge is
+ * never cut in half. Does nothing when the item is already visible.
  */
 export function revealCurrentItem(container: HTMLElement | null): void {
   const current = container?.querySelector<HTMLElement>('[aria-current="page"]');
   if (!container || !current) return;
-  const top = current.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+  const boxTop = container.getBoundingClientRect().top - container.scrollTop;
+  const offsetOf = (element: HTMLElement) => element.getBoundingClientRect().top - boxTop;
+  const top = offsetOf(current);
   const bottom = top + current.offsetHeight;
   if (top < container.scrollTop || bottom > container.scrollTop + container.clientHeight) {
-    container.scrollTop = Math.max(0, top - container.clientHeight / 3);
+    const target = Math.max(0, top - container.clientHeight / 3);
+    // The last row that starts at or above the target: it becomes the first whole row in view.
+    let snapped = target;
+    let best = -1;
+    for (const row of Array.from(container.querySelectorAll<HTMLElement>(OUTLINE_ROW_SELECTOR))) {
+      const rowTop = offsetOf(row);
+      if (rowTop <= target && rowTop > best) best = rowTop;
+    }
+    if (best >= 0) snapped = best;
+    container.scrollTop = Math.max(0, snapped);
   }
 }
 

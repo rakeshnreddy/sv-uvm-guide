@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { PlacementQuiz } from '@/components/assessment/PlacementQuiz';
-import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
+import { cardClass } from '@/components/ui/Card';
 import { placementTierRecommendations } from '@/components/assessment/placementQuizData';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
@@ -48,58 +51,47 @@ export default function PlacementQuizPage() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl space-y-10 pb-16">
+    <PageShell width="content">
       {/* Curriculum › Find your level: the quiz is listed under Learn, beside the curriculum. */}
-      <div>
-        <Breadcrumbs items={[siteLink(CURRICULUM_HREF), { label: siteLabel(PLACEMENT_QUIZ_HREF) }]} className="-mt-2 mb-4" />
-        <header>
-          <p className="text-xs font-medium text-subtle">Skill placement</p>
-          <h1 className="mt-2 text-h1 text-foreground">{siteLabel(PLACEMENT_QUIZ_HREF)}</h1>
-          <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
-            Answer ten questions to find where to start. Your result is a starting lesson on one of the three{' '}
+      <PageHeader
+        breadcrumbs={[siteLink(CURRICULUM_HREF), { label: siteLabel(PLACEMENT_QUIZ_HREF) }]}
+        title={siteLabel(PLACEMENT_QUIZ_HREF)}
+        lead={
+          <>
+            Answer ten questions to find where to start: a lesson on one of the three{' '}
             <Link href={START_HERE_HREF} className={inlineLink}>
               learning routes
             </Link>
-            , a short list of lessons to skim first, and lessons for any area that scored under 75%.
-          </p>
-        </header>
-      </div>
+            , lessons to skim first, and lessons for any area under 75%.
+          </>
+        }
+      />
 
       <PlacementQuiz plans={plans} />
 
-      <section aria-labelledby="placement-coverage-heading">
-        <h2 id="placement-coverage-heading" className="text-h3 text-foreground">
-          What the quiz covers
-        </h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
-          {quizSections.map((section) => (
-            <article
-              key={section.title}
-              aria-labelledby={`placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`}
-              className="rounded-xl border border-border bg-card p-5 shadow-card"
-            >
-              <h3
-                id={`placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`}
-                className="text-h4 text-foreground"
-              >
-                {section.title}
-              </h3>
-              <p className="mt-2 text-sm text-muted-foreground">{section.description}</p>
-              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                {section.sample.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </article>
-          ))}
-        </div>
-      </section>
+      <Section id="placement-coverage" title="What the quiz covers" className="mt-12">
+        <ul className="grid gap-4 lg:grid-cols-3">
+          {quizSections.map((section) => {
+            const headingId = `placement-coverage-${section.title.replace(/\W+/g, '-').toLowerCase()}`;
+            return (
+              <li key={section.title} className={cardClass({ padding: 'default' })}>
+                <h3 id={headingId} className="text-h4 text-foreground">
+                  {section.title}
+                </h3>
+                <p className="mt-2 text-sm text-muted-foreground">{section.description}</p>
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                  {section.sample.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      </Section>
 
-      <section aria-labelledby="placement-skip-heading" className="rounded-xl border border-border bg-card p-5 shadow-card">
-        <h2 id="placement-skip-heading" className="text-h3 text-foreground">
-          Rather choose for yourself?
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+      <Section id="placement-skip" title="Rather choose for yourself?">
+        <p className="max-w-[30em] text-ui text-muted-foreground">
           Compare the{' '}
           <Link href="/curriculum#route-junior" className={inlineLink}>
             Junior
@@ -118,7 +110,7 @@ export default function PlacementQuizPage() {
           </Link>
           .
         </p>
-      </section>
-    </div>
+      </Section>
+    </PageShell>
   );
 }

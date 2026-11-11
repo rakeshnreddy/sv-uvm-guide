@@ -1,101 +1,132 @@
 import React, { ReactNode } from "react";
 
-import { Breadcrumbs, type BreadcrumbItem } from "@/components/layout/Breadcrumbs";
-import { cn } from "@/lib/utils";
+import type { BreadcrumbItem } from "@/components/layout/Breadcrumbs";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell, type PageWidth } from "@/components/layout/PageShell";
+import { Section } from "@/components/layout/Section";
+import { PROSE_CLASS } from "@/components/ui/Prose";
 
 /*
- * The template for practice, exercise and guide pages. It is unboxed: one
- * content-width container, a plain header with a hairline below, then the
- * content. There is no outer card, so an interactive card never sits on a
- * card of the same colour.
+ * The template for reference, guide, legal and practice tool pages, built on
+ * the shared page primitives: PageShell (one width, aligned to the page
+ * frame's left edge), PageHeader (breadcrumbs, the one h1, the lead, a meta
+ * row, a hairline below) and Prose for the body. It is unboxed: no card wraps
+ * the header or the content.
  *
- * Running text (paragraphs, lists, quotes, headings) uses the prose styles and
- * is capped at 68 characters per line. Anything marked `not-prose`, and every
- * chart and diagram slot, uses the full container width.
+ * Running text (direct paragraphs, lists, quotes and headings of the body) is
+ * held to the measure by Prose. Anything else, and every chart and diagram
+ * slot, uses the full column.
  */
 
-/** Prose styles for the children, with running text capped at 68ch. */
-export const infoPageProseClass =
-  "prose max-w-none prose-p:max-w-[68ch] prose-ul:max-w-[68ch] prose-ol:max-w-[68ch] prose-blockquote:max-w-[68ch] prose-headings:max-w-[68ch] prose-code:before:content-none prose-code:after:content-none";
+/** The body's prose recipe: the shared Prose classes (running text at the 68-character measure). */
+export const infoPageProseClass = PROSE_CLASS;
 
-interface InfoPageProps {
+/** The id of the charts and diagrams sections, for their headings and anchors. */
+export const INFO_PAGE_CHARTS_ID = "charts";
+export const INFO_PAGE_DIAGRAMS_ID = "diagrams";
+
+/** A section anchor from its heading: "Cookies and third parties" -> "cookies-and-third-parties". */
+export function infoSectionId(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export interface InfoPageProps {
   /**
    * The trail above the title, for every page below the top level. The last
    * item is the current page. Build it from src/lib/site-links.ts labels.
    */
   breadcrumbs?: readonly BreadcrumbItem[];
+  /** The one h1. It starts with the page's navigation label (src/lib/site-links.ts). */
   title?: string;
-  description?: string;
-  children?: ReactNode; // Main content of the page
-  // Optional slots for specific types of content; these render outside the prose styles at full width.
-  charts?: ReactNode[];
-  diagrams?: ReactNode[];
+  /** The lead under the title: one short paragraph. */
+  description?: ReactNode;
+  /** A short sentence-case label or signal tags above the title. */
+  eyebrow?: ReactNode;
+  /** Meta items under the lead ("Last updated: October 2026", counts). */
+  meta?: ReactNode;
+  /** Links or buttons on the header's right. */
+  actions?: ReactNode;
+  /** reading (768 px) for long text, content (1152 px, the default) for pages with figures or tools, wide (1280 px) for dense tools. */
+  width?: PageWidth;
   /**
-   * Add the page gutters (16 px on phones, 24 on tablets, 32 on desktop).
-   * Pages inside the app shell (MainLayout) pass `false`: the shell already
-   * provides the gutter, and doubling it squeezes phones.
+   * Wrap the children in the prose styles (the default). Pass false when the
+   * body is made of Section blocks that carry their own Prose, so section
+   * headings sit outside the prose styles. The blocks are stacked 48 px apart.
    */
-  gutter?: boolean;
+  prose?: boolean;
+  children?: ReactNode;
+  /** Charts, rendered after the body at full width under "Charts and visualizations". */
+  charts?: ReactNode[];
+  /** Diagrams and interactives, rendered after the body at full width under "Diagrams and illustrations". */
+  diagrams?: ReactNode[];
   /** The end of the page, after every other slot: the practice pager on practice tool pages. */
   pager?: ReactNode;
+}
+
+function SlotSection({ id, title, items }: { id: string; title: string; items: ReactNode[] }) {
+  return (
+    <Section id={id} title={title} className="not-prose">
+      <div className="space-y-8">
+        {items.map((item, index) => (
+          <div key={`${id}-${index}`} className="min-w-0">
+            {item}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
 }
 
 export const InfoPage: React.FC<InfoPageProps> = ({
   breadcrumbs,
   title,
   description,
+  eyebrow,
+  meta,
+  actions,
+  width = "content",
+  prose = true,
   children,
   charts,
   diagrams,
-  gutter = true,
   pager,
 }) => {
+  const hasCharts = Boolean(charts && charts.length > 0);
+  const hasDiagrams = Boolean(diagrams && diagrams.length > 0);
   return (
-    <div
-      data-testid="info-page"
-      className={cn("mx-auto w-full max-w-6xl", gutter ? "px-4 py-8 sm:px-6 lg:px-8" : "pb-8")}
-    >
-      {breadcrumbs && breadcrumbs.length > 0 ? <Breadcrumbs items={breadcrumbs} className="-mt-2 mb-4" /> : null}
+    <PageShell data-testid="info-page" width={width}>
       <article>
-        {title && (
-          <header className="mb-8 border-b border-border pb-6">
-            <h1 className="text-h1 text-foreground">{title}</h1>
-            {description && (
-              <p className="mt-3 max-w-[68ch] text-lead text-muted-foreground">{description}</p>
-            )}
-          </header>
-        )}
+        {title ? (
+          <PageHeader
+            breadcrumbs={breadcrumbs}
+            eyebrow={eyebrow}
+            title={title}
+            lead={description}
+            meta={meta}
+            actions={actions}
+          />
+        ) : null}
 
-        {children && (
-          <section className={cn("mb-8", infoPageProseClass)}>
-            {children}
-          </section>
-        )}
-
-        {charts && charts.length > 0 && (
-          <section className="not-prose mb-8">
-            <h2 className="mb-4 mt-10 text-h2 text-foreground">Charts and visualizations</h2>
-            <div className="space-y-8">
-              {charts.map((chart, index) => (
-                <div key={`chart-${index}`} className="min-w-0">{chart}</div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {diagrams && diagrams.length > 0 && (
-          <section className="not-prose mb-8">
-            <h2 className="mb-4 mt-10 text-h2 text-foreground">Diagrams and illustrations</h2>
-            <div className="space-y-8">
-              {diagrams.map((diagram, index) => (
-                <div key={`diagram-${index}`} className="min-w-0">{diagram}</div>
-              ))}
-            </div>
-          </section>
-        )}
+        {/* One stack, 48 px between the body and each slot. */}
+        <div data-info-page-body="" className="space-y-12">
+          {children ? (
+            prose ? (
+              <div data-prose="" className={infoPageProseClass}>
+                {children}
+              </div>
+            ) : (
+              <div className="min-w-0 space-y-12">{children}</div>
+            )
+          ) : null}
+          {hasCharts ? <SlotSection id={INFO_PAGE_CHARTS_ID} title="Charts and visualizations" items={charts!} /> : null}
+          {hasDiagrams ? <SlotSection id={INFO_PAGE_DIAGRAMS_ID} title="Diagrams and illustrations" items={diagrams!} /> : null}
+        </div>
       </article>
       {pager ? <div className="mt-12">{pager}</div> : null}
-    </div>
+    </PageShell>
   );
 };
 

@@ -2,6 +2,8 @@
 
 import React, { useId, useMemo, useState } from 'react';
 
+import { Section } from '@/components/layout/Section';
+import { FilterChip } from '@/components/ui/Badge';
 import { LessonLinkList, focusRing } from '@/components/practice/LearnInLesson';
 import {
   RESOURCE_COST_LABELS,
@@ -102,26 +104,11 @@ export default function ResourceLibrary({ groups, resources }: ResourceLibraryPr
     [resources, group, query],
   );
 
-  const filterButton = (id: GroupFilter, label: string) => {
-    const active = group === id;
-    return (
-      <button
-        key={id}
-        type="button"
-        aria-pressed={active}
-        onClick={() => setGroup(id)}
-        className={cn(
-          'min-h-10 rounded-lg border px-3 py-1 text-sm font-medium text-foreground transition-colors duration-150 ease-bench',
-          active
-            ? 'border-border border-b-2 border-b-primary bg-muted'
-            : 'border-border bg-card hover:bg-muted',
-          focusRing,
-        )}
-      >
-        {label}
-      </button>
-    );
-  };
+  const filterButton = (id: GroupFilter, label: string) => (
+    <FilterChip key={id} pressed={group === id} onClick={() => setGroup(id)}>
+      {label}
+    </FilterChip>
+  );
 
   return (
     <div className="flex flex-col gap-8">
@@ -158,25 +145,21 @@ export default function ResourceLibrary({ groups, resources }: ResourceLibraryPr
         </p>
       ) : null}
 
-      {groups.map((g) => {
-        const items = visible.filter((resource) => resource.group === g.id);
-        if (items.length === 0) return null;
-        return (
-          <section key={g.id} aria-labelledby={`group-${g.id}`} className="flex flex-col gap-4">
-            <div>
-              <h2 id={`group-${g.id}`} className="text-h2 text-foreground">
-                {g.title}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">{g.purpose}</p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {items.map((resource) => (
-                <ResourceCard key={resource.id} resource={resource} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+      <div>
+        {groups.map((g) => {
+          const items = visible.filter((resource) => resource.group === g.id);
+          if (items.length === 0) return null;
+          return (
+            <Section key={g.id} id={`group-${g.id}`} title={g.title} description={g.purpose}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                {items.map((resource) => (
+                  <ResourceCard key={resource.id} resource={resource} />
+                ))}
+              </div>
+            </Section>
+          );
+        })}
+      </div>
     </div>
   );
 }

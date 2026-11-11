@@ -3,12 +3,18 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
+import { cardClass } from '@/components/ui/Card';
 import { verificationStackLinks } from '@/components/diagrams/verification-stack-links';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
 import { buildCurriculumOverview, PLANNED_MODULES, type LessonPosition } from '@/lib/curriculum-overview';
 import { readLessonMinutes, readManifestTiers } from '@/lib/curriculum-scan';
 import { getAllLabs } from '@/lib/lab-registry';
 import { resolveMilestones, resolveRoutes } from '@/lib/learning-paths';
+import { siteLabel } from '@/lib/nav-labels';
+import { CURRICULUM_HREF } from '@/lib/site-links';
 
 export const metadata: Metadata = {
   title: 'Curriculum',
@@ -38,47 +44,36 @@ export default function CurriculumPage() {
   const stackLessons = verificationStackLinks.filter((link) => link.href !== '#');
 
   return (
-    <div className="mx-auto max-w-7xl pb-16">
-      <header className="mb-10 max-w-4xl">
-        <h1 className="text-h1 text-foreground">Curriculum</h1>
-        <p className="mt-4 text-lead text-muted-foreground">
-          SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers ordered by what each
-          lesson needs first. Pick a route that matches your experience, or browse every module below.
-        </p>
-      </header>
+    <PageShell width="content">
+      <PageHeader
+        title={siteLabel(CURRICULUM_HREF)}
+        lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route that matches your experience, or browse every module below."
+      />
 
       <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />
 
-      <section aria-labelledby="verification-stack-heading">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-card sm:p-6">
-          <div className="mb-5 max-w-3xl">
-            <h2 id="verification-stack-heading" className="text-h2 text-foreground">
-              Explore the verification stack
-            </h2>
-            <p className="mt-2 text-ui text-muted-foreground sm:text-base">
-              Start from the test layer and follow the flow into environments, agents, analysis and coverage. Each card
-              opens the lesson that explains that layer, and the last card opens the interactive architecture
-              walkthrough, which follows the same layers.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {stackLessons.map(({ id, title, description, href }) => (
+      <Section
+        id="verification-stack"
+        title="Explore the verification stack"
+        description="Follow the test layer into environments, agents, analysis and coverage. Each card opens the lesson for that layer; the last opens the interactive architecture walkthrough."
+        className="mt-12"
+      >
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {stackLessons.map(({ id, title, description, href }) => (
+            <li key={id} className={cardClass({ variant: 'interactive', padding: 'compact', className: 'flex min-w-0 flex-col' })}>
               <Link
-                key={id}
                 data-node-id={id}
                 href={href}
-                className="group flex min-w-0 flex-col rounded-xl border border-border bg-card p-4 transition-colors duration-150 ease-bench hover:border-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none"
+                className="flex items-center justify-between gap-2 text-sm font-semibold text-foreground after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none"
               >
-                <span className="flex items-center justify-between gap-2 text-sm font-semibold text-foreground">
-                  {title}
-                  <ArrowRight className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                </span>
-                <span className="mt-2 text-sm text-muted-foreground">{description}</span>
+                {title}
+                <ArrowRight className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
               </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-    </div>
+              <span className="mt-2 text-sm text-muted-foreground">{description}</span>
+            </li>
+          ))}
+        </ul>
+      </Section>
+    </PageShell>
   );
 }

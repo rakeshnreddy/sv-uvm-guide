@@ -3,6 +3,7 @@ import React from "react";
 
 import { getLessonContext, type NeighbourLesson } from "@/lib/curriculum/lesson-context";
 import { lessonSegments } from "@/lib/curriculum/lesson-urls";
+import { PROSE_MEASURE_CLASS } from "@/components/ui/Prose";
 import { cn } from "@/lib/utils";
 
 export interface NextLessonProps {
@@ -37,7 +38,7 @@ export function NextLesson({ lesson, className }: NextLessonProps) {
   const { next } = context;
 
   return (
-    <span className={cn("my-[1.25em] block", className)} data-testid="next-lesson">
+    <span className={cn("my-[1.25em] block", PROSE_MEASURE_CLASS, className)} data-testid="next-lesson">
       <strong>Next:</strong>{" "}
       {next ? (
         <>

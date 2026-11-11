@@ -8,13 +8,20 @@ import { getLabLessons, getPracticePages } from '@/lib/practice-links';
 import { PRACTICE_SECTION_ID } from '@/lib/site-links';
 
 describe('PracticeHub', () => {
-  it('renders hero section with title and description', () => {
-    render(<PracticeHub />);
+  it('renders the page header: the h1, the lead and the section jump links on the hairline', () => {
+    const { container } = render(<PracticeHub />);
 
-    expect(
-      screen.getByRole('heading', { level: 1, name: /practice hub/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/sharpen your systemverilog/i)).toBeInTheDocument();
+    const heading = screen.getByRole('heading', { level: 1, name: /practice hub/i });
+    const header = heading.closest('[data-page-header]') as HTMLElement;
+    expect(header).not.toBeNull();
+    expect(within(header).getByText(/^Labs, exercises, interactive models, tools and interview questions/)).toHaveAttribute(
+      'data-page-header-lead',
+    );
+    expect(within(header).getByRole('navigation', { name: 'Practice sections' })).toBeInTheDocument();
+    // One frame: the shell caps the content at 1152 px without a second centred container.
+    const shell = container.querySelector('[data-page-shell]') as HTMLElement;
+    expect(shell).toHaveAttribute('data-width', 'content');
+    expect(shell.querySelector('[data-page-shell-inner]')).not.toHaveClass('mx-auto');
   });
 
   it('groups items by category and renders cards', () => {

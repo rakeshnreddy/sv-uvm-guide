@@ -38,7 +38,8 @@ const SAVE_ERROR_MESSAGE = 'Unable to save preferences right now. Please retry.'
 const LOAD_ERROR_MESSAGE = 'Unable to load your preferences right now.';
 const SAVED_STATUS_MS = 2000;
 
-const card = 'min-w-0 rounded-xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6';
+// Unboxed like the page's other sections (Section): no card, the heading in the h2 token.
+const card = 'min-w-0';
 const panel = 'min-w-0 rounded-xl border border-border bg-background p-4';
 const eyebrow = 'text-xs font-medium text-subtle';
 const toggleRow = cn(
@@ -159,10 +160,10 @@ export default function AccountPreferencesPanel() {
   const header = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h2 id="settings-account-heading" className="text-h3 text-foreground">
+        <h2 id="settings-account-heading" className="text-h2 text-foreground">
           Account preferences
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Saved to your account.</p>
+        <p className="mt-1 text-ui text-muted-foreground">Saved to your account.</p>
       </div>
       <p
         role="status"

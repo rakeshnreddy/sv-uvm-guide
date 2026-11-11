@@ -1,6 +1,7 @@
 /**
- * highlight.js style for react-syntax-highlighter's light build (used by
- * src/components/ui/CodeBlock.tsx). Code panels sit on the code surface
+ * highlight.js token colours for code blocks (src/lib/highlight-code.ts turns
+ * highlight.js output into tokens keyed by this style; src/components/ui/CodeBlock.tsx
+ * renders them). Code panels sit on the code surface
  * (--code-surface, 226 40% 5%, #080a12), which is dark in both site modes
  * (DESIGN.md section 3), so this style is fixed and does not follow the theme.
  * The token colours match the site Monaco theme (src/lib/monaco-themes.ts) so
@@ -67,3 +68,14 @@ export const codeSurfaceHljsStyle: Record<string, Record<string, string>> = {
   'hljs-emphasis': { fontStyle: 'italic' },
   'hljs-strong': { fontWeight: '600' },
 };
+
+/**
+ * The style key for one highlight.js span class list ("hljs-keyword",
+ * "hljs-title class_", "hljs-title function_"), or undefined when the style
+ * has no rule for it, so the token takes its parent's colour.
+ */
+export function codeSurfaceStyleKey(className: string): string | undefined {
+  const [base, ...modifiers] = className.trim().split(/\s+/);
+  if (base === 'hljs-title' && modifiers.includes('class_')) return 'hljs-class .hljs-title';
+  return base && base !== 'hljs' && base in codeSurfaceHljsStyle ? base : undefined;
+}

@@ -7,7 +7,7 @@ This is the single source for every design decision in the refresh. Builders imp
 - **Product.** A free, long-form SystemVerilog, UVM and AMBA verification course for engineers from their first testbench to staff-level interviews, with progress kept in the learner's own browser.
 - **Character.** Exact, patient, quietly technical.
 - **World.** A verification engineer's bench during a regression run: a waveform viewer with named signals, the simulator log, the standard open beside it.
-- **Moments.** The interactives and diagrams carry the rich colour. Everything around them is quiet.
+- **Moments.** The interactives and diagrams carry the rich colour. Around them, colour says where you are in the course (section 11) and glass marks the layers that float above the page; the reading surface itself stays quiet.
 - **Signature.** The signal tag (section 8).
 
 Three goals rank above everything else, in this order: the lesson is comfortable to read for an hour; a learner always knows where they are and what comes next; coming back to the site shows them their progress and their next step at once.
@@ -43,7 +43,7 @@ Rules:
 1. Headings and body text use `text-foreground`. A heading is never set in the accent or a status colour.
 2. The accent marks what is clickable or current. One filled accent button per view; every other button is the secondary style (raised surface, hairline border, primary text).
 3. A current or selected item is a raised surface with a 2 px accent marker on its leading edge and primary text. This is the same in the outline, the menus, the table of contents and tabs.
-4. No hue gradients, gradient text, glass panels, colour washes, glows or coloured shadows anywhere in the chrome. Dark mode has no shadows; depth comes from the surface steps and hairlines. Light mode may use `0 1px 2px rgb(16 24 40 / 0.05)`. Use `shadow-card` where a shadow class is needed (in dark mode it is a transparent zero shadow, so it still composes with a focus ring), never `shadow-lg`, `shadow-xl` or `shadow-2xl` in the chrome.
+4. Colour and glass follow section 11 (owner decision, 2026-11-10), which replaces the earlier ban on gradients and glass in the chrome. Still banned everywhere: gradient text, glass on glass, glow halos around single elements, coloured shadows, and any glass or gradient under lesson running text or code. Dark mode depth comes from the surface steps, hairlines and the glass tokens. Use `shadow-card` where a shadow class is needed, never `shadow-lg`, `shadow-xl` or `shadow-2xl` in the chrome.
 5. Mint is retired from the chrome. Progress and "done" use `--success`.
 6. Text contrast is at least 4.5:1, large text and control boundaries at least 3:1, in both modes. A unit test enforces this from `globals.css`.
 
@@ -76,7 +76,7 @@ Scale (size / line height in px):
 | `h3` | 19/28 | 600 | 0 | subsection |
 | `h4` | 16/24 | 600 | 0 | minor heading |
 | `lead` | 18/28 | 400 | 0 | one-paragraph page intro, secondary colour |
-| `body` | 17/29, 16/27 on phones | 400 | 0 | lesson prose, at most 68 characters per line |
+| `body` | 17/29, 16/27 on phones | 400 | 0 | lesson prose, about 65 characters per line on average and never more than 75 (a 31em measure in lessons) |
 | `ui` | 14/20 | 400 or 500 | 0 | interface text |
 | `label` | 12/16 | 500 | 0 | labels, eyebrows, meta |
 | `code` | 13.5/22 | 400 | 0 | code blocks |
@@ -131,3 +131,60 @@ These carry the "return again and again" goal and are built in phases 3 and 4:
 - **Next step at the end of every lesson.** The pager names the next lesson and the lab or review that reinforces this one.
 - **Progress as a trace.** Progress through a tier is drawn as a signal trace: one segment per module, high when the module is done. It appears on the dashboard and, in miniature, in the curriculum index.
 - **Reviews due.** When flashcards are due, the dashboard and the landing header say how many, with one action to start.
+
+## 11. Colour and glass
+
+Owner decision on 2026-11-10, after phases 0 to 2 were live: the neutral chrome read as "just black and white". The owner asked for a liquid glass feel, glass panels, gradient colours and accents, approved the sketch of this section, and asked for the same treatment in light mode (paler there). One sentence holds the whole rule: **glass on the layers that float, colour fields behind page tops, solid surfaces for reading.**
+
+### Tier colours
+
+Each tier has one colour, the way a waveform viewer colours each signal group. Tokens `--tier-1` to `--tier-4`; each also has `-subtle` (the colour at 14% over the surface) and `-border` (the colour at 38%).
+
+| Tier | Dark | Light | Name |
+|---|---|---|---|
+| 1 Foundations | `172 66% 50%` | `172 80% 24%` | teal |
+| 2 Intermediate | `222 100% 74%` | `222 75% 42%` | blue |
+| 3 Advanced | `260 100% 79%` | `262 60% 46%` | violet |
+| 4 Expert | `36 90% 63%` | `30 92% 32%` | amber |
+
+- A builder may move lightness by up to 4 points so that each colour, used as text, holds 4.5:1 on the page, on the card surface and on its own subtle fill. A unit test enforces it.
+- The tier of a module code comes from the curriculum data (one shared lookup), never from the code's prefix. Milestone ids (M0 to M8) and codes with no tier stay neutral.
+- Where it shows: every signal tag (tier-coloured text, subtle fill, tinted border); tier headings on the curriculum page and in the course outline (a small step mark in the tier colour); a 2 px top edge on cards that belong to one tier (the tier colour fading to transparent); on a lesson page the header's tags and the first 48 px of each layer band's rule; progress traces.
+- Tier colour always travels with the tier's name or the module code, so it is never the only cue. The sky accent keeps its meaning: clickable or current. Headings and body text stay neutral.
+
+### Colour field
+
+A static, decorative layer behind the top of a page (`aria-hidden`, no pointer events, no animation, no JavaScript): three or four soft radial gradients in the tier colours, masked so it has fully faded by the end of its height.
+
+- Strength: 0.34 to 0.55 alpha per gradient in dark mode, 0.14 to 0.24 in light mode.
+- Variants: `all` (landing, curriculum, practice, dashboard, reference and info pages: all four tier colours in fixed positions) and `tier` (lesson pages, labs and anything that belongs to one tier: that tier's colour leads and its neighbours are faint).
+- Height: up to 820 px on hub pages. On lesson pages it covers the header only and has fully faded before the first paragraph of the article.
+- Text over the field (page titles, leads, meta) must hold 4.5:1 against the worst-case blend; the unit test composites the strongest gradient stop over the page colour and checks primary, secondary and subtle text.
+
+### Glass
+
+Tokens `--glass-bg`, `--glass-border`, `--glass-highlight`, `--glass-shadow`, `--glass-blur`; one utility (`glass`) and one quieter variant without blur (`glass-quiet`).
+
+| Token | Dark | Light |
+|---|---|---|
+| `--glass-bg` | `222 22% 12% / 0.42` | `0 0% 100% / 0.62` |
+| `--glass-border` | `0 0% 100% / 0.12` | `220 14% 70% / 0.35` |
+| `--glass-highlight` (inset top edge) | `0 0% 100% / 0.14` | `0 0% 100% / 0.7` |
+| `--glass-shadow` | `0 12px 40px rgb(0 0 0 / 0.28)` | `0 8px 30px rgb(16 24 40 / 0.08)` |
+| `--glass-blur` | `blur(22px) saturate(170%)` | `blur(22px) saturate(150%)` |
+
+- **Real glass (with backdrop blur)** is for layers that float above content: the header bar, menus and popovers (Practice, Reference, theme, Jump to, search results), dialogs and sheets (search, shortcuts help, the lesson contents sheet, the phone menu and the outline drawer), the sticky "On this page" bar, and cards that overlap a colour field at the top of a hub page.
+- **Quiet glass (no blur)** is for cards further down hub pages: the translucent fill, the hairline and the top highlight, with no backdrop filter.
+- **Never glass:** lesson running text, code blocks and editors, tables, quiz and exercise controls, form fields, the docked outline and the "On this page" panel. No glass on glass: a glass card never sits inside a glass panel.
+- At most three blurred layers are visible at once (header, one menu or dialog, one sticky bar). No `will-change`. The field and the glass must not cause layout shift.
+- Fallbacks: without `backdrop-filter` support, with `prefers-reduced-transparency: reduce` and in forced colours, glass becomes the solid card surface with its hairline.
+- The header stays 64 px tall (56 px for the public header on phones) and keeps its alignment with the page columns; the glass bar is a rounded background layer (radius 16) inside that height, not a layout wrapper. Content scrolling under it is what shows the glass.
+- Text on glass holds 4.5:1 against the worst case (the glass fill over the strongest field colour); the unit test checks it.
+
+### Gradient accents
+
+Allowed: the reading progress line (tier colour into the accent), progress traces, the 2 px top edge of tier cards, and a vertical sheen on the one primary button (the accent 6% lighter at the top, 6% darker at the bottom, with an inset highlight). Not allowed: gradient text, gradient borders around whole cards, animated gradients.
+
+### Light mode
+
+The same structure, paler: field alphas from the light column, white glass at 62% with the softer shadow, tier colours from the light column. Both modes are checked at every release.

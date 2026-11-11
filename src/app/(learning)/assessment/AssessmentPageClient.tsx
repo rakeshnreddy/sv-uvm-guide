@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
 import { eyebrow, inlineLink, primaryAction, secondaryAction, textLink } from '@/components/curriculum/overview-ui';
-import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { LEARNER_BODY_MIN_HEIGHT_CLASS, LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
+import { PageShell } from '@/components/layout/PageShell';
 import { siteLabel } from '@/lib/nav-labels';
 import { SELF_ASSESSMENT_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
@@ -405,7 +406,7 @@ function EmptyState() {
       <h2 id="assessment-empty-heading" className="text-h3 text-foreground">
         Nothing to assess yet
       </h2>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+      <p className="mt-2 max-w-[30em] text-sm text-muted-foreground">
         This page summarizes what you do on this site: lessons you mark done, lesson quizzes, labs, flashcard
         reviews and the placement quiz. None of that is recorded in this browser yet.
       </p>
@@ -434,7 +435,7 @@ function AccountNotice() {
       <h2 id="assessment-account-heading" className="text-h3 text-foreground">
         Your progress is saved to your account
       </h2>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+      <p className="mt-2 max-w-[30em] text-sm text-muted-foreground">
         While you are signed in, new progress is saved to your account. This page reads only what is stored in this
         browser, so it does not assess account progress yet.
       </p>
@@ -516,19 +517,16 @@ export default function AssessmentPageClient({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
-      <header className="space-y-4">
-        <div>
-          <h1 className="text-h1 text-foreground">{siteLabel(SELF_ASSESSMENT_HREF)}</h1>
-          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
-            Where you stand in each track, from what you have done here: lessons, lesson quizzes, labs, flashcards and
-            the placement quiz. It is a self-check, not a grade or a certificate.
-          </p>
-        </div>
-        <LearnerSectionNav current="assessment" />
-        <StorageStatusNote savedLabel="Stored only in this browser" />
-      </header>
-      {body}
-    </div>
+    <PageShell width="content">
+      <LearnerPageHeader
+        current="assessment"
+        title={siteLabel(SELF_ASSESSMENT_HREF)}
+        lead="Where you stand in each track, from what you have done here: lessons, lesson quizzes, labs, flashcards and the placement quiz. It is a self-check, not a grade or a certificate."
+        meta={<StorageStatusNote savedLabel="Stored only in this browser" />}
+      />
+      <div data-testid="assessment-body" aria-busy={!loaded} className={LEARNER_BODY_MIN_HEIGHT_CLASS}>
+        {body}
+      </div>
+    </PageShell>
   );
 }

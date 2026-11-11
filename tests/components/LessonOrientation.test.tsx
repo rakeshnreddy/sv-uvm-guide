@@ -3,7 +3,9 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import LessonOrientation from "@/components/curriculum/LessonOrientation";
-import LessonPager from "@/components/curriculum/LessonPager";
+import LessonNextBlock, { lessonLab } from "@/components/curriculum/LessonNextBlock";
+import LessonPager, { nextLessonBoundary } from "@/components/curriculum/LessonPager";
+import type { LessonPracticeEntry } from "@/lib/practice-links";
 import { curriculumData, findPrevNextTopics } from "@/lib/curriculum-data";
 import { getLessonContext } from "@/lib/curriculum/lesson-context";
 
@@ -27,21 +29,47 @@ function renderHeader(slug: string[]) {
 }
 
 describe("<LessonOrientation />", () => {
-  it('shows "Lesson k of N in <module>" from the manifest order (G30-PAGE-V01)', () => {
+  it('shows "Lesson k of N" in the meta row, naming the module for screen readers (G30-PAGE-V01)', () => {
     const context = renderHeader(["T2_Intermediate", IUVM3B, "sequencer-driver-handshake"]);
-    expect(screen.getByTestId("lesson-position")).toHaveTextContent(
-      new RegExp(`^Lesson 2 of 9 in ${context.module.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
-    );
-    expect(screen.getByTestId("lesson-position")).toHaveTextContent(`module ${context.module.position} of ${context.module.count} in Tier 2: Intermediate`);
+    const position = screen.getByTestId("lesson-position");
+    expect(position).toHaveTextContent(`Lesson 2 of 9 in ${context.module.label}`);
+    expect(position.querySelector(".sr-only")).toHaveTextContent(`in ${context.module.label}`);
+    expect(position.closest("[data-page-header-meta]")).toHaveTextContent("7 min read");
   });
 
-  it("badges the track and tier as text, and lists the milestones the module builds", () => {
+  it("is unboxed: PageHeader's hairline, no card or background", () => {
+    renderHeader(["T2_Intermediate", IUVM3B, "sequencer-driver-handshake"]);
+    const header = screen.getByTestId("lesson-header");
+    expect(header).toHaveClass("border-b", "border-border", "pb-6");
+    expect(header.className).not.toMatch(/\bbg-card\b|rounded|shadow/);
+    expect(header.querySelector("h1")).toHaveClass("text-h1", "text-foreground");
+  });
+
+  it("puts the tier and module codes in the eyebrow without repeating the trail's titles", () => {
+    const context = renderHeader(["T2_Intermediate", IUVM3B, "sequencer-driver-handshake"]);
+    const eyebrow = document.querySelector("[data-page-header-eyebrow]")!;
+    const tags = Array.from(eyebrow.querySelectorAll("[data-signal-tag]")).map((tag) => tag.textContent);
+    expect(tags).toEqual(["T2", context.module.code]);
+    // The titles are for assistive technology only (sr-only); the trail shows them.
+    expect(eyebrow.querySelector(".sr-only")).toHaveTextContent(context.tier.title);
+    expect(Array.from(eyebrow.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE)).toHaveLength(0);
+    // From sm up the trail's last crumb shows the module code, so the eyebrow's tag is for phones only.
+    expect(screen.getByTestId("lesson-eyebrow-module")).toHaveClass("contents", "sm:hidden");
+  });
+
+  it("leaves the module tag out when the title already starts with the code", () => {
+    const context = getLessonContext(["T2_Intermediate", "I-UVM-1B_The_UVM_Factory", "index"])!;
+    render(<LessonOrientation context={context} title="I-UVM-1B: The UVM Factory" readingMinutes={0} />);
+    const tags = Array.from(document.querySelectorAll("[data-page-header-eyebrow] [data-signal-tag]")).map((tag) => tag.textContent);
+    expect(tags).toEqual(["T2"]);
+  });
+
+  it("marks an elective as quiet text, and lists the milestones the module builds as tags", () => {
     renderHeader(["T2_Intermediate", "I-SV-8_Power_Intent_and_UPF", "index"]);
-    const facts = screen.getByRole("list", { name: "About this lesson" });
-    expect(within(facts).getByText("Elective (optional)")).toBeInTheDocument();
-    expect(facts).toHaveTextContent("T2");
-    expect(facts).toHaveTextContent("7-minute read");
-    expect(screen.getByText("Builds toward:").parentElement).toHaveTextContent("M8");
+    expect(screen.getByText("Elective, optional")).toHaveAttribute("data-level", "elective");
+    const milestones = screen.getByTestId("lesson-milestones");
+    expect(milestones).toHaveTextContent(/^Builds toward/);
+    expect(milestones.querySelector("[data-signal-tag]")).toHaveTextContent("M8");
   });
 
   it('links "Before you start" to the manifest prerequisites with canonical URLs', () => {
@@ -54,9 +82,8 @@ describe("<LessonOrientation />", () => {
   it("renders the module code, the milestones and the prerequisite codes as signal tags", () => {
     const context = renderHeader(["T4_Expert", "E-PWR-1_Power_Aware_Verification", "index"]);
     const header = document.querySelector("header")!;
-    const eyebrow = header.querySelector("p")!;
-    expect(eyebrow.querySelector("[data-signal-tag]")).toHaveTextContent(context.module.code);
-    expect(eyebrow).toHaveTextContent(`${context.module.code}: `);
+    const eyebrow = header.querySelector("[data-page-header-eyebrow]")!;
+    expect(Array.from(eyebrow.querySelectorAll("[data-signal-tag]")).map((tag) => tag.textContent)).toContain(context.module.code);
 
     const prerequisite = within(screen.getByRole("list", { name: "Before you start" })).getAllByRole("link")[0];
     expect(prerequisite.querySelector("[data-signal-tag]")).toHaveTextContent("I-SV-8");
@@ -71,9 +98,12 @@ describe("<LessonOrientation />", () => {
     }
   });
 
-  it("says when there is nothing to read first", () => {
+  it("says when there is nothing to read first, on one row", () => {
     renderHeader(["T1_Foundational", "F1A_The_Cost_of_Bugs", "index"]);
-    expect(screen.getByText("No prerequisites: this lesson is a starting point.")).toBeInTheDocument();
+    const row = screen.getByTestId("before-you-start-chips");
+    expect(row.tagName).toBe("P");
+    expect(row).toHaveTextContent("Before you start No prerequisites: this lesson is a starting point.");
+    expect(within(row).queryAllByRole("link")).toHaveLength(0);
   });
 
   it("keeps the H1 inside the header (regression-gates selects `header h1`)", () => {
@@ -93,6 +123,33 @@ describe("<LessonPager />", () => {
     expect(nextLink).toHaveAttribute("href", `/curriculum/${next!.slug}`);
     expect(nextLink).toHaveAttribute("rel", "next");
     expect(nextLink).toHaveTextContent("Lesson 4 of 9 in I-UVM-3B");
+    // The next lesson is the filled accent action; the previous one is a quiet text link.
+    expect(nextLink).toHaveClass("bg-primary", "text-primary-foreground");
+    expect(within(nav).getByRole("link", { name: /^Previous lesson/ }).className).not.toMatch(/bg-primary/);
+  });
+
+  it("does not repeat the module code when the next lesson's title already starts with it", () => {
+    const context = getLessonContext(["T2_Intermediate", "I-UVM-1B_The_UVM_Factory", "index"])!;
+    const lessons = context.lessons;
+    const last = lessons[lessons.length - 1];
+    const lastContext = getLessonContext(last.href.replace(/^\/curriculum\//, "").split("/"))!;
+    const next = lastContext.next!;
+    expect(next.step).toBe("module");
+    expect(next.label.startsWith(`${next.moduleCode}:`)).toBe(true);
+    render(<LessonPager context={lastContext} />);
+    const link = screen.getByRole("link", { name: /^Next lesson/ });
+    expect(link).toHaveTextContent(next.label);
+    expect(link.textContent!.split(next.moduleCode)).toHaveLength(2);
+    expect(link).toHaveTextContent(/Next module$/);
+  });
+
+  it("keeps the step words when the label lacks the code", () => {
+    const base = { label: "I-UVM-1C: UVM Phasing", moduleCode: "I-UVM-1C" };
+    expect(nextLessonBoundary({ ...base, step: "module", boundary: "Next module: I-UVM-1C" })).toBe("Next module");
+    expect(nextLessonBoundary({ ...base, step: "module", boundary: "Next module: I-UVM-1C, elective" })).toBe("Next module, elective");
+    expect(nextLessonBoundary({ ...base, label: "Phasing", step: "module", boundary: "Next module: I-UVM-1C" })).toBe("Next module: I-UVM-1C");
+    expect(nextLessonBoundary({ ...base, step: "tier", boundary: "Starts Tier 3: Advanced" })).toBe("Starts Tier 3: Advanced");
+    expect(nextLessonBoundary({ ...base, step: "lesson", boundary: "Lesson 3 of 9 in I-UVM-1C" })).toBe("Lesson 3 of 9 in I-UVM-1C");
   });
 
   it("labels a tier boundary", () => {
@@ -108,5 +165,53 @@ describe("<LessonPager />", () => {
     const end = screen.getByTestId("end-of-path");
     expect(within(end).getByRole("link", { name: "curriculum overview" })).toHaveAttribute("href", "/curriculum");
     expect(screen.queryByRole("link", { name: /^Next lesson/ })).toBeNull();
+  });
+});
+
+const labEntry = (overrides: Partial<LessonPracticeEntry["item"]> = {}, after?: LessonPracticeEntry["after"]): LessonPracticeEntry => ({
+  item: { id: "lab:x", kind: "lab", title: "Factory overrides", description: "", href: "/practice/lab/x", status: "available", lessons: [], order: 0, ...overrides },
+  teaches: true,
+  after,
+});
+
+describe("lessonLab", () => {
+  it("picks the module's first lab that can be opened now", () => {
+    expect(lessonLab([labEntry({ kind: "exercise", href: "/exercises/y" }), labEntry()])).toEqual({ href: "/practice/lab/x", title: "Factory overrides" });
+  });
+
+  it("skips planned labs, labs without a page, and labs a later lesson teaches", () => {
+    const later = { href: "/curriculum/a/b/c" } as LessonPracticeEntry["after"];
+    expect(lessonLab([labEntry({ status: "coming_soon" }), labEntry({ href: undefined }), labEntry({}, later)])).toBeNull();
+    expect(lessonLab([])).toBeNull();
+  });
+});
+
+describe("<LessonNextBlock />", () => {
+  const slug = ["T2_Intermediate", IUVM3B, "sequence-arbitration"];
+
+  it("is a band with Lesson done, the next lesson as the one accent action, and the quieter lab and flashcards", () => {
+    render(
+      <LessonNextBlock
+        context={getLessonContext(slug)!}
+        moduleId={IUVM3B}
+        lessonSlug="sequence-arbitration"
+        lab={{ href: "/practice/lab/x", title: "Factory overrides" }}
+        hasFlashcards
+      />,
+    );
+    const block = screen.getByRole("region", { name: "Next" });
+    expect(block).toHaveClass("border-t", "border-border");
+    expect(within(block).getByRole("button", { name: "Lesson done" })).toHaveAttribute("aria-pressed", "false");
+    const filled = Array.from(block.querySelectorAll("a")).filter((link) => link.className.includes("bg-primary"));
+    expect(filled).toHaveLength(1);
+    expect(filled[0]).toHaveAccessibleName(/^Next lesson/);
+    const practise = within(block).getByRole("list", { name: "Practise this lesson" });
+    expect(within(practise).getByRole("link", { name: "Lab: Factory overrides" })).toHaveAttribute("href", "/practice/lab/x");
+    expect(within(practise).getByRole("link", { name: "Review flashcards" })).toHaveAttribute("href", "#reinforce-the-essentials");
+  });
+
+  it("leaves the practise list out when the module has neither", () => {
+    render(<LessonNextBlock context={getLessonContext(slug)!} moduleId={IUVM3B} lessonSlug="sequence-arbitration" />);
+    expect(screen.queryByTestId("lesson-reinforce")).toBeNull();
   });
 });

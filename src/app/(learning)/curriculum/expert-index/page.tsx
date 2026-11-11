@@ -2,13 +2,16 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
-import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
 import { SignalTag } from '@/components/ui/SignalTag';
 import { curriculumData } from '@/lib/curriculum-data';
 import { loadExpertIndex } from '@/lib/curriculum-scan';
 import type { ExpertIndexModule, ExpertIndexTier } from '@/lib/expert-index';
 import { routeAnchor } from '@/lib/learning-route-state';
-import { CURRICULUM_HREF, EXPERT_INDEX_HREF, FOOTER_NAV, INTERVIEW_PREP_HREF, PRIMARY_NAV, isNavGroup } from '@/lib/site-links';
+import { siteLabel } from '@/lib/nav-labels';
+import { CURRICULUM_HREF, EXPERT_INDEX_HREF, INTERVIEW_PREP_HREF } from '@/lib/site-links';
 
 export const metadata: Metadata = {
   title: 'Expert index',
@@ -20,17 +23,13 @@ const focusRing =
   'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 const inlineLink = `font-medium text-primary underline underline-offset-4 hover:no-underline ${focusRing}`;
 const listLink = `font-medium text-primary underline-offset-4 transition-colors duration-150 ease-bench hover:underline motion-reduce:transition-none ${focusRing}`;
-const eyebrow = 'text-label text-subtle';
+/** A quiet header action: a 40 px link in the accent, no fill (the page has no filled action). */
+const actionLink = `inline-flex min-h-10 items-center text-ui ${listLink}`;
 
 /** The labels from the one navigation config: "Curriculum" and "Expert index". */
-function navLabel(href: string, fallback: string): string {
-  const links = [...PRIMARY_NAV.flatMap((item) => (isNavGroup(item) ? item.children : [item])), ...FOOTER_NAV.flatMap((group) => group.children)];
-  return links.find((link) => link.href === href)?.label ?? fallback;
-}
-
 const EXPERT_INDEX_TRAIL = [
-  { label: navLabel(CURRICULUM_HREF, 'Curriculum'), href: CURRICULUM_HREF },
-  { label: navLabel(EXPERT_INDEX_HREF, 'Expert index') },
+  { label: siteLabel(CURRICULUM_HREF), href: CURRICULUM_HREF },
+  { label: siteLabel(EXPERT_INDEX_HREF) },
 ] as const;
 
 function plural(count: number, one: string, many = `${one}s`): string {
@@ -136,33 +135,32 @@ export default function ExpertIndexPage() {
       : `${plural(index.topicCount, 'expert topic')} in ${index.taggedModuleCount} of ${index.moduleCount} modules. Modules without tagged topics link their Push Further section where they have one.`;
 
   return (
-    <div className="mx-auto max-w-5xl pb-16">
-      <Breadcrumbs items={EXPERT_INDEX_TRAIL} className="mb-4" />
+    <PageShell width="content">
+      <PageHeader
+        breadcrumbs={EXPERT_INDEX_TRAIL}
+        title={siteLabel(EXPERT_INDEX_HREF)}
+        lead="Every Expert subsection in the lessons, linked to the heading itself: corner cases, tool behaviour, methodology trade-offs and staff-level questions."
+        meta={<span>{summary}</span>}
+        actions={
+          <>
+            <Link href={`${CURRICULUM_HREF}#${routeAnchor('expert')}`} className={actionLink}>
+              The Expert route
+            </Link>
+            <Link href={INTERVIEW_PREP_HREF} className={actionLink}>
+              {siteLabel(INTERVIEW_PREP_HREF)}
+            </Link>
+          </>
+        }
+      />
+      <p className="max-w-[30em] text-ui text-muted-foreground">
+        Every module on the{' '}
+        <Link href={`${CURRICULUM_HREF}#modules`} className={inlineLink}>
+          curriculum page
+        </Link>{' '}
+        lists the modules it builds on, so a gap is one click away.
+      </p>
 
-      <header className="rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
-        <p className={eyebrow}>Expert layers</p>
-        <h1 className="mt-2 text-h1 text-foreground">Expert index</h1>
-        <p className="mt-3 max-w-3xl text-lead text-muted-foreground">
-          Every <strong className="font-semibold text-foreground">Expert:</strong> subsection in the lessons, linked to
-          the heading itself: standard corner cases, tool-dependent behaviour, methodology trade-offs, scale and
-          performance, and staff-level interview questions. Every module on the{' '}
-          <Link href="/curriculum#modules" className={inlineLink}>
-            curriculum page
-          </Link>{' '}
-          lists the modules it builds on, so a gap is one click away.
-        </p>
-        <p className="mt-3 max-w-3xl text-sm text-foreground">{summary}</p>
-        <p className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-          <Link href={`/curriculum#${routeAnchor('expert')}`} className={inlineLink}>
-            The Expert route
-          </Link>
-          <Link href={INTERVIEW_PREP_HREF} className={inlineLink}>
-            Interview prep
-          </Link>
-        </p>
-      </header>
-
-      <nav aria-label="Tiers on this page" className="mt-6">
+      <nav aria-label="Tiers on this page" className="mb-12 mt-6">
         <ul className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
           {index.tiers.map((tier) => (
             <li key={tier.id}>
@@ -182,13 +180,9 @@ export default function ExpertIndexPage() {
         const tagged = tier.modules.filter((m) => m.topicCount > 0);
         const untagged = tier.modules.filter((m) => m.topicCount === 0);
         return (
-          <section key={tier.id} id={tier.anchor} aria-labelledby={`${tier.anchor}-heading`} className="mt-10 scroll-mt-24">
-            <h2 id={`${tier.anchor}-heading`} className="text-h2 text-foreground">
-              {tier.title}
-            </h2>
-            {tier.audience && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{tier.audience}</p>}
+          <Section key={tier.id} id={tier.anchor} title={tier.title} description={tier.audience || undefined}>
             {tagged.length > 0 && (
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {plural(tier.topicCount, 'expert topic')} in {tagged.length} of {plural(tier.modules.length, 'module')}.
               </p>
             )}
@@ -200,9 +194,9 @@ export default function ExpertIndexPage() {
               </div>
             )}
             <UntaggedModules tier={tier} modules={untagged} />
-          </section>
+          </Section>
         );
       })}
-    </div>
+    </PageShell>
   );
 }

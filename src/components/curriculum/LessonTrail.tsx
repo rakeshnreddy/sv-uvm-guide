@@ -50,7 +50,8 @@ export default function LessonTrail({ slug, className }: LessonTrailProps) {
 
   return (
     <div className={cn("flex flex-wrap items-center justify-between gap-x-4 gap-y-1 print:hidden", className)}>
-      <Breadcrumbs items={items} className="min-w-0 flex-1" />
+      {/* -ml-1 cancels the crumb links' own padding, so the trail's text starts at the title's edge. */}
+      <Breadcrumbs items={items} className="-ml-1 min-w-0 flex-1" />
       {context.lessons.length > 1 ? (
         <ModuleJumpMenu
           moduleLabel={context.module.label}

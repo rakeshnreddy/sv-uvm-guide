@@ -51,21 +51,38 @@ describe("<CurriculumNotFound />", () => {
     visit("/T2_Intermediate/I-SV-1_OOP");
     render(<CurriculumNotFound />);
     const heading = await screen.findByRole("heading", { name: "Did you mean" });
-    const suggestions = within(heading.parentElement as HTMLElement).getAllByRole("link");
+    const suggestions = within(heading.closest("[data-section]") as HTMLElement).getAllByRole("link");
     expect(suggestions[0]).toHaveAttribute("href", "/curriculum/T2_Intermediate/I-SV-1_OOP/index");
     expect(suggestions[0].textContent).toMatch(/^I-SV-1: /);
   });
 
-  it("sits on a token card with a label eyebrow and the h1 token in the primary text colour", async () => {
+  it("sits on the page frame: a reading-width PageShell with PageHeader and Sections, and no card", async () => {
     render(<CurriculumNotFound />);
     const heading = await screen.findByRole("heading", { level: 1, name: "Page not found" });
     expect(heading).toHaveClass("text-h1", "text-foreground");
-    const card = heading.parentElement as HTMLElement;
-    expect(card).toHaveClass("rounded-2xl", "border", "border-border", "bg-card");
+    const shell = screen.getByTestId("not-found");
+    expect(shell.tagName).toBe("SECTION");
+    expect(shell).toHaveAttribute("data-page-shell");
+    expect(shell).toHaveAttribute("data-width", "reading");
+    expect(shell).toHaveAttribute("aria-labelledby", "not-found-title");
+    expect(heading).toHaveAttribute("id", "not-found-title");
+    expect(heading.closest("[data-page-header]")).not.toBeNull();
+    // No whole-page card and no second centred container inside the frame.
+    expect(shell.querySelector(".bg-card, .rounded-2xl, .mx-auto")).toBeNull();
+    for (const name of ["Find your way back", "Search tips"]) {
+      const sectionHeading = screen.getByRole("heading", { level: 2, name });
+      expect(sectionHeading.closest("[data-section]")).not.toBeNull();
+    }
     const eyebrow = screen.getByTestId("not-found-eyebrow");
     expect(eyebrow).toHaveTextContent("Error 404");
-    expect(eyebrow).toHaveClass("text-label");
+    expect(eyebrow.closest("[data-page-header-eyebrow]")).not.toBeNull();
     expect(eyebrow).not.toHaveClass("uppercase", "tracking-wide", "tracking-wider");
+  });
+
+  it("shows the requested address in the header's meta row", async () => {
+    render(<CurriculumNotFound />);
+    const code = await screen.findByText("/curriculum/does-not-exist");
+    expect(code.closest("[data-page-header-meta]")).not.toBeNull();
   });
 
   it("gives each way back a block-level accent link, 40 px tall from padding, never inline-flex in running text", () => {

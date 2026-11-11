@@ -3,7 +3,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import Footer from '@/components/Footer';
-import InfoPage from '@/components/templates/InfoPage';
+import { Section } from '@/components/layout/Section';
+import InfoPage, { infoSectionId } from '@/components/templates/InfoPage';
+import { Prose } from '@/components/ui/Prose';
 import { LEGAL_LINKS, SITE_NAME, TERMS_OF_SERVICE_HREF } from '@/lib/site-links';
 
 /** The page's one label, from the shared navigation config. */
@@ -120,22 +122,23 @@ export default function TermsOfServicePage() {
     <div className="flex min-h-[calc(100vh-3.5rem)] flex-col bg-background text-foreground sm:min-h-[calc(100vh-4rem)]">
       <main id="main-content" className="flex-1">
         <InfoPage
+          width="reading"
+          prose={false}
           title={PAGE_LABEL}
           description={`Guidelines for using ${SITE_NAME}.`}
+          meta={<span>Last updated: October 2026</span>}
         >
-          <div className="space-y-10">
-            <p className="text-xs font-medium text-subtle">Last updated: October 2026</p>
-            {commitments.map((section) => (
-              <section key={section.heading} className="space-y-4">
-                <h2 className="text-h2 text-foreground">{section.heading}</h2>
-                <ul className="list-disc space-y-2 pl-6 text-foreground">
+          {commitments.map((section) => (
+            <Section key={section.heading} id={infoSectionId(section.heading)} title={section.heading}>
+              <Prose>
+                <ul>
                   {section.points.map((item) => (
                     <li key={item.id}>{item.content}</li>
                   ))}
                 </ul>
-              </section>
-            ))}
-          </div>
+              </Prose>
+            </Section>
+          ))}
         </InfoPage>
       </main>
       <Footer />

@@ -424,6 +424,16 @@ describe('outline helpers', () => {
     expect(container.scrollTop).toBe(900);
   });
 
+  it('snaps the scroll position to the top of a whole row, so no row is cut in half at the top edge', () => {
+    const container = scrollBox(1000);
+    // A 40 px row from 880 to 920 straddles the unsnapped target (900).
+    const row = document.createElement('a');
+    container.insertBefore(row, container.firstChild);
+    row.getBoundingClientRect = () => ({ top: 100 + 880 - container.scrollTop }) as DOMRect;
+    revealCurrentItem(container);
+    expect(container.scrollTop).toBe(880);
+  });
+
   it('leaves the scroll position alone when the current item is visible, or there is none', () => {
     const container = scrollBox(120);
     revealCurrentItem(container);

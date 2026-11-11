@@ -17,7 +17,10 @@ export const metadata: Metadata = {
 // Samples come from the AXI and AHB lesson models (src/lib/waveform-studio.ts).
 export default function WaveformStudioPage() {
   return (
-    <PracticeInfoPage href={HREF}
+    // A dense tool: the wide width (1280 px).
+    <PracticeInfoPage
+      href={HREF}
+      width="wide"
       title={practice.title}
       description="Read, edit and debug protocol timing diagrams. The checker uses the same AXI model as the B-AXI-1 lesson figures."
       diagrams={[<WaveformStudio key="waveform-studio" />]}

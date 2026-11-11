@@ -1,22 +1,24 @@
 "use client";
 
-import {
-  lazy,
-  Suspense,
-  type ComponentType,
-  type LazyExoticComponent,
-  type ReactNode,
-} from "react";
+import type { ReactNode } from "react";
 
-import type { LazyMdxInteractiveName } from "./lazy-mdx-interactives";
+import {
+  createLazyComponentCache,
+  InteractiveSlot,
+  type InteractiveComponent,
+  type InteractiveLoader,
+  type InteractiveModule,
+} from "./InteractiveSlot";
+import {
+  interactiveComponentProps,
+  lazyMdxInteractivePlaceholder,
+  type LazyMdxInteractiveName,
+} from "./lazy-mdx-interactives";
 
 type MdxInteractiveProps = Record<string, unknown> & { children?: ReactNode };
-type MdxInteractiveComponent = ComponentType<MdxInteractiveProps>;
-type MdxInteractiveModule = { default: MdxInteractiveComponent };
-type MdxInteractiveLoader = () => Promise<MdxInteractiveModule>;
 
-const asMdxModule = (component: unknown): MdxInteractiveModule => ({
-  default: component as MdxInteractiveComponent,
+const asMdxModule = (component: unknown): InteractiveModule => ({
+  default: component as InteractiveComponent,
 });
 
 const loaders = {
@@ -131,43 +133,31 @@ const loaders = {
   StreamPackLab: () => import("@/components/visuals/StreamPackLab").then(module => asMdxModule(module.default)),
   FsmEdgeStepper: () => import("@/components/visuals/FsmEdgeStepper").then(module => asMdxModule(module.default)),
   DeferredReportVisualizer: () => import("@/components/visuals/DeferredReportVisualizer").then(module => asMdxModule(module.default)),
-} satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
+} satisfies Record<LazyMdxInteractiveName, InteractiveLoader>;
 
-const componentCache = new Map<
-  LazyMdxInteractiveName,
-  LazyExoticComponent<MdxInteractiveComponent>
->();
+/** The lazy components, shared by every slot on the page; Retry drops a failed one. */
+export const lazyMdxComponentCache = createLazyComponentCache<LazyMdxInteractiveName>(loaders);
 
-function getLazyComponent(name: LazyMdxInteractiveName) {
-  const cached = componentCache.get(name);
-  if (cached) return cached;
-
-  const component = lazy(loaders[name]);
-  componentCache.set(name, component);
-  return component;
-}
-
-function LoadingVisualization() {
-  return (
-    <div
-      className="flex h-48 items-center justify-center"
-      role="status"
-      aria-live="polite"
-    >
-      Loading interactive…
-    </div>
-  );
-}
-
+/**
+ * An MDX interactive by name: loaded on demand, inside an error boundary with
+ * Retry, and held in place by its server HTML or a placeholder of its expected
+ * height while its code loads (see InteractiveSlot). An instance can state its
+ * own placeholder height with `placeholderHeight` / `placeholderMobileHeight`;
+ * those two props are not passed on to the interactive.
+ */
 export function LazyMdxInteractive({
   name,
   ...props
 }: MdxInteractiveProps & { name: LazyMdxInteractiveName }) {
-  const Component = getLazyComponent(name);
-
+  const { title, height, mobileHeight } = lazyMdxInteractivePlaceholder(name, props);
   return (
-    <Suspense fallback={<LoadingVisualization />}>
-      <Component {...props} />
-    </Suspense>
+    <InteractiveSlot
+      name={name}
+      title={title}
+      height={height}
+      mobileHeight={mobileHeight}
+      cache={lazyMdxComponentCache}
+      componentProps={interactiveComponentProps(props)}
+    />
   );
 }

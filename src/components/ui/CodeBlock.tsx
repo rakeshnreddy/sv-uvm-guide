@@ -1,26 +1,10 @@
-'use client';
-import React, { useState, useEffect } from "react";
-import SyntaxHighlighter, { registerLanguage } from "react-syntax-highlighter/dist/light";
-import bash from "react-syntax-highlighter/dist/languages/bash";
-import cpp from "react-syntax-highlighter/dist/languages/cpp";
-import javascript from "react-syntax-highlighter/dist/languages/javascript";
-import json from "react-syntax-highlighter/dist/languages/json";
-import python from "react-syntax-highlighter/dist/languages/python";
-import shell from "react-syntax-highlighter/dist/languages/shell";
-import typescript from "react-syntax-highlighter/dist/languages/typescript";
-import verilog from "react-syntax-highlighter/dist/languages/verilog";
-import { CODE_SURFACE_TEXT, codeSurfaceHljsStyle } from "@/lib/code-surface-hljs";
-import { Copy, Check } from "lucide-react";
-import { Button } from "./Button";
+import React from "react";
 
-registerLanguage("bash", bash);
-registerLanguage("shell", shell);
-registerLanguage("cpp", cpp);
-registerLanguage("javascript", javascript);
-registerLanguage("json", json);
-registerLanguage("python", python);
-registerLanguage("typescript", typescript);
-registerLanguage("verilog", verilog);
+import { CODE_SURFACE_TEXT, codeSurfaceHljsStyle } from "@/lib/code-surface-hljs";
+import { highlightCode, resolveCodeLanguage, type CodeLine } from "@/lib/highlight-code";
+import { cn } from "@/lib/utils";
+
+import { CODE_BLOCK_COLLAPSE_LINES, CodeBlockFrame } from "./CodeBlockFrame";
 
 // Code panels stay dark in both modes (DESIGN.md section 3), so the chrome on the
 // code surface uses the code-surface roles, which are the same in both modes.
@@ -30,105 +14,121 @@ export const CODE_BLOCK_CHROME = {
   hairline: "border-code-border",
   copyButton: "text-code-muted hover:bg-code-border hover:text-code-foreground",
 } as const;
-const { text: surfaceText, secondary: surfaceSecondary, hairline: surfaceHairline, copyButton } = CODE_BLOCK_CHROME;
 
-interface CodeBlockProps {
+/** The listing: JetBrains Mono at the code token (13.5/22), growing to its longest line so the box around it scrolls. */
+export const CODE_BLOCK_PRE_CLASS = "m-0 w-max min-w-full bg-transparent px-4 py-3 font-mono text-code [tab-size:2]";
+/** Line numbers are a CSS counter, so they are never selected, copied or read out. */
+export const CODE_BLOCK_LINE_NUMBER_CLASS =
+  "[counter-increment:line] before:mr-4 before:inline-block before:w-[var(--code-line-number-width)] before:text-right before:text-code-muted before:content-[counter(line)]";
+
+export interface CodeBlockProps {
   code: string;
+  /** The fence name ("systemverilog", "bash", "text"). Defaults to SystemVerilog. */
   language?: string;
   fileName?: string;
   showLineNumbers?: boolean;
+  /** Attributes for one line (1-based), for example to mark it; lines then render as blocks. */
   lineProps?: (lineNumber: number) => React.HTMLAttributes<HTMLElement>;
+  /** Extra style for the `pre`. */
   customStyle?: React.CSSProperties;
+  /** Listings longer than this open collapsed in a 28 rem window. */
+  collapseAfter?: number;
+  className?: string;
 }
 
-// ⚡ Bolt: Added React.memo to prevent expensive SyntaxHighlighter re-renders when parent components update
-export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
-  code = '',
-  language = "systemverilog",
-  fileName,
-  showLineNumbers = true,
+function renderLine(tokens: CodeLine) {
+  return tokens.map((token, index) =>
+    token.style ? (
+      <span key={index} style={codeSurfaceHljsStyle[token.style] as React.CSSProperties}>
+        {token.text}
+      </span>
+    ) : (
+      <React.Fragment key={index}>{token.text}</React.Fragment>
+    ),
+  );
+}
+
+/**
+ * The highlighted listing. Server-safe and synchronous: on lesson pages it is
+ * highlighted when the page is prerendered, so the server HTML is final and
+ * nothing moves when the page hydrates.
+ */
+export function CodeListing({
+  lines,
+  showLineNumbers = false,
   lineProps,
   customStyle,
-}) => {
-  const [isCopied, setIsCopied] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy code: ", err);
-    }
-  };
-
-  if (!isMounted) {
-    return (
-      <div className={`my-4 rounded-xl border ${surfaceHairline} bg-code-surface p-4 ${surfaceText}`}>
-        <pre><code>Loading code...</code></pre>
-      </div>
-    );
-  }
+}: {
+  lines: readonly CodeLine[];
+  showLineNumbers?: boolean;
+  lineProps?: CodeBlockProps["lineProps"];
+  customStyle?: React.CSSProperties;
+}) {
+  const asBlocks = Boolean(lineProps);
+  const style = {
+    color: CODE_SURFACE_TEXT.text,
+    ...(showLineNumbers ? { counterReset: "line", "--code-line-number-width": `${String(lines.length).length}ch` } : {}),
+    ...customStyle,
+  } as React.CSSProperties;
 
   return (
-    <div data-testid="code-block" className={`my-4 overflow-hidden rounded-xl border ${surfaceHairline} bg-code-surface ${surfaceText}`}>
-      {fileName && (
-        <div className={`flex justify-between items-center px-4 py-2 border-b ${surfaceHairline}`}>
-          <span className={`text-xs font-mono ${surfaceSecondary}`}>{fileName}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopy}
-            className={copyButton}
-            aria-label="Copy code to clipboard"
-          >
-            {isCopied ? (
-              <Check className="w-4 h-4 mr-1" />
-            ) : (
-              <Copy className="w-4 h-4 mr-1" />
-            )}
-            {isCopied ? "Copied" : "Copy"}
-          </Button>
-        </div>
-      )}
-      {!fileName && (
-         <div className="relative text-right p-2">
-            <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCopy}
-                className={`absolute top-2 right-2 ${copyButton}`}
-                aria-label="Copy code to clipboard"
-            >
-                {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-            </Button>
-         </div>
-      )}
-      <div className="overflow-x-auto">
-        <SyntaxHighlighter
-          language={language.toLowerCase() === "systemverilog" ? "verilog" : language}
-          style={codeSurfaceHljsStyle}
-          showLineNumbers={showLineNumbers}
-          lineNumberStyle={{ color: CODE_SURFACE_TEXT.secondary, fontSize: "12px", marginRight: "1em" }}
-          wrapLines={true}
-          lineProps={lineProps}
-          customStyle={{
-            margin: 0,
-            borderRadius: "0",
-            backgroundColor: "transparent",
-            ...customStyle,
-          }}
-        >
-          {code.trim()}
-        </SyntaxHighlighter>
-      </div>
-    </div>
+    <pre className={CODE_BLOCK_PRE_CLASS} style={style}>
+      <code>
+        {lines.map((tokens, index) => {
+          const extra = lineProps?.(index + 1) ?? {};
+          return (
+            <React.Fragment key={index}>
+              <span
+                {...extra}
+                data-line={index + 1}
+                className={cn(
+                  showLineNumbers && CODE_BLOCK_LINE_NUMBER_CLASS,
+                  asBlocks && "block min-h-[1.375rem]",
+                  extra.className,
+                ) || undefined}
+              >
+                {renderLine(tokens)}
+              </span>
+              {!asBlocks && index < lines.length - 1 ? "\n" : null}
+            </React.Fragment>
+          );
+        })}
+      </code>
+    </pre>
   );
-});
+}
 
-CodeBlock.displayName = "CodeBlock";
+/**
+ * A code block on the code surface: language label, copy button, and for
+ * listings over 40 lines a 28 rem window with "Show all N lines". No "use
+ * client": the highlighting runs where the block renders (on the server for
+ * lessons) and only the chrome (CodeBlockFrame) is a client component.
+ */
+export function CodeBlock({
+  code = "",
+  language = "systemverilog",
+  fileName,
+  showLineNumbers = false,
+  lineProps,
+  customStyle,
+  collapseAfter = CODE_BLOCK_COLLAPSE_LINES,
+  className,
+}: CodeBlockProps) {
+  const lines = highlightCode(code, language);
+  const { id, label } = resolveCodeLanguage(language);
+
+  return (
+    <CodeBlockFrame
+      label={label}
+      fileName={fileName}
+      language={id}
+      lineCount={lines.length}
+      collapseAfter={collapseAfter}
+      className={className}
+    >
+      <CodeListing lines={lines} showLineNumbers={showLineNumbers} lineProps={lineProps} customStyle={customStyle} />
+    </CodeBlockFrame>
+  );
+}
+
+export default CodeBlock;

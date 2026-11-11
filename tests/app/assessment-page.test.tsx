@@ -317,6 +317,8 @@ describe('/assessment', () => {
     expect(navigation.notFound).not.toHaveBeenCalled();
     expect(html).toMatch(/<h1[^>]*>Self-assessment<\/h1>/);
     expect(html).toContain('Reading what this browser has saved');
+    // The body reserves the empty state's height while it loads, so the footer does not jump after hydration.
+    expect(html).toMatch(/<div data-testid="assessment-body" aria-busy="true" class="min-h-\[22rem\] sm:min-h-\[16rem\]">/);
     expect(html).not.toContain('Nothing to assess yet');
     expect(html).not.toContain('Lessons by track');
     for (const pattern of FORBIDDEN) expect(html).not.toMatch(pattern);

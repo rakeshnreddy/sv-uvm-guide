@@ -11,6 +11,7 @@ import LabPage, {
   generateStaticParams,
 } from "@/app/(learning)/practice/lab/[labId]/page";
 import LabClientPage from "@/app/(learning)/practice/lab/[labId]/LabClientPage";
+import { PageShell } from "@/components/layout/PageShell";
 import { getAllLabs } from "@/lib/lab-registry";
 import type { LabFileDto } from "@/types/lab";
 
@@ -47,15 +48,17 @@ describe("static lab page", () => {
   });
 
   it("passes the basics-1 files and solutions with their contents, the policy and the orientation", async () => {
-    const page = (await LabPage({ params: { labId: "basics-1" } })) as ReactElement<{ children: ReactElement[] }>;
-    // Breadcrumbs, the client page, then the practice pager.
-    const [trail, element, pager] = React.Children.toArray(page.props.children) as [
-      ReactElement<{ items: { label: string; href?: string }[] }>,
+    const page = (await LabPage({ params: { labId: "basics-1" } })) as ReactElement<{ width: string; children: ReactElement[] }>;
+    // One wide PageShell holding the client page (with the trail for its header), then the practice pager.
+    expect(page.type).toBe(PageShell);
+    expect(page.props.width).toBe("wide");
+    const [element, pager] = React.Children.toArray(page.props.children) as [
       ReactElement<ClientProps>,
       ReactElement<{ pager: { section: { href: string } } }>,
     ];
-    expect(trail.props.items.map((item) => item.label)).toEqual(["Practice", "Labs", "Refactor Repeated Stimulus into a Task"]);
-    expect(trail.props.items[1].href).toBe("/practice#labs");
+    const trail = element.props.breadcrumbs ?? [];
+    expect(trail.map((item) => item.label)).toEqual(["Practice", "Labs", "Refactor Repeated Stimulus into a Task"]);
+    expect(trail[1].href).toBe("/practice#labs");
     expect(pager.props.pager.section.href).toBe("/practice#labs");
     expect(element.type).toBe(LabClientPage);
     const { lab, policy, files, solutions, backLink, lessons, prerequisites } = element.props;

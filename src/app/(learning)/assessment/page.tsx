@@ -13,8 +13,6 @@ import { buildCurriculumTotals } from '@/lib/learner-stats';
 import { resolvePlacementPlan, resolveRoutes } from '@/lib/learning-paths';
 import { SITE_FEATURES } from '@/lib/site-features';
 
-import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
-import { learnerBreadcrumbs } from '@/components/learner/LearnerSectionNav';
 import { siteLabel } from '@/lib/nav-labels';
 import { SELF_ASSESSMENT_HREF } from '@/lib/site-links';
 
@@ -73,17 +71,12 @@ export default function AssessmentPage() {
   ) as Record<PlacementAreaId, string>;
 
   return (
-    <>
-      <div className="mx-auto w-full max-w-6xl">
-        <Breadcrumbs items={learnerBreadcrumbs('assessment')} className="-mt-2 mb-4" />
-      </div>
-      <AssessmentPageClient
-        curriculum={buildCurriculumTotals(curriculumData)}
-        labs={labs}
-        placementPlans={placementPlans}
-        placementAreaTitles={placementAreaTitles}
-        placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
-      />
-    </>
+    <AssessmentPageClient
+      curriculum={buildCurriculumTotals(curriculumData)}
+      labs={labs}
+      placementPlans={placementPlans}
+      placementAreaTitles={placementAreaTitles}
+      placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
+    />
   );
 }

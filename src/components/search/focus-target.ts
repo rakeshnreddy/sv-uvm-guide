@@ -73,7 +73,8 @@ export function focusAfterNavigation(href: string, options: FocusAfterNavigation
 /**
  * Moves focus into the lesson's "On this page" list (the "t" shortcut): the
  * entry for the section being read, else the first entry. Below xl the list
- * is a disclosure, so it is opened first. Returns false when the page has no
+ * is a modal sheet opened by the same button[aria-controls], so it is opened
+ * first. Returns false when the page has no
  * such list.
  */
 export function focusLessonToc(doc: Document = document): boolean {

@@ -1,6 +1,9 @@
 import React from 'react';
 import type { Metadata } from 'next';
 
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
 import { LessonLinkList, focusRing } from '@/components/practice/LearnInLesson';
 import { siteLabel } from '@/lib/nav-labels';
 import { INTERVIEW_PREP_HREF } from '@/lib/site-links';
@@ -211,20 +214,17 @@ export default function InterviewPrepPage() {
   const questionTotal = banks.reduce((sum, bank) => sum + bank.questionCount, 0);
 
   return (
-    <div className="mx-auto w-full max-w-4xl pb-16">
-      <header className="rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-card sm:p-6">
-        <h1 className="text-h1 text-foreground">Interview prep</h1>
-        <p className="mt-3 text-lead text-muted-foreground">
-          {questionTotal} questions in {banks.length} banks, from junior to senior staff. Answer each one out loud or on paper
-          first, then reveal the model answer and check yourself against what a strong answer covers.
-        </p>
-        <p className="mt-3 text-sm text-muted-foreground">
-          The banks are being reviewed against the standards. Where a model answer disagrees with a lesson, follow the lesson
-          and the clause it cites.
-        </p>
-      </header>
+    <PageShell width="reading">
+      <PageHeader
+        title={siteLabel(INTERVIEW_PREP_HREF)}
+        lead={`${questionTotal} questions in ${banks.length} banks, from junior to senior staff. Answer each one out loud or on paper first, then reveal the model answer.`}
+      />
+      <p className="max-w-[30em] text-ui text-muted-foreground">
+        The banks are being reviewed against the standards. Where a model answer disagrees with a lesson, follow the lesson
+        and the clause it cites.
+      </p>
 
-      <nav aria-label="Interview banks" className="mt-6">
+      <nav aria-label="Interview banks" data-bank-nav="" className="mt-6">
         <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-2">
           {banks.map((bank) => (
             <li key={bank.id}>
@@ -241,16 +241,18 @@ export default function InterviewPrepPage() {
       </nav>
 
       {banks.map((bank) => (
-        <section key={bank.id} aria-labelledby={bank.anchor} className="mt-12">
-          <h2 id={bank.anchor} className="scroll-mt-24 text-h2 text-foreground">
-            {bank.title}
-          </h2>
-          {bank.description ? <p className="mt-2 text-muted-foreground">{bank.description}</p> : null}
-          <LessonLinkList lessons={bank.lessons} label="Related lessons" className="mt-3" />
+        <Section
+          key={bank.id}
+          id={bank.anchor}
+          title={bank.title}
+          description={bank.description || undefined}
+          className="[[data-bank-nav]+&]:mt-12"
+        >
+          <LessonLinkList lessons={bank.lessons} label="Related lessons" />
 
           {/* Level groups are unnamed sections: one region landmark per bank is enough. */}
           {bank.levels.map((group) => (
-            <section key={group.level} className="mt-8">
+            <section key={group.level} className="mt-8 first:mt-0">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h3 id={group.anchor} className="scroll-mt-24 text-h3 text-foreground">
                   {group.label}
@@ -268,8 +270,8 @@ export default function InterviewPrepPage() {
               </ol>
             </section>
           ))}
-        </section>
+        </Section>
       ))}
-    </div>
+    </PageShell>
   );
 }

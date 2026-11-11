@@ -2,10 +2,14 @@
 
 import React, { useCallback, useState } from 'react';
 import ConceptList from '@/components/knowledge/ConceptList';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
 import ConceptModal from '@/components/knowledge/ConceptModal';
 import ModuleMap, { mapNodeDomId } from '@/components/knowledge/ModuleMap';
 import { KnowledgeContextProvider } from '@/contexts/KnowledgeContext';
 import { conceptGraph, type ConceptNode, type ConceptTier } from '@/lib/knowledge-graph-engine';
+import { siteLabel } from '@/lib/nav-labels';
 
 const FIRST_MODULE = conceptGraph.modules[0];
 
@@ -42,32 +46,24 @@ const KnowledgeHubClient = () => {
 
   return (
     <KnowledgeContextProvider>
-      <div className="mx-auto max-w-5xl">
-        <header className="mb-8">
-          <h1 className="text-h1 text-foreground">Knowledge hub</h1>
-          <p className="mt-2 text-lead text-muted-foreground">
-            How the {moduleCount} modules and {lessonCount} lessons of the curriculum build on each other, and where each of{' '}
-            {termCount} key terms is taught.
-          </p>
-        </header>
+      <PageShell width="content">
+        <PageHeader
+          title={siteLabel('/knowledge-hub')}
+          lead={`How the ${moduleCount} modules and ${lessonCount} lessons of the curriculum build on each other, and where each of ${termCount} key terms is taught.`}
+        />
 
-        <section aria-labelledby="module-map-heading" className="mb-10">
-          <h2 id="module-map-heading" className="mb-3 text-h2 text-foreground">
-            Module map
-          </h2>
+        <Section id="module-map" title="Module map">
           <ModuleMap graph={conceptGraph} tier={tier} onTierChange={setTier} selectedId={selectedId} onSelect={select} />
-        </section>
+        </Section>
 
-        <section aria-labelledby="concept-list-heading">
-          <h2 id="concept-list-heading" className="mb-1 text-h2 text-foreground">
-            Every concept
-          </h2>
-          <p className="mb-4 text-muted-foreground">
-            The same map as a list: search modules, lessons and key terms, and open the lesson that teaches each one.
-          </p>
+        <Section
+          id="concept-list"
+          title="Every concept"
+          description="The same map as a list: search modules, lessons and key terms, and open the lesson that teaches each one."
+        >
           <ConceptList graph={conceptGraph} onShowOnMap={showOnMap} />
-        </section>
-      </div>
+        </Section>
+      </PageShell>
       <ConceptModal />
     </KnowledgeContextProvider>
   );

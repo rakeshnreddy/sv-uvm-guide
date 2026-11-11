@@ -142,6 +142,20 @@ describe('/projects page', () => {
     expect(html.match(/<h3[^>]*>Design under test: /g) ?? []).toHaveLength(MILESTONES.length);
   });
 
+  it('builds the milestone ladder and each brief from the shared Section, with spaced heading names', async () => {
+    const html = await renderPage();
+    // The ladder is a Section (its own anchor and h2) holding the named nav.
+    expect(html).toMatch(/<section id="milestone-ladder" aria-labelledby="milestone-ladder-heading" data-section=""/);
+    expect(html).toMatch(/<h2 id="milestone-ladder-heading"[^>]*>The milestone ladder<\/h2>/);
+    expect(html).toContain('<nav aria-label="Milestone ladder">');
+    // The tag and the name are separated by a text space, so the heading reads "M0 Self-checking...".
+    for (const milestone of MILESTONES) {
+      const id = `project-${milestone.id.toLowerCase()}-heading`;
+      const heading = html.match(new RegExp(`<h2 id="${id}"[^>]*>([\\s\\S]*?)</h2>`))?.[1] ?? '';
+      expect(heading, milestone.id).toMatch(/^<[^>]+>[^<]*<\/[a-z]+> \S/);
+    }
+  });
+
   it('links every preparing lesson and every available lab, and no unavailable lab', async () => {
     const html = await renderPage();
     for (const project of resolveProjects()) {

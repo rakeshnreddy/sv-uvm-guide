@@ -7,7 +7,7 @@ import { PracticePager } from "./PracticePager";
 
 type InfoPageProps = React.ComponentProps<typeof InfoPage>;
 
-export interface PracticeInfoPageProps extends Omit<InfoPageProps, "breadcrumbs" | "pager" | "gutter"> {
+export interface PracticeInfoPageProps extends Omit<InfoPageProps, "breadcrumbs" | "pager"> {
   /** The page's route, as listed in PRACTICE_PAGES (src/lib/practice-links.ts). */
   href: string;
 }
@@ -15,15 +15,15 @@ export interface PracticeInfoPageProps extends Omit<InfoPageProps, "breadcrumbs"
 /**
  * The InfoPage template for an exercise, interactive model, diagram, chart or
  * tool page: the trail Practice › <section> › <item> above the title, and the
- * practice pager at the end, both derived from the route. Inside the app
- * shell, so it adds no gutter of its own. A server component.
+ * practice pager at the end, both derived from the route. It uses the content
+ * width (1152 px) from the page frame's left edge, like every practice page.
+ * A server component.
  */
 export function PracticeInfoPage({ href, ...props }: PracticeInfoPageProps) {
   const item = requirePracticePage(href);
   return (
     <InfoPage
       {...props}
-      gutter={false}
       breadcrumbs={practiceBreadcrumbs(item)}
       pager={<PracticePager pager={requirePracticePager(href)} />}
     />

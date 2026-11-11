@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
 import { eyebrow, focusRing, inlineLink, primaryAction, secondaryAction, textLink } from '@/components/curriculum/overview-ui';
-import { LearnerSectionNav } from '@/components/learner/LearnerSectionNav';
+import { LEARNER_BODY_MIN_HEIGHT_CLASS, LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
+import { PageShell } from '@/components/layout/PageShell';
 import { siteLabel } from '@/lib/nav-labels';
 import { DASHBOARD_HREF, LABS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
@@ -603,7 +604,7 @@ function EmptyState() {
       <h2 id="dashboard-empty-heading" className="text-h3 text-foreground">
         Nothing recorded in this browser yet
       </h2>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+      <p className="mt-2 max-w-[30em] text-sm text-muted-foreground">
         Open a lesson, finish a lab step, rate a flashcard or take a quiz, and it shows up here. It stays in this
         browser.
       </p>
@@ -632,7 +633,7 @@ function AccountNotice() {
       <h2 id="dashboard-account-heading" className="text-h3 text-foreground">
         Your progress is saved to your account
       </h2>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+      <p className="mt-2 max-w-[30em] text-sm text-muted-foreground">
         While you are signed in, new progress is saved to your account. This page reads only what is stored in this
         browser, so it does not show account progress yet.
       </p>
@@ -744,19 +745,17 @@ export default function DashboardPageClient({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 pb-16">
-      <header className="space-y-4">
-        <div>
-          <h1 className="text-h1 text-foreground">{siteLabel(DASHBOARD_HREF)}</h1>
-          <p className="mt-2 max-w-3xl text-lead text-muted-foreground">
-            The lessons, labs, reviews, notes and quiz results recorded in this browser, and what to do next.
-          </p>
-        </div>
-        <LearnerSectionNav current="dashboard" />
-        <StorageStatusNote savedLabel="Stored only in this browser" />
-      </header>
-      {body}
-    </div>
+    <PageShell width="content">
+      <LearnerPageHeader
+        current="dashboard"
+        title={siteLabel(DASHBOARD_HREF)}
+        lead="The lessons, labs, reviews, notes and quiz results recorded in this browser, and what to do next."
+        meta={<StorageStatusNote savedLabel="Stored only in this browser" />}
+      />
+      <div data-testid="dashboard-body" aria-busy={!loaded} className={LEARNER_BODY_MIN_HEIGHT_CLASS}>
+        {body}
+      </div>
+    </PageShell>
   );
 }
 

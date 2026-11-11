@@ -3,6 +3,7 @@ import React from "react";
 
 import { lessonPrerequisites } from "@/lib/curriculum/lesson-context";
 import { lessonSegments } from "@/lib/curriculum/lesson-urls";
+import { PROSE_MEASURE_CLASS } from "@/components/ui/Prose";
 import { cn } from "@/lib/utils";
 
 export interface BeforeYouStartProps {
@@ -30,7 +31,7 @@ export function BeforeYouStart({ lesson, className }: BeforeYouStartProps) {
   if (!items) return null;
 
   return (
-    <span className={cn("my-[1.25em] block", className)} data-testid="before-you-start">
+    <span className={cn("my-[1.25em] block", PROSE_MEASURE_CLASS, className)} data-testid="before-you-start">
       <strong>Before you start:</strong>{" "}
       {items.length === 0 ? (
         "no prerequisites. This lesson is a starting point."
