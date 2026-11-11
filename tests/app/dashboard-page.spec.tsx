@@ -16,14 +16,17 @@ import { DAY_MS, localDayKey } from '@/lib/learner-store/time';
 
 type MockNextLinkProps = React.PropsWithChildren<Omit<React.ComponentProps<'a'>, 'href'> & { href: string }>;
 
-vi.mock('next/link', () => ({
-  __esModule: true,
-  default: ({ href, children, ...rest }: MockNextLinkProps) => (
-    <a href={href} {...rest}>
+vi.mock('next/link', async () => {
+  const { forwardRef } = await import('react');
+  // Like next/link, the mock forwards its ref (the progress trace moves focus between its links).
+  const MockLink = forwardRef<HTMLAnchorElement, MockNextLinkProps>(({ href, children, ...rest }, ref) => (
+    <a ref={ref} href={href} {...rest}>
       {children}
     </a>
-  ),
-}));
+  ));
+  MockLink.displayName = 'MockLink';
+  return { __esModule: true, default: MockLink };
+});
 
 const navigation = vi.hoisted(() => ({
   notFound: vi.fn(() => {
@@ -54,7 +57,7 @@ vi.mock('@/lib/persistence/target', () => ({
 }));
 
 import DashboardPage, * as dashboardModule from '@/app/(learning)/dashboard/page';
-import { DASHBOARD_BODY_MIN_HEIGHT_CLASS, continuePrimary } from '@/app/(learning)/dashboard/DashboardPageClient';
+import { DASHBOARD_BODY_MIN_HEIGHT_CLASS, DASHBOARD_TOP_MIN_HEIGHT_CLASS, continuePrimary } from '@/app/(learning)/dashboard/DashboardPageClient';
 
 const NOW = new Date(2026, 9, 18, 10, 0).getTime();
 const HOUR = 60 * 60 * 1000;
@@ -185,6 +188,12 @@ describe('/dashboard', () => {
     expect(DASHBOARD_BODY_MIN_HEIGHT_CLASS).toContain('calc(100svh-20rem)');
     // The server render shows none of the stored data, so hydration always matches.
     expect(html).not.toContain('Nothing recorded in this browser yet');
+    // The traces render on the server, every module not started, under a top slot of reserved height.
+    expect(html).toContain(`<div data-testid="dashboard-top" class="flex flex-col ${DASHBOARD_TOP_MIN_HEIGHT_CLASS}">`);
+    expect(html.match(/data-testid="progress-trace"/g)).toHaveLength(curriculumData.length);
+    expect(html).not.toContain('data-state="done"');
+    expect(html).not.toContain('data-state="opened"');
+    expect(html).toContain('Tier 1: Foundations');
     expect(html).not.toContain('Clocking blocks');
     expect(html).not.toMatch(/<main[\s>]/);
     for (const pattern of FORBIDDEN) expect(html).not.toMatch(pattern);
@@ -201,7 +210,11 @@ describe('/dashboard', () => {
     expect(within(empty).getByRole('link', { name: 'Find your level' })).toHaveAttribute('href', '/quiz/placement');
     expect(within(empty).getByRole('link', { name: 'Begin the Junior route' })).toHaveAttribute('href', '/curriculum#route-junior');
     expect(within(empty).getByRole('link', { name: 'Import a backup' })).toHaveAttribute('href', '/settings#data');
-    expect(screen.queryByRole('region', { name: 'Lessons' })).not.toBeInTheDocument();
+    // A new visitor still sees every tier's trace, every module not started, linking to its module.
+    const progress = screen.getByRole('region', { name: 'Progress' });
+    expect(within(progress).getAllByTestId('progress-trace')).toHaveLength(curriculumData.length);
+    expect(within(progress).getByRole('link', { name: 'F1A: The Cost of Bugs, not started' })).toHaveAttribute('href', F1A_PATH);
+    expect(screen.queryByRole('region', { name: 'Continue' })).not.toBeInTheDocument();
     expect(screen.getByText('Stored only in this browser')).toBeInTheDocument();
     for (const pattern of FORBIDDEN) expect(document.body.textContent ?? '').not.toMatch(pattern);
     expect(fetch).not.toHaveBeenCalled();
@@ -236,11 +249,26 @@ describe('/dashboard', () => {
     expect(within(continueCard).getByText('Next on your Junior route')).toBeInTheDocument();
     expect(within(continueCard).getByRole('link', { name: /^Continue with / }).getAttribute('href')).toMatch(/^\/curriculum\/T\d_/);
 
-    const lessons = screen.getByRole('region', { name: 'Lessons' });
+    const lessons = screen.getByRole('region', { name: 'Progress' });
     expect(within(lessons).getByTestId('dashboard-lesson-totals')).toHaveTextContent(
       `1 done and 2 opened, of ${TOTAL_LESSONS} lessons.`,
     );
-    expect(lessons).toHaveTextContent(`1 of ${TIER1_LESSONS} done (${Math.round((1 / TIER1_LESSONS) * 100)}%) · 2 opened`);
+    // Tier names come from the navigation config, as everywhere else on the site.
+    expect(within(lessons).getByRole('link', { name: 'Tier 1: Foundations' })).toHaveAttribute('href', '/curriculum#t1');
+    expect(lessons).not.toHaveTextContent('Tier 1: Foundational');
+    expect(within(lessons).getAllByTestId('dashboard-tier-totals')[0]).toHaveTextContent(
+      `1 of ${tier1.sections.length} modules · 1 of ${TIER1_LESSONS} lessons done · 1 more opened`,
+    );
+    const trace1 = within(lessons).getByRole('list', { name: 'Tier 1: Foundations modules' });
+    expect(within(trace1).getByRole('link', { name: 'F1A: The Cost of Bugs, done' })).toHaveAttribute('href', F1A_PATH);
+    expect(within(trace1).getByRole('link', { name: /^F1B: .*, opened/ })).toHaveAttribute('href', F1B_PATH);
+    // The cursor sits on the module of the lesson to continue.
+    // (Searched in the traces only: the phone list of each tier's modules says it too.)
+    const [cursor, ...others] = within(lessons)
+      .getAllByRole('list', { name: / modules$/ })
+      .flatMap((trace) => within(trace).queryAllByRole('link', { name: /, where you are$/ }));
+    expect(others).toHaveLength(0);
+    expect(cursor.getAttribute('aria-label')).toMatch(new RegExp(`^${AFTER_F1A.code}: `));
     expect(within(lessons).getByText('Modules you opened (2)')).toBeInTheDocument();
     expect(within(lessons).getByRole('link', { name: 'F1A: The Cost of Bugs' })).toHaveAttribute('href', F1A_PATH);
 
@@ -250,8 +278,8 @@ describe('/dashboard', () => {
     expect(labs).toHaveTextContent(`In progress (1)`);
     expect(labs).toHaveTextContent(`1 of ${basics.steps.length} steps done`);
 
-    const review = screen.getByRole('region', { name: 'Review' });
-    expect(review).toHaveTextContent('1 card due today');
+    const review = screen.getByRole('region', { name: 'Reviews due' });
+    expect(review).toHaveTextContent('1 flashcard is due today.');
     expect(review).toHaveTextContent('2 cards in your review queue.');
     expect(within(review).getByRole('link', { name: 'Open the review queue' })).toHaveAttribute('href', '/dashboard/review');
 
@@ -294,6 +322,14 @@ describe('/dashboard', () => {
     expect(document.querySelectorAll('a.bg-primary, button.bg-primary')).toHaveLength(1);
     expect(data).toHaveTextContent("You haven't downloaded a backup yet.");
     expect(data).toHaveTextContent("Some browsers clear site data for sites they haven't seen for a while.");
+
+    // Order (DESIGN.md section 10): Continue, reviews due, progress, then the rest.
+    const order = ['Continue', 'Reviews due', 'Progress', 'Labs'].map((name) => screen.getByRole('region', { name }));
+    for (let i = 1; i < order.length; i += 1) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // No card inside the Continue block.
+    expect(continueCard.querySelectorAll('[class*="glass"], [data-card]')).toHaveLength(0);
 
     for (const pattern of FORBIDDEN) expect(document.body.textContent ?? '').not.toMatch(pattern);
     expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument();
@@ -353,7 +389,7 @@ describe('/dashboard', () => {
       'href',
       '/practice#labs',
     );
-    expect(screen.getByRole('region', { name: 'Review' })).toHaveTextContent('0 cards due today');
+    expect(screen.getByRole('region', { name: 'Reviews due' })).toHaveTextContent('No flashcards are due today.');
     expect(screen.getByRole('region', { name: 'Streak and the last 7 days' })).toHaveTextContent('1 day in a row');
   });
 
@@ -363,7 +399,7 @@ describe('/dashboard', () => {
     render(<DashboardPage />);
 
     expect(screen.getByRole('region', { name: 'Your progress is saved to your account' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Lessons' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Progress' })).not.toBeInTheDocument();
     expect(screen.queryByText('Clocking blocks <b>')).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
   });

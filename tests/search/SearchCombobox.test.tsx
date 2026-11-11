@@ -253,6 +253,16 @@ describe('SearchCombobox results across kinds', () => {
     for (const name of SHORTCUT_FIELD_PADDING.split(' ')) expect(field).toHaveClass(name);
   });
 
+  it('keeps the keyboard hint in a fixed box, invisible in the server HTML until the platform is known', async () => {
+    const { renderToString } = await import('react-dom/server');
+    const html = renderToString(<SearchCombobox variant="popup" commandTarget />);
+    expect(html).toMatch(/<kbd[^>]*class="[^"]*\binvisible\b[^"]*"[^>]*data-search-shortcut|<kbd[^>]*data-search-shortcut[^>]*class="[^"]*\binvisible\b/);
+    render(<SearchCombobox variant="popup" commandTarget />);
+    const hint = document.querySelector('[data-search-shortcut]') as HTMLElement;
+    expect(hint).toHaveClass('w-14', 'text-center');
+    expect(hint).not.toHaveClass('invisible');
+  });
+
   it('links to the curriculum and the practice hub when the index cannot load', async () => {
     const spy = vi.spyOn(searchIndexLoader, 'loadSearchDocuments').mockRejectedValue(new Error('offline'));
     try {

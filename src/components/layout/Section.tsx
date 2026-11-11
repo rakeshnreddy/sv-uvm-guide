@@ -26,9 +26,21 @@ export const SECTION_DESCRIPTION_CLASS = "mt-1 max-w-[30em] text-ui text-muted-f
 /** The gap between the heading block and the body. */
 export const SECTION_BODY_CLASS = "mt-6";
 
+/** Where the anchor id goes: on the section (the default) or on its heading. */
+export type SectionAnchor = "section" | "heading";
+
+/** The heading's class when it carries the anchor: the h2 token, clear of the 64 px sticky header. */
+export const SECTION_ANCHORED_HEADING_CLASS = cn("scroll-mt-24", SECTION_HEADING_CLASS);
+
 export interface SectionProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
-  /** The anchor id. The heading gets `${id}-heading` and labels the section. */
+  /**
+   * The anchor id. By default it goes on the section and the heading gets
+   * `${id}-heading`; with `anchor="heading"` the heading carries the id itself
+   * (and the scroll margin), and the section is labelled by it.
+   */
   id: string;
+  /** Which element carries `id`. Default "section". */
+  anchor?: SectionAnchor;
   title: React.ReactNode;
   /** One line under the heading. */
   description?: React.ReactNode;
@@ -39,14 +51,31 @@ export interface SectionProps extends Omit<React.HTMLAttributes<HTMLElement>, "t
   children?: React.ReactNode;
 }
 
-export function Section({ id, title, description, level = 2, action, className, children, ...rest }: SectionProps) {
+export function Section({
+  id,
+  anchor = "section",
+  title,
+  description,
+  level = 2,
+  action,
+  className,
+  children,
+  ...rest
+}: SectionProps) {
   const Heading = `h${level}` as "h2" | "h3" | "h4";
-  const headingId = `${id}-heading`;
+  const onHeading = anchor === "heading";
+  const headingId = onHeading ? id : `${id}-heading`;
   return (
-    <section id={id} aria-labelledby={headingId} data-section="" className={cn(SECTION_CLASS, className)} {...rest}>
+    <section
+      id={onHeading ? undefined : id}
+      aria-labelledby={headingId}
+      data-section=""
+      className={cn(SECTION_CLASS, className)}
+      {...rest}
+    >
       <div className={cn(action && "flex flex-wrap items-end justify-between gap-x-6 gap-y-2")}>
         <div className="min-w-0">
-          <Heading id={headingId} className={SECTION_HEADING_CLASS}>
+          <Heading id={headingId} className={onHeading ? SECTION_ANCHORED_HEADING_CLASS : SECTION_HEADING_CLASS}>
             {title}
           </Heading>
           {description ? <p className={SECTION_DESCRIPTION_CLASS}>{description}</p> : null}

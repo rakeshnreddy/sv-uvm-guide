@@ -157,18 +157,23 @@ describe('practice hub', () => {
     }
   });
 
-  it('puts every card on quiet glass, so the hub never passes three blurred layers', () => {
+  it('puts every panel and tile on quiet glass, so the hub never passes three blurred layers', () => {
     render(<PracticeHub />);
     expect(PRACTICE_GLASS_CARDS).toBe(0);
     expect(document.querySelectorAll('.glass')).toHaveLength(0);
+    // Lab rows sit on one quiet-glass panel per tier; the rows themselves are not cards.
     const labsRegion = screen.getByRole('region', { name: 'Labs' });
-    const labCards = Array.from(labsRegion.querySelectorAll(':scope > div > ul > li'));
-    labCards.slice(0, PRACTICE_GLASS_CARDS).forEach((li) => expect(li).toHaveClass('glass'));
-    labCards.slice(PRACTICE_GLASS_CARDS).forEach((li) => expect(li).toHaveClass('glass-quiet'));
-    // A card with a teaching lesson in a tier carries that tier and its edge.
-    const tiered = document.querySelectorAll('li[data-tier]');
+    const panels = Array.from(labsRegion.querySelectorAll('[data-practice-tier-group]'));
+    expect(panels.length).toBeGreaterThan(0);
+    panels.forEach((panel) => expect(panel).toHaveClass('glass-quiet'));
+    labsRegion.querySelectorAll('[data-practice-row]').forEach((row) => expect(row).not.toHaveClass('glass-quiet'));
+    // Tiles are quiet glass; one with a teaching lesson in a tier carries that tier and its edge.
+    const tiles = Array.from(document.querySelectorAll('[data-practice-tile]'));
+    expect(tiles.length).toBeGreaterThan(0);
+    tiles.forEach((tile) => expect(tile).toHaveClass('glass-quiet'));
+    const tiered = document.querySelectorAll('[data-practice-tile][data-tier], [data-practice-tier-group][data-tier]');
     expect(tiered.length).toBeGreaterThan(0);
-    tiered.forEach((li) => expect(li).toHaveClass('tier-edge'));
+    tiered.forEach((element) => expect(element).toHaveClass('tier-edge'));
   });
 });
 

@@ -620,7 +620,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             {analysis?.warnings.length === 0 && <li>None detected</li>}
           </ul>
           <h4 className="font-semibold mt-4 mb-2">Generated Tests</h4>
-          <pre className="bg-black/10 p-2 rounded">{analysis?.testCases.join('\n')}</pre>
+          <pre className="overflow-x-auto rounded border border-code-border bg-code-surface p-2 font-mono text-code-foreground">{analysis?.testCases.join('\n')}</pre>
         </div>
         <div className="flex flex-col justify-center items-center space-y-4">
           <svg ref={svgRef} width="300" height="120"></svg>

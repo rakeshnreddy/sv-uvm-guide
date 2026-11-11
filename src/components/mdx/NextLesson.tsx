@@ -29,7 +29,9 @@ function stepNote(next: NeighbourLesson): string {
  * to the path), so the two always agree (G30-LINK-02, spine §5.9).
  *
  * Renders a block-level <span> so it is valid both on its own line and inside
- * a paragraph.
+ * a paragraph. On screen it is hidden, because the lesson page's Next block
+ * (LessonNextBlock) sits right below it and says the same thing; print keeps
+ * it, so a printed lesson still names what comes next.
  */
 export function NextLesson({ lesson, className }: NextLessonProps) {
   const segments = lessonSegments(lesson);
@@ -38,7 +40,7 @@ export function NextLesson({ lesson, className }: NextLessonProps) {
   const { next } = context;
 
   return (
-    <span className={cn("my-[1.25em] block", PROSE_MEASURE_CLASS, className)} data-testid="next-lesson">
+    <span className={cn("my-[1.25em] hidden print:block", PROSE_MEASURE_CLASS, className)} data-testid="next-lesson">
       <strong>Next:</strong>{" "}
       {next ? (
         <>

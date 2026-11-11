@@ -101,6 +101,9 @@ export default function SearchCombobox({
 }: SearchComboboxProps) {
   const router = useRouter();
   const apple = useIsApplePlatform();
+  // The hint's text depends on the platform, known only after mount: keep it invisible until then so the swap is not a layout shift.
+  const [platformKnown, setPlatformKnown] = useState(false);
+  useEffect(() => setPlatformKnown(true), []);
   const baseId = useId();
   const listboxId = `${baseId}-results`;
   const hintId = `${baseId}-hint`;
@@ -266,8 +269,10 @@ export default function SearchCombobox({
             aria-hidden="true"
             data-search-shortcut=""
             className={cn(
-              "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border px-1.5 py-0.5 font-mono text-label text-muted-foreground",
+              // A fixed box, so "Ctrl K" and "⌘K" take the same room.
+              "pointer-events-none absolute right-2 top-1/2 w-14 -translate-y-1/2 rounded border border-border py-0.5 text-center font-mono text-label text-muted-foreground",
               SHORTCUT_HINT_VISIBILITY,
+              !platformKnown && "invisible",
             )}
           >
             {shortcut}

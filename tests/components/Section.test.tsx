@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import SectionDefault, {
   SECTION_CLASS,
   SECTION_DESCRIPTION_CLASS,
+  SECTION_ANCHORED_HEADING_CLASS,
   SECTION_HEADING_CLASS,
   Section,
 } from '@/components/layout/Section';
@@ -22,6 +23,18 @@ describe('Section', () => {
     expect(heading.className).toBe(SECTION_HEADING_CLASS);
     expect(screen.getByText('Hands-on benches for each tier').className).toBe(SECTION_DESCRIPTION_CLASS);
     expect(region).toHaveAttribute('data-section');
+  });
+
+  it('can put the anchor id on the heading, which then clears the sticky header and labels the section', () => {
+    const { container } = render(<Section id="labs" anchor="heading" title="Labs" />);
+    const heading = screen.getByRole('heading', { level: 2, name: 'Labs' });
+    expect(heading).toHaveAttribute('id', 'labs');
+    expect(heading.className).toBe(SECTION_ANCHORED_HEADING_CLASS);
+    expect(heading).toHaveClass('scroll-mt-24', 'text-h2', 'text-foreground');
+    const region = screen.getByRole('region', { name: 'Labs' });
+    expect(region).not.toHaveAttribute('id');
+    expect(region).toHaveAttribute('aria-labelledby', 'labs');
+    expect(container.querySelectorAll('#labs')).toHaveLength(1);
   });
 
   it('keeps the h2 look at any heading level', () => {

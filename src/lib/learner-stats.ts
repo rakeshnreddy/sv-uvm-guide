@@ -22,6 +22,7 @@ import type { CurriculumProgressData, LessonLogData } from '@/lib/learner-store/
 import type { LearnerMeta } from '@/lib/learner-store/repositories/meta';
 import type { NotebookEntry } from '@/lib/learner-store/repositories/notebook';
 import { DAY_MS, dayKeyToMs, localDayKey } from '@/lib/learner-store/time';
+import { TIER_LINKS, tierSectionHref } from '@/lib/site-links';
 
 // ---------------------------------------------------------------------------
 // Static curriculum totals (built on the server, passed to the dashboard)
@@ -47,9 +48,18 @@ export interface StaticTier {
   /** The tier folder, for example 'T1_Foundational'. */
   id: string;
   number: number;
-  /** 'Tier 1: Foundational'. */
+  /** The tier's name from the navigation config, 'Tier 1: Foundations'. */
   label: string;
   modules: StaticModule[];
+}
+
+/**
+ * A tier's name as the navigation shows it (src/lib/site-links.ts), so every
+ * surface reads "Tier 1: Foundations"; `fallback` for a tier it does not list.
+ */
+function navTierLabel(tierSlug: string, fallback: string): string {
+  const href = tierSectionHref(tierSlug);
+  return TIER_LINKS.find((link) => link.href === href)?.label ?? fallback;
 }
 
 /** Every tier, module and lesson in curriculum order: the dashboard's lesson totals. */
@@ -59,7 +69,7 @@ export function buildCurriculumTotals(data: readonly CurriculumTier[]): StaticTi
     return {
       id: tier.slug,
       number,
-      label: number > 0 ? `Tier ${number}: ${tier.title}` : tier.title,
+      label: navTierLabel(tier.slug, number > 0 ? `Tier ${number}: ${tier.title}` : tier.title),
       modules: tier.sections.map((section) => ({
         id: section.slug,
         code: moduleCode(section.slug),

@@ -189,7 +189,7 @@ describe('tierAndModuleProgress', () => {
     );
     const index = indexStaticLessons(totals);
     expect(index.size).toBe(lessonCount);
-    expect(totals[0].label).toBe('Tier 1: Foundational');
+    expect(totals.map((tier) => tier.label)).toEqual(['Tier 1: Foundations', 'Tier 2: Intermediate', 'Tier 3: Advanced', 'Tier 4: Expert']);
     expect(index.get('/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index')).toEqual(
       expect.objectContaining({ moduleId: 'F1A_The_Cost_of_Bugs', moduleCode: 'F1A', slug: 'index', tierId: 'T1_Foundational' }),
     );

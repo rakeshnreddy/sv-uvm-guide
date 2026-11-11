@@ -52,9 +52,12 @@ export default function DashboardPage() {
     return page?.href ? [{ id, title: page.title, href: page.href }] : [];
   });
 
+  // Tier names as the rest of the site shows them ("Tier 1: Foundations"), from the navigation config.
+  const curriculum = buildCurriculumTotals(curriculumData);
+
   return (
     <DashboardPageClient
-      curriculum={buildCurriculumTotals(curriculumData)}
+      curriculum={curriculum}
       routes={routes}
       labs={availableLabs}
       exercises={exercises}

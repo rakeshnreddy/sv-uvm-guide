@@ -5,12 +5,13 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
 import { CodedLabel, withoutCode } from '@/components/curriculum/CodedLabel';
-import { eyebrow, focusRing, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from '@/components/curriculum/overview-ui';
+import { focusRing, inlineLink, primaryAction, secondaryAction, tagInLink, textLink } from '@/components/curriculum/overview-ui';
 import { LearnerPageHeader } from '@/components/learner/LearnerSectionNav';
-import { PageShell } from '@/components/layout/PageShell';
-import { siteLabel } from '@/lib/nav-labels';
-import { DASHBOARD_HREF, LABS_HREF } from '@/lib/site-links';
+import { ProgressTraceLegend, ProgressTraceView } from '@/components/learner/ProgressTrace';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
+import { PageShell } from '@/components/layout/PageShell';
+import { Section } from '@/components/layout/Section';
+import { cardClass } from '@/components/ui/Card';
 import { labelWithCode } from '@/lib/curriculum-overview';
 import {
   continueAccessibleName,
@@ -20,7 +21,6 @@ import {
   type ContinueLessonEntry,
   type ContinuePosition,
 } from '@/lib/continue-lesson';
-import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import {
   backupReminder,
   dailyStreak,
@@ -63,7 +63,22 @@ import {
   subscribeSelectedRoute,
   type RouteId,
 } from '@/lib/learning-route-state';
+import { siteLabel } from '@/lib/nav-labels';
 import { usePersistenceTarget } from '@/lib/persistence/target';
+import { emptyTraces, progressTraces, traceTotals, type TierTrace } from '@/lib/progress-trace';
+import {
+  CURRICULUM_HREF,
+  DASHBOARD_HREF,
+  LABS_HREF,
+  NOTEBOOK_HREF,
+  PLACEMENT_QUIZ_HREF,
+  PRACTICE_HREF,
+  REVIEW_HREF,
+  SETTINGS_HREF,
+  START_HERE_HREF,
+  tierSectionHref,
+} from '@/lib/site-links';
+import { tierDataAttribute } from '@/lib/tier-colors';
 import { cn } from '@/lib/utils';
 
 /** A learning route as "Continue" needs it: its name and lessons in route order. */
@@ -98,24 +113,32 @@ const serverRoute = () => null;
  * The dashboard body's least height: the learner page minimum, raised to the
  * viewport less 20rem (the header, page header and the gap above the footer
  * take about 21 to 23rem at every width), so the footer starts below the fold
- * in every state. The placeholder, the empty state and the full card grid
- * then all keep the footer out of view, and swapping one for another after
- * hydration shifts nothing on screen.
+ * in every state.
  */
 export const DASHBOARD_BODY_MIN_HEIGHT_CLASS =
   'min-h-[max(22rem,calc(100svh-20rem))] sm:min-h-[max(16rem,calc(100svh-20rem))]';
 
-/*
- * Colour and glass (DESIGN.md section 11): the dashboard's cards are quiet
- * glass; the first card, which overlaps the colour field at the top of the
- * page, is real glass (`glassCard`). The panels inside stay solid.
+/**
+ * The top slot's reserved height: it holds "Continue" and reviews due, the
+ * empty state or the account notice, all read after hydration. The progress
+ * traces below it render on the server, so the slot keeps the height of its
+ * usual contents from the first paint and the traces do not move when the
+ * browser's records arrive. Measured at 390, 700, 1024 and 1440 px.
  */
-const cardBox = 'min-w-0 rounded-xl p-5 text-card-foreground sm:p-6';
-const card = cn('glass-quiet', cardBox);
-const glassCard = cn('glass', cardBox);
-const panel = 'min-w-0 rounded-lg border border-border bg-background p-4';
+export const DASHBOARD_TOP_MIN_HEIGHT_CLASS = 'min-h-[30rem] sm:min-h-[25.5rem] md:min-h-[18rem]';
+
+/*
+ * Colour and glass (DESIGN.md section 11): "Continue", at the top of the page
+ * over the colour field, is the one real glass card; the cards further down
+ * are quiet glass. Nothing inside a card is another card.
+ */
+const card = cardClass({ variant: 'glassQuiet', padding: 'default', className: 'min-w-0' });
 const muted = 'text-sm text-muted-foreground';
 const listItem = 'flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm';
+/** A text link that stands on its own line: a 40 px tall target (DESIGN.md section 5), not just its line of text. */
+const standaloneLink = cn(textLink, 'mt-1 inline-flex min-h-10 items-center text-sm');
+
+const BACKUP_HREF = `${SETTINGS_HREF}#data`;
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const weekdayShort = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
@@ -164,41 +187,30 @@ function useBrowserReads(): { now: number | null; exercises: readonly StoredExer
   return state;
 }
 
+/** A quiet-glass card in the activity grid, with an h3 under the section's h2. */
 function DashboardCard({
   id,
   title,
   className,
-  glass = false,
   children,
 }: {
   id: string;
   title: string;
   className?: string;
-  /** Real glass: only for the card at the top of the page, over the colour field. */
-  glass?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className={cn(glass ? glassCard : card, className)}>
-      <h2 id={id} className="text-h3 text-foreground">
+    <section aria-labelledby={id} className={cn(card, className)}>
+      <h3 id={id} className="text-h4 text-foreground">
         {title}
-      </h2>
+      </h3>
       <div className="mt-3">{children}</div>
     </section>
   );
 }
 
-/** A decorative bar; the numbers next to it carry the information. */
-function Bar({ percent }: { percent: number }) {
-  return (
-    <div aria-hidden="true" className="mt-2 h-2 w-full rounded-full bg-muted">
-      <div className="h-2 rounded-full bg-success" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
-// Cards
+// Continue and reviews due
 // ---------------------------------------------------------------------------
 
 /**
@@ -212,14 +224,19 @@ export function continuePrimary(hasContinue: boolean, hasNext: boolean): 'contin
   return null;
 }
 
-/** The eyebrow over the lesson to continue: why it is the one. */
+/** The line over the lesson to continue: why it is the one. */
 export function dashboardContinueEyebrow(position: ContinuePosition<ContinueLessonEntry>): string {
   return position.reason === 'next-after-done'
     ? `Next after ${position.lastOpened.code}, which you marked done`
     : 'Last opened';
 }
 
-function ContinueCard({
+/**
+ * "Continue": one glass block. The lesson to continue leads, with the view's
+ * accent; the route's next lesson sits beside it as the quieter action,
+ * across a hairline. No card inside it.
+ */
+function ContinueBlock({
   position,
   lastAt,
   route,
@@ -233,129 +250,207 @@ function ContinueCard({
 }) {
   const routePosition = route ? nextOnRoute(route.sequence, progress) : null;
   const next = route && routePosition && routePosition.status !== 'complete' ? route.sequence[routePosition.index] : undefined;
-  // The route's next lesson is the lesson to continue: one link, in the first panel.
+  // The route's next lesson is the lesson to continue: one link, on the left.
   const nextIsContinue = Boolean(position && next && next.href === position.lesson.href);
   const primary = continuePrimary(Boolean(position), Boolean(next) && !nextIsContinue);
 
   return (
-    <DashboardCard id="dashboard-continue-heading" title="Continue" className="md:col-span-2" glass>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className={panel}>
-          <p className={eyebrow}>{position ? dashboardContinueEyebrow(position) : 'Last opened'}</p>
-          {position ? (
-            <>
+    <section
+      aria-labelledby="dashboard-continue-heading"
+      className={cardClass({ variant: 'glass', padding: 'default', className: 'grid min-w-0 gap-5 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-0' })}
+    >
+      <div className="min-w-0 md:pr-6">
+        <h2 id="dashboard-continue-heading" className="text-h3 text-foreground">
+          Continue
+        </h2>
+        <p className="mt-1 text-ui text-muted-foreground">{position ? dashboardContinueEyebrow(position) : 'Last opened'}</p>
+        {position ? (
+          <>
+            <Link
+              href={position.lesson.href}
+              data-testid="dashboard-continue"
+              aria-label={continueAccessibleName(position.lesson)}
+              className={cn(primary === 'continue' ? primaryAction : secondaryAction, 'mt-4 max-w-full justify-start text-left')}
+            >
+              <span className="[overflow-wrap:anywhere]">
+                {continueLabel(position.lesson)}: {position.lesson.title}
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </Link>
+            {lastAt !== null && (
+              <p className="mt-2 text-label text-muted-foreground">
+                {position.reason === 'next-after-done' ? `${position.lastOpened.code} opened` : 'Opened'} {formatDate(lastAt)}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="mt-4 text-sm text-foreground">No lesson opened in this browser yet.</p>
+        )}
+      </div>
+      <div className="min-w-0 border-t border-border pt-5 md:border-l md:border-t-0 md:pl-6 md:pt-0">
+        {route ? (
+          <>
+            <h3 className="text-ui font-medium text-foreground">Next on your {route.name} route</h3>
+            {next && nextIsContinue ? (
+              <p className="mt-1 text-sm text-muted-foreground">It is the lesson to continue.</p>
+            ) : next ? (
               <Link
-                href={position.lesson.href}
-                data-testid="dashboard-continue"
-                aria-label={continueAccessibleName(position.lesson)}
-                className={cn(primary === 'continue' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}
+                href={next.href}
+                className={cn(primary === 'next' ? primaryAction : secondaryAction, 'mt-3 max-w-full justify-start text-left')}
               >
                 <span className="[overflow-wrap:anywhere]">
-                  {continueLabel(position.lesson)}: {position.lesson.title}
+                  {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
+                  {labelWithCode(next.moduleCode, next.title)}
                 </span>
                 <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
               </Link>
-              {lastAt !== null && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {position.reason === 'next-after-done' ? `${position.lastOpened.code} opened` : 'Opened'} {formatDate(lastAt)}
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="mt-1 text-sm text-foreground">No lesson opened in this browser yet.</p>
-          )}
-        </div>
-        <div className={panel}>
-          {route ? (
-            <>
-              <p className={eyebrow}>Next on your {route.name} route</p>
-              {next && nextIsContinue ? (
-                <p className="mt-1 text-sm text-foreground">It is the lesson to continue.</p>
-              ) : next ? (
-                <Link href={next.href} className={cn(primary === 'next' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}>
-                  <span className="[overflow-wrap:anywhere]">
-                    {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
-                    {labelWithCode(next.moduleCode, next.title)}
-                  </span>
-                  <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <p className="mt-1 text-sm text-muted-foreground">
+                You have opened every lesson on this route.{' '}
+                <Link href={START_HERE_HREF} className={inlineLink}>
+                  Choose another route
                 </Link>
-              ) : (
-                <p className="mt-1 text-sm text-foreground">
-                  You have opened every lesson on this route.{' '}
-                  <Link href="/curriculum#routes" className={inlineLink}>
-                    Choose another route
-                  </Link>
-                  .
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <p className={eyebrow}>Your route</p>
-              <p className="mt-1 text-sm text-foreground">You aren&apos;t following a learning route yet.</p>
-              <Link href="/curriculum#routes" className={cn(textLink, 'mt-2 inline-block text-sm')}>
-                Choose a route
-              </Link>
-            </>
-          )}
-        </div>
+                .
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <h3 className="text-ui font-medium text-foreground">Your route</h3>
+            <p className="mt-1 text-sm text-muted-foreground">You aren&apos;t following a learning route yet.</p>
+            <Link href={START_HERE_HREF} className={standaloneLink}>
+              Choose a route
+            </Link>
+          </>
+        )}
       </div>
-    </DashboardCard>
+    </section>
   );
 }
 
-function LessonsCard({ summary, moduleHrefs }: { summary: CurriculumProgressSummary; moduleHrefs: ReadonlyMap<string, string> }) {
+/** Reviews due: the count and one way into the review queue; says so plainly when none are due. */
+function ReviewsDue({ due, tracked }: { due: number; tracked: number }) {
   return (
-    <DashboardCard id="dashboard-lessons-heading" title="Lessons" className="md:col-span-2">
-      <p className="text-sm text-foreground" data-testid="dashboard-lesson-totals">
-        <strong className="font-semibold">{summary.done}</strong> done and{' '}
-        <strong className="font-semibold">{summary.opened}</strong> opened, of {summary.total} lessons.
-      </p>
-      <ul className="mt-4 space-y-5">
-        {summary.tiers.map((tier) => {
-          const active = tier.modules.filter((mod) => mod.opened > 0);
-          return (
-            <li key={tier.id} className="min-w-0" data-tier={tierDataAttribute(tierOfTierSlug(tier.id))}>
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  {tierOfTierSlug(tier.id) ? <span className="tier-step" aria-hidden="true" /> : null}
-                  {tier.label}
-                </h3>
-                <p className={muted}>
-                  {tier.done} of {tier.total} done ({tier.percentDone}%) · {tier.opened} opened
-                </p>
-              </div>
-              <Bar percent={tier.percentDone} />
-              {active.length > 0 && (
-                <details className="mt-2">
-                  <summary className={cn('cursor-pointer rounded-sm text-sm font-medium text-primary', focusRing)}>
-                    Modules you opened ({active.length})
-                  </summary>
-                  <ul className="mt-2 space-y-1.5">
-                    {active.map((mod) => (
-                      <li key={mod.id} className={listItem}>
-                        <Link
-                          href={moduleHrefs.get(mod.id) ?? '/curriculum'}
-                          aria-label={labelWithCode(mod.code, mod.title)}
-                          className={cn(textLink, 'group [overflow-wrap:anywhere]')}
-                        >
-                          <CodedLabel code={mod.code} title={withoutCode(mod.title, mod.code)} tagClassName={tagInLink} />
-                        </Link>
-                        <span className="text-muted-foreground">
-                          {mod.done} of {mod.total} done · {mod.opened} opened
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </DashboardCard>
+    <section
+      aria-labelledby="dashboard-review-heading"
+      className="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-border pb-6"
+    >
+      <div className="min-w-0">
+        <h2 id="dashboard-review-heading" className="text-h4 text-foreground">
+          Reviews due
+        </h2>
+        <p className="mt-1 text-sm text-foreground" data-testid="dashboard-reviews-due">
+          {due > 0 ? (
+            <>
+              <strong className="font-mono font-medium tabular-nums">{due}</strong> {due === 1 ? 'flashcard is' : 'flashcards are'}{' '}
+              due today.
+            </>
+          ) : (
+            'No flashcards are due today.'
+          )}{' '}
+          <span className="text-muted-foreground">
+            {tracked > 0
+              ? `${plural(tracked, 'card', 'cards')} in your review queue.`
+              : "Rate a flashcard in a lesson's “Reinforce the essentials” section to start your review queue."}
+          </span>
+        </p>
+      </div>
+      <Link href={REVIEW_HREF} className={cn(secondaryAction, 'shrink-0')}>
+        Open the review queue
+      </Link>
+    </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Progress traces
+// ---------------------------------------------------------------------------
+
+/** One tier: its name (linking to its section of the curriculum), its totals, its trace and the modules opened. */
+function TierProgress({
+  trace,
+  modules,
+}: {
+  trace: TierTrace;
+  /** The tier's module counts, after load; null in the server render. */
+  modules: CurriculumProgressSummary['tiers'][number]['modules'] | null;
+}) {
+  const headingId = `dashboard-tier-${trace.tierId}`;
+  const active = modules?.filter((mod) => mod.opened > 0) ?? [];
+  const hrefs = new Map(trace.segments.map((segment) => [segment.id, segment.href]));
+  return (
+    <li className="min-w-0" data-tier={tierDataAttribute(trace.tier)}>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-4">
+        <h3 id={headingId} className="flex items-center gap-2 text-h4 text-foreground">
+          {trace.tier ? <span className="tier-step" aria-hidden="true" /> : null}
+          <Link href={tierSectionHref(trace.tierId)} className={cn('rounded-sm underline-offset-4 hover:underline', focusRing)}>
+            {trace.label}
+          </Link>
+        </h3>
+        <p className="text-sm tabular-nums text-muted-foreground" data-testid="dashboard-tier-totals">
+          {traceTotals(trace)}
+        </p>
+      </div>
+      <ProgressTraceView trace={trace} className="mt-3" />
+      {active.length > 0 && (
+        <details className="mt-1">
+          <summary className={cn('flex min-h-10 cursor-pointer items-center rounded-sm text-sm font-medium text-primary', focusRing)}>
+            Modules you opened ({active.length})
+          </summary>
+          <ul className="mt-1">
+            {active.map((mod) => (
+              <li key={mod.id} className={cn(listItem, 'min-h-8 py-1')}>
+                <Link
+                  href={hrefs.get(mod.id) ?? CURRICULUM_HREF}
+                  aria-label={labelWithCode(mod.code, mod.title)}
+                  className={cn(textLink, 'group [overflow-wrap:anywhere]')}
+                >
+                  <CodedLabel code={mod.code} title={withoutCode(mod.title, mod.code)} tagClassName={tagInLink} />
+                </Link>
+                <span className="text-muted-foreground">
+                  {mod.done} of {mod.total} done · {mod.opened} opened
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The four tiers as progress traces. The server render draws every module not
+ * started in the same boxes, so nothing moves when the browser's records
+ * arrive.
+ */
+function ProgressSection({ traces, summary }: { traces: readonly TierTrace[]; summary: CurriculumProgressSummary | null }) {
+  return (
+    <Section
+      id="dashboard-progress"
+      title="Progress"
+      className="mt-12"
+      description={
+        <span data-testid="dashboard-lesson-totals">
+          {summary
+            ? `${summary.done} done and ${summary.opened} opened, of ${summary.total} lessons.`
+            : 'One segment per module, in course order.'}
+        </span>
+      }
+    >
+      <ProgressTraceLegend />
+      <ul className="mt-6 space-y-8">
+        {traces.map((trace, index) => (
+          <TierProgress key={trace.tierId} trace={trace} modules={summary?.tiers[index]?.modules ?? null} />
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity cards
+// ---------------------------------------------------------------------------
 
 function LabsCard({ summaries }: { summaries: LabSummaries }) {
   const { inProgress, completed } = summaries;
@@ -364,7 +459,7 @@ function LabsCard({ summaries }: { summaries: LabSummaries }) {
       {inProgress.length + completed.length === 0 ? (
         <>
           <p className={muted}>No lab started in this browser yet.</p>
-          <Link href={LABS_HREF} className={cn(textLink, 'mt-2 inline-block text-sm')}>
+          <Link href={LABS_HREF} className={standaloneLink}>
             Browse the labs
           </Link>
         </>
@@ -372,9 +467,9 @@ function LabsCard({ summaries }: { summaries: LabSummaries }) {
         <div className="space-y-4">
           {inProgress.length > 0 && (
             <div>
-              <h3 id="dashboard-labs-progress" className="text-sm font-semibold text-foreground">
+              <h4 id="dashboard-labs-progress" className="text-sm font-medium text-foreground">
                 In progress ({inProgress.length})
-              </h3>
+              </h4>
               <ul aria-labelledby="dashboard-labs-progress" className="mt-2 space-y-1.5">
                 {inProgress.map((lab) => (
                   <li key={lab.id} className={listItem}>
@@ -392,9 +487,9 @@ function LabsCard({ summaries }: { summaries: LabSummaries }) {
           )}
           {completed.length > 0 && (
             <div>
-              <h3 id="dashboard-labs-done" className="text-sm font-semibold text-foreground">
+              <h4 id="dashboard-labs-done" className="text-sm font-medium text-foreground">
                 Done ({completed.length})
-              </h3>
+              </h4>
               <ul aria-labelledby="dashboard-labs-done" className="mt-2 space-y-1.5">
                 {completed.map((lab) => (
                   <li key={lab.id} className={listItem}>
@@ -416,24 +511,6 @@ function LabsCard({ summaries }: { summaries: LabSummaries }) {
   );
 }
 
-function ReviewCard({ due, tracked }: { due: number; tracked: number }) {
-  return (
-    <DashboardCard id="dashboard-review-heading" title="Review">
-      <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold tabular-nums">{due}</strong> {due === 1 ? 'card' : 'cards'} due today
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {tracked > 0
-          ? `${plural(tracked, 'card', 'cards')} in your review queue.`
-          : "Rate a flashcard in a lesson's “Reinforce the essentials” section to start your review queue."}
-      </p>
-      <Link href="/dashboard/review" className={cn(textLink, 'mt-3 inline-block text-sm')}>
-        Open the review queue
-      </Link>
-    </DashboardCard>
-  );
-}
-
 function NotebookCard({ entries }: { entries: readonly NotebookEntry[] }) {
   const latest = entries.reduce<NotebookEntry | null>(
     (newest, entry) => (!newest || entry.updatedAt > newest.updatedAt ? entry : newest),
@@ -442,20 +519,21 @@ function NotebookCard({ entries }: { entries: readonly NotebookEntry[] }) {
   return (
     <DashboardCard id="dashboard-notebook-heading" title="Notebook">
       <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold tabular-nums">{entries.length}</strong> {entries.length === 1 ? 'note' : 'notes'}
+        <strong className="font-mono text-xl font-medium tabular-nums">{entries.length}</strong>{' '}
+        {entries.length === 1 ? 'note' : 'notes'}
       </p>
       {latest ? (
-        <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
           {/* Learner-written text: rendered as plain text only. */}
           Latest: <span className="font-medium text-foreground">{latest.title.trim() || 'Untitled note'}</span>
           {latest.updatedAt > 0 ? ` · ${formatDate(latest.updatedAt)}` : ''}
         </p>
       ) : (
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           Your “Teach it back” answers from lessons and your own notes are kept here.
         </p>
       )}
-      <Link href="/dashboard/notebook" className={cn(textLink, 'mt-3 inline-block text-sm')}>
+      <Link href={NOTEBOOK_HREF} className={cn(standaloneLink, 'mt-2')}>
         Open your notebook
       </Link>
     </DashboardCard>
@@ -476,20 +554,18 @@ function PlacementCard({
       {attempt ? (
         <>
           <p className="text-sm text-foreground">
-            <strong className="font-semibold">Start in Tier {attempt.tier}</strong>
+            <strong className="font-medium">Start in Tier {attempt.tier}</strong>
             {routeName ? ` on the ${routeName} route` : ''}, {percentText(attempt.percent)} ·{' '}
             {formatDate(attempt.completedAt)}
           </p>
-          {stale && (
-            <p className="mt-1 text-xs text-muted-foreground">The quiz has changed since this attempt.</p>
-          )}
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          {stale && <p className="mt-1 text-sm text-muted-foreground">The quiz has changed since this attempt.</p>}
+          <div className="mt-2 flex flex-wrap gap-x-5 text-sm">
             {routeName && (
-              <Link href={`/curriculum#${routeAnchor(attempt.routeId)}`} className={textLink}>
+              <Link href={`${CURRICULUM_HREF}#${routeAnchor(attempt.routeId)}`} className={cn(textLink, 'inline-flex min-h-10 items-center')}>
                 See the {routeName} route
               </Link>
             )}
-            <Link href="/quiz/placement" className={textLink}>
+            <Link href={PLACEMENT_QUIZ_HREF} className={cn(textLink, 'inline-flex min-h-10 items-center')}>
               Retake the quiz
             </Link>
           </div>
@@ -497,8 +573,8 @@ function PlacementCard({
       ) : (
         <>
           <p className={muted}>You haven&apos;t taken the placement quiz in this browser.</p>
-          <Link href="/quiz/placement" className={cn(textLink, 'mt-2 inline-block text-sm')}>
-            Find your level
+          <Link href={PLACEMENT_QUIZ_HREF} className={standaloneLink}>
+            {siteLabel(PLACEMENT_QUIZ_HREF)}
           </Link>
         </>
       )}
@@ -523,12 +599,12 @@ function QuizzesCard({
         <>
           <p className="text-sm text-foreground">{plural(taken, 'lesson quiz', 'lesson quizzes')} taken.</p>
           {weak.length === 0 ? (
-            <p className="mt-1 text-xs text-muted-foreground">Every quiz you took has a best score of 75% or more.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Every quiz you took has a best score of 75% or more.</p>
           ) : (
             <>
-              <h3 id="dashboard-quizzes-weak" className="mt-3 text-sm font-semibold text-foreground">
+              <h4 id="dashboard-quizzes-weak" className="mt-3 text-sm font-medium text-foreground">
                 Under 75%: worth another look
-              </h3>
+              </h4>
               <ul aria-labelledby="dashboard-quizzes-weak" className="mt-2 space-y-1.5">
                 {weak.map((entry) => {
                   // The link always comes from the curriculum index, never from the stored path.
@@ -566,7 +642,7 @@ function ExercisesCard({ summaries }: { summaries: readonly ExerciseSummary[] })
       {summaries.length === 0 ? (
         <>
           <p className={muted}>No exercise attempted in this browser yet.</p>
-          <Link href="/practice" className={cn(textLink, 'mt-2 inline-block text-sm')}>
+          <Link href={PRACTICE_HREF} className={standaloneLink}>
             Browse practice
           </Link>
         </>
@@ -595,11 +671,12 @@ function ExercisesCard({ summaries }: { summaries: readonly ExerciseSummary[] })
 function StreakCard({ streak, days }: { streak: number; days: readonly ActivityDay[] }) {
   const busiest = Math.max(1, ...days.map((day) => day.total));
   return (
-    <DashboardCard id="dashboard-streak-heading" title="Streak and the last 7 days" className="md:col-span-2">
+    <DashboardCard id="dashboard-streak-heading" title="Streak and the last 7 days">
       <p className="text-sm text-foreground">
-        <strong className="text-2xl font-semibold tabular-nums">{streak}</strong> {streak === 1 ? 'day' : 'days'} in a row
+        <strong className="font-mono text-xl font-medium tabular-nums">{streak}</strong> {streak === 1 ? 'day' : 'days'} in a
+        row
       </p>
-      <p className="mt-1 text-xs text-muted-foreground">
+      <p className="mt-1 text-sm text-muted-foreground">
         A day counts when you open a lesson, finish a lab step, review flashcards, take a quiz or write a note, by
         this device&apos;s clock.
       </p>
@@ -609,10 +686,10 @@ function StreakCard({ streak, days }: { streak: number; days: readonly ActivityD
           const height = day.total > 0 ? Math.max(8, Math.round((day.total / busiest) * 100)) : 0;
           return (
             <li key={day.dayKey} className="flex min-w-0 flex-col items-center gap-1">
-              <span aria-hidden="true" className="flex h-16 w-full items-end overflow-hidden rounded-md bg-muted">
-                <span className="block w-full rounded bg-success" style={{ height: `${height}%` }} />
+              <span aria-hidden="true" className="flex h-12 w-full items-end overflow-hidden rounded bg-muted">
+                <span className="block w-full rounded-sm bg-success" style={{ height: `${height}%` }} />
               </span>
-              <span aria-hidden="true" className="text-xs font-semibold text-foreground">
+              <span aria-hidden="true" className="font-mono text-xs font-medium tabular-nums text-foreground">
                 {day.total}
               </span>
               <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
@@ -631,8 +708,11 @@ function StreakCard({ streak, days }: { streak: number; days: readonly ActivityD
 
 function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
   return (
-    <DashboardCard id="dashboard-data-heading" title="Your data" className="md:col-span-2">
-      <p className="text-sm text-foreground">
+    <section aria-labelledby="dashboard-data-heading" className={cn(card, 'mt-5')}>
+      <h2 id="dashboard-data-heading" className="text-h4 text-foreground">
+        Your data
+      </h2>
+      <p className="mt-3 max-w-[40em] text-sm text-foreground">
         Everything on this page is stored only in this browser. Download a backup to keep it safe or to move it to
         another browser.
       </p>
@@ -645,21 +725,24 @@ function DataCard({ meta, remind }: { meta: LearnerMeta; remind: boolean }) {
         </p>
       )}
       {!remind && meta.lastExportAt ? (
-        <p className="mt-2 text-xs text-muted-foreground">Last backup: {formatDate(meta.lastExportAt)}.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Last backup: {formatDate(meta.lastExportAt)}.</p>
       ) : null}
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 text-sm text-muted-foreground">
         Some browsers clear site data for sites they haven&apos;t seen for a while.
       </p>
-      <Link href="/settings#data" className={cn(secondaryAction, 'mt-4')}>
+      <Link href={BACKUP_HREF} className={cn(secondaryAction, 'mt-4')}>
         Back up or reset your data
       </Link>
-    </DashboardCard>
+    </section>
   );
 }
 
 function EmptyState() {
   return (
-    <section aria-labelledby="dashboard-empty-heading" className={cn(glassCard, 'sm:p-8')}>
+    <section
+      aria-labelledby="dashboard-empty-heading"
+      className={cardClass({ variant: 'glass', className: 'flex flex-1 flex-col p-5 sm:p-8' })}
+    >
       <h2 id="dashboard-empty-heading" className="text-h3 text-foreground">
         Nothing recorded in this browser yet
       </h2>
@@ -668,19 +751,20 @@ function EmptyState() {
         browser.
       </p>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-        <Link href="/quiz/placement" className={primaryAction}>
-          Find your level
+        <Link href={PLACEMENT_QUIZ_HREF} className={primaryAction}>
+          {siteLabel(PLACEMENT_QUIZ_HREF)}
         </Link>
-        <Link href="/curriculum#route-junior" className={secondaryAction}>
+        <Link href={`${CURRICULUM_HREF}#${routeAnchor('junior')}`} className={secondaryAction}>
           Begin the Junior route
         </Link>
       </div>
-      <p className="mt-5 text-sm text-muted-foreground">
+      {/* mt-auto: the top slot's spare height sits inside the card, above this footer line, not under the card. */}
+      <p className="mt-auto pt-5 text-sm text-muted-foreground">
         Moving from another browser?{' '}
-        <Link href="/settings#data" className={inlineLink}>
+        <Link href={BACKUP_HREF} className={inlineLink}>
           Import a backup
         </Link>{' '}
-        in Settings.
+        in {siteLabel(SETTINGS_HREF)}.
       </p>
     </section>
   );
@@ -688,7 +772,7 @@ function EmptyState() {
 
 function AccountNotice() {
   return (
-    <section aria-labelledby="dashboard-account-heading" className={card}>
+    <section aria-labelledby="dashboard-account-heading" className={cn(card, 'flex flex-1 flex-col')}>
       <h2 id="dashboard-account-heading" className="text-h3 text-foreground">
         Your progress is saved to your account
       </h2>
@@ -705,11 +789,13 @@ function AccountNotice() {
 // ---------------------------------------------------------------------------
 
 /**
- * The learner dashboard, read from the learner records in this browser. The
- * server render and the hydrating render show only the heading and a neutral
- * line; the cards appear right after hydration. It never writes and makes no
- * request: while the persistence target is 'server' (accounts with server
- * sync), it says so instead of presenting local data as the learner's
+ * The learner dashboard, read from the learner records in this browser, in
+ * the order DESIGN.md section 10 sets: "Continue", reviews due, the progress
+ * traces, then everything else. The server render and the hydrating render
+ * show the heading, a neutral line in the top slot and every tier's trace not
+ * started; the records fill them right after hydration. It never writes and
+ * makes no request: while the persistence target is 'server' (accounts with
+ * server sync), it says so instead of presenting local data as the learner's
  * progress.
  */
 export default function DashboardPageClient({
@@ -734,21 +820,17 @@ export default function DashboardPageClient({
   const { now, exercises } = useBrowserReads();
 
   const lessons = useMemo(() => indexStaticLessons(curriculum), [curriculum]);
-  const moduleHrefs = useMemo(() => {
-    const hrefs = new Map<string, string>();
-    for (const tier of curriculum) {
-      for (const mod of tier.modules) {
-        const first = mod.lessons.find((lesson) => lesson.slug === 'index') ?? mod.lessons[0];
-        if (first) hrefs.set(mod.id, first.href);
-      }
-    }
-    return hrefs;
-  }, [curriculum]);
   const labRecords = useMemo(() => labEntries.map((entry) => entry.value), [labEntries]);
   const notebook = useMemo(() => notebookList.map((entry) => entry.value), [notebookList]);
   const lessonSummary = useMemo(
     () => tierAndModuleProgress(curriculum, progress, lessonLog),
     [curriculum, progress, lessonLog],
+  );
+  const position = useMemo(() => continueLesson(lessonLog, progress, continueLessons), [lessonLog, progress, continueLessons]);
+  const serverTraces = useMemo(() => emptyTraces(curriculum), [curriculum]);
+  const traces = useMemo(
+    () => progressTraces(curriculum, progress, lessonLog, position?.lesson.href ?? null),
+    [curriculum, progress, lessonLog, position],
   );
   const labProgress = useMemo(() => labSummaries(labRecords, labs), [labRecords, labs]);
   // Only quizzes on lessons that still exist: a stored lessonPath is never used as a link on its own.
@@ -757,14 +839,10 @@ export default function DashboardPageClient({
   const exerciseList = useMemo(() => exerciseSummaries(exercises, exerciseMeta), [exercises, exerciseMeta]);
 
   const loaded = hydrated && targetReady && now !== null;
-
-  let body: React.ReactNode;
-  if (!loaded) {
-    body = <p className={muted}>Reading what this browser has saved…</p>;
-  } else if (target === 'server') {
-    body = <AccountNotice />;
-  } else {
-    const hasData = hasLearnerData({
+  const local = loaded && target !== 'server';
+  const hasData =
+    local &&
+    hasLearnerData({
       curriculum: progress,
       lessonLog,
       labs: labRecords,
@@ -774,35 +852,48 @@ export default function DashboardPageClient({
       activity: activity.days,
       exercises,
     });
-    if (!hasData) {
-      body = <EmptyState />;
-    } else {
-      const position = continueLesson(lessonLog, progress, continueLessons);
-      const lastAt = position ? lastOpenedAt(lessonLog, progress, position.lastOpened.href) : null;
-      const route = routes.find((candidate) => candidate.id === selectedRoute) ?? null;
-      const attempt = latestPlacementAttempt(assessments);
-      const attemptRoute = attempt ? routes.find((candidate) => candidate.id === attempt.routeId) : undefined;
-      const stale = Boolean(
-        attempt &&
-          placementVersions &&
-          (attempt.assessmentVersion !== placementVersions.assessmentVersion ||
-            attempt.scoringVersion !== placementVersions.scoringVersion),
-      );
-      body = (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          <ContinueCard position={position} lastAt={lastAt} route={route} progress={progress} />
-          <LessonsCard summary={lessonSummary} moduleHrefs={moduleHrefs} />
-          <LabsCard summaries={labProgress} />
-          <ReviewCard due={countDueCards(flashcards, now)} tracked={trackedCardCount(flashcards)} />
-          <NotebookCard entries={notebook} />
-          <PlacementCard attempt={attempt} routeName={attemptRoute?.name ?? null} stale={stale} />
-          <QuizzesCard taken={Object.keys(knownQuizzes).length} weak={weak} lessons={lessons} />
-          <ExercisesCard summaries={exerciseList} />
-          <StreakCard streak={dailyStreak(activity.days, now)} days={last7Days(activity.days, now)} />
-          <DataCard meta={meta} remind={backupReminder(meta, true, now)} />
-        </div>
-      );
-    }
+
+  let top: React.ReactNode;
+  let rest: React.ReactNode = null;
+  if (!loaded) {
+    top = <p className={muted}>Reading what this browser has saved…</p>;
+  } else if (target === 'server') {
+    top = <AccountNotice />;
+  } else if (!hasData) {
+    top = <EmptyState />;
+  } else {
+    const lastAt = position ? lastOpenedAt(lessonLog, progress, position.lastOpened.href) : null;
+    const route = routes.find((candidate) => candidate.id === selectedRoute) ?? null;
+    const attempt = latestPlacementAttempt(assessments);
+    const attemptRoute = attempt ? routes.find((candidate) => candidate.id === attempt.routeId) : undefined;
+    const stale = Boolean(
+      attempt &&
+        placementVersions &&
+        (attempt.assessmentVersion !== placementVersions.assessmentVersion ||
+          attempt.scoringVersion !== placementVersions.scoringVersion),
+    );
+    top = (
+      <>
+        <ContinueBlock position={position} lastAt={lastAt} route={route} progress={progress} />
+        <ReviewsDue due={countDueCards(flashcards, now)} tracked={trackedCardCount(flashcards)} />
+      </>
+    );
+    rest = (
+      <>
+        <Section id="dashboard-activity" title="Labs, quizzes and notes" className="mt-12">
+          {/* items-start: each card is as tall as what it says, never stretched to its neighbour with empty glass. */}
+          <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2">
+            <LabsCard summaries={labProgress} />
+            <QuizzesCard taken={Object.keys(knownQuizzes).length} weak={weak} lessons={lessons} />
+            <ExercisesCard summaries={exerciseList} />
+            <PlacementCard attempt={attempt} routeName={attemptRoute?.name ?? null} stale={stale} />
+            <NotebookCard entries={notebook} />
+            <StreakCard streak={dailyStreak(activity.days, now)} days={last7Days(activity.days, now)} />
+          </div>
+        </Section>
+        <DataCard meta={meta} remind={backupReminder(meta, true, now)} />
+      </>
+    );
   }
 
   return (
@@ -814,7 +905,14 @@ export default function DashboardPageClient({
         meta={<StorageStatusNote savedLabel="Stored only in this browser" />}
       />
       <div data-testid="dashboard-body" aria-busy={!loaded} className={DASHBOARD_BODY_MIN_HEIGHT_CLASS}>
-        {body}
+        <div data-testid="dashboard-top" className={cn('flex flex-col', DASHBOARD_TOP_MIN_HEIGHT_CLASS)}>
+          {top}
+        </div>
+        {/* Account progress is not in this browser: no traces drawn from local records then. */}
+        {loaded && target === 'server' ? null : (
+          <ProgressSection traces={local ? traces : serverTraces} summary={hasData ? lessonSummary : null} />
+        )}
+        {rest}
       </div>
     </PageShell>
   );

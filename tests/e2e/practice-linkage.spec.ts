@@ -74,13 +74,18 @@ test.describe('Practice linkage', () => {
   test('the Practice Hub names a lesson for each item and never links a coming-soon lab', async ({ page }) => {
     await page.goto('/practice');
     await expect(page.getByRole('heading', { level: 1, name: 'Practice hub' })).toBeVisible({ timeout: 60000 });
-    const comingSoon = page.getByRole('region', { name: 'Coming soon', exact: true });
-    await expect(comingSoon.getByRole('heading', { level: 4 }).first()).toBeVisible();
-    // Coming-soon titles are text; only their "Planned for" lesson links remain.
-    const plannedLinks = await comingSoon.getByRole('link').evaluateAll((links) => links.map((a) => a.getAttribute('href')));
-    for (const href of plannedLinks) expect(href).toMatch(/^\/curriculum\//);
     const labs = page.getByRole('region', { name: 'Labs', exact: true });
-    await expect(labs.getByText('Learn it in').first()).toBeVisible();
+    // Every row and tile leads with the teaching lesson's signal tag, linked to that lesson.
+    const items = page.locator('[data-practice-row], [data-practice-tile]');
+    const total = await items.count();
+    expect(total).toBeGreaterThan(0);
+    await expect(page.locator('[data-practice-row] a[data-lesson-tag], [data-practice-tile] a[data-lesson-tag]')).toHaveCount(total);
+    const lessonHrefs = await page.locator('a[data-lesson-tag]').evaluateAll((links) => links.map((a) => a.getAttribute('href')));
+    for (const href of lessonHrefs) expect(href).toMatch(/^\/curriculum\//);
+    await expect(labs.locator('a[data-lesson-tag]').first()).toBeVisible();
+    // A coming-soon lab row says so and has no link to the lab (its route 404s).
+    const comingSoonRows = labs.locator('[data-practice-row]', { hasText: 'Coming soon' });
+    for (const row of await comingSoonRows.all()) await expect(row.locator('a[href^="/practice/lab/"]')).toHaveCount(0);
   });
 
   test('interview prep keeps answers hidden until revealed', async ({ page }) => {

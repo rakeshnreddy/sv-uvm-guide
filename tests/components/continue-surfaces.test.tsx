@@ -29,14 +29,17 @@ import { resolveMilestones, resolveRoutes } from '@/lib/learning-paths';
 
 type MockNextLinkProps = React.PropsWithChildren<Omit<React.ComponentProps<'a'>, 'href'> & { href: string }>;
 
-vi.mock('next/link', () => ({
-  __esModule: true,
-  default: ({ href, children, ...rest }: MockNextLinkProps) => (
-    <a href={href} {...rest}>
+vi.mock('next/link', async () => {
+  const { forwardRef } = await import('react');
+  // Like next/link, the mock forwards its ref (the progress trace moves focus between its links).
+  const MockLink = forwardRef<HTMLAnchorElement, MockNextLinkProps>(({ href, children, ...rest }, ref) => (
+    <a ref={ref} href={href} {...rest}>
       {children}
     </a>
-  ),
-}));
+  ));
+  MockLink.displayName = 'MockLink';
+  return { __esModule: true, default: MockLink };
+});
 
 vi.mock('next/navigation', () => ({
   notFound: () => {

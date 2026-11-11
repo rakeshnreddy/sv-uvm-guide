@@ -22,6 +22,14 @@ const allLessons = curriculumData.flatMap((tier) =>
 );
 
 describe("<NextLesson />", () => {
+  it("is hidden on screen (the page's Next block repeats it) and kept in print", () => {
+    render(<NextLesson lesson="T2_Intermediate/I-UVM-1B_The_UVM_Factory/index" />);
+    const line = screen.getByTestId("next-lesson");
+    expect(line).toHaveClass("hidden", "print:block");
+    expect(line).not.toHaveClass("block");
+    cleanup();
+  });
+
   it("is registered for lessons", () => {
     expect(mdxComponents).toHaveProperty("NextLesson");
   });

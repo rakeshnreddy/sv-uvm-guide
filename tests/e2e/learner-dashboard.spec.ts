@@ -67,8 +67,15 @@ test.describe('learner dashboard', () => {
     await page.goto('/dashboard');
     await waitForShell(page);
 
-    const lessons = page.getByRole('region', { name: 'Lessons' });
-    await expect(lessons.getByTestId('dashboard-lesson-totals')).toContainText('1 done and 1 opened');
+    const progress = page.getByRole('region', { name: 'Progress' });
+    await expect(progress.getByTestId('dashboard-lesson-totals')).toContainText('1 done and 1 opened');
+    // The Tier 1 trace: F1A high, and the cursor on F1B, the module of the lesson to continue.
+    const trace = progress.getByRole('list', { name: 'Tier 1: Foundations modules' });
+    await expect(trace.getByRole('link', { name: 'F1A: The Cost of Bugs, done' })).toHaveAttribute('href', LESSON);
+    await expect(trace.getByRole('link', { name: 'F1B: The Verification Mindset, not started, where you are' })).toHaveAttribute(
+      'href',
+      NEXT_LESSON,
+    );
     const continueCard = page.getByRole('region', { name: 'Continue' });
     await expect(continueCard.getByText('Next after F1A, which you marked done')).toBeVisible();
     const resume = continueCard.getByTestId('dashboard-continue');
