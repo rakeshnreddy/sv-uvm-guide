@@ -9,6 +9,7 @@ import { PageShell } from '@/components/layout/PageShell';
 import { Section } from '@/components/layout/Section';
 import { cardClass } from '@/components/ui/Card';
 import { verificationStackLinks } from '@/components/diagrams/verification-stack-links';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
 import { buildCurriculumOverview, PLANNED_MODULES, type LessonPosition, type OverviewTier } from '@/lib/curriculum-overview';
 import { readLessonMinutes, readManifestTiers } from '@/lib/curriculum-scan';
@@ -76,7 +77,7 @@ export default function CurriculumPage() {
         <TierJumpLinks tiers={tiers} />
       </PageHeader>
 
-      <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />
+      <CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />
 
       <Section
         id="verification-stack"

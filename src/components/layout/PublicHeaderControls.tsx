@@ -12,12 +12,12 @@ import { useModalDialog } from "@/components/search/useModalDialog";
 import { CHROME_GLASS_CLASS, DIALOG_BACKDROP_CLASS } from "@/components/layout/nav-styles";
 import { headerFocusRing, iconButtonClass, iconButtonIconClass } from "@/components/ui/icon-button-class";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
-import { useRecord } from "@/lib/learner-store/react";
-import { curriculumProgressRecord, lessonLogRecord } from "@/lib/learner-store/repositories/lessons";
+import { useContinueLesson } from "@/hooks/useContinueLesson";
+import { continueAccessibleName, continueLabel, type ContinueLessonEntry } from "@/lib/continue-lesson";
 import type { NavLink } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
-import { CONTINUE_LABEL, START_LEARNING_LABEL, resumeLessonHref } from "./public-header-resume";
+import { START_LEARNING_LABEL, longestContinueLabel } from "./public-header-resume";
 
 /** Tailwind's `md`: below it the header shows the wordmark, search and the menu button. */
 export const PUBLIC_MENU_MAX_WIDTH = 768;
@@ -36,13 +36,6 @@ function preloadSearchDialog(): void {
 // ---------------------------------------------------------------------------
 // Start learning / Continue
 // ---------------------------------------------------------------------------
-
-/** The lesson the accent action opens: the stored position once hydrated, the first lesson before. */
-export function useResumeHref(lessonPaths: readonly string[]): string | null {
-  const lessonLog = useRecord(lessonLogRecord);
-  const progress = useRecord(curriculumProgressRecord);
-  return useMemo(() => resumeLessonHref(lessonLog, progress, lessonPaths), [lessonLog, progress, lessonPaths]);
-}
 
 /**
  * The accent action's style. In the bar it is the secondary style (raised
@@ -63,36 +56,44 @@ export function resumeLinkClass(layout: "bar" | "menu"): string {
 
 interface ResumeLinkProps {
   firstLessonHref: string;
-  lessonPaths: readonly string[];
+  /** Every lesson in course order (continueLessons()), for the one continue rule. */
+  lessons: readonly ContinueLessonEntry[];
   layout?: "bar" | "menu";
   onNavigate?: () => void;
 }
 
 /**
- * "Start learning" (to the first lesson), or "Continue" (to the lesson this
- * browser opened last). Both labels sit in the same grid cell and the unused
- * one is invisible, so the link is as wide as the longer label in either state
- * and nothing in the row shifts when the stored position appears after
- * hydration. The server HTML is always "Start learning".
+ * "Start learning" (to the first lesson), or "Continue <code>" (to the lesson
+ * to continue, by the one rule in src/lib/continue-lesson.ts), with the
+ * lesson's full title in the accessible name. The labels sit in one grid cell
+ * beside an invisible copy of the longest continue label any lesson can
+ * produce, so the link has the same width in every state and nothing in the
+ * row shifts when the stored position appears after hydration. The server HTML
+ * is always "Start learning".
  */
-export function ResumeLink({ firstLessonHref, lessonPaths, layout = "bar", onNavigate }: ResumeLinkProps) {
-  const resumeHref = useResumeHref(lessonPaths);
-  const resuming = resumeHref !== null;
+export function ResumeLink({ firstLessonHref, lessons, layout = "bar", onNavigate }: ResumeLinkProps) {
+  const position = useContinueLesson(lessons);
+  const lesson = position?.lesson ?? null;
+  const sizer = useMemo(() => longestContinueLabel(lessons), [lessons]);
   const cell = "col-start-1 row-start-1";
 
   return (
     <Link
-      href={resumeHref ?? firstLessonHref}
+      href={lesson?.href ?? firstLessonHref}
       onClick={onNavigate}
       data-testid="public-header-resume"
-      data-state={resuming ? "continue" : "start"}
+      data-state={lesson ? "continue" : "start"}
+      aria-label={lesson ? continueAccessibleName(lesson) : undefined}
       className={resumeLinkClass(layout)}
     >
-      <span className={cn(cell, resuming && "invisible")} aria-hidden={resuming || undefined}>
+      <span className={cn(cell, lesson && "invisible")} aria-hidden={lesson ? true : undefined}>
         {START_LEARNING_LABEL}
       </span>
-      <span className={cn(cell, !resuming && "invisible")} aria-hidden={!resuming || undefined}>
-        {CONTINUE_LABEL}
+      <span className={cn(cell, !lesson && "invisible")} aria-hidden={lesson ? undefined : true}>
+        {lesson ? continueLabel(lesson) : null}
+      </span>
+      <span className={cn(cell, "invisible")} aria-hidden="true" data-resume-sizer="">
+        {sizer}
       </span>
     </Link>
   );
@@ -166,10 +167,10 @@ const menuHeadingClass = "px-3 text-label text-muted-foreground";
 interface PublicMenuProps {
   links: readonly NavLink[];
   firstLessonHref: string;
-  lessonPaths: readonly string[];
+  lessons: readonly ContinueLessonEntry[];
 }
 
-function PublicMenuPanel({ links, firstLessonHref, lessonPaths }: PublicMenuProps) {
+function PublicMenuPanel({ links, firstLessonHref, lessons }: PublicMenuProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const appearanceId = useId();
@@ -214,7 +215,7 @@ function PublicMenuPanel({ links, firstLessonHref, lessonPaths }: PublicMenuProp
           <div className="px-3">
             <ResumeLink
               firstLessonHref={firstLessonHref}
-              lessonPaths={lessonPaths}
+              lessons={lessons}
               layout="menu"
               onNavigate={shellStore.closeMenu}
             />
@@ -284,7 +285,7 @@ export default function PublicHeaderControls(props: PublicMenuProps) {
         <ThemeSwitcher />
       </div>
       <div className="hidden md:block">
-        <ResumeLink firstLessonHref={props.firstLessonHref} lessonPaths={props.lessonPaths} />
+        <ResumeLink firstLessonHref={props.firstLessonHref} lessons={props.lessons} />
       </div>
       <div className="md:hidden">
         <PublicMenu {...props} />

@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PLACEMENT_ASSESSMENT_VERSION, PLACEMENT_SCORING_VERSION } from '@/components/assessment/placementQuizData';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getLabById } from '@/lib/lab-registry';
 import { __resetRecordsForTests } from '@/lib/learner-store/record';
@@ -61,6 +62,8 @@ const [tier1] = curriculumData;
 const [f1a, f1b] = tier1.sections;
 const F1A_PATH = `/curriculum/${tier1.slug}/${f1a.slug}/index`;
 const F1B_PATH = `/curriculum/${tier1.slug}/${f1b.slug}/index`;
+// F1A is marked done and opened last in the seeded store, so Continue goes to the lesson after it.
+const AFTER_F1A = continueLessons().find((lesson) => lesson.href === continueLessons().find((l) => l.href === F1A_PATH)?.nextHref)!;
 const TOTAL_LESSONS = curriculumData.reduce((sum, t) => sum + t.sections.reduce((n, s) => n + s.topics.length, 0), 0);
 const TIER1_LESSONS = tier1.sections.reduce((n, s) => n + s.topics.length, 0);
 const basics = getLabById('basics-1')!;
@@ -204,18 +207,20 @@ describe('/dashboard', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('gives "Back to" the accent when no route is chosen, and nothing else', () => {
+  it('gives Continue the accent when no route is chosen, and nothing else', () => {
     seedStore();
     render(<DashboardPage />);
     const continueCard = screen.getByRole('region', { name: 'Continue' });
-    expect(within(continueCard).getByRole('link', { name: /^Back to F1A: The Cost of Bugs/ })).toHaveClass('bg-primary');
+    const resume = within(continueCard).getByTestId('dashboard-continue');
+    expect(resume).toHaveClass('bg-primary');
+    expect(resume).toHaveAccessibleName(`Continue ${AFTER_F1A.code}: ${AFTER_F1A.title}`);
     expect(document.querySelectorAll('a.bg-primary, button.bg-primary')).toHaveLength(1);
   });
 
-  it('picks the next route lesson, then the last lesson opened, for the accent', () => {
-    expect(continuePrimary(true, true)).toBe('next');
+  it('picks the lesson to continue, then the next route lesson, for the accent', () => {
+    expect(continuePrimary(true, true)).toBe('continue');
     expect(continuePrimary(false, true)).toBe('next');
-    expect(continuePrimary(true, false)).toBe('last');
+    expect(continuePrimary(true, false)).toBe('continue');
     expect(continuePrimary(false, false)).toBeNull();
   });
 
@@ -225,7 +230,9 @@ describe('/dashboard', () => {
     render(<DashboardPage />);
 
     const continueCard = screen.getByRole('region', { name: 'Continue' });
-    expect(within(continueCard).getByRole('link', { name: /^Back to F1A: The Cost of Bugs/ })).toHaveAttribute('href', F1A_PATH);
+    // F1A, opened last, is marked done: Continue names the lesson after it and says why.
+    expect(within(continueCard).getByTestId('dashboard-continue')).toHaveAttribute('href', AFTER_F1A.href);
+    expect(within(continueCard).getByText('Next after F1A, which you marked done')).toBeInTheDocument();
     expect(within(continueCard).getByText('Next on your Junior route')).toBeInTheDocument();
     expect(within(continueCard).getByRole('link', { name: /^Continue with / }).getAttribute('href')).toMatch(/^\/curriculum\/T\d_/);
 
@@ -280,10 +287,10 @@ describe('/dashboard', () => {
 
     const data = screen.getByRole('region', { name: 'Your data' });
     expect(within(data).getByRole('link', { name: 'Back up or reset your data' })).toHaveAttribute('href', '/settings#data');
-    // One filled accent action per view: the next lesson on the route; backup and "Back to" are secondary.
+    // One filled accent action per view: Continue; backup and the route's next lesson are secondary.
     expect(within(data).getByRole('link', { name: 'Back up or reset your data' })).not.toHaveClass('bg-primary');
-    expect(within(continueCard).getByRole('link', { name: /^Continue with / })).toHaveClass('bg-primary');
-    expect(within(continueCard).getByRole('link', { name: /^Back to F1A/ })).not.toHaveClass('bg-primary');
+    expect(within(continueCard).getByTestId('dashboard-continue')).toHaveClass('bg-primary');
+    expect(within(continueCard).getByRole('link', { name: /^Continue with / })).not.toHaveClass('bg-primary');
     expect(document.querySelectorAll('a.bg-primary, button.bg-primary')).toHaveLength(1);
     expect(data).toHaveTextContent("You haven't downloaded a backup yet.");
     expect(data).toHaveTextContent("Some browsers clear site data for sites they haven't seen for a while.");

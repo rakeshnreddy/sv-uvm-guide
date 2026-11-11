@@ -94,12 +94,22 @@ export function barLinkClass(current: boolean): string {
  */
 export const MENU_SURFACE_CLASS = cn(CHROME_GLASS_CLASS, "rounded-xl text-popover-foreground");
 
-/** A disclosure's panel: the glass menu surface, faded in over 200 ms. */
+/**
+ * Takes the backdrop blur off a glass layer that stays mounted while hidden,
+ * so a closed menu never counts as a blurred layer (at most three are
+ * visible at once, DESIGN.md section 11).
+ */
+export const NO_BACKDROP_BLUR_CLASS = "[-webkit-backdrop-filter:none] [backdrop-filter:none]";
+
+/**
+ * A disclosure's panel: the glass menu surface, faded in over 200 ms. It stays
+ * mounted while closed (invisible), without the blur.
+ */
 export function menuPanelClass(open: boolean): string {
   return cn(
     MENU_SURFACE_CLASS,
     "absolute left-0 top-full z-50 mt-3 w-56 p-1.5 transition-[opacity,visibility] duration-200 ease-bench motion-reduce:transition-none",
-    open ? "visible opacity-100" : "invisible opacity-0",
+    open ? "visible opacity-100" : cn("invisible opacity-0", NO_BACKDROP_BLUR_CLASS),
   );
 }
 

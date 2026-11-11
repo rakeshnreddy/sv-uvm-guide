@@ -4,6 +4,7 @@ import {
   CONTINUE_LABEL,
   START_LEARNING_LABEL,
   lessonPathsFromManifest,
+  longestContinueLabel,
   resumeLessonHref,
 } from '@/components/layout/public-header-resume';
 import { curriculumData, moduleHref } from '@/lib/curriculum-data';
@@ -69,5 +70,12 @@ describe('resumeLessonHref', () => {
 
   it('labels the two states in sentence case', () => {
     expect([START_LEARNING_LABEL, CONTINUE_LABEL]).toEqual(['Start learning', 'Continue']);
+  });
+});
+
+describe('longestContinueLabel', () => {
+  it('is the widest "Continue <code>" any lesson produces, so the header reserves its width', () => {
+    expect(longestContinueLabel([{ code: 'F1A' }, { code: 'E-UVM-ML-1' }, { code: 'I-SV-1' }])).toBe('Continue E-UVM-ML-1');
+    expect(longestContinueLabel([])).toBe('Continue');
   });
 });

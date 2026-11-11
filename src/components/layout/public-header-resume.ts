@@ -1,22 +1,19 @@
 /**
  * Where the public header's accent action goes: "Start learning" to the first
- * lesson, or "Continue" to the lesson this browser opened last. Pure functions,
- * safe on the server and in client islands, so the choice is unit-tested
- * without a browser.
- *
- * The last opened lesson comes from the same two records the dashboard reads
- * (DashboardPageClient's latestLesson): the lesson log, keyed by canonical
- * lesson path, and, for visits saved before the log existed, the legacy
- * 'curriculumProgress' record, which keeps the last lesson per module. A
- * stored lesson that no longer exists is ignored.
+ * lesson, or "Continue <code>" to the lesson to continue. The lesson comes from
+ * the one continue rule in src/lib/continue-lesson.ts (re-exported here), the
+ * same rule the landing page, the curriculum page and the dashboard use. Pure
+ * functions, safe on the server and in client islands.
  */
-import type { CurriculumProgressData, LessonLogData } from "@/lib/learner-store/repositories/lessons";
+import { CONTINUE_PREFIX, continueLabel } from "@/lib/continue-lesson";
+
+export { resumeLessonHref } from "@/lib/continue-lesson";
 
 /** The accent action before the browser holds a lesson position (and in the server HTML). */
 export const START_LEARNING_LABEL = "Start learning";
 
-/** The accent action once the browser holds a lesson position. */
-export const CONTINUE_LABEL = "Continue";
+/** The first word of the accent action once the browser holds a lesson position ("Continue F3C"). */
+export const CONTINUE_LABEL = CONTINUE_PREFIX;
 
 /** The parts of content/curriculum/curriculum.manifest.json this reads. */
 export interface LessonManifest {
@@ -39,30 +36,13 @@ export function lessonPathsFromManifest(manifest: LessonManifest): string[] {
 }
 
 /**
- * The most recently opened lesson that still exists, as its path, or null when
- * the browser holds no lesson position.
+ * The longest continue label any lesson can produce. The header reserves its
+ * width (an invisible copy in the same grid cell), so the row never moves
+ * when the stored position appears after hydration, whatever the module code.
  */
-export function resumeLessonHref(
-  lessonLog: Pick<LessonLogData, "lessons">,
-  progress: Readonly<CurriculumProgressData>,
-  lessonPaths: readonly string[],
-): string | null {
-  const known = new Set(lessonPaths);
-  let best: { href: string; at: number } | null = null;
-
-  for (const [path, visit] of Object.entries(lessonLog.lessons)) {
-    if (known.has(path) && (!best || visit.lastVisitedAt > best.at)) best = { href: path, at: visit.lastVisitedAt };
-  }
-
-  // Not lastVisit() from src/lib/learning-route-state.ts: that keeps only the
-  // newest legacy entry, so a newest entry whose lesson is gone would hide an
-  // older legacy lesson that still exists. This scan skips the gone one.
-  for (const [moduleId, entry] of Object.entries(progress)) {
-    if (!entry?.lastVisitedAt || (best && entry.lastVisitedAt <= best.at)) continue;
-    const suffix = `/${moduleId}/${entry.lastVisitedLesson ?? "index"}`;
-    const href = lessonPaths.find((path) => path.endsWith(suffix));
-    if (href) best = { href, at: entry.lastVisitedAt };
-  }
-
-  return best?.href ?? null;
+export function longestContinueLabel(lessons: readonly { code: string }[]): string {
+  return lessons.reduce((longest, lesson) => {
+    const label = continueLabel(lesson);
+    return label.length > longest.length ? label : longest;
+  }, CONTINUE_PREFIX);
 }

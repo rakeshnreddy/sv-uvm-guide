@@ -8,17 +8,18 @@ import { EXPERT_INDEX_HREF, PLACEMENT_QUIZ_HREF } from '@/lib/learning-paths';
  */
 
 const F1A = '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index';
-const F3A = '/curriculum/T1_Foundational/F3A_Simulation_Semantics/index';
+const F2D_IPC = '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc';
+const F2E = '/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index';
 
-async function seedVisit(page: Page, moduleId: string, lessonSlug: string) {
+async function seedVisit(page: Page, moduleId: string, lessonSlug: string, done = false) {
   await page.addInitScript(
-    ([id, slug]) => {
+    ([id, slug, isDone]) => {
       window.localStorage.setItem(
         'curriculumProgress',
-        JSON.stringify({ [id]: { completedLessons: [], lastVisitedAt: Date.now(), lastVisitedLesson: slug } }),
+        JSON.stringify({ [id]: { completedLessons: isDone ? [slug] : [], lastVisitedAt: Date.now(), lastVisitedLesson: slug } }),
       );
     },
-    [moduleId, lessonSlug],
+    [moduleId, lessonSlug, done] as const,
   );
 }
 
@@ -76,7 +77,7 @@ test.describe('curriculum overview modules', () => {
     await expect(modules.getByText(/Placeholder/)).toHaveCount(0);
     await modules.getByRole('button', { name: 'Map' }).click();
     const map = page.getByRole('group', { name: 'Curriculum map' });
-    await expect(map.getByRole('link')).toHaveCount(69);
+    await expect(map.getByRole('link')).toHaveCount(74);
     for (const href of (await map.getByRole('link').evaluateAll((links) => links.map((a) => a.getAttribute('href')))).slice(0, 3)) {
       const response = await page.request.get(href!);
       expect(response.status(), href!).toBeLessThan(400);
@@ -93,11 +94,22 @@ test.describe('curriculum overview modules', () => {
     await expect(page.getByRole('heading', { level: 4, name: /^I-SV-5:/ })).toBeVisible();
   });
 
-  test('"Continue" follows the last lesson opened (F2D/ipc -> F3A)', async ({ page }) => {
+  test('"Continue" names the lesson opened last while it is not done (F2D/ipc)', async ({ page }) => {
     await seedVisit(page, 'F2D_Reusable_Code_and_Parallelism', 'ipc');
     await page.goto('/curriculum');
     const resume = page.getByRole('region', { name: 'Pick up where you left off' });
-    await expect(resume.getByRole('link', { name: 'Continue with F3A: Simulation Semantics' })).toHaveAttribute('href', F3A);
+    const action = resume.getByTestId('curriculum-continue');
+    await expect(action).toHaveAccessibleName('Continue F2D: Interprocess Communication');
+    await expect(action).toHaveAttribute('href', F2D_IPC);
+  });
+
+  test('"Continue" moves to the next lesson once the one opened last is marked done (F2D/ipc -> F2E)', async ({ page }) => {
+    await seedVisit(page, 'F2D_Reusable_Code_and_Parallelism', 'ipc', true);
+    await page.goto('/curriculum');
+    const resume = page.getByRole('region', { name: 'Pick up where you left off' });
+    const action = resume.getByTestId('curriculum-continue');
+    await expect(action).toHaveAccessibleName('Continue F2E: Your First Self-Checking Testbench');
+    await expect(action).toHaveAttribute('href', F2E);
   });
 
   test('fits a 390 px screen without horizontal scrolling', async ({ page }) => {

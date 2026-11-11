@@ -15,7 +15,9 @@ import {
   CHROME_GLASS_LIGHT_ALPHA,
   DIALOG_BACKDROP_CLASS,
   MENU_SURFACE_CLASS,
+  NO_BACKDROP_BLUR_CLASS,
   headerBarFrameClass,
+  menuPanelClass,
 } from "@/components/layout/nav-styles";
 import SearchDialog from "@/components/search/SearchDialog";
 import ShortcutsHelpDialog from "@/components/search/ShortcutsHelpDialog";
@@ -219,6 +221,14 @@ describe("header bar and dialog backdrop", () => {
 // ---------------------------------------------------------------------------
 
 describe("glass dialogs and menus", () => {
+  it("takes the blur off a disclosure panel while it is closed, so a closed menu is never a blurred layer", () => {
+    expect(NO_BACKDROP_BLUR_CLASS).toBe("[-webkit-backdrop-filter:none] [backdrop-filter:none]");
+    expect(menuPanelClass(false)).toContain(NO_BACKDROP_BLUR_CLASS);
+    expect(menuPanelClass(false)).toContain("invisible");
+    expect(menuPanelClass(true)).not.toMatch(/backdrop-filter/);
+    expect(menuPanelClass(true).split(" ")).toContain("glass");
+  });
+
   it("makes the search dialog a glass panel over a dimming backdrop", () => {
     act(() => shellStore.openSearch());
     render(<SearchDialog />);

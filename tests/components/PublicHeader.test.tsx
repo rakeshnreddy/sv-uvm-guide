@@ -9,6 +9,8 @@ import PublicHeader, {
   PUBLIC_HEADER_CONTAINER,
 } from '@/components/layout/PublicHeader';
 import { shellStore } from '@/components/search/shell-store';
+import { longestContinueLabel } from '@/components/layout/public-header-resume';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { lessonLogRecord } from '@/lib/learner-store/repositories/lessons';
 import { moduleHref } from '@/lib/curriculum-data';
 import { PUBLIC_NAV, SITE_NAME } from '@/lib/site-links';
@@ -95,6 +97,8 @@ describe('<PublicHeader />', () => {
   it('sends "Start learning" to the first lesson of the course', () => {
     const firstModule = manifest.tiers[0].modules[0].id;
     expect(FIRST_LESSON_HREF).toBe(moduleHref(firstModule));
+    // The same first lesson the continue rule's lesson list starts with.
+    expect(continueLessons()[0].href).toBe(FIRST_LESSON_HREF);
   });
 
   it('is a transparent sticky row over a glass bar, in the same container and gutters as the pages below it', () => {
@@ -146,8 +150,10 @@ describe('<PublicHeader />', () => {
     const resume = container.querySelector('[data-testid="public-header-resume"]');
     expect(resume).toHaveAttribute('data-state', 'start');
     expect(resume).toHaveAttribute('href', FIRST_LESSON_HREF);
-    // Both labels share one grid cell, so the link is as wide as the longer one in either state.
-    expect(resume?.querySelectorAll('span.col-start-1.row-start-1')).toHaveLength(2);
+    // Both labels share one grid cell with an invisible copy of the longest continue label, so the
+    // link has one width in every state, whatever the module code.
+    expect(resume?.querySelectorAll('span.col-start-1.row-start-1')).toHaveLength(3);
+    expect(resume?.querySelector('[data-resume-sizer]')).toHaveTextContent(longestContinueLabel(continueLessons()));
     const button = container.querySelector('button[aria-label="Theme"]');
     expect(button).toHaveClass('h-10', 'w-10');
     expect(button?.parentElement?.parentElement).toHaveClass('h-10', 'w-10', 'shrink-0');
@@ -155,12 +161,14 @@ describe('<PublicHeader />', () => {
     expect(container.textContent).not.toMatch(/loading/i);
   });
 
-  it('reads "Continue" and links to the stored lesson once the browser holds a lesson position', () => {
+  it('reads "Continue <code>" and links to the lesson to continue once the browser holds a lesson position', () => {
     const lesson = '/curriculum/T2_Intermediate/I-SV-1_OOP/index';
     lessonLogRecord.write({ lessons: { [lesson]: { firstVisitedAt: 1, lastVisitedAt: 2, visits: 1 } } });
     render(<PublicHeader />);
     const banner = screen.getByRole('banner');
-    const link = within(banner).getByRole('link', { name: 'Continue' });
+    const title = continueLessons().find((entry) => entry.href === lesson)!.title;
+    const link = within(banner).getByRole('link', { name: `Continue I-SV-1: ${title}` });
+    expect(link).toHaveTextContent('Continue I-SV-1');
     expect(link).toHaveAttribute('href', lesson);
     expect(link).toHaveAttribute('data-state', 'continue');
     expect(within(banner).queryByRole('link', { name: 'Start learning' })).not.toBeInTheDocument();

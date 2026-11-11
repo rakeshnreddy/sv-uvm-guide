@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { PLACEMENT_ASSESSMENT_VERSION, PLACEMENT_SCORING_VERSION } from '@/components/assessment/placementQuizData';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { buildCurriculumTotals, type ExerciseMeta, type LabMeta } from '@/lib/learner-stats';
@@ -58,6 +59,7 @@ export default function DashboardPage() {
       labs={availableLabs}
       exercises={exercises}
       placementVersions={{ assessmentVersion: PLACEMENT_ASSESSMENT_VERSION, scoringVersion: PLACEMENT_SCORING_VERSION }}
+      continueLessons={continueLessons()}
     />
   );
 }

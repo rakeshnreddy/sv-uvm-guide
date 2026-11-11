@@ -9,7 +9,9 @@ import { routeOpeningModules, routeStartTier } from '@/components/curriculum/Rou
 import { glassCardHover, primaryAction, tierChip } from '@/components/curriculum/overview-ui';
 import HeroSection from '@/components/home/HeroSection';
 import type { HomeStats } from '@/components/home/home-stats';
+import { buildSchedulerFrame } from '@/components/home/scheduler-frame';
 import PracticeHub, { PRACTICE_GLASS_CARDS, practiceItemTier } from '@/components/practice/PracticeHub';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getLessonContext } from '@/lib/curriculum/lesson-context';
 import { PLANNED_MODULES, buildCurriculumOverview } from '@/lib/curriculum-overview';
@@ -77,7 +79,7 @@ describe('/curriculum overview', () => {
   });
 
   it('makes the route cards quiet glass with the tier edge, and shows their first modules as tinted tags', () => {
-    render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />);
+    render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />);
     for (const [id, tier] of [['junior', '1'], ['practitioner', '2'], ['expert', '4']] as const) {
       const card = document.getElementById(`route-${id}`)!;
       expect(card, id).toHaveClass('glass-quiet', 'tier-edge');
@@ -98,7 +100,7 @@ describe('/curriculum overview', () => {
   });
 
   it('scopes every tier section to its tier: the step mark, the top edge and quiet-glass module cards', () => {
-    render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />);
+    render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />);
     for (const n of [1, 2, 3, 4]) {
       const section = document.getElementById(`t${n}`)!;
       expect(section).toHaveAttribute('data-tier', String(n));
@@ -172,17 +174,16 @@ describe('practice hub', () => {
 
 describe('landing hero', () => {
   const stats: HomeStats = { lessonCount: 112, labCount: 20, tierCount: 4 };
+  const lessons = [{ href: '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index', code: 'F1A', title: 'The Cost of Bugs' }];
 
-  it('lets the colour field show behind the hero: real glass on its card, quiet glass on its three highlights', () => {
-    const { container } = render(<HeroSection {...stats} />);
+  it('lets the colour field show behind the hero: one real-glass card, the scheduler frame, and the sheen on the one filled action', () => {
+    const { container } = render(<HeroSection stats={stats} lessons={lessons} placementQuestionCount={10} frame={buildSchedulerFrame()} />);
     expect(container.querySelector('section')).not.toHaveClass('bg-background');
     expect(screen.getByTestId('home-hero-card')).toHaveClass('glass');
-    const highlights = screen.getAllByRole('term').map((term) => term.parentElement!);
-    expect(highlights).toHaveLength(3);
-    highlights.forEach((card) => expect(card).toHaveClass('glass-quiet'));
     // The hero card is the page's one blurred card.
     expect(container.querySelectorAll('.glass')).toHaveLength(1);
     // The filled action is the Button's default variant, which carries the sheen.
-    expect(screen.getByRole('link', { name: 'Find your level' })).toHaveClass('sheen-primary');
+    expect(screen.getByRole('link', { name: 'Start lesson 1' })).toHaveClass('sheen-primary');
+    expect(screen.getByRole('link', { name: 'Find your level' })).not.toHaveClass('sheen-primary');
   });
 });

@@ -7,6 +7,8 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 const LESSON = '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index';
+/** The next lesson on the learning path after LESSON: where Continue goes once LESSON is marked done. */
+const NEXT_LESSON = '/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index';
 
 /** The layout marks <html data-shortcuts-ready> once its keyboard shortcuts are live (after hydration). */
 async function waitForShell(page: Page) {
@@ -44,7 +46,7 @@ test.describe('learner dashboard', () => {
     expect(apiRequests).toEqual([]);
   });
 
-  test('a lesson marked done shows on the dashboard, with a link back to it', async ({ page }) => {
+  test('a lesson marked done shows on the dashboard, and Continue moves on to the next lesson', async ({ page }) => {
     await page.goto(LESSON);
     await waitForShell(page);
 
@@ -68,16 +70,18 @@ test.describe('learner dashboard', () => {
     const lessons = page.getByRole('region', { name: 'Lessons' });
     await expect(lessons.getByTestId('dashboard-lesson-totals')).toContainText('1 done and 1 opened');
     const continueCard = page.getByRole('region', { name: 'Continue' });
-    const back = continueCard.getByRole('link', { name: /^Back to F1A: The Cost of Bugs/ });
-    await expect(back).toHaveAttribute('href', LESSON);
+    await expect(continueCard.getByText('Next after F1A, which you marked done')).toBeVisible();
+    const resume = continueCard.getByTestId('dashboard-continue');
+    await expect(resume).toHaveAccessibleName('Continue F1B: The Verification Mindset');
+    await expect(resume).toHaveAttribute('href', NEXT_LESSON);
     await expect(page.getByRole('region', { name: 'Your data' }).getByRole('link', { name: 'Back up or reset your data' })).toHaveAttribute(
       'href',
       '/settings#data',
     );
     expect(apiRequests).toEqual([]);
 
-    await back.click();
-    await expect(page).toHaveURL(new RegExp(`${LESSON}$`));
+    await resume.click();
+    await expect(page).toHaveURL(new RegExp(`${NEXT_LESSON}$`));
   });
 
   test('/dashboard/coverage no longer exists', async ({ page }) => {

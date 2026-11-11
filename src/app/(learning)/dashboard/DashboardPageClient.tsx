@@ -12,6 +12,14 @@ import { siteLabel } from '@/lib/nav-labels';
 import { DASHBOARD_HREF, LABS_HREF } from '@/lib/site-links';
 import { StorageStatusNote } from '@/components/learner/StorageStatusNote';
 import { labelWithCode } from '@/lib/curriculum-overview';
+import {
+  continueAccessibleName,
+  continueLabel,
+  continueLesson,
+  lastOpenedAt,
+  type ContinueLessonEntry,
+  type ContinuePosition,
+} from '@/lib/continue-lesson';
 import { tierDataAttribute, tierOfTierSlug } from '@/lib/tier-colors';
 import {
   backupReminder,
@@ -49,7 +57,6 @@ import { metaRecord, type LearnerMeta } from '@/lib/learner-store/repositories/m
 import { notebookEntries, type NotebookEntry } from '@/lib/learner-store/repositories/notebook';
 import type { ResolvedLesson } from '@/lib/learning-paths';
 import {
-  lastVisit,
   nextOnRoute,
   readSelectedRoute,
   routeAnchor,
@@ -80,6 +87,8 @@ export interface DashboardPageClientProps {
   exercises: readonly ExerciseMeta[];
   /** The placement quiz's current versions; an older saved attempt is marked as from an earlier quiz. */
   placementVersions?: PlacementVersions;
+  /** Every lesson in course order (continueLessons()), for the one continue rule. */
+  continueLessons: readonly ContinueLessonEntry[];
 }
 
 const NO_EXERCISES: readonly StoredExerciseProgress[] = Object.freeze([]);
@@ -192,51 +201,65 @@ function Bar({ percent }: { percent: number }) {
 // Cards
 // ---------------------------------------------------------------------------
 
-interface LastOpened {
-  lesson: IndexedStaticLesson;
-  at: number;
-}
-
 /**
- * Which Continue link carries the view's one filled accent: the next lesson on
- * the learner's route when there is one, otherwise the last lesson opened.
+ * Which Continue link carries the view's one filled accent: the lesson to
+ * continue (DESIGN.md section 10: Continue comes first), otherwise the next
+ * lesson on the learner's route.
  */
-export function continuePrimary(hasLast: boolean, hasNext: boolean): 'next' | 'last' | null {
+export function continuePrimary(hasContinue: boolean, hasNext: boolean): 'continue' | 'next' | null {
+  if (hasContinue) return 'continue';
   if (hasNext) return 'next';
-  if (hasLast) return 'last';
   return null;
 }
 
+/** The eyebrow over the lesson to continue: why it is the one. */
+export function dashboardContinueEyebrow(position: ContinuePosition<ContinueLessonEntry>): string {
+  return position.reason === 'next-after-done'
+    ? `Next after ${position.lastOpened.code}, which you marked done`
+    : 'Last opened';
+}
+
 function ContinueCard({
-  last,
+  position,
+  lastAt,
   route,
   progress,
 }: {
-  last: LastOpened | null;
+  position: ContinuePosition<ContinueLessonEntry> | null;
+  /** When this browser last opened position.lastOpened, epoch ms. */
+  lastAt: number | null;
   route: DashboardRoute | null;
   progress: Parameters<typeof nextOnRoute>[1];
 }) {
-  const position = route ? nextOnRoute(route.sequence, progress) : null;
-  const next = route && position && position.status !== 'complete' ? route.sequence[position.index] : undefined;
-  const primary = continuePrimary(Boolean(last), Boolean(next));
+  const routePosition = route ? nextOnRoute(route.sequence, progress) : null;
+  const next = route && routePosition && routePosition.status !== 'complete' ? route.sequence[routePosition.index] : undefined;
+  // The route's next lesson is the lesson to continue: one link, in the first panel.
+  const nextIsContinue = Boolean(position && next && next.href === position.lesson.href);
+  const primary = continuePrimary(Boolean(position), Boolean(next) && !nextIsContinue);
 
   return (
     <DashboardCard id="dashboard-continue-heading" title="Continue" className="md:col-span-2" glass>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className={panel}>
-          <p className={eyebrow}>Last opened</p>
-          {last ? (
+          <p className={eyebrow}>{position ? dashboardContinueEyebrow(position) : 'Last opened'}</p>
+          {position ? (
             <>
               <Link
-                href={last.lesson.href}
-                className={cn(primary === 'last' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}
+                href={position.lesson.href}
+                data-testid="dashboard-continue"
+                aria-label={continueAccessibleName(position.lesson)}
+                className={cn(primary === 'continue' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}
               >
                 <span className="[overflow-wrap:anywhere]">
-                  Back to {labelWithCode(last.lesson.moduleCode, last.lesson.title)}
+                  {continueLabel(position.lesson)}: {position.lesson.title}
                 </span>
                 <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
               </Link>
-              <p className="mt-2 text-xs text-muted-foreground">Opened {formatDate(last.at)}</p>
+              {lastAt !== null && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {position.reason === 'next-after-done' ? `${position.lastOpened.code} opened` : 'Opened'} {formatDate(lastAt)}
+                </p>
+              )}
             </>
           ) : (
             <p className="mt-1 text-sm text-foreground">No lesson opened in this browser yet.</p>
@@ -246,10 +269,12 @@ function ContinueCard({
           {route ? (
             <>
               <p className={eyebrow}>Next on your {route.name} route</p>
-              {next ? (
-                <Link href={next.href} className={cn(primaryAction, 'mt-3 max-w-full')}>
+              {next && nextIsContinue ? (
+                <p className="mt-1 text-sm text-foreground">It is the lesson to continue.</p>
+              ) : next ? (
+                <Link href={next.href} className={cn(primary === 'next' ? primaryAction : secondaryAction, 'mt-3 max-w-full')}>
                   <span className="[overflow-wrap:anywhere]">
-                    {position?.status === 'not-started' ? 'Start with ' : 'Continue with '}
+                    {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
                     {labelWithCode(next.moduleCode, next.title)}
                   </span>
                   <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -693,6 +718,7 @@ export default function DashboardPageClient({
   labs,
   exercises: exerciseMeta,
   placementVersions,
+  continueLessons,
 }: DashboardPageClientProps) {
   const hydrated = useHydrated();
   const { target, ready: targetReady } = usePersistenceTarget();
@@ -751,7 +777,8 @@ export default function DashboardPageClient({
     if (!hasData) {
       body = <EmptyState />;
     } else {
-      const last = latestLesson(progress, lessonLog, lessons);
+      const position = continueLesson(lessonLog, progress, continueLessons);
+      const lastAt = position ? lastOpenedAt(lessonLog, progress, position.lastOpened.href) : null;
       const route = routes.find((candidate) => candidate.id === selectedRoute) ?? null;
       const attempt = latestPlacementAttempt(assessments);
       const attemptRoute = attempt ? routes.find((candidate) => candidate.id === attempt.routeId) : undefined;
@@ -763,7 +790,7 @@ export default function DashboardPageClient({
       );
       body = (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          <ContinueCard last={last} route={route} progress={progress} />
+          <ContinueCard position={position} lastAt={lastAt} route={route} progress={progress} />
           <LessonsCard summary={lessonSummary} moduleHrefs={moduleHrefs} />
           <LabsCard summaries={labProgress} />
           <ReviewCard due={countDueCards(flashcards, now)} tracked={trackedCardCount(flashcards)} />
@@ -791,25 +818,4 @@ export default function DashboardPageClient({
       </div>
     </PageShell>
   );
-}
-
-/** The most recently opened lesson that still exists: from the lesson log, or from 'curriculumProgress' for older visits. */
-function latestLesson(
-  progress: Parameters<typeof lastVisit>[0],
-  lessonLog: { lessons: Readonly<Record<string, { lastVisitedAt: number }>> },
-  lessons: ReadonlyMap<string, IndexedStaticLesson>,
-): LastOpened | null {
-  let best: LastOpened | null = null;
-  for (const [path, visit] of Object.entries(lessonLog.lessons)) {
-    const lesson = lessons.get(path);
-    if (lesson && (!best || visit.lastVisitedAt > best.at)) best = { lesson, at: visit.lastVisitedAt };
-  }
-  const legacy = lastVisit(progress);
-  if (legacy && (!best || legacy.at > best.at)) {
-    const lesson = [...lessons.values()].find(
-      (candidate) => candidate.moduleId === legacy.moduleId && candidate.slug === legacy.lessonSlug,
-    );
-    if (lesson) best = { lesson, at: legacy.at };
-  }
-  return best;
 }

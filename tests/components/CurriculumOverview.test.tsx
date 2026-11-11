@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { samePageHash } from '@/components/curriculum/CurriculumBrowser';
 import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
+import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
 import { PLANNED_MODULES, buildCurriculumOverview, type LessonPosition } from '@/lib/curriculum-overview';
 import { readLessonMinutes, readManifestTiers } from '@/lib/curriculum-scan';
@@ -41,7 +42,7 @@ const routes = resolveRoutes(curriculumData, { labs });
 const milestones = resolveMilestones(labs);
 
 function renderOverview() {
-  return render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} />);
+  return render(<CurriculumOverview tiers={tiers} routes={routes} milestones={milestones} planned={PLANNED_MODULES} continueLessons={continueLessons()} />);
 }
 
 function visit(moduleId: string, lessonSlug: string, at = 1_000) {
@@ -287,24 +288,40 @@ describe('pick up where you left off', () => {
     expect(screen.queryByText(/Recommended For You/i)).not.toBeInTheDocument();
   });
 
-  it('continues with the lesson after the last one opened (F2D/ipc -> F2E)', async () => {
+  it('continues the lesson opened last while it is not marked done (F2D/ipc)', async () => {
     visit('F2D_Reusable_Code_and_Parallelism', 'ipc');
     renderOverview();
     const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
-    expect(within(resume).getByRole('link', { name: /^Continue with F2E: / })).toHaveAttribute(
-      'href',
-      '/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index',
-    );
+    const action = within(resume).getByTestId('curriculum-continue');
+    expect(action).toHaveAttribute('href', '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc');
+    expect(action).toHaveAccessibleName(/^Continue F2D: /);
+    expect(action).toHaveTextContent(/^Continue F2D: /);
+    expect(within(resume).getByText('The lesson you opened last.')).toBeInTheDocument();
     expect(within(resume).getByRole('heading', { name: 'Recently visited' })).toBeInTheDocument();
     expect(within(resume).getByRole('link', { name: 'F2D: Interprocess Communication' })).toBeInTheDocument();
     const here = within(document.getElementById('t1-panel')!).getByRole('link', { name: /^F2D:/, current: 'location' });
     expect(here.closest('article')).toHaveTextContent('You are here');
-    // The continue action now holds the one accent fill; the Junior call to action steps down.
+    // The continue action holds the one accent fill; the Junior call to action steps down.
     const filled = Array.from(document.querySelectorAll('a, button')).filter((el) =>
       el.classList.contains('bg-primary'),
     );
-    expect(filled.map((el) => el.textContent)).toEqual([expect.stringMatching(/^Continue with F2E: /)]);
+    expect(filled).toEqual([action]);
     expect(screen.getByRole('link', { name: 'Begin the Junior route' })).toHaveClass('bg-muted');
+  });
+
+  it('moves to the lesson after the one opened last once it is marked done (F2D/ipc -> F2E)', async () => {
+    localStorage.setItem(
+      'curriculumProgress',
+      JSON.stringify({
+        F2D_Reusable_Code_and_Parallelism: { completedLessons: ['ipc'], lastVisitedAt: 1_000, lastVisitedLesson: 'ipc' },
+      }),
+    );
+    renderOverview();
+    const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
+    const action = within(resume).getByTestId('curriculum-continue');
+    expect(action).toHaveAttribute('href', '/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index');
+    expect(action).toHaveAccessibleName(/^Continue F2E: /);
+    expect(within(resume).getByText(/^The lesson after F2D: .*, which you marked done\.$/)).toBeInTheDocument();
   });
 
   it('shows the next lesson on the followed route once, and marks the current step', async () => {
@@ -313,7 +330,10 @@ describe('pick up where you left off', () => {
     renderOverview();
     const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
     expect(within(resume).getByText('Next on your Junior route')).toBeInTheDocument();
+    // Continue (the lesson opened last) and the route's next lesson are two links; only Continue is filled.
+    expect(within(resume).getByTestId('curriculum-continue')).toHaveClass('bg-primary');
     expect(screen.getAllByRole('link', { name: /^Continue with F2E: / })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: /^Continue with F2E: / })).not.toHaveClass('bg-primary');
     const steps = screen.getByRole('region', { name: 'The Junior route: 6 steps' });
     const current = within(steps).getAllByRole('listitem').find((li) => li.getAttribute('aria-current') === 'step');
     // F2E closes the language step, so the learner is still in it.

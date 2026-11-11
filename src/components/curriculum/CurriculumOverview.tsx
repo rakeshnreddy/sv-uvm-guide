@@ -2,7 +2,9 @@
 
 import React, { useMemo, useSyncExternalStore } from 'react';
 
+import { useContinueLesson } from '@/hooks/useContinueLesson';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+import type { ContinueLessonEntry } from '@/lib/continue-lesson';
 import { indexOverviewLessons, type OverviewTier, type PlannedModule } from '@/lib/curriculum-overview';
 import type { ResolvedMilestone, ResolvedRoute } from '@/lib/learning-paths';
 import {
@@ -21,6 +23,8 @@ export interface CurriculumOverviewProps {
   routes: ResolvedRoute[];
   milestones: ResolvedMilestone[];
   planned: readonly PlannedModule[];
+  /** Every lesson in course order (continueLessons()), for the one continue rule. */
+  continueLessons: readonly ContinueLessonEntry[];
 }
 
 const NO_PROGRESS: ProgressLike = {};
@@ -31,8 +35,9 @@ const serverRoute = () => null;
  * data from the manifest; this component adds what only the browser knows:
  * the route the learner follows and the lessons they opened.
  */
-export default function CurriculumOverview({ tiers, routes, milestones, planned }: CurriculumOverviewProps) {
+export default function CurriculumOverview({ tiers, routes, milestones, planned, continueLessons }: CurriculumOverviewProps) {
   const { progress, isLoaded } = useCurriculumProgress();
+  const position = useContinueLesson(continueLessons);
   const selectedRoute = useSyncExternalStore(subscribeSelectedRoute, readSelectedRoute, serverRoute);
 
   const visits: ProgressLike = isLoaded ? progress : NO_PROGRESS;
@@ -52,6 +57,7 @@ export default function CurriculumOverview({ tiers, routes, milestones, planned 
         selectedRoute={selectedRoute}
         progress={visits}
         lessons={lessons}
+        position={isLoaded ? position : null}
         ready={isLoaded}
       />
       <RouteChooser
