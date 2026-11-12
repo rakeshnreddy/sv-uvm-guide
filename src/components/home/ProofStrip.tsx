@@ -20,9 +20,9 @@ function listOf(items: readonly string[]): string {
 /** The four facts, every figure from the data (home-stats.ts). */
 export function proofFacts(facts: LandingFacts): ProofFact[] {
   return [
-    { id: 'lessons', figure: facts.lessonCount, label: `lessons in ${facts.tierCount} tiers, from your first testbench to staff-level depth` },
-    { id: 'models', figure: facts.interactiveModelCount, label: 'interactive models on the practice hub, beside the ones inside the lessons' },
-    { id: 'labs', figure: facts.labCount, label: 'guided labs, with your progress saved in this browser' },
+    { id: 'lessons', figure: facts.lessonCount, label: `lessons in ${facts.tierCount} tiers` },
+    { id: 'labs', figure: facts.labCount, label: 'guided labs' },
+    { id: 'questions', figure: facts.interviewQuestionCount, label: 'interview questions with model answers' },
     {
       id: 'standards',
       // A name, not a count (home-stats.ts, MAIN_STANDARDS): the SystemVerilog standard the course is built on.

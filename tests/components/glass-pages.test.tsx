@@ -8,8 +8,7 @@ import LessonOrientation from '@/components/curriculum/LessonOrientation';
 import { routeOpeningModules, routeStartTier } from '@/components/curriculum/RouteChooser';
 import { glassCardHover, primaryAction, tierChip } from '@/components/curriculum/overview-ui';
 import HeroSection from '@/components/home/HeroSection';
-import type { HomeStats } from '@/components/home/home-stats';
-import { buildSchedulerFrame } from '@/components/home/scheduler-frame';
+import type { LandingFacts } from '@/components/home/home-stats';
 import PracticeHub, { PRACTICE_GLASS_CARDS, practiceItemTier } from '@/components/practice/PracticeHub';
 import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData } from '@/lib/curriculum-data';
@@ -183,11 +182,12 @@ describe('practice hub', () => {
 });
 
 describe('landing hero', () => {
-  const stats: HomeStats = { lessonCount: 112, labCount: 20, tierCount: 4 };
+  const facts = { lessonCount: 112, labCount: 20, tierCount: 4, interviewQuestionCount: 166, placementQuestionCount: 10 } as LandingFacts;
+  const tiers = [{ id: 'T1_Foundational', number: 1 as const, label: 'Tier 1: Foundations', href: '/curriculum#t1', covers: 'The language.', lessonCount: 19 }];
   const lessons = [{ href: '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index', code: 'F1A', title: 'The Cost of Bugs' }];
 
-  it('lets the colour field show behind the hero: one real-glass card, the scheduler frame, and the sheen on the one filled action', () => {
-    const { container } = render(<HeroSection stats={stats} lessons={lessons} placementQuestionCount={10} frame={buildSchedulerFrame()} />);
+  it('lets the colour field show behind the hero: one real-glass card, the path, and the sheen on the one filled action', () => {
+    const { container } = render(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />);
     expect(container.querySelector('section')).not.toHaveClass('bg-background');
     expect(screen.getByTestId('home-hero-card')).toHaveClass('glass');
     // The hero card is the page's one blurred card.
@@ -195,5 +195,6 @@ describe('landing hero', () => {
     // The filled action is the Button's default variant, which carries the sheen.
     expect(screen.getByRole('link', { name: 'Start lesson 1' })).toHaveClass('sheen-primary');
     expect(screen.getByRole('link', { name: 'Find your level' })).not.toHaveClass('sheen-primary');
+    expect(screen.getByRole('link', { name: 'Browse the curriculum' })).not.toHaveClass('sheen-primary');
   });
 });

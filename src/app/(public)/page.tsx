@@ -4,22 +4,26 @@ import React from 'react';
 import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
 import { placementQuestions } from '@/components/assessment/placementQuizData';
 import Footer from '@/components/Footer';
+import ClosingRow from '@/components/home/ClosingRow';
 import HeroSection from '@/components/home/HeroSection';
 import { getLandingFacts, landingDescription } from '@/components/home/home-stats';
-import InteractiveFeaturesSection from '@/components/home/InteractiveFeaturesSection';
+import HowYouLearnSection, { type StepLesson } from '@/components/home/HowYouLearnSection';
 import { returningLearnerScript } from '@/components/home/landing-resume';
+import { buildPathTiers } from '@/components/home/path-tiers';
 import ProofStrip from '@/components/home/ProofStrip';
 import ReturningLearnerStrip from '@/components/home/ReturningLearnerStrip';
 import RoutesStrip from '@/components/home/RoutesStrip';
-import { buildPractiseThumbnails } from '@/components/home/practise-thumbnails';
-import { HERO_SCENARIO_ID, LIVE_MODEL_HREF, buildSchedulerFrame, buildSchedulerFrameAt } from '@/components/home/scheduler-frame';
-import SeeItRunSection, { type SeeItRunLesson } from '@/components/home/SeeItRunSection';
+import { LIVE_MODEL_HREF, buildSchedulerFrame, liveModelLink } from '@/components/home/scheduler-frame';
+import { buildStepPreviews, interviewLevelCount } from '@/components/home/step-previews';
 import { PageShell } from '@/components/layout/PageShell';
 import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData } from '@/lib/curriculum-data';
+import { readLessonBody, readManifestTiers } from '@/lib/curriculum-scan';
 import { getAllLabs } from '@/lib/lab-registry';
+import { buildCurriculumTotals } from '@/lib/learner-stats';
 import { resolveRoutes, summarizeRoutes } from '@/lib/learning-paths';
-import { getPracticeLabItems, getPracticePages, requirePracticePage } from '@/lib/practice-links';
+import { getPracticeLabItems, getPracticePages } from '@/lib/practice-links';
+import { TIER_LINKS } from '@/lib/site-links';
 
 /**
  * Every count on the page, from the data the rest of the site uses. Read at
@@ -30,8 +34,8 @@ function landingData() {
   const labs = getAllLabs();
   const interviewBanks = loadInterviewBanks();
   const lessons = continueLessons();
-  const frame = buildSchedulerFrame();
-  const liveLesson = liveModelLesson(lessons);
+  const firstLesson = lessonAt(lessons, lessons[0]?.href ?? '');
+  const modelLesson = { ...lessonAt(lessons, LIVE_MODEL_HREF.split('#')[0]), href: liveModelLink() };
   return {
     facts: getLandingFacts({
       curriculum: curriculumData,
@@ -40,36 +44,39 @@ function landingData() {
       interviewBanks,
       placementQuestions,
     }),
+    // "The path": the tiers as the curriculum page shows them (the navigation config, the totals and the manifest).
+    tiers: buildPathTiers({ totals: buildCurriculumTotals(curriculumData), manifestTiers: readManifestTiers(), tierLinks: TIER_LINKS }),
     // The learner routes from src/lib/learning-paths.ts, resolved here so the strip receives plain data.
     routes: summarizeRoutes(resolveRoutes(curriculumData, { labs })),
-    // Plain data for the two client islands (the primary action and the returning-learner strip):
+    // Plain data for the client islands (the primary actions, the path's tag and the returning-learner strip):
     // the same lesson list the header, the curriculum page and the dashboard resolve "Continue" against.
     lessons,
-    frame,
-    // "See it run": the same scenario as the hero's frame, from the step the live visualizer opens on.
-    liveFrame: buildSchedulerFrameAt(HERO_SCENARIO_ID, 0),
-    liveLesson,
-    // Small drawings for the practise cards, from the labs, the phase model, the scheduler run and the interview banks.
-    thumbnails: buildPractiseThumbnails({
+    firstLesson,
+    modelLesson,
+    interviewLevelCount: interviewLevelCount(interviewBanks),
+    // The small previews on the "How you learn here" cards, from lesson 1, the scheduler model, the labs and the banks.
+    previews: buildStepPreviews({
+      firstLesson: { code: firstLesson.code, body: lessonBody(firstLesson.href) },
+      modelCode: modelLesson.code,
+      frame: buildSchedulerFrame(),
       labItems: getPracticeLabItems(labs),
       labs,
       interviewBanks,
-      frame,
-      sorterCode: requirePracticePage(PHASE_SORTER_HREF).lessons[0]?.code ?? '',
-      modelCode: liveLesson.code,
     }),
   };
 }
 
-/** The exercise the "Exercises" card draws: the phase sorter's lanes. */
-const PHASE_SORTER_HREF = '/exercises/uvm-phase-sorter';
+/** A lesson from the lesson list by its path. */
+function lessonAt(lessons: ReturnType<typeof continueLessons>, href: string): StepLesson {
+  const lesson = lessons.find((entry) => entry.href === href);
+  if (!lesson) throw new Error(`The lesson ${href} is not in the lesson list`);
+  return { code: lesson.code, title: lesson.title, href: lesson.href };
+}
 
-/** The lesson that holds the live model (LIVE_MODEL_HREF), from the lesson list; the link keeps the heading anchor. */
-function liveModelLesson(lessons: ReturnType<typeof continueLessons>): SeeItRunLesson {
-  const [path] = LIVE_MODEL_HREF.split('#');
-  const lesson = lessons.find((entry) => entry.href === path);
-  if (!lesson) throw new Error(`The live model's lesson ${path} is not in the lesson list`);
-  return { code: lesson.code, title: lesson.title, href: LIVE_MODEL_HREF };
+/** "/curriculum/<tier>/<module>/<lesson>" -> that lesson's MDX body. */
+function lessonBody(href: string): string | null {
+  const [tierId, moduleId, lessonSlug] = href.replace(/^\/curriculum\//, '').split('/');
+  return tierId && moduleId && lessonSlug ? readLessonBody(tierId, moduleId, lessonSlug) : null;
 }
 
 export function generateMetadata(): Metadata {
@@ -77,26 +84,26 @@ export function generateMetadata(): Metadata {
 }
 
 export default function HomePage() {
-  const { facts, routes, lessons, frame, liveFrame, liveLesson, thumbnails } = landingData();
+  const { facts, tiers, routes, lessons, firstLesson, modelLesson, interviewLevelCount: levels, previews } = landingData();
 
   return (
     // No background of its own: the body's page colour shows, and the public layout's colour field shows behind the hero.
     <div className="flex min-h-screen flex-col text-foreground">
       <main id="main-content" tabIndex={-1} className="w-full flex-1 focus:outline-none">
-        {/* Marks <html> before first paint when this browser holds a lesson visit, so the strip's space is reserved. */}
+        {/* Marks <html> before first paint when this browser holds a lesson visit, so reserved spaces are right. */}
         <script dangerouslySetInnerHTML={{ __html: returningLearnerScript() }} />
         <PageShell width="content" className="pb-20 pt-0 sm:pb-24">
-          <HeroSection stats={facts} lessons={lessons} placementQuestionCount={facts.placementQuestionCount} frame={frame} />
+          <HeroSection facts={facts} lessons={lessons} tiers={tiers} />
           <ProofStrip facts={facts} />
           <ReturningLearnerStrip lessons={lessons} />
           <div className="mt-16 lg:mt-20">
-            <SeeItRunSection scenario={HERO_SCENARIO_ID} frame={liveFrame} lesson={liveLesson} />
+            <HowYouLearnSection facts={facts} previews={previews} firstLesson={firstLesson} modelLesson={modelLesson} interviewLevelCount={levels} />
           </div>
           <div className="mt-16 lg:mt-20">
             <RoutesStrip routes={routes} />
           </div>
           <div className="mt-16 lg:mt-20">
-            <InteractiveFeaturesSection facts={facts} thumbnails={thumbnails} />
+            <ClosingRow lessons={lessons} lessonCount={facts.lessonCount} />
           </div>
         </PageShell>
       </main>

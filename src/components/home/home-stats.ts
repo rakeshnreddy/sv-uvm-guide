@@ -81,14 +81,23 @@ export function getLandingFacts({
   };
 }
 
+/** "four" for 4, up to twelve; larger counts stay as figures. */
+export function countWord(count: number): string {
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  return words[count] ?? String(count);
+}
+
+/** Where the course takes a learner, as the hero's headline and the descriptions say it. */
+export const COURSE_SPAN = 'from your first testbench to expert level';
+
 /** The hero's one factual paragraph. */
-export function heroParagraph({ lessonCount, tierCount, labCount }: HomeStats): string {
-  return `A free course in SystemVerilog, UVM and AMBA verification: ${lessonCount} lessons in ${tierCount} tiers, with interactive models you step through, ${labCount} guided labs and interview prep. No sign-up. Your progress stays in this browser.`;
+export function heroParagraph({ lessonCount, tierCount, labCount, interviewQuestionCount }: HomeStats & { interviewQuestionCount: number }): string {
+  return `A free, structured course: ${lessonCount} lessons in ${countWord(tierCount)} tiers, with interactive models you step through, ${labCount} guided labs and ${interviewQuestionCount} interview questions with model answers. No sign-up. Your progress stays in this browser.`;
 }
 
 /** The landing page's meta description, from the same counts. */
 export function landingDescription(facts: LandingFacts): string {
-  return `A free SystemVerilog, UVM and AMBA verification course: ${facts.lessonCount} lessons in ${facts.tierCount} tiers, ${facts.interactiveModelCount} interactive models, ${facts.labCount} guided labs and ${facts.interviewQuestionCount} interview questions. No sign-up; your progress stays in your browser.`;
+  return `A free SystemVerilog, UVM and AMBA verification course, ${COURSE_SPAN}: ${facts.lessonCount} lessons in ${facts.tierCount} tiers, ${facts.interactiveModelCount} interactive models, ${facts.labCount} guided labs and ${facts.interviewQuestionCount} interview questions with model answers. No sign-up; your progress stays in your browser.`;
 }
 
 /** "1 lesson", "112 lessons". */

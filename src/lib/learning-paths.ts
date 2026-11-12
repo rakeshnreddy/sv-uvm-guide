@@ -435,7 +435,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
     id: 'expert',
     name: 'Expert',
     tagline: 'Jump in',
-    audience: 'Senior and staff engineers, and candidates preparing for staff-level interviews.',
+    audience: 'Experienced engineers, and candidates preparing for senior verification interviews.',
     layers: 'Expert layers: every Push Further section and Expert topic, plus Tier 4.',
     assumesSummary:
       'Assumes Tiers 1 to 3: you can build and debug a multi-agent UVM environment. Each lesson links what it builds on, so gaps are one click away.',

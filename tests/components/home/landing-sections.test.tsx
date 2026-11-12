@@ -9,13 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
 import { placementQuestions } from '@/components/assessment/placementQuizData';
 import HeroPrimaryAction from '@/components/home/HeroPrimaryAction';
-import HeroSection, { HERO_HEADLINE } from '@/components/home/HeroSection';
-import { MAIN_STANDARDS, getHomeStats, getLandingFacts, heroParagraph, landingDescription, plural } from '@/components/home/home-stats';
+import ClosingRow from '@/components/home/ClosingRow';
+import HeroSection, { BROWSE_CURRICULUM_LABEL, HERO_HEADLINE, pathLine } from '@/components/home/HeroSection';
+import HowYouLearnSection, { HOW_YOU_LEARN_TITLE, learnSteps } from '@/components/home/HowYouLearnSection';
+import { START_HERE_TAG, YOU_ARE_HERE_TAG } from '@/components/home/PathTierList';
+import { buildPathTiers, tierCovers } from '@/components/home/path-tiers';
+import { buildStepPreviews, interviewLevelCount } from '@/components/home/step-previews';
+import { MAIN_STANDARDS, countWord, getHomeStats, getLandingFacts, heroParagraph, landingDescription, plural } from '@/components/home/home-stats';
 import { RETURNING_ATTRIBUTE, type LandingLesson } from '@/components/home/landing-resume';
 import ProofStrip, { proofFacts } from '@/components/home/ProofStrip';
 import ReturningLearnerStrip, { continueNote, tierOfLesson } from '@/components/home/ReturningLearnerStrip';
 import RoutesStrip from '@/components/home/RoutesStrip';
-import { buildSchedulerFrame } from '@/components/home/scheduler-frame';
+import { buildSchedulerFrame, liveModelLink } from '@/components/home/scheduler-frame';
+import { readLessonBody, readManifestTiers } from '@/lib/curriculum-scan';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { buildCurriculumTotals } from '@/lib/learner-stats';
@@ -23,8 +29,8 @@ import { FLASHCARDS_KEY, LESSONS_KEY } from '@/lib/learner-store/keys';
 import { __resetRecordsForTests } from '@/lib/learner-store/record';
 import { __resetStorageForTests } from '@/lib/learner-store/storage';
 import { EXPERT_INDEX_HREF, LEARNING_ROUTES, PLACEMENT_QUIZ_HREF, resolveRoutes, summarizeRoutes } from '@/lib/learning-paths';
-import { allLessons, getPracticePages } from '@/lib/practice-links';
-import { REVIEW_HREF, START_HERE_HREF } from '@/lib/site-links';
+import { allLessons, getPracticeLabItems, getPracticePages } from '@/lib/practice-links';
+import { CURRICULUM_HREF, INTERVIEW_PREP_HREF, LABS_HREF, REVIEW_HREF, START_HERE_HREF, TIER_LINKS } from '@/lib/site-links';
 import { appRouteExists, repoRoot } from '../../fixtures/site-routes';
 
 vi.mock('next/link', async () => {
@@ -51,7 +57,26 @@ const facts = getLandingFacts({
   placementQuestions,
 });
 const lessons: LandingLesson[] = allLessons().map(({ href, code, title }) => ({ href, code, title }));
-const frame = buildSchedulerFrame();
+const banks = loadInterviewBanks();
+const totals = buildCurriculumTotals(curriculumData);
+const tiers = buildPathTiers({ totals, manifestTiers: readManifestTiers(), tierLinks: TIER_LINKS });
+const first = lessons[0];
+const model = lessons.find((lesson) => lesson.href === F3C)!;
+const previews = buildStepPreviews({
+  firstLesson: { code: first.code, body: readLessonBody('T1_Foundational', 'F1A_The_Cost_of_Bugs', 'index') },
+  modelCode: model.code,
+  frame: buildSchedulerFrame(),
+  labItems: getPracticeLabItems(labs),
+  labs,
+  interviewBanks: banks,
+});
+const howProps = {
+  facts,
+  previews,
+  firstLesson: first,
+  modelLesson: { ...model, href: liveModelLink() },
+  interviewLevelCount: interviewLevelCount(banks),
+};
 
 function resetStore() {
   window.localStorage.clear();
@@ -94,15 +119,17 @@ describe('landing facts (every number from the data)', () => {
   });
 
   it('build the hero paragraph and the meta description from the counts', () => {
-    expect(heroParagraph({ lessonCount: 112, tierCount: 4, labCount: 30 })).toBe(
-      'A free course in SystemVerilog, UVM and AMBA verification: 112 lessons in 4 tiers, with interactive models you step through, 30 guided labs and interview prep. No sign-up. Your progress stays in this browser.',
+    expect(heroParagraph({ lessonCount: 112, tierCount: 4, labCount: 30, interviewQuestionCount: 166 })).toBe(
+      'A free, structured course: 112 lessons in four tiers, with interactive models you step through, 30 guided labs and 166 interview questions with model answers. No sign-up. Your progress stays in this browser.',
     );
+    expect(countWord(4)).toBe('four');
+    expect(countWord(40)).toBe('40');
     const description = landingDescription(facts);
     expect(description).toContain(`${facts.lessonCount} lessons in ${facts.tierCount} tiers`);
     expect(description).toContain(`${facts.interactiveModelCount} interactive models`);
     expect(description).toContain(`${facts.labCount} guided labs`);
     expect(description).toContain(`${facts.interviewQuestionCount} interview questions`);
-    expect(description).not.toMatch(/!|mastery|definitive/i);
+    expect(description).not.toMatch(/!|mastery|definitive|staff[ -]level/i);
   });
 
   it('pluralise', () => {
@@ -112,36 +139,132 @@ describe('landing facts (every number from the data)', () => {
 });
 
 describe('hero', () => {
-  const hero = () => render(<HeroSection stats={facts} lessons={lessons} placementQuestionCount={facts.placementQuestionCount} frame={frame} />);
+  const hero = () => render(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />);
 
   it('has the one h1 in the display style, the paragraph of counts and no eyebrow', () => {
     hero();
     const h1 = screen.getByRole('heading', { level: 1 });
     expect(h1).toHaveTextContent(HERO_HEADLINE);
+    expect(HERO_HEADLINE).toBe('Learn SystemVerilog and UVM verification, from your first testbench to expert level');
     expect(h1).toHaveClass('text-display');
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByText(heroParagraph(facts))).toBeInTheDocument();
     expect(document.querySelector('.rounded-full')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/staff[ -]level/i);
   });
 
-  it('has exactly one filled accent action, "Start lesson 1" to lesson 1, and the secondary "Find your level"', () => {
+  it('has exactly one filled accent action, "Start lesson 1" to lesson 1, the secondary "Browse the curriculum" and the placement line', () => {
     hero();
     const filled = Array.from(document.querySelectorAll('a,button')).filter((el) => el.classList.contains('sheen-primary'));
     expect(filled.map((el) => el.textContent)).toEqual(['Start lesson 1']);
     expect(screen.getByTestId('hero-primary-action')).toHaveAttribute('href', F1A);
     expect(lessons[0].href).toBe(F1A);
+    const browse = screen.getByRole('link', { name: BROWSE_CURRICULUM_LABEL });
+    expect(browse).toHaveAttribute('href', CURRICULUM_HREF);
+    expect(browse).not.toHaveClass('sheen-primary');
     const level = screen.getByRole('link', { name: 'Find your level' });
     expect(level).toHaveAttribute('href', PLACEMENT_QUIZ_HREF);
-    expect(level).not.toHaveClass('sheen-primary');
-    expect(screen.getByText(`Placement quiz: ${placementQuestions.length} questions, suggests where to start`)).toBeInTheDocument();
+    expect(level).toHaveAttribute('data-testid', 'hero-find-level');
+    expect(level.parentElement).toHaveTextContent(`Not a beginner? Find your level with a ${placementQuestions.length}-question placement quiz.`);
   });
 
-  it('gives the frame at least half the width from 1024 px, after the actions in reading order', () => {
+  it('puts "The path" after the actions in reading order, as the one real-glass card', () => {
     const { container } = hero();
     const section = screen.getByTestId('home-hero');
-    expect(section).toHaveClass('lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]');
-    expect(section.lastElementChild).toBe(screen.getByTestId('hero-frame'));
+    expect(section.lastElementChild).toBe(screen.getByTestId('home-hero-card'));
     expect(container.querySelectorAll('.glass')).toHaveLength(1);
+    const card = screen.getByRole('region', { name: 'The path' });
+    expect(card).toHaveTextContent(pathLine(tiers.length));
+    expect(pathLine(4)).toBe('Four tiers, in the order each lesson needs the last.');
+  });
+});
+
+describe('the path (tiers from the navigation config and the curriculum totals)', () => {
+  it('builds one row per tier with the nav name and href, the manifest line and the totals count', () => {
+    const manifest = readManifestTiers();
+    expect(tiers.map((tier) => tier.label)).toEqual(TIER_LINKS.map((link) => link.label));
+    expect(tiers.map((tier) => tier.href)).toEqual(TIER_LINKS.map((link) => link.href));
+    expect(tiers.map((tier) => tier.lessonCount)).toEqual(totals.map((tier) => tier.modules.reduce((n, m) => n + m.lessons.length, 0)));
+    expect(tiers.reduce((sum, tier) => sum + tier.lessonCount, 0)).toBe(facts.lessonCount);
+    expect(tiers.map((tier) => tier.covers)).toEqual(manifest.map((tier) => tierCovers(tier.audience)));
+    for (const tier of tiers) expect(tier.covers).not.toMatch(/staff/i);
+    expect(tierCovers('New to it: the language, and races.')).toBe('The language, and races.');
+    expect(tierCovers('no colon here')).toBe('No colon here');
+  });
+
+  it('links each row to its tier section, in its colour, with "Start here" on Tier 1 for a first-time visitor', () => {
+    render(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />);
+    tiers.forEach((tier) => {
+      const row = screen.getByTestId(`path-tier-${tier.number}`);
+      expect(row).toHaveAttribute('data-tier', String(tier.number));
+      expect(within(row).getByRole('link', { name: tier.label })).toHaveAttribute('href', tier.href);
+      expect(row).toHaveTextContent(tier.covers);
+      expect(within(row).getByText(plural(tier.lessonCount, 'lesson', 'lessons'))).toHaveClass('font-mono', 'tabular-nums');
+      expect(row.querySelector('[data-path-tag]')).toHaveClass('h-5', 'w-24');
+    });
+    expect(screen.getByTestId('path-tier-1')).toHaveTextContent(START_HERE_TAG);
+    expect(screen.queryByText(YOU_ARE_HERE_TAG)).toBeNull();
+    // The server HTML holds "Start here", hidden before first paint for a returning learner.
+    expect(renderToStaticMarkup(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />)).toContain('[html[data-home-returning]_&amp;]:invisible');
+  });
+
+  it('shows "You are here" on the tier of the continue lesson for a returning learner, instead of "Start here"', () => {
+    const intermediate = totals[1].modules[0].lessons[0].href;
+    window.localStorage.setItem(LESSONS_KEY, JSON.stringify({ v: 1, data: { lessons: { [intermediate]: { firstVisitedAt: 1, lastVisitedAt: 2, visits: 1 } } } }));
+    render(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />);
+    expect(screen.getByTestId('path-tier-2')).toHaveTextContent(YOU_ARE_HERE_TAG);
+    expect(screen.getAllByText(YOU_ARE_HERE_TAG)).toHaveLength(1);
+    expect(screen.queryByText(START_HERE_TAG)).toBeNull();
+  });
+});
+
+describe('how you learn here', () => {
+  it('has four quiet-glass cards, each a preview, a heading, a sentence and a link named by its destination', () => {
+    render(<HowYouLearnSection {...howProps} />);
+    const section = screen.getByRole('region', { name: HOW_YOU_LEARN_TITLE });
+    expect(section).toHaveTextContent('Every topic goes through the same four steps.');
+    const cards = section.querySelectorAll('[data-step]');
+    expect(Array.from(cards).map((card) => card.getAttribute('data-step'))).toEqual(['read', 'stepThrough', 'build', 'rehearse']);
+    cards.forEach((card) => {
+      expect(card).toHaveClass('glass-quiet');
+      expect(card.querySelector('[data-preview][aria-hidden="true"]')).not.toBeNull();
+    });
+    expect(within(section).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Read', 'Step through', 'Build', 'Rehearse']);
+    expect(section.querySelectorAll('.glass')).toHaveLength(0);
+    expect(section.textContent).not.toMatch(/staff/i);
+  });
+
+  it('sends Read to lesson 1, Step through to the live model on its scenario, Build to the labs and Rehearse to interview prep', () => {
+    render(<HowYouLearnSection {...howProps} />);
+    expect(screen.getByTestId('step-link-read')).toHaveAttribute('href', F1A);
+    expect(screen.getByTestId('step-link-stepThrough')).toHaveAttribute('href', liveModelLink());
+    expect(screen.getByTestId('step-link-stepThrough')).toHaveTextContent('Open the scheduler model');
+    expect(screen.getByTestId('step-link-build')).toHaveAttribute('href', LABS_HREF);
+    expect(screen.getByTestId('step-link-build')).toHaveTextContent('Labs on the Practice hub');
+    expect(screen.getByTestId('step-link-rehearse')).toHaveAttribute('href', INTERVIEW_PREP_HREF);
+    expect(screen.getByTestId('step-link-rehearse')).toHaveTextContent('Interview prep');
+    for (const link of screen.getAllByRole('link')) {
+      expect(appRouteExists(link.getAttribute('href') ?? ''), link.getAttribute('href') ?? '').toBe(true);
+    }
+  });
+
+  it('states the lab, exercise and question counts from the data', () => {
+    const steps = learnSteps(howProps);
+    expect(steps[2].meta).toBe(`${facts.labCount} labs · ${facts.exerciseCount} exercises`);
+    expect(steps[3].meta).toBe(`${facts.interviewQuestionCount} questions in ${facts.interviewBankCount} banks`);
+    expect(steps[3].line).toContain(`${countWord(interviewLevelCount(banks))} levels`);
+  });
+});
+
+describe('closing row', () => {
+  it('repeats the two actions, both in the secondary style', () => {
+    render(<ClosingRow lessons={lessons} lessonCount={facts.lessonCount} />);
+    const row = screen.getByTestId('closing-row');
+    expect(within(row).getByTestId('closing-primary-action')).toHaveAttribute('href', F1A);
+    expect(within(row).getByTestId('closing-primary-action')).toHaveTextContent('Start lesson 1');
+    expect(within(row).getByRole('link', { name: BROWSE_CURRICULUM_LABEL })).toHaveAttribute('href', CURRICULUM_HREF);
+    expect(row.querySelectorAll('.sheen-primary')).toHaveLength(0);
+    expect(row).toHaveTextContent(`${facts.lessonCount} lessons`);
   });
 });
 
@@ -179,9 +302,13 @@ describe('proof strip', () => {
     render(<ProofStrip facts={facts} />);
     const strip = screen.getByRole('region', { name: 'The course in numbers' });
     const figures = within(strip).getAllByRole('definition');
-    expect(figures.map((figure) => figure.textContent)).toEqual([facts.lessonCount, facts.interactiveModelCount, facts.labCount].map(String).concat('IEEE 1800'));
+    expect(figures.map((figure) => figure.textContent)).toEqual([facts.lessonCount, facts.labCount, facts.interviewQuestionCount].map(String).concat('IEEE 1800'));
     figures.forEach((figure) => expect(figure).toHaveClass('font-mono', 'tabular-nums'));
-    expect(proofFacts(facts)[0].label).toContain(`in ${facts.tierCount} tiers`);
+    expect(proofFacts(facts).map((fact) => fact.label).slice(0, 3)).toEqual([
+      `lessons in ${facts.tierCount} tiers`,
+      'guided labs',
+      'interview questions with model answers',
+    ]);
   });
 
   it('names the main standards without claiming a count, and keeps each identifier on one line', () => {

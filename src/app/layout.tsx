@@ -11,7 +11,7 @@ import "./globals.css";
 
 // What the site is, with the counts the landing page states, taken from the curriculum and the lab registry.
 const { lessonCount, tierCount, labCount } = getHomeStats(curriculumData, getAllLabs());
-const SITE_DESCRIPTION = `A free SystemVerilog, UVM and AMBA verification course: ${lessonCount} lessons in ${tierCount} tiers, ${labCount} guided labs, interactive models and interview prep, with your progress kept in your browser.`;
+const SITE_DESCRIPTION = `A free SystemVerilog, UVM and AMBA verification course, from your first testbench to expert level: ${lessonCount} lessons in ${tierCount} tiers, ${labCount} guided labs, interactive models and interview prep, with your progress kept in your browser.`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(env.APP_URL),

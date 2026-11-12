@@ -249,7 +249,7 @@ function collectBrokenCurriculumAnchors(): string[] {
   const filesToCheck = [
     ...walkFiles(contentRoot, (filePath) => filePath.endsWith('.mdx')),
     path.join(repoRoot, 'src', 'components', 'diagrams', 'uvm-link-map.ts'),
-    path.join(repoRoot, 'src', 'components', 'home', 'InteractiveFeaturesSection.tsx'),
+    path.join(repoRoot, 'src', 'components', 'home', 'HowYouLearnSection.tsx'),
   ];
   const brokenAnchors: string[] = [];
 

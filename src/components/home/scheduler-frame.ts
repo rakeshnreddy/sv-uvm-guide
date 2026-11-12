@@ -1,15 +1,16 @@
 import { regionGuideById, type RegionGuideEntry } from '@/components/visuals/scheduler/region-guide';
 import { codeLinesFor } from '@/components/visuals/scheduler/scheduler-view-helpers';
 import type { OwnerKind } from '@/components/visual-system/visual-language';
-import { REGION_LABELS, REGION_ORDER, simulateTimeSlot, slotTimeLabel, type RegionId, type SvValue, type TraceStep } from '@/lib/sv-scheduler-model';
+import { REGION_LABELS, REGION_ORDER, simulateTimeSlot, slotTimeLabel, type RegionId, type TraceStep } from '@/lib/sv-scheduler-model';
 import { getTracePreset, type TraceScenarioId } from '@/lib/sv-scheduler-scenarios';
 
 /**
- * One frame of the scheduler model for the landing hero, computed from the
- * same scenario data and the same simulation the live TimeSlotTraceVisualizer
- * runs (src/lib/sv-scheduler-model.ts, src/lib/sv-scheduler-scenarios.ts), so
- * the code, the region ladder and the waveform cannot disagree with the
- * interactive. Pure: the hero renders it on the server as static markup.
+ * One frame of the scheduler model for the "Step through" preview on the
+ * landing page, computed from the same scenario data and the same simulation
+ * the live TimeSlotTraceVisualizer runs (src/lib/sv-scheduler-model.ts,
+ * src/lib/sv-scheduler-scenarios.ts), so the regions, the statement and the
+ * narration cannot disagree with the interactive. Pure: the page renders it on
+ * the server as static markup.
  */
 
 /** The scenario the frame shows: the two-stage shift register written with <=. */
@@ -62,12 +63,6 @@ export interface FrameCodeLine {
   current: boolean;
 }
 
-export interface FrameSignal {
-  name: string;
-  /** One value per scheduler step, step 1 first. */
-  values: SvValue[];
-}
-
 export interface SchedulerFrame {
   title: string;
   /** The scenario's button label in the live visualizer ("Shift register · <="), for the caption's hint. */
@@ -81,9 +76,6 @@ export interface SchedulerFrame {
   groups: FrameRegionGroup[];
   executingRegion: RegionId;
   code: FrameCodeLine[];
-  signals: FrameSignal[];
-  /** Values after this step, in watch order. */
-  values: { name: string; value: SvValue; changed: boolean }[];
 }
 
 /** The region the ladder marks for a step, as the live visualizer marks it. */
@@ -112,12 +104,8 @@ export function buildSchedulerFrame(scenarioId: TraceScenarioId = HERO_SCENARIO_
   return buildSchedulerFrameAt(scenarioId, stepIndex);
 }
 
-/**
- * The frame at a step index (0 is the slot's start, the step the live
- * visualizer opens on). The "See it run" section's fallback uses step 0, so
- * what shows before the interactive mounts is what it shows once it has.
- */
-export function buildSchedulerFrameAt(scenarioId: TraceScenarioId, stepIndex: number): SchedulerFrame {
+/** The frame at a step index (0 is the slot's start, the step the live visualizer opens on). */
+function buildSchedulerFrameAt(scenarioId: TraceScenarioId, stepIndex: number): SchedulerFrame {
   const preset = getTracePreset(scenarioId);
   const scenario = preset.build();
   const run = simulateTimeSlot(scenario);
@@ -159,7 +147,5 @@ export function buildSchedulerFrameAt(scenarioId: TraceScenarioId, stepIndex: nu
     groups,
     executingRegion,
     code,
-    signals: scenario.watch.map((name) => ({ name, values: run.trace.map((s) => s.values[name]) })),
-    values: scenario.watch.map((name) => ({ name, value: step.values[name], changed: step.changed.includes(name) })),
   };
 }

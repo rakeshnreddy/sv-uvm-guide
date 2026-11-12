@@ -6,6 +6,7 @@ import React from 'react';
 
 import { Button } from '@/components/ui/Button';
 import { SignalTag } from '@/components/ui/SignalTag';
+import { CURRICULUM_HREF } from '@/lib/site-links';
 
 import { START_LESSON_LABEL, continueAccessibleName, type LandingLesson } from './landing-resume';
 import { useLandingResume } from './use-landing-resume';
@@ -13,6 +14,12 @@ import { useLandingResume } from './use-landing-resume';
 interface HeroPrimaryActionProps {
   /** Every lesson in course order; the first is lesson 1. */
   lessons: readonly LandingLesson[];
+  /**
+   * The hero's is the view's one filled button (the default); the closing row
+   * repeats the same action in the secondary style.
+   */
+  variant?: 'default' | 'secondary';
+  testId?: string;
 }
 
 /**
@@ -37,14 +44,14 @@ export const HERO_RETURNING_WIDTH_CLASS = 'sm:[html[data-home-returning]_&]:w-96
 /** The signal tag on the accent fill: the fill's text colour and a faint border of it. */
 export const HERO_TAG_CLASS = 'border-primary-foreground/40 text-primary-foreground';
 
-export default function HeroPrimaryAction({ lessons }: HeroPrimaryActionProps) {
+export default function HeroPrimaryAction({ lessons, variant = 'default', testId = 'hero-primary-action' }: HeroPrimaryActionProps) {
   const { lesson } = useLandingResume(lessons);
   const first = lessons[0];
   return (
-    <Button asChild size="lg" className={`w-full justify-between px-5 sm:w-64 ${HERO_RETURNING_WIDTH_CLASS}`}>
+    <Button asChild size="lg" variant={variant} className={`w-full justify-between px-5 sm:w-64 ${HERO_RETURNING_WIDTH_CLASS}`}>
       <Link
-        href={lesson?.href ?? first?.href ?? '/curriculum'}
-        data-testid="hero-primary-action"
+        href={lesson?.href ?? first?.href ?? CURRICULUM_HREF}
+        data-testid={testId}
         data-state={lesson ? 'continue' : 'start'}
         aria-label={lesson ? continueAccessibleName(lesson) : undefined}
       >
@@ -53,7 +60,7 @@ export default function HeroPrimaryAction({ lessons }: HeroPrimaryActionProps) {
           <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
             <span className="shrink-0">Continue:</span>
             {/* On the accent fill the tag takes the button's own text colour, not a tier or secondary colour. */}
-            <SignalTag code={lesson.code} neutral className={HERO_TAG_CLASS} />
+            <SignalTag code={lesson.code} neutral className={variant === 'default' ? HERO_TAG_CLASS : undefined} />
             <span className="min-w-0 truncate" data-hero-lesson-title="">
               {lesson.title}
             </span>

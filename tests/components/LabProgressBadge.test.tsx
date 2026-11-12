@@ -194,9 +194,9 @@ describe('lab entry-point client components', () => {
       'src/components/practice/LabProgressBadge.tsx',
       'src/components/curriculum/ModuleCard.tsx',
     ];
-    // The home feature section is a server component since the design refresh removed its animation, so it ships
-    // no client code at all. The import ban still applies to it, in case it becomes a client component again.
-    const serverFiles = ['src/components/home/InteractiveFeaturesSection.tsx'];
+    // The home "How you learn here" section is a server component, so it ships no client code at all. The import
+    // ban still applies to it, in case it becomes a client component.
+    const serverFiles = ['src/components/home/HowYouLearnSection.tsx'];
     for (const file of [...clientFiles, ...serverFiles]) {
       const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8');
       const isClient = source.startsWith("'use client'") || source.startsWith('"use client"');

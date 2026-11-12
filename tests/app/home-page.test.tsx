@@ -10,7 +10,11 @@ import { loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-ba
 import { placementQuestions } from '@/components/assessment/placementQuizData';
 import { getLandingFacts, landingDescription, type LandingFacts } from '@/components/home/home-stats';
 import { returningLearnerScript } from '@/components/home/landing-resume';
-import { HERO_SCENARIO_ID, LIVE_MODEL_HREF } from '@/components/home/scheduler-frame';
+import { buildPathTiers, type PathTier } from '@/components/home/path-tiers';
+import { liveModelLink } from '@/components/home/scheduler-frame';
+import { readManifestTiers } from '@/lib/curriculum-scan';
+import { buildCurriculumTotals } from '@/lib/learner-stats';
+import { TIER_LINKS } from '@/lib/site-links';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import { getPracticePages } from '@/lib/practice-links';
@@ -67,13 +71,12 @@ vi.mock('next/link', async () => {
 // The sections have their own tests (tests/components/home/); stubs keep this one about the page frame and its data.
 vi.mock('@/components/home/HeroSection', () => ({
   __esModule: true,
-  default: ({ stats, lessons, placementQuestionCount, frame }: { stats: LandingFacts; lessons: unknown[]; placementQuestionCount: number; frame: { stepIndex: number } }) => (
+  default: ({ facts, lessons, tiers }: { facts: LandingFacts; lessons: unknown[]; tiers: PathTier[] }) => (
     <section
       aria-label="Hero"
-      data-stats={`${stats.lessonCount}/${stats.tierCount}/${stats.labCount}`}
+      data-stats={`${facts.lessonCount}/${facts.tierCount}/${facts.labCount}/${facts.interviewQuestionCount}/${facts.placementQuestionCount}`}
       data-lessons={lessons.length}
-      data-placement={placementQuestionCount}
-      data-frame-step={frame.stepIndex}
+      data-tiers={JSON.stringify(tiers)}
     />
   ),
 }));
@@ -86,19 +89,19 @@ vi.mock('@/components/home/ReturningLearnerStrip', () => ({
   __esModule: true,
   default: () => <section aria-label="Returning" />,
 }));
-vi.mock('@/components/home/SeeItRunSection', () => ({
+vi.mock('@/components/home/HowYouLearnSection', () => ({
   __esModule: true,
-  default: ({ scenario, frame, lesson }: { scenario: string; frame: { stepIndex: number }; lesson: { href: string } }) => (
-    <section aria-label="See it run" data-scenario={scenario} data-frame-step={frame.stepIndex} data-lesson={lesson.href} />
+  default: ({ modelLesson, firstLesson }: { modelLesson: { href: string }; firstLesson: { href: string } }) => (
+    <section aria-label="How you learn" data-model={modelLesson.href} data-first={firstLesson.href} />
   ),
 }));
 vi.mock('@/components/home/RoutesStrip', () => ({
   __esModule: true,
   default: () => <section aria-label="Routes" />,
 }));
-vi.mock('@/components/home/InteractiveFeaturesSection', () => ({
+vi.mock('@/components/home/ClosingRow', () => ({
   __esModule: true,
-  default: () => <section aria-label="Practise" />,
+  default: ({ lessonCount }: { lessonCount: number }) => <section aria-label="Closing" data-lessons={lessonCount} />,
 }));
 
 const expectedFacts = getLandingFacts({
@@ -114,42 +117,49 @@ afterEach(() => {
 });
 
 describe('home page', () => {
-  it('keeps the sections in the main landmark, in order: hero, proof, returning learner, see it run, routes, practise', () => {
+  it('keeps the sections in the main landmark, in order: hero, proof, returning learner, how you learn, routes, closing row', () => {
     render(<HomePage />);
     const main = screen.getByRole('main');
     expect(within(main).getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual([
       'Hero',
       'Proof',
       'Returning',
-      'See it run',
+      'How you learn',
       'Routes',
-      'Practise',
+      'Closing',
     ]);
     expect(screen.queryByText('Loading Section...')).not.toBeInTheDocument();
   });
 
   it('passes every count from the curriculum, the lab registry, the practice pages, the interview banks and the quiz', () => {
     render(<HomePage />);
-    const { lessonCount, tierCount, labCount } = expectedFacts;
+    const { lessonCount, tierCount, labCount, interviewQuestionCount, placementQuestionCount } = expectedFacts;
     const hero = screen.getByRole('region', { name: 'Hero' });
-    expect(hero).toHaveAttribute('data-stats', `${lessonCount}/${tierCount}/${labCount}`);
+    expect(hero).toHaveAttribute('data-stats', `${lessonCount}/${tierCount}/${labCount}/${interviewQuestionCount}/${placementQuestionCount}`);
     expect(hero).toHaveAttribute('data-lessons', String(lessonCount));
-    expect(hero).toHaveAttribute('data-placement', String(placementQuestions.length));
     expect(JSON.parse(screen.getByRole('region', { name: 'Proof' }).getAttribute('data-facts') ?? '{}')).toEqual(JSON.parse(JSON.stringify(expectedFacts)));
+    expect(screen.getByRole('region', { name: 'Closing' })).toHaveAttribute('data-lessons', String(lessonCount));
+  });
+
+  it('gives the path the tiers as the curriculum page has them: the navigation config, the totals and the manifest', () => {
+    render(<HomePage />);
+    const tiers = JSON.parse(screen.getByRole('region', { name: 'Hero' }).getAttribute('data-tiers') ?? '[]') as PathTier[];
+    expect(tiers).toEqual(buildPathTiers({ totals: buildCurriculumTotals(curriculumData), manifestTiers: readManifestTiers(), tierLinks: TIER_LINKS }));
+    expect(tiers.map((tier) => [tier.label, tier.href])).toEqual(TIER_LINKS.map((link) => [link.label, link.href]));
+    expect(tiers.reduce((sum, tier) => sum + tier.lessonCount, 0)).toBe(expectedFacts.lessonCount);
+  });
+
+  it('links "Step through" to the live model on the scenario its preview shows, and "Read" to lesson 1', () => {
+    render(<HomePage />);
+    const section = screen.getByRole('region', { name: 'How you learn' });
+    expect(section).toHaveAttribute('data-model', liveModelLink());
+    expect(section).toHaveAttribute('data-first', '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index');
   });
 
   it('runs the returning-learner script before the sections, inside main', () => {
     const { container } = render(<HomePage />);
     const script = container.querySelector('main > script');
     expect(script?.innerHTML).toBe(returningLearnerScript());
-  });
-
-  it('runs the hero\'s scenario in "See it run", from its first step, linked to the lesson that holds the live model', () => {
-    render(<HomePage />);
-    const section = screen.getByRole('region', { name: 'See it run' });
-    expect(section).toHaveAttribute('data-scenario', HERO_SCENARIO_ID);
-    expect(section).toHaveAttribute('data-frame-step', '0');
-    expect(section).toHaveAttribute('data-lesson', LIVE_MODEL_HREF);
   });
 
   it('builds its meta description from the same counts', () => {
@@ -165,25 +175,17 @@ describe('home page', () => {
     }
   });
 
-  it('reaches the live scheduler model only through the in-view boundary\'s dynamic import', () => {
-    // The initial page: static imports only. The visualizer and its model must not be in it.
-    const initial = localImportGraph(['src/app/(public)/layout.tsx', 'src/app/(public)/page.tsx'], { dynamic: false });
-    expect(initial.files).toContain('src/components/home/SeeItRunLive.tsx');
-    expect(initial.files).not.toContain('src/components/visuals/TimeSlotTraceVisualizer.tsx');
-    // The hero's static frame reads the model, the encodings and the code-line helper on the server; none of the
-    // visualizer's interactive parts are reachable without the dynamic import (the network log in the batch report shows
-    // the chunk arriving only on scroll).
-    for (const part of ['visual-system/usePlayback.ts', 'visual-system/PlaybackControls.tsx', 'visual-system/StepWaveform.tsx', 'visuals/scheduler/RegionLadder.tsx']) {
-      expect(initial.files).not.toContain(`src/components/${part}`);
-    }
-    // The one way in is the import() in SeeItRunLive, which runs when the slot scrolls into view.
-    const live = fs.readFileSync(path.join(process.cwd(), 'src/components/home/SeeItRunLive.tsx'), 'utf8');
-    expect(live).toMatch(/import\(\s*['"]@\/components\/visuals\/TimeSlotTraceVisualizer['"]\s*\)/);
-    expect(live).not.toMatch(/^import[^;]*TimeSlotTraceVisualizer/m);
+  it('keeps the live scheduler visualizer out of the page: the preview is static markup', () => {
+    const graph = localImportGraph(['src/app/(public)/layout.tsx', 'src/app/(public)/page.tsx']);
+    expect(graph.files).not.toContain('src/components/visuals/TimeSlotTraceVisualizer.tsx');
+    expect(graph.files).not.toContain('src/components/visual-system/usePlayback.ts');
   });
 
-  // This walk follows dynamic imports too, so it covers the live model behind the in-view boundary as well as
-  // the initial page: no animation library is loaded on the landing page at all, before or after scrolling.
+  it('never says "staff level" in its metadata', () => {
+    expect(String(generateMetadata().description)).not.toMatch(/staff[ -]level/i);
+  });
+
+  // This walk follows dynamic imports too: no animation library is loaded on the landing page at all.
   it('loads no animation library anywhere in the public layout\'s import graph (landing, privacy and terms)', () => {
     const graph = localImportGraph([
       'src/app/(public)/layout.tsx',
@@ -194,7 +196,6 @@ describe('home page', () => {
     // The walk reaches the header, its controls and the lazily loaded search dialog.
     expect(graph.files).toContain('src/components/layout/PublicHeaderControls.tsx');
     expect(graph.files).toContain('src/components/search/SearchDialog.tsx');
-    expect(graph.files).toContain('src/components/visuals/TimeSlotTraceVisualizer.tsx');
     const animation = graph.packages.filter((pkg) => /^(framer-motion|motion|gsap|react-spring)(\/|$)/.test(pkg));
     expect(animation).toEqual([]);
   });

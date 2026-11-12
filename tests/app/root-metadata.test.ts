@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { HERO_HEADLINE } from '@/components/home/HeroSection';
 import { getHomeStats } from '@/components/home/home-stats';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
@@ -37,7 +38,8 @@ describe('root metadata', () => {
     expect(description).toContain(`${lessonCount} lessons in ${tierCount} tiers`);
     expect(description).toContain(`${labCount} guided labs`);
     expect(description).toMatch(/SystemVerilog, UVM and AMBA verification/);
-    expect(description).not.toMatch(/definitive|mastery|!/i);
+    expect(description).not.toMatch(/definitive|mastery|!|staff[ -]level/i);
+    expect(description).toContain('from your first testbench to expert level');
     expect(metadata.openGraph?.description).toBe(description);
   });
 
@@ -129,7 +131,7 @@ describe('app icons and social image (static files, Next.js metadata conventions
     for (const file of ['opengraph-image.alt.txt', 'twitter-image.alt.txt']) {
       const alt = fs.readFileSync(path.join(APP, file), 'utf8');
       expect(alt).toContain(SITE_NAME);
-      expect(alt).toContain('SystemVerilog and UVM, one clock edge at a time');
+      expect(alt).toContain(HERO_HEADLINE);
     }
   });
 

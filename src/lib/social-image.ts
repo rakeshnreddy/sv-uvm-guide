@@ -10,5 +10,5 @@ export const SOCIAL_IMAGE = {
   url: "/opengraph-image.png",
   width: 1200,
   height: 630,
-  alt: "SV/UVM Hub: SystemVerilog and UVM, one clock edge at a time. The mark, a single clock pulse, on the course's colour field.",
+  alt: "SV/UVM Hub: Learn SystemVerilog and UVM verification, from your first testbench to expert level. The mark, a single clock pulse, on the course's colour field.",
 } as const;

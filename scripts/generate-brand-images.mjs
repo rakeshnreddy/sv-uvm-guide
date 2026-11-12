@@ -26,7 +26,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appDir = path.join(root, 'src/app');
 
 export const SITE_NAME = 'SV/UVM Hub';
-export const HEADLINE = 'SystemVerilog and UVM, one clock edge at a time';
+// The landing page's headline (HERO_HEADLINE in src/components/home/HeroSection.tsx; a test keeps them equal).
+export const HEADLINE = 'Learn SystemVerilog and UVM verification, from your first testbench to expert level';
 export const SOCIAL_ALT = `${SITE_NAME}: ${HEADLINE}. The mark, a single clock pulse, on the course's colour field.`;
 
 /** The pulse on the 32-unit grid: low from x 6 to 13, up to the high level, high to x 26, then down. */
@@ -99,7 +100,7 @@ html,body{margin:0;width:1200px;height:630px;background:${tokens.background};}
 .wordmark{font-size:34px;line-height:1;white-space:nowrap;}
 .wordmark .sv{font-family:Mono,monospace;font-weight:700;color:${tokens.foreground};font-variant-ligatures:none;}
 .wordmark .hub{font-weight:500;color:${tokens.muted};margin-left:0.3em;}
-h1{margin:0;max-width:16em;font-size:76px;line-height:1.05;font-weight:500;letter-spacing:-0.025em;color:${tokens.foreground};text-wrap:balance;}
+h1{margin:0;max-width:18em;font-size:60px;line-height:1.1;font-weight:500;letter-spacing:-0.025em;color:${tokens.foreground};text-wrap:balance;}
 </style></head><body><div class="frame"><div class="field"></div><div class="content">
 <div class="brand">${markSvg(tokens)}<span class="wordmark"><span class="sv">SV/UVM</span><span class="hub">Hub</span></span></div>
 <h1>${HEADLINE}</h1>
