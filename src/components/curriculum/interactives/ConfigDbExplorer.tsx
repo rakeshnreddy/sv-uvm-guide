@@ -238,7 +238,7 @@ function Resolution({ ops, run, getId }: { ops: CfgOp[]; run: ConfigRun; getId: 
           >
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-semibold text-foreground">{c.resource.setIds.map(label).join(" + ")}</span>
-              {c.winner ? <span className="font-bold text-emerald-800 dark:text-emerald-200">★ returned</span> : c.eligible ? <span className="font-semibold text-amber-800 dark:text-amber-200">matches, loses</span> : null}
+              {c.winner ? <span className="font-bold text-emerald-800 dark:text-emerald-200">★ Returned</span> : c.eligible ? <span className="font-semibold text-amber-800 dark:text-amber-200">Matches, loses</span> : null}
               <span className="ml-auto font-mono text-xs [font-variant-ligatures:none]">
                 precedence {c.resource.precedence} · queue position {c.queuePos + 1}
               </span>

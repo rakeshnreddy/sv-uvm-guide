@@ -18,7 +18,7 @@ describe("ConfigDbExplorer", () => {
     expect(screen.getByText(/^Not quite\./)).toBeInTheDocument();
     expect(screen.getAllByText(/higher context wins/).length).toBeGreaterThan(0);
     const entries = screen.getByRole("list", { name: "Database entries considered by get" });
-    expect(within(entries).getByText("★ returned")).toBeInTheDocument();
+    expect(within(entries).getByText("★ Returned")).toBeInTheDocument();
     expect(entries).toHaveTextContent("precedence 999");
     expect(entries).toHaveTextContent("precedence 998");
   });

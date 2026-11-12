@@ -107,12 +107,12 @@ function SeverityAndEnd() {
     if (!line.key || line.key !== ctlKey) return null;
     return (
       <span className="flex max-w-[11rem] flex-wrap items-center justify-end gap-1 font-sans">
-        <label className="flex items-center gap-1 text-xs text-slate-300">
+        <label className="flex items-center gap-1 text-xs text-code-muted">
           <span className="sr-only">Statement at t = {run.controlTime} ns</span>
           <select
             value={control}
             onChange={(e) => setControl(e.target.value as EndControl)}
-            className="h-8 rounded-md border border-slate-500 bg-slate-900 px-1 text-[12px] text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+            className="h-8 rounded-md border border-input bg-code-surface px-1 text-[12px] text-code-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
           >
             {END_CONTROLS.map((c) => (
               <option key={c} value={c}>
@@ -121,7 +121,7 @@ function SeverityAndEnd() {
             ))}
           </select>
         </label>
-        <label className="flex min-h-8 items-center gap-1 text-xs text-slate-300">
+        <label className="flex min-h-8 items-center gap-1 text-xs text-code-muted">
           <input type="checkbox" checked={count} onChange={(e) => setCount(e.target.checked)} className="size-5 shrink-0 accent-cyan-400" />
           n_fail++ in the failing branch
         </label>

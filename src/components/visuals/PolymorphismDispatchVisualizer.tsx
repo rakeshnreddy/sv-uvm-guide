@@ -157,8 +157,8 @@ function HierarchyCards({ table, config, result, revealed }: { table: ClassTable
             >
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{c.name}</span>
-                {isHandle ? <span className="rounded-full border border-amber-500/70 bg-amber-500/15 px-1.5 text-label text-amber-900 dark:text-amber-100">handle type</span> : null}
-                {isObject ? <span className="rounded-sm border border-indigo-500/70 bg-indigo-500/15 px-1.5 text-label text-indigo-900 dark:text-indigo-100">object</span> : null}
+                {isHandle ? <span className="rounded-full border border-amber-500/70 bg-amber-500/15 px-1.5 text-label text-amber-900 dark:text-amber-100">Handle type</span> : null}
+                {isObject ? <span className="rounded-sm border border-indigo-500/70 bg-indigo-500/15 px-1.5 text-label text-indigo-900 dark:text-indigo-100">Object</span> : null}
                 {isBinding ? <span className="rounded-sm bg-cyan-500/20 px-1.5 text-label text-cyan-900 dark:text-cyan-100">▶ call binds here</span> : null}
                 {!isBinding && runs ? <span className="text-xs font-semibold text-cyan-800 dark:text-cyan-200">▶ runs via super</span> : null}
                 {!visible.includes(c.name) ? <span className="text-xs text-muted-foreground">(members hidden from h)</span> : null}

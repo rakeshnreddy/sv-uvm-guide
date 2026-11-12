@@ -66,7 +66,7 @@ describe("UvmSequenceHierarchyVisualizer", () => {
     const next = within(controls).getByRole("button", { name: "Next call" });
     fireEvent.keyDown(next, { key: "ArrowRight" });
     fireEvent.keyDown(next, { key: "ArrowRight" });
-    expect(screen.getByText(/call 3 of/)).toBeInTheDocument();
+    expect(screen.getByText(/Call 3 of/)).toBeInTheDocument();
     revealAndJumpToEnd();
     const log = screen.getByRole("list", { name: "Call log so far" });
     expect(within(log).getAllByText("m_sequencer.wait_for_grant(write_seq, priority)")).toHaveLength(1);

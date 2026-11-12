@@ -123,6 +123,8 @@ Every module code, milestone id and lesson reference (F1A, I-UVM-1C, M3, B-AXI-1
 - Counts come from data, never from hand-typed numbers.
 - A button names its destination ("Open the UVM phase map"), not a generic action.
 
+- Sentence case is for interface text: labels, buttons, headings the site writes, and the names of the site's own tools and destinations wherever they appear, including inside lesson prose ("Waveform studio", "Practice hub"). The titles of course content (lessons, modules, labs and question banks) are titles and keep the case their authors gave them.
+
 ## 10. Coming back
 
 These carry the "return again and again" goal and are built in phases 3 and 4:

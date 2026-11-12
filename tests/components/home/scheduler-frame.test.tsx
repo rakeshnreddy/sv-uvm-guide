@@ -129,12 +129,12 @@ describe('<SchedulerFrame>', () => {
     expect(within(screen.getByRole('list', { name: 'Code under simulation' })).getByText(/Executing:/)).toBeInTheDocument();
   });
 
-  it('has the caption, the link to the live model and the scenario to choose there', () => {
+  it('has the caption, the link to the live model and the scenario it opens on', () => {
     const { container } = render(<SchedulerFrame frame={frame} />);
     expect(screen.getByRole('figure', { name: 'One time slot, region by region' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open the live model' })).toHaveAttribute('href', LIVE_MODEL_HREF);
+    expect(screen.getByRole('link', { name: 'Open the live model' })).toHaveAttribute('href', LIVE_MODEL_HREF.replace('#', `?scenario=${HERO_SCENARIO_ID}#`));
     expect(frame.scenarioLabel).toBe(getTracePreset(HERO_SCENARIO_ID).label);
-    expect(screen.getByTestId('hero-frame').lastElementChild).toHaveTextContent(`Open the live model, then choose ${frame.scenarioLabel}`);
+    expect(screen.getByTestId('hero-frame').lastElementChild).toHaveTextContent(`Open the live model on ${frame.scenarioLabel}`);
   });
 
   it('separates the waveform rows with a hairline', () => {

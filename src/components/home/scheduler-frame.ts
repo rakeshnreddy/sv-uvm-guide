@@ -20,11 +20,21 @@ export const HERO_STATEMENT_ID = 'b1';
 
 /**
  * The lesson that holds the live TimeSlotTraceVisualizer with this scenario, at
- * the heading above it. The visualizer opens on another scenario (the racing
- * blocking version) and reads no query parameter, so the caption tells the
- * learner which scenario button to choose (SchedulerFrame.scenarioLabel).
+ * the heading above it. The visualizer there opens on another scenario (the
+ * racing blocking version) unless the URL names one with `?scenario=`, so the
+ * landing links go through liveModelLink.
  */
 export const LIVE_MODEL_HREF = '/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index#watch-one-clock-edge-step-by-step';
+
+/**
+ * A link to the live model that opens it on `scenarioId`: the query parameter
+ * TimeSlotTraceVisualizer reads (SCENARIO_QUERY_PARAM), placed before the anchor.
+ */
+export function liveModelLink(href: string = LIVE_MODEL_HREF, scenarioId: TraceScenarioId = HERO_SCENARIO_ID): string {
+  const hashAt = href.indexOf('#');
+  const [path, hash] = hashAt < 0 ? [href, ''] : [href.slice(0, hashAt), href.slice(hashAt)];
+  return `${path}${path.includes('?') ? '&' : '?'}scenario=${encodeURIComponent(scenarioId)}${hash}`;
+}
 
 /** How the ladder groups the nine regions (IEEE 1800-2023 §4.4, §4.5): read-only ends around the two iterative sets. */
 export type RegionGroupId = 'preponed' | 'activeSet' | 'reactiveSet' | 'postponed';

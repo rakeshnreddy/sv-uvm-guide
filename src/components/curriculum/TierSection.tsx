@@ -31,6 +31,15 @@ export interface TierSectionProps {
   hereModuleId?: string;
 }
 
+/**
+ * The progress words beside a tier's counts. Below sm they always sit on a
+ * second line one text line tall: shown empty before React takes over when
+ * <html> carries data-home-returning, hidden while empty otherwise, so the
+ * tier's heading block paints at its final height for every visitor.
+ */
+export const TIER_PROGRESS_CLASS =
+  'min-h-4 min-w-[16ch] font-medium tabular-nums text-muted-foreground max-sm:basis-full max-sm:empty:hidden max-sm:[html[data-home-returning]_&]:block';
+
 function countLine(tier: OverviewTier, shown: number, searching: boolean): string {
   const modules = `${tier.modules.length} ${tier.modules.length === 1 ? 'module' : 'modules'}`;
   const electives = tier.electiveCount > 0 ? ` (${tier.electiveCount} elective)` : '';
@@ -110,8 +119,10 @@ export const TierSection: React.FC<TierSectionProps> = ({
         {trace ? <ProgressTraceView trace={trace} size="mini" /> : null}
         <span className="tabular-nums">{countLine(tier, modules.length, searching)}</span>
         {/* The trace's totals in words, so a sighted learner can read "opened" too. Its width is reserved, so
-            progress arriving moves nothing; hidden from assistive technology, since the trace's name says it. */}
-        <span aria-hidden="true" data-testid="tier-progress" className="min-w-[16ch] font-medium tabular-nums text-muted-foreground">
+            progress arriving moves nothing; hidden from assistive technology, since the trace's name says it.
+            Below sm it takes a line of its own, reserved before paint for a learner with lesson visits (the
+            page's pre-paint script sets data-home-returning) and collapsed for a first-time visitor. */}
+        <span aria-hidden="true" data-testid="tier-progress" className={TIER_PROGRESS_CLASS}>
           {progress}
         </span>
       </p>

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import React from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import LabPage from "@/app/(learning)/practice/lab/[labId]/page";
@@ -205,6 +205,34 @@ describe("LabClientPage (local mode)", () => {
     expect((await editor("work/dut_counter.sv (editable)")).value).toContain("module dut_counter");
     expect(screen.getByText("Your progress is saved in this browser.")).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders backticked spans in step titles and instructions as inline code, as text only", async () => {
+    await renderLab("ahb-axi-bridge-debug");
+    const instructions = screen.getByTestId("lab-step-instructions");
+    expect(instructions.textContent).not.toContain("`");
+    expect([...instructions.querySelectorAll("code")].map((code) => code.textContent)).toEqual(
+      expect.arrayContaining(["bridge_split_checker.sv", "testbench.sv", "tb_top"]),
+    );
+    cleanup();
+
+    const props = await propsFor("basics-1");
+    const [first, ...rest] = props.lab.steps;
+    const lab = {
+      ...props.lab,
+      steps: [
+        { ...first, title: "Step 1: Run `tb_top` once", instructions: "Run <b>it</b> with `+define+X` and a lone ` tick." },
+        ...rest,
+      ],
+    };
+    render(<LabClientPage {...props} lab={lab} />);
+    const shown = await screen.findByTestId("lab-step-instructions");
+    expect(shown.textContent).toBe("Run <b>it</b> with +define+X and a lone ` tick.");
+    expect(shown.querySelector("b")).toBeNull();
+    expect([...shown.querySelectorAll("code")].map((code) => code.textContent)).toEqual(["+define+X"]);
+    const stepButton = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("button")[0];
+    expect(stepButton.textContent).toBe("Step 1: Run tb_top once");
+    expect(stepButton.querySelector("code")?.textContent).toBe("tb_top");
   });
 
   it("gives the editor a definite height below lg and the step buttons a 40 px tap target", async () => {

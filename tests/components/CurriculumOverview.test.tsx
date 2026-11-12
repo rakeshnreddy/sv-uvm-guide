@@ -7,6 +7,7 @@ import CurriculumOverview from '@/components/curriculum/CurriculumOverview';
 import { RESUME_BOX_CLASS, RESUME_SUBTITLE_ROUTE } from '@/components/curriculum/Recommendations';
 import { ROUTE_FOLLOWED_ATTRIBUTE, routeFollowedScript } from '@/components/curriculum/route-followed-script';
 import { milestoneSpan } from '@/components/curriculum/RouteChooser';
+import { TIER_PROGRESS_CLASS } from '@/components/curriculum/TierSection';
 import { RETURNING_ATTRIBUTE } from '@/components/home/landing-resume';
 import { continueLessons } from '@/lib/continue-lesson-data';
 import { curriculumData, findPrevNextTopics } from '@/lib/curriculum-data';
@@ -344,6 +345,18 @@ describe('modules by tier', () => {
     expect(count).toHaveTextContent('1 done · 2 opened');
     expect(count).toHaveAttribute('aria-hidden', 'true');
     expect(within(document.getElementById('t2')!).getByTestId('tier-progress')).toBeEmptyDOMElement();
+  });
+
+  it('reserves the tier progress line below sm before paint only for a learner with lesson visits', () => {
+    // jsdom has no layout: pin the classes that keep the heading block at its final height.
+    expect(TIER_PROGRESS_CLASS).toContain('max-sm:basis-full');
+    expect(TIER_PROGRESS_CLASS).toContain('min-h-4');
+    expect(TIER_PROGRESS_CLASS).toContain('max-sm:empty:hidden');
+    expect(TIER_PROGRESS_CLASS).toContain(`max-sm:[html[${RETURNING_ATTRIBUTE}]_&]:block`);
+    renderOverview();
+    for (const id of ['t1', 't2']) {
+      expect(within(document.getElementById(id)!).getByTestId('tier-progress').className).toBe(TIER_PROGRESS_CLASS);
+    }
   });
 
   it('lists a module’s lessons on request', () => {

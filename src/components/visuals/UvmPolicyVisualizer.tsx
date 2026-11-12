@@ -71,17 +71,23 @@ function FlagSelect({
   field,
   choices,
   onChange,
+  surface = "code",
 }: {
   field: FieldSpec;
   choices: { id: string; flags: FieldFlags }[];
   onChange: (flags: FieldFlags) => void;
+  /** "code" when the select sits on a code panel, "page" when it sits on an ordinary surface. */
+  surface?: "code" | "page";
 }) {
   return (
     <select
       aria-label={`Flag for ${field.name}`}
       value={choiceId(choices, field.flags)}
       onChange={(e) => onChange((choices.find((c) => c.id === e.target.value) ?? choices[0]).flags)}
-      className="h-10 max-w-[11rem] rounded border border-slate-600 bg-slate-900 px-1 font-mono text-xs text-slate-100"
+      className={cn(
+        "h-10 max-w-[11rem] rounded border border-input px-1 font-mono text-xs",
+        surface === "code" ? "bg-code-surface text-code-foreground" : "bg-muted text-foreground",
+      )}
     >
       {choices.map((c) => (
         <option key={c.id} value={c.id}>
@@ -422,13 +428,13 @@ function PrintMode() {
             <label className="text-xs text-muted-foreground">
               tag flag
               <span className="mt-1 block">
-                <FlagSelect field={tag} choices={PRINT_TAG_CHOICES} onChange={(f) => update("tag", f)} />
+                <FlagSelect field={tag} choices={PRINT_TAG_CHOICES} surface="page" onChange={(f) => update("tag", f)} />
               </span>
             </label>
             <label className="text-xs text-muted-foreground">
               cfg flag
               <span className="mt-1 block">
-                <FlagSelect field={cfg} choices={OBJ_FLAG_CHOICES} onChange={(f) => update("cfg", f)} />
+                <FlagSelect field={cfg} choices={OBJ_FLAG_CHOICES} surface="page" onChange={(f) => update("cfg", f)} />
               </span>
             </label>
           </div>

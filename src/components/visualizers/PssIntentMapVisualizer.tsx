@@ -95,7 +95,7 @@ function scheduleDiagram(res: PssResolution) {
     y: 14 + (laneOf.get(inst.id) ?? 0) * ROW_H,
     w: NODE_W,
     h: 52,
-    badge: inst.inferred ? "inferred" : undefined,
+    badge: inst.inferred ? "Inferred" : undefined,
     state: inst.inferred ? ("active" as const) : ("normal" as const),
   }));
   const edges: DiagramEdge[] = res.instances.flatMap((inst) =>
@@ -158,7 +158,7 @@ export function PssIntentMapVisualizer() {
               {res.instances.map((inst) => (
                 <li key={inst.id} className="rounded-md border border-border/60 bg-background/50 px-3 py-2">
                   <code className="font-mono [font-variant-ligatures:none]">{inst.id}</code>
-                  {inst.inferred ? <span className="ml-2 rounded border border-dashed border-cyan-500 px-1 text-label">inferred</span> : null}
+                  {inst.inferred ? <span className="ml-2 rounded border border-dashed border-cyan-500 px-1 text-label">Inferred</span> : null}
                   <span className="text-muted-foreground"> — {inst.why}</span>
                 </li>
               ))}

@@ -106,7 +106,7 @@ const code = "rounded bg-muted px-1 font-mono text-[0.95em] [font-variant-ligatu
 const button =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border/70 bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const lineControlClass =
-  "min-h-10 rounded-md border border-border/70 bg-slate-900 px-1.5 font-mono text-xs sm:h-7 sm:min-h-0 text-slate-100 [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400";
+  "min-h-10 rounded-md border border-input bg-code-surface px-1.5 font-mono text-xs sm:h-7 sm:min-h-0 text-code-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400";
 
 /* ========================================================================= */
 /* Line controls rendered inside the code                                     */
@@ -422,7 +422,7 @@ function LogPanel({ lines, label = "Simulation output", testId = "log", emphasiz
         <ol className="space-y-0.5">
           {lines.map((l, i) => (
             <li key={i} className={cn("flex gap-3", emphasizeLast && i === lines.length - 1 && "text-cyan-200")}>
-              {l.time !== undefined ? <span className="w-12 shrink-0 text-right text-slate-400">{l.time} ns</span> : null}
+              {l.time !== undefined ? <span className="w-12 shrink-0 text-right text-code-muted">{l.time} ns</span> : null}
               <span className="whitespace-pre-wrap break-words">{l.text}</span>
             </li>
           ))}

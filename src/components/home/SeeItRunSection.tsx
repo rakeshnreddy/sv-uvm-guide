@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import type { TraceScenarioId } from '@/lib/sv-scheduler-scenarios';
 
 import { CodeFrame } from './SchedulerFrame';
-import type { SchedulerFrame as Frame } from './scheduler-frame';
+import { liveModelLink, type SchedulerFrame as Frame } from './scheduler-frame';
 import SeeItRunLive from './SeeItRunLive';
 
 /** The lesson that teaches the model, as the landing page resolves it from the lesson list. */
@@ -60,7 +60,7 @@ export function SeeItRunFallback({ frame, lesson }: Pick<SeeItRunSectionProps, '
       </div>
       <p className="text-ui text-muted-foreground">
         The same model runs in the lesson that teaches it.{' '}
-        <Link href={lesson.href} className={linkClass}>
+        <Link href={liveModelLink(lesson.href)} className={linkClass}>
           Step through it in {lesson.code}
         </Link>
       </p>

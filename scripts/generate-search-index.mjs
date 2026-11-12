@@ -149,6 +149,67 @@ function keywords(...values) {
   return [...seen];
 }
 
+/** Words search ignores in a query (STOP_WORDS in src/components/search/search-engine.ts); never worth a keyword. */
+export const KEYWORD_STOP_WORDS = new Set([
+  "a", "an", "and", "the", "of", "to", "in", "on", "for", "with", "vs", "is", "are", "how", "what", "why",
+]);
+
+/** Function words that name no topic, left out of derived keywords along with the stop words. */
+const GENERIC_KEYWORD_WORDS = new Set([
+  "as", "at", "be", "by", "can", "each", "from", "into", "it", "its", "no", "not", "or", "so", "that", "their",
+  "them", "then", "they", "this", "through", "up", "use", "when", "which", "without", "you", "your",
+]);
+
+/** Words as search tokenizes them (tokenizeSearchText): lowercase, SystemVerilog identifiers kept whole. */
+function searchWords(text) {
+  return String(text ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9_$]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Topic keywords for a practice item, from data already true of it: the words
+ * of its authored outcome line and the titles of the lessons that teach it
+ * (for a lab, its launching lesson and every lesson that places its LabLink).
+ * Single letters, stop words, function words and words already in its title,
+ * one-line description or other keywords are left out: they add size and no match.
+ *
+ * @param {{ title: string, description: string, outcome?: string, lessonTitles?: string[] }} entry
+ * @param {string[]} [existing]
+ * @returns {string[]}
+ */
+export function topicKeywords({ title, description, outcome, lessonTitles = [] }, existing = []) {
+  const known = new Set([...searchWords(title), ...searchWords(oneLine(description)), ...existing.flatMap(searchWords)]);
+  const words = [];
+  for (const word of [...searchWords(outcome), ...lessonTitles.flatMap((lessonTitle) => searchWords(stripCodePrefix(lessonTitle)))]) {
+    if (word.length < 2 || KEYWORD_STOP_WORDS.has(word) || GENERIC_KEYWORD_WORDS.has(word) || known.has(word)) continue;
+    known.add(word);
+    words.push(word);
+  }
+  return words;
+}
+
+/** "F2D: Reusable Code and Parallelism" → "Reusable Code and Parallelism". */
+function stripCodePrefix(title) {
+  // A module code holds a digit, so "Semaphores: Keys…" keeps its first word.
+  return String(title ?? "").replace(/^(?=[A-Za-z-]*\d)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*:\s*/, "");
+}
+
+/**
+ * The title of the lesson a ref names: "<ModuleFolder>/<lesson>", a bare
+ * module folder or a module code (its index lesson), as resolveLessonRef in
+ * src/lib/practice-links.ts reads refs. Undefined when it names nothing.
+ */
+function lessonTitleOf(lessonTitles, ref) {
+  if (!ref) return undefined;
+  const [moduleRef, lessonSlug = "index"] = ref.split("/");
+  const moduleId = lessonTitles.moduleIds.get(moduleRef) ?? lessonTitles.moduleIds.get(moduleRef.split("_")[0]);
+  return moduleId ? lessonTitles.titles.get(`${moduleId}/${lessonSlug}`) : undefined;
+}
+
 /** One index item; `code` only when there is one. */
 function item(kind, title, description, href, words, code) {
   const entry = { kind, title: title.replace(/\s+/g, " ").trim(), description: oneLine(description), href, keywords: words };
@@ -182,7 +243,7 @@ function pageMetadataDescription(route) {
 }
 
 /** Labs, exercises, models, tools, interview banks and reference pages. */
-export async function buildSearchItems() {
+export async function buildSearchItems(lessonTitles = { titles: new Map(), moduleIds: new Map(), labLinks: new Map() }) {
   const practice = await importTsModule("src/lib/practice-links.ts");
   const { GENERATED_LAB_MANIFESTS } = await importTsModule("src/generated/lab-registry.ts");
   const siteLinks = await importTsModule("src/lib/site-links.ts");
@@ -192,25 +253,35 @@ export async function buildSearchItems() {
   for (const lab of GENERATED_LAB_MANIFESTS) {
     if (lab.status !== "available") continue;
     const override = practice.LAB_LESSON_OVERRIDES[lab.id]?.[0];
-    const fromHref = lab.moduleHref ? lab.moduleHref.split("/")[3] : undefined;
+    const [, hrefRoot, , hrefModule, hrefLesson] = lab.moduleHref ? lab.moduleHref.split("/") : [];
+    const fromHref = hrefRoot === "curriculum" && hrefModule ? `${hrefModule}/${hrefLesson || "index"}` : undefined;
     const code = codeOfLessonRef(override) ?? codeOfLessonRef(fromHref) ?? lab.owningModule;
-    items.push(item("lab", lab.title, lab.description, `/practice/lab/${lab.id}`, keywords("lab", lab.owningModule, code), code));
+    const base = keywords("lab", lab.owningModule, code);
+    const teaching = override ?? fromHref ?? lab.owningModule;
+    const launching = lessonTitleOf(lessonTitles, teaching);
+    const linking = lessonTitles.labLinks.get(lab.id) ?? [];
+    const topics = topicKeywords({ ...lab, lessonTitles: [launching, ...linking].filter(Boolean) }, base);
+    items.push(item("lab", lab.title, lab.description, `/practice/lab/${lab.id}`, [...base, ...topics], code));
   }
 
   for (const page of practice.PRACTICE_PAGES) {
     const kind = PRACTICE_KIND_TO_SEARCH_KIND[page.kind];
     if (!kind) throw new Error(`Practice page ${page.href} has kind ${page.kind}, which search does not map`);
     const codes = page.lessons.map(codeOfLessonRef);
-    items.push(item(kind, page.title, page.description, page.href, keywords(PRACTICE_KIND_WORDS[page.kind], codes), codes[0]));
+    const base = keywords(PRACTICE_KIND_WORDS[page.kind], codes);
+    const topics = topicKeywords({ ...page, lessonTitles: [lessonTitleOf(lessonTitles, page.lessons[0])].filter(Boolean) }, base);
+    items.push(item(kind, page.title, page.description, page.href, [...base, ...topics], codes[0]));
   }
 
   const bankDir = path.join(root, "content", "interview-questions");
   for (const file of fs.readdirSync(bankDir).filter((name) => name.endsWith(".json")).sort()) {
     const bank = JSON.parse(fs.readFileSync(path.join(bankDir, file), "utf8"));
-    const code = codeOfLessonRef(practice.INTERVIEW_BANK_LESSONS[bank.topic]?.[0]);
-    items.push(
-      item("interview", bank.title, bank.description, `/interview-prep/${file.replace(/\.json$/, "")}`, keywords("interview", "interview questions", bank.topic), code),
-    );
+    const home = practice.INTERVIEW_BANK_LESSONS[bank.topic]?.[0];
+    const code = codeOfLessonRef(home);
+    const base = keywords("interview", "interview questions", bank.topic);
+    const outcome = practice.INTERVIEW_BANK_OUTCOMES[bank.topic];
+    const topics = topicKeywords({ ...bank, outcome, lessonTitles: [lessonTitleOf(lessonTitles, home)].filter(Boolean) }, base);
+    items.push(item("interview", bank.title, bank.description, `/interview-prep/${file.replace(/\.json$/, "")}`, [...base, ...topics], code));
   }
 
   for (const link of siteLinks.REFERENCE_LINKS) {
@@ -294,6 +365,8 @@ export async function buildSearchIndex() {
   const parser = unified().use(remarkParse).use(remarkMdx).use(remarkGfm);
   const warnings = [];
   const tiers = [];
+  /** Lab id → titles of the lessons that place its <LabLink>, in manifest order. */
+  const labLinks = new Map();
 
   for (const tier of manifest.tiers) {
     const modules = [];
@@ -330,6 +403,12 @@ export async function buildSearchIndex() {
           entries.push(anchor === headingSlug(text) ? [text, heading.depth] : [text, heading.depth, anchor]);
         }
 
+        for (const [, labId] of body.matchAll(/<LabLink\s[^>]*?labId=["']([^"']+)["']/g)) {
+          const titles = labLinks.get(labId) ?? [];
+          if (!titles.includes(title)) titles.push(title);
+          labLinks.set(labId, titles);
+        }
+
         lessons.push({ slug: lessonSlug, title, description, headings: entries });
       }
 
@@ -339,7 +418,15 @@ export async function buildSearchIndex() {
     tiers.push({ id: tier.id, title: tier.title, modules });
   }
 
-  const items = await buildSearchItems();
+  const lessonTitles = { titles: new Map(), moduleIds: new Map(), labLinks };
+  for (const tier of tiers) {
+    for (const mod of tier.modules) {
+      lessonTitles.moduleIds.set(mod.id, mod.id);
+      lessonTitles.moduleIds.set(mod.id.split("_")[0], mod.id);
+      for (const lesson of mod.lessons) lessonTitles.titles.set(`${mod.id}/${lesson.slug}`, lesson.title);
+    }
+  }
+  const items = await buildSearchItems(lessonTitles);
   return { index: { version: SEARCH_INDEX_VERSION, tiers, items }, warnings };
 }
 

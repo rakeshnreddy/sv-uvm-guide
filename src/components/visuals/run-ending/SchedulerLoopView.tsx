@@ -95,7 +95,7 @@ export function RunLog({ step, result, prepared, index }: { step: TraceStep; res
         <ol className="space-y-0.5" aria-label="Simulation output, oldest first">
           {step.log.map((l, i) => (
             <li key={i} className={cn("flex flex-wrap gap-x-3", i === step.log.length - 1 && step.kind === "print" && "text-cyan-200")}>
-              <span className="w-12 shrink-0 text-right text-slate-400">{l.time} ns</span>
+              <span className="w-12 shrink-0 text-right text-code-muted">{l.time} ns</span>
               <span className="min-w-0 flex-1 break-words">
                 {l.severity ? <span className="text-amber-200/90">{severityPrefix(l.severity, l.time)} </span> : null}
                 {l.text}
@@ -106,11 +106,11 @@ export function RunLog({ step, result, prepared, index }: { step: TraceStep; res
         </ol>
       )}
       {hasSeverity ? (
-        <p className="mt-2 font-sans text-xs text-slate-400">
+        <p className="mt-2 font-sans text-xs text-code-muted">
           ‹… prefix› is a placeholder: the tool prints its own text with the severity, file and line, scope and time. That layout is tool-specific (§20.10).
         </p>
       ) : null}
-      {diagnostic && index >= diagnostic.index ? <p className="mt-2 font-sans text-xs text-slate-400">{diagnostic.text}</p> : null}
+      {diagnostic && index >= diagnostic.index ? <p className="mt-2 font-sans text-xs text-code-muted">{diagnostic.text}</p> : null}
     </div>
   );
 }

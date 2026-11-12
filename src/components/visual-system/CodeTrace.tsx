@@ -56,7 +56,7 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
                     : "border-transparent",
               )}
             >
-              <span className="w-7 shrink-0 select-none pt-px text-right text-xs text-slate-400" aria-hidden>
+              <span className="w-7 shrink-0 select-none pt-px text-right text-xs text-code-muted" aria-hidden>
                 {i + 1}
               </span>
               <span className="w-8 shrink-0" aria-hidden>

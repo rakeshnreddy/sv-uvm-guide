@@ -249,7 +249,7 @@ export default function TelemetryEventBusVisualizer() {
                         {o.message.origin === "sv" ? "$error" : o.originalSeverity} [{o.message.id}]
                       </span>
                       <span className="block text-xs text-muted-foreground">{o.message.text}</span>
-                      {i === REAL_BUG_INDEX ? <span className="mt-0.5 inline-block rounded bg-rose-500/15 px-1 text-label text-rose-800 dark:text-rose-200">real bug</span> : null}
+                      {i === REAL_BUG_INDEX ? <span className="mt-0.5 inline-block rounded bg-rose-500/15 px-1 text-label text-rose-800 dark:text-rose-200">Real bug</span> : null}
                     </td>
                     <td className="px-3 py-2">
                       <FateBadge outcome={o} />

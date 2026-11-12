@@ -333,7 +333,7 @@ function ReturnChip({ value }: { value: string | null }) {
   if (value === null) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/70 bg-amber-500/10 px-2.5 py-0.5 font-mono text-sm text-amber-900 dark:text-amber-100" data-testid="return-chip">
-      <span className="text-label">returned</span>
+      <span className="text-label">Returned</span>
       <span className="font-semibold">{value}</span>
     </span>
   );

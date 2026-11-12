@@ -133,7 +133,7 @@ function TraceView({ events, deadlock, resetKey }: { events: HookEvent[]; deadlo
       <PlaybackControls playback={playback} stepCount={events.length} stepNoun="Call" describeStep={(i) => events[i]?.call ?? ""} />
       <div className="rounded-xl border border-border bg-card p-3" aria-live="polite">
         <p className="text-label text-muted-foreground">
-          call {index + 1} of {events.length}
+          Call {index + 1} of {events.length}
         </p>
         <p className="mt-1 font-mono text-[15px] font-medium text-foreground [font-variant-ligatures:none]">{ev.call}</p>
         <p className="mt-1 text-sm text-muted-foreground">

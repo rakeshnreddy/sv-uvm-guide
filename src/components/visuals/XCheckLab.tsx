@@ -207,7 +207,7 @@ function CheckerLab({ preset }: { preset?: string }) {
         aria-label="Checker form"
         value={config.form}
         onChange={(e) => update({ form: e.target.value as CheckerForm })}
-        className={cn("min-h-8 rounded border border-white/20 bg-slate-900 px-1 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400", mono)}
+        className={cn("min-h-8 rounded border border-input bg-code-surface px-1 text-xs text-code-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400", mono)}
       >
         {CHECKER_FORMS.map((f) => (
           <option key={f} value={f}>

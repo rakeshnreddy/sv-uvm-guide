@@ -406,7 +406,7 @@ function TermDetail({ term, why, result, expressionName, showChips }: { term: Te
         {code(term.text)} <span aria-hidden>→</span> <span className="sr-only">gives</span>
         {term.unsupported ? (
           <span className="ml-1 inline-flex h-5 items-center rounded border border-dashed border-amber-500/70 bg-amber-500/10 px-1.5 text-label text-warning">
-            not comparable
+            Not comparable
           </span>
         ) : (
           <span className={cn("ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded border px-1 font-mono text-xs font-semibold", resultStyle(term.result))}>{term.result}</span>

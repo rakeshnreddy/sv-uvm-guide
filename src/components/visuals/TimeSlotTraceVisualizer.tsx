@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeTrace } from "@/components/visual-system/CodeTrace";
 import { FidelityBadge } from "@/components/visual-system/FidelityBadge";
@@ -72,6 +72,25 @@ interface TimeSlotTraceVisualizerProps {
 /** The site's label style (sentence case, no tracking), for the labels inside the model. */
 export const TRACE_LABEL_CLASS = "text-label text-muted-foreground";
 
+/** The query parameter that names the scenario a visualizer opens on (`?scenario=shift-nba`). */
+export const SCENARIO_QUERY_PARAM = "scenario";
+
+/**
+ * The scenario a URL's query asks for, when it is one this instance offers;
+ * null for anything else (no parameter, an unknown id, one the instance's
+ * picker does not list), so the instance keeps its own starting scenario.
+ */
+export function scenarioFromSearch(search: string, offered: readonly string[]): TraceScenarioId | null {
+  let requested: string | null;
+  try {
+    requested = new URLSearchParams(search).get(SCENARIO_QUERY_PARAM);
+  } catch {
+    return null;
+  }
+  if (!requested) return null;
+  return offered.includes(requested) ? (requested as TraceScenarioId) : null;
+}
+
 /**
  * Synchronised view of one time slot: code, region ladder (or the folded
  * event box), values, waveform and narration all render the same model step.
@@ -94,6 +113,17 @@ export default function TimeSlotTraceVisualizer({
   const folded = regionView === "folded";
 
   const [orderKey, setOrderKey] = useState<string>("");
+  // The page is static, so the URL is read once after mount: a link can open this instance on a scenario it offers.
+  const readUrl = useRef(false);
+  useEffect(() => {
+    if (readUrl.current) return;
+    readUrl.current = true;
+    const requested = scenarioFromSearch(window.location.search, presets.map((p) => p.id));
+    if (!requested) return;
+    setScenarioId(requested);
+    setOrderKey("");
+    if (getTracePreset(requested).advanced) setShowAdvanced(true);
+  }, [presets]);
   const exploration = useMemo(() => exploreOrderings(scenario), [scenario]);
   const orderings = useMemo(() => {
     const options = orderingOptions(scenario, exploration);

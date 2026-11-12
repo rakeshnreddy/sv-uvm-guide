@@ -433,7 +433,7 @@ export default function LabClientPage({
                     disabled={!loaded || !isStepUnlocked(policy, progress.completedSteps, step.id)}
                     onClick={() => storeActions.selectStep(step.id)}
                   >
-                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{step.title}</span>
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><InlineCodeText text={step.title} /></span>
                     {done ? (
                       <>
                         <Check aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-success" />
@@ -476,8 +476,8 @@ export default function LabClientPage({
         {/* A section, not <main>: the learning layout already provides the page's main landmark. */}
         <section aria-label="Lab workspace" aria-busy={!loaded} className="flex min-w-0 flex-1 flex-col">
           <div className="border-b border-border bg-card p-4 text-card-foreground">
-            <h2 className="text-h3 text-foreground">{currentStep.title}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{currentStep.instructions}</p>
+            <h2 className="text-h3 text-foreground [overflow-wrap:anywhere]"><InlineCodeText text={currentStep.title} /></h2>
+            <p data-testid="lab-step-instructions" className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]"><InlineCodeText text={currentStep.instructions} /></p>
           </div>
           {/* Below lg the page is one column with no fixed height, so the editor needs its own height or 100% resolves to 0. */}
           <div data-testid="lab-editor-frame" className="h-[60vh] min-h-[420px] lg:h-auto lg:min-h-[520px] lg:flex-1">

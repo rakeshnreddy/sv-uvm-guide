@@ -6,7 +6,7 @@ import { classifyValue, fidelityLabels, ownerStyles, valueStyles } from '@/compo
 import { formatValue, type SvValue } from '@/lib/sv-scheduler-model';
 import { cn } from '@/lib/utils';
 
-import { LIVE_MODEL_HREF, type FrameRegion, type FrameRegionGroup, type FrameSignal, type SchedulerFrame as Frame } from './scheduler-frame';
+import { liveModelLink, type FrameRegion, type FrameRegionGroup, type FrameSignal, type SchedulerFrame as Frame } from './scheduler-frame';
 
 /*
  * The hero's frame of the scheduler model (DESIGN.md section 11: the one
@@ -261,12 +261,12 @@ export default function SchedulerFrame({ frame }: { frame: Frame }) {
         </span>
         <span className="text-muted-foreground">
           <Link
-            href={LIVE_MODEL_HREF}
+            href={liveModelLink()}
             className="rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Open the live model
           </Link>
-          , then choose <span className="whitespace-nowrap font-mono text-foreground">{frame.scenarioLabel}</span>
+          {" "}on <span className="whitespace-nowrap font-mono text-foreground">{frame.scenarioLabel}</span>
         </span>
       </figcaption>
     </figure>
