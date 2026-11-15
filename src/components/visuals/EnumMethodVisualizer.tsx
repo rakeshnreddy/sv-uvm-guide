@@ -559,7 +559,7 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
       <figcaption className="text-label text-subtle">Values on a number line, in value order</figcaption>
       {line.slots.length > LONG_LINE_SLOTS ? <p className="text-xs text-muted-foreground sm:hidden">Scroll the line sideways to see every value.</p> : null}
       <ol
-        className="grid grid-flow-col auto-cols-[minmax(2.75rem,1fr)] gap-1 overflow-x-auto pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="grid grid-flow-col auto-cols-[minmax(min-content,1fr)] gap-1 overflow-x-auto pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={label}
         // A line that can scroll sideways takes keyboard focus so the arrow keys can scroll it.
         tabIndex={line.slots.length > LONG_LINE_SLOTS ? 0 : undefined}
@@ -576,7 +576,7 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
                   : `value ${s.from}: ${s.members.join(" and ")}${collision ? ", the same value twice, an error" : ""}${pointer === s.from ? ", s is here" : ""}`
               }
               className={cn(
-                "flex min-h-24 flex-col items-stretch justify-end gap-1 rounded-md border p-1 text-center",
+                "flex min-h-24 min-w-[2.75rem] flex-col items-stretch justify-end gap-1 rounded-md border p-1 text-center",
                 s.kind === "gap" ? "border-dashed border-border text-muted-foreground" : collision ? "border-2 border-danger" : "border-border",
                 pointer === s.from && "ring-2 ring-ring",
               )}
@@ -585,7 +585,7 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
                 <span className="text-xs">no member</span>
               ) : (
                 s.members.map((name) => (
-                  <span key={name} className={cn("rounded border px-1 py-0.5 text-xs", mono, errorNames.has(name) ? "border-danger text-danger" : "border-border bg-muted text-foreground")}>
+                  <span key={name} className={cn("whitespace-nowrap rounded border px-1 py-0.5 text-xs", mono, errorNames.has(name) ? "border-danger text-danger" : "border-border bg-muted text-foreground")}>
                     {errorNames.has(name) ? <span aria-hidden>✕ </span> : null}
                     {name}
                   </span>

@@ -397,7 +397,7 @@ describe("prediction options", () => {
   });
 
   it("asks a question that names the target", () => {
-    expect(predictionQuestion("8'hFF", "logic16")).toBe("After v = 8'hFF;, which bits does v hold?");
+    expect(predictionQuestion("8'hFF", "logic16")).toBe("After v = 8'hFF, which bits does v hold?");
     expect(predictionQuestion("'1", "self")).toContain("$display");
   });
 });

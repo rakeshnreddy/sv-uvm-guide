@@ -292,15 +292,19 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
       { when: propIs("scenario", "x-arith"), height: 735, midHeight: 735, mobileHeight: 997 },
     ],
   },
-  // The base is the timeout-disable-fork tour; the other openings are shorter.
+  // The base is the timeout-disable-fork tour; the other openings are shorter, except the tour with its process tree.
   ForkJoinVisualizer: {
     height: 1139,
     midHeight: 971,
     mobileHeight: 1501,
     variants: [
-      { when: propIs("mode", "debug"), height: 1015, midHeight: 1015, mobileHeight: 1195 },
-      { when: propIs("scenario", "event-race"), height: 964, midHeight: 964, mobileHeight: 1301 },
-      { when: propIs("scenario", "join-variants"), height: 1101, midHeight: 1101, mobileHeight: 1327 },
+      { when: propIs("mode", "debug"), height: 1015, midHeight: 1015, mobileHeight: 1199 },
+      { when: propIs("scenario", "event-race"), height: 964, midHeight: 964, mobileHeight: 1317 },
+      // Measured on 2026-11-15 on F2C (1440, 1100 and 390 px), with the process tree open where `treeView` is set.
+      { when: all(propIs("scenario", "timeout-disable-fork"), propIs("treeView", true)), height: 1827, midHeight: 1864, mobileHeight: 2248 },
+      { when: propIs("scenario", "finished-child-grandchild"), height: 1517, midHeight: 1531, mobileHeight: 1802 },
+      { when: propIs("scenario", "fork-loop-capture"), height: 809, midHeight: 809, mobileHeight: 1135 },
+      { when: propIs("scenario", "join-variants"), height: 1049, midHeight: 1049, mobileHeight: 1279 },
       { when: all(propIs("scenario", "timeout-disable-fork"), (props) => listLength(props.scenarios) === 1), height: 1087, midHeight: 1087, mobileHeight: 1449 },
     ],
   },
@@ -383,7 +387,16 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   RaceConditionDebugger: { height: 656, midHeight: 656, mobileHeight: 895 },
   TestbenchDriveComparison: { height: 462, midHeight: 462, mobileHeight: 688 },
   RaceDebugChallenge: { height: 623, midHeight: 623, mobileHeight: 761 },
-  EnumMethodVisualizer: { height: 1060, midHeight: 1060, mobileHeight: 1700 },
+  // Re-measured on 2026-11-15 on F2A and its structs lesson: the base is the methods tab (no initialTab).
+  EnumMethodVisualizer: {
+    height: 1112,
+    midHeight: 1192,
+    mobileHeight: 1772,
+    variants: [
+      { when: propIs("initialTab", "declaration"), height: 763, midHeight: 783, mobileHeight: 1095 },
+      { when: propIs("initialTab", "casts"), height: 1125, midHeight: 1125, mobileHeight: 1619 },
+    ],
+  },
   // Every instance opens its own preset, so each has its own value.
   FileReadCursorVisualizer: {
     height: 1294,
@@ -396,6 +409,91 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
       { when: propIs("preset", "case-2"), height: 1493, midHeight: 1493, mobileHeight: 1580 },
       { when: propIs("preset", "robust-parsing"), height: 1392, midHeight: 1392, mobileHeight: 2141 },
       { when: propIs("preset", "regression-scale"), height: 1294, midHeight: 1294, mobileHeight: 1934 },
+    ],
+  },
+  // Measured on 2026-11-15 at 1440, 1100 and 390 px for every instance in the nine Tier 1 lessons that embed them
+  // (F1A, F2A and its structs lesson, F2B, F2C and flow-control, F2D and ipc, F3B).
+  InteractiveCostOfBugGraph: { height: 520, midHeight: 520, mobileHeight: 716 },
+  HallOfShameCarousel: { height: 927, midHeight: 927, mobileHeight: 1476 },
+  BoundaryProbe: { height: 1166, midHeight: 1166, mobileHeight: 1500 },
+  // The base is section="widths"; the defaults drills are much shorter.
+  DataTypeComparisonChart: {
+    height: 1354,
+    midHeight: 1354,
+    mobileHeight: 2189,
+    variants: [{ when: propIs("section", "defaults"), height: 523, midHeight: 523, mobileHeight: 809 }],
+  },
+  // The base is the "hex-ff" preset (also the default); "truncated-hex" opens a longer readout.
+  LiteralDecoder: {
+    height: 1007,
+    midHeight: 1007,
+    mobileHeight: 1703,
+    variants: [{ when: propIs("preset", "truncated-hex"), height: 1141, midHeight: 1141, mobileHeight: 1837 }],
+  },
+  // Each initial scene opens its own panel; "mem-block" is the base.
+  SystemVerilog3DVisualizer: {
+    height: 1316,
+    midHeight: 1316,
+    mobileHeight: 1690,
+    variants: [{ when: propIs("initialScene", "queue"), height: 668, midHeight: 668, mobileHeight: 832 }],
+  },
+  // The base is the UVM scoreboard with no mode (A-UVM-6 and E-RISCV-1, measured on 2026-11-15 as well); debug mode and the plain-SV F2B instances differ.
+  ScoreboardMatchingVisualizer: {
+    height: 1008,
+    midHeight: 1048,
+    mobileHeight: 1619,
+    variants: [
+      { when: propIs("mode", "debug"), height: 1285, midHeight: 1309, mobileHeight: 1873 },
+      { when: all(propIs("variant", "plain-sv"), (props) => listLength(props.compare) > 0), height: 2663, midHeight: 2663, mobileHeight: 4183 },
+      { when: propIs("variant", "plain-sv"), height: 2527, midHeight: 2647, mobileHeight: 4173 },
+    ],
+  },
+  // The game (no items) opens on a short start card; the "first-read" sorter is the full board.
+  EventRegionGame: {
+    height: 334,
+    midHeight: 334,
+    mobileHeight: 370,
+    variants: [{ when: propIs("items", "first-read"), height: 1138, midHeight: 1186, mobileHeight: 1122 }],
+  },
+  // The base is the "f3b-worked-example" preset (also the default).
+  RegionTraceExercise: {
+    height: 1747,
+    midHeight: 1891,
+    mobileHeight: 2479,
+    variants: [{ when: propIs("preset", "f3b-kata"), height: 1860, midHeight: 1860, mobileHeight: 2760 }],
+  },
+  // The base is "for-continue-break"; each other preset opens its own program.
+  LoopTracer: {
+    height: 807,
+    midHeight: 807,
+    mobileHeight: 1024,
+    variants: [
+      { when: propIs("preset", "foreach-visit-order"), height: 719, midHeight: 719, mobileHeight: 955 },
+      { when: propIs("preset", "repeat-1101"), height: 811, midHeight: 811, mobileHeight: 1099 },
+    ],
+  },
+  EventMemoryMatrix: { height: 1188, midHeight: 1188, mobileHeight: 1498 },
+  // The base is mode="format" (also the default); each monitor opening is taller.
+  PrintingLab: {
+    height: 803,
+    midHeight: 803,
+    mobileHeight: 1055,
+    variants: [
+      { when: all(propIs("mode", "monitor"), propIs("preset", "replaced-list")), height: 1192, midHeight: 1192, mobileHeight: 1300 },
+      { when: propIs("mode", "monitor"), height: 1765, midHeight: 1765, mobileHeight: 2161 },
+    ],
+  },
+  ReadmemLoader: { height: 776, midHeight: 776, mobileHeight: 1310 },
+  // The base is the semaphore game (no mode on ipc, mode="semaphore" in Tier 2, also measured on 2026-11-15); the other openings differ.
+  MailboxSemaphoreGame: {
+    height: 1496,
+    midHeight: 1496,
+    mobileHeight: 2162,
+    variants: [
+      { when: propIs("mode", "mailbox"), height: 1490, midHeight: 1490, mobileHeight: 2098 },
+      { when: propIs("mode", "debug"), height: 1072, midHeight: 1072, mobileHeight: 1264 },
+      { when: propIs("mode", "bench"), height: 1649, midHeight: 1649, mobileHeight: 2281 },
+      { when: all(propIs("mode", "semaphore"), propIs("initialProgram", "same-time")), height: 1480, midHeight: 1480, mobileHeight: 2243 },
     ],
   },
 };

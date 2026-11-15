@@ -1230,7 +1230,7 @@ export function literalPredictionOptions(d: LiteralDecode): LiteralOption[] {
 /** The question the prediction asks. */
 export function predictionQuestion(text: string, targetId: LiteralTargetId): string {
   const t = literalTarget(targetId);
-  return t.decl ? `After ${t.decl.name} = ${text};, which bits does ${t.decl.name} hold?` : `As a $display argument, how many bits is ${text}, and which?`;
+  return t.decl ? `After ${t.decl.name} = ${text}, which bits does ${t.decl.name} hold?` : `As a $display argument, how many bits is ${text}, and which?`;
 }
 
 // ---------------------------------------------------------------------------

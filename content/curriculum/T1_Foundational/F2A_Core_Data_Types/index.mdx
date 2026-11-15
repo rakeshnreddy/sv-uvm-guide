@@ -179,6 +179,10 @@ Every variable holds a default value until something assigns it (Table 6-7), and
 | `trireg` net | `x`, then it holds its last driven value | §6.6, §6.6.4 |
 | `tri0` / `tri1` net with no driver | 0 / 1 at pull strength | §6.6.5 |
 
+Drill the table before you go on. Pick a declaration, commit to the value it holds before anything assigns it, then reveal it. The last two drills print the same bits, `8'hFF`, through a signed `byte` and an unsigned `bit [7:0]`: notice that the value changes while the bits do not, which [Integer types and signedness](#integer-types-and-signedness) explains.
+
+<DataTypeComparisonChart section="defaults" />
+
 **Predict before you read on.** `logic [7:0] dut_data;` is never assigned, and the testbench runs `bit [7:0] tb_data; initial tb_data = dut_data;`. What does `$display("%h", tb_data)` print, and what does `$isunknown(tb_data)` return (§20.9: it returns 1 if any bit is `x` or `z`)?
 
 <details>
@@ -326,6 +330,10 @@ Three mistakes this table prevents:
 - `v = 1` sets only bit 0. Write `v = '1` to set every bit.
 - `v = 4'bx` leaves the upper 12 bits at 0, because a sized unsigned value is zero-extended (§10.7, §11.8.3). Write `v = 'x` to make every bit unknown (§5.7.1). Block 10 of the bench in Make It Work checks both.
 - An unsized constant cannot appear in a concatenation: `{a, 1}` is illegal, so write `{a, 1'b1}` (§11.4.12).
+
+Now decode the table's literals one step at a time. Pick a literal, predict the bits it stores in `logic [15:0] v`, then step through: read the parts, turn the digits into bits, fit them to the size, then extend or cut them into `v`. Notice which step adds the twelve zeros of `4'bx` and which step makes `'x` fill all sixteen bits; the two syntax-error cards show why `{a, 1}` does not compile.
+
+<LiteralDecoder preset="hex-ff" presets={["decimal-12", "hex-ff", "signed-hex-ff", "binary-10x1", "binary-x", "hex-3x", "unsized-x", "sized-x", "fill-ones", "decimal-1"]} />
 
 In testbenches the fill literals do daily work: `'0` for reset values, `'1` for all-ones masks, `'x` to mark a field as not yet known, and `'z` to release a tri-state bus. [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions) applies the same sizing rules to every operator.
 
@@ -588,6 +596,10 @@ Two mistakes to avoid:
 | `time` | 4 | 64 | no |
 
 Sizes and states come from Table 6-8, default signs from §6.11.3, and the 1-bit default from §6.9. Any of them can be declared explicitly `signed` or `unsigned` (`int unsigned ui;`, §6.11.3), and nets can be declared `signed` too (`wire signed [7:0] w;`, §6.7.1).
+
+The chart draws the fixed-width types to scale against a 64-bit value. Notice that `int` and `integer` are the same 32 bits but differ in states, and that `time` is as wide as `longint` yet unsigned. `bit` and `logic` have no bar, because your declared range sets their width.
+
+<DataTypeComparisonChart section="widths" />
 
 Signedness decides how a value is extended when it moves into a wider variable (§6.11.2):
 
@@ -935,6 +947,10 @@ Practise the indexed part-select and range-direction rules. Move the base of `v[
   </svg>
   <figcaption className="mt-2 text-sm text-muted-foreground">Slate boxes are separate unpacked elements; cyan lanes and cells are parts of one packed vector. Indices apply unpacked first, then packed, each group left to right (§7.4.4), so <code>mem[5][2][3]</code> walks word 5, byte lane 2, bit 3.</figcaption>
 </figure>
+
+See the same memory in three dimensions. Pick a select, predict whether it reads a word, a byte or a bit and its value, then reveal it; the text view beside the scene lists every byte. Notice that each index you add removes one dimension, and try `mem[16]` and `mem[i]` with `i` holding `x`: both are invalid unpacked indices, and the `b[5]` row of the table above gives the rule for what they read (§7.4.5, Table 7-1).
+
+<SystemVerilog3DVisualizer initialScene="mem-block" syncSceneToUrl={false} />
 
 Unpacked arrays can have several dimensions too. `int grid [4][8];` is four rows of eight `int`s: `grid[1]` is a whole row (an unpacked array of eight `int`s), `grid[1][7]` is the last `int` in that row, and the rightmost dimension varies fastest, as in C (§7.4.4).
 
@@ -1590,6 +1606,10 @@ The rules, including the four you just predicted:
 - `>>>` fills with the sign bit only when the expression is signed (§11.4.10). On an unsigned operand it behaves like `>>`.
 - When a signed operand is extended and its sign bit is `x` or `z`, the new bits are `x` or `z` too (§11.8.4).
 - Converting a `real` to an integer rounds to the nearest integer, with .5 rounded away from zero: `int'(2.5)` is 3 and `int'(-1.5)` is −2 (§6.12.1).
+
+Step through the literal corner cases with the same decoder. Predict the stored bits first, then watch the size step: `4'hFF` loses its upper digit, `'hx` fills all 40 bits of `logic [39:0] v`, `'h7_0000_0000` needs more than 32 bits, and `'1` on its own in a `$display` is 1 bit wide.
+
+<LiteralDecoder preset="truncated-hex" presets={["truncated-hex", "unsized-x-40", "wide-unsized", "fill-display"]} />
 
 ### Expert: X-propagation beyond the standard (tool-dependent)
 

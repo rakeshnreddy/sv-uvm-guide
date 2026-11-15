@@ -224,6 +224,15 @@ describe("ForkJoinVisualizer process tree (treeView)", () => {
     expect(document.activeElement).toBe(verdict);
   });
 
+  it("the scenario picker keeps the order the lesson passes, and the note names each statement without its semicolon", () => {
+    render(<ForkJoinVisualizer scenario="timeout-disable-fork" scenarios={["timeout-disable-fork", "wrapper-begin-end", "named-disable", "wait-fork"]} treeView />);
+    const labels = within(screen.getByRole("radiogroup", { name: "Scenario" }))
+      .getAllByRole("radio")
+      .map((r) => r.textContent);
+    expect(labels).toEqual(["Timeout + disable fork", "Wrappers and disable fork", "disable by name", "wait fork"]);
+    expect(screen.getByText(/Playback pauses before each/).textContent).not.toMatch(/;,/);
+  });
+
   it("cleanup preset, disable by name with two calls: xfer(2) is forced out of guard, not ended (§9.6.2)", () => {
     render(<ForkJoinVisualizer preset="cleanup" />);
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Scenario" })).getByRole("radio", { name: "disable by name" }));

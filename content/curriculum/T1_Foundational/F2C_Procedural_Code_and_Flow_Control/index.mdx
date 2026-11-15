@@ -361,9 +361,15 @@ The keyword that closes a fork decides when the **parent**, the process that exe
 
 One rule surprises almost everyone: **spawned processes do not start until the parent blocks or finishes**, whichever keyword you use (§9.3.2).
 
-**Predict first.** The visualizer opens on a parent that forks A (`#10`), B (`#30`) and C (`#20`) and then prints "parent continues". Predict the print time for `join`, `join_any` and `join_none`. Then switch to *fork in a loop*, the most common fork bug in real testbenches.
+**Predict first.** The visualizer opens on a parent that forks A (`#10`), B (`#30`) and C (`#20`) and then prints "parent continues". Predict the print time for `join`, `join_any` and `join_none`.
 
-<ForkJoinVisualizer scenario="join-variants" scenarios={["join-variants", "fork-loop-capture"]} />
+The picture above the lanes is a **process tree**: each process sits under the process that forked it. As you step, notice that every statement of the fork becomes a child node of its own under the parent: §9.5 lists each parallel statement in a fork-join (or `join_any` or `join_none`) group as a thread of its own.
+
+<ForkJoinVisualizer scenario="join-variants" scenarios={["join-variants"]} treeView />
+
+**Predict next.** Now try *fork in a loop*, the most common fork bug in real testbenches: a `for` loop forks one child per pass with `join_none`, and each child prints the loop variable. Predict the values the three children print before you step.
+
+<ForkJoinVisualizer scenario="fork-loop-capture" scenarios={["fork-loop-capture"]} />
 
 What the lanes showed:
 
@@ -391,18 +397,21 @@ Three statements control threads that you have forked (§9.6):
 - `disable fork;` kills **every descendant** of the calling process, not just the children of the last fork. A monitor that the same process forked earlier dies too (§9.6.3).
 - `disable name;` ends the named block or task in **every process** that is executing it (§9.6.2). In a task called by two threads at once, one call's cleanup kills the other call's work.
 
-**Predict first.** The visualizer opens on a test that forks a background monitor, then runs a transfer whose response races a timer with `join_any`, and cleans up with `disable fork`. Predict which processes `disable fork` kills. Then try the *isolation wrapper* variant, the *disable by name* scenario with two concurrent calls, and the *wait fork* scenario.
+**Predict first.** The visualizer opens on a test that forks a background monitor, then runs a transfer whose response races a timer with `join_any`, and cleans up with `disable fork`. Predict which processes `disable fork` kills. Then try the *isolation wrapper* variant (the *Wrappers and disable fork* scenario sets the same idiom, `fork begin … end join`, beside two other wrappers), the *disable by name* scenario with two concurrent calls, and the *wait fork* scenario.
 
-<ForkJoinVisualizer scenario="timeout-disable-fork" scenarios={["timeout-disable-fork", "named-disable", "wait-fork"]} />
+With the process tree drawn, each run pauses just before `disable fork`, `wait fork` or a disable by name (`disable guard`): tap the nodes you think the statement reaches, then lock your answer and step on. The *Wrappers and disable fork* scenario puts the same race inside two wrappers, `fork begin … end join` and `begin … end`, and with no wrapper; predict for each whether the monitor survives, and count the nodes under test.
+
+<ForkJoinVisualizer scenario="timeout-disable-fork" scenarios={["timeout-disable-fork", "wrapper-begin-end", "named-disable", "wait-fork"]} treeView />
 
 What the lanes showed:
 
 - Plain `disable fork` kills the timer **and the monitor**, because the test forked both. The monitor goes silent with no error.
 - With the isolation wrapper, `disable fork` runs inside a new parent whose only descendants are the response and the timer, so the monitor survives.
+- A `begin … end` wrapper changes nothing: it creates no process (§9.5), so `disable fork` still runs in test and the monitor dies. Only `fork begin … end join` adds a node under test.
 - `disable guard` with two concurrent calls ends both activations of the block, so the second call never prints its response.
 - `wait fork` returns at 20 ns, when the last immediate child ends. It does not wait for the grandchild G.
 
-The two pictures below freeze the first scenario at 15 ns, the moment the response wins, as a **process tree**: each process sits under the process that forked it. The lanes add the transfer's id to the names (`rsp 1`, `timer 1`, `wrapper 1`). `disable fork` reaches everything below the process that calls it.
+The two pictures below freeze the first scenario at 15 ns, the moment the response wins, as a process tree like the one in the lab above. The lanes add the transfer's id to the names (`rsp 1`, `timer 1`, `wrapper 1`). `disable fork` reaches everything below the process that calls it.
 
 <ArchitectureDiagram
   title="Without the wrapper: disable fork reaches every descendant of test"
@@ -965,6 +974,10 @@ endtask
 - **Unspecified leftovers.** After a task is disabled, its `output` and `inout` results, its scheduled but not yet performed nonblocking assignments, and its procedural continuous assignments are unspecified (§9.6.2). Never rely on the outputs of a disabled task.
 - **Descendants of finished children.** `disable fork` also kills the descendants of children that have already finished (§9.6.3).
 - **`process::kill()`** kills a process and all of its descendants, even if the process itself has finished (§9.7). I-SV-5 teaches the `process` class: [Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index).
+
+To see the finished-children rule in the tree, try the lab below: parent forks C with `join`, C forks its own child G with `join_none` and finishes, and later parent runs the cleanup statement. Run it once with `disable fork` and once with `wait fork`, and watch G's node: before you lock in each answer, predict what each statement does to G, then check (§9.6.1, §9.6.3).
+
+<ForkJoinVisualizer scenario="finished-child-grandchild" scenarios={["finished-child-grandchild"]} treeView />
 
 The four ways to wait for or stop threads, side by side:
 

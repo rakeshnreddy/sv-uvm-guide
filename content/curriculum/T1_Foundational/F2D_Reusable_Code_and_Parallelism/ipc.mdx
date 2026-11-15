@@ -196,6 +196,8 @@ The mistakes everyone makes with events:
 - **Spinning on `triggered`.** Never put `wait (ev.triggered)` alone inside a loop; use `@(ev)` there.
 - **Expecting events to carry or count anything.** Two triggers while nobody waits are both lost. To pass data or keep every notification, use a mailbox.
 
+To test the first two mistakes cell by cell, with a waiter that starts at 0, 20 or 50 ns, use the event memory matrix in [Expert: When a signal must last, use a level, not an event](#expert-when-a-signal-must-last-use-a-level-not-an-event).
+
 <VisualRecap
   title="Named events: zero-duration pulse and the triggered window"
   rule="-> ev lasts zero simulation time: only processes already blocked in @(ev) wake (§15.5.1, §15.5.2). ev.triggered remains true throughout the current time step (§15.5.3). Once simulation time advances, past triggers are lost forever."
@@ -801,6 +803,10 @@ Make each change on its own, predict the log, then compare with the result below
 
    </details>
 
+After you have predicted all three, run them in the bench lab. It models the `tb_top` bench from Build it: pick **As written** or one of the three changes, answer its prediction, then scrub the run. Watch the `gen2drv` slot, the `bus` key queue and the `drv_done` trigger, and notice that when every process is blocked the run simply ends, with no error line.
+
+<MailboxSemaphoreGame mode="bench" />
+
 **Checklist before moving on:**
 - [ ] Every semaphore `get()` has a matching `put()` on every path out, including early returns.
 - [ ] Every mailbox is typed, `mailbox #(T)`, and bounded unless you have a reason not to.
@@ -849,6 +855,10 @@ Three more things are not spelled out. The standard gives no order for several p
   ]}
 />
 
+The lab below sets up the same-time case from the table: A holds the only key until 10 ns, and B and C both call `get(1)` at 2 ns. Predict who gets the key first, then compare the outcomes across every order of the ready processes. Then switch to **Requests through one owner**, the pattern in the diagram above, and notice that the grant order now follows a rule in the owner's code, not the order in which B and C were run.
+
+<MailboxSemaphoreGame mode="semaphore" initialProgram="same-time" />
+
 ### Expert: When a signal must last, use a level, not an event
 
 An event is an edge: `-> ev` reaches only the processes waiting at that moment, and `ev.triggered` is a short memory that clears when simulation time advances (§15.5.3). A wait condition is also re-evaluated only when one of its operands changes, and the end-of-time-slot reset of `triggered` does not count (§15.5.3). No event construct can tell a process that starts waiting at 50 ns about a trigger at 20 ns.
@@ -867,6 +877,10 @@ initial begin : late_joiner
   #50 wait (reset_done_flag);  // passes at once: the level is still 1
 end
 ```
+
+Before you read the table below, predict each cell of the matrix. `reset_gen` always notifies at 20 ns; each row is one way to notify and wait (`@(ev)`, `wait (ev.triggered)`, `wait (flag)`, `sem.get(1)`), and each column is when the waiter starts: at 0 ns, at 20 ns in the same time step, or late at 50 ns. Commit to **Passes**, **Blocks forever** or **Depends on order** for a cell, then reveal it and read the run. Notice which rows change their answer as you move right.
+
+<EventMemoryMatrix />
 
 | Mechanism | Notification syntax | How long the notification lasts | Late arrival at t = 50 ns (trigger was at 20 ns) | Clause |
 |---|---|---|---|---|

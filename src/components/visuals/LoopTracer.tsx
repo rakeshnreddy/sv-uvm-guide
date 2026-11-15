@@ -19,7 +19,7 @@ import {
   INT_INPUT_MIN,
   LOOP_ASSUMPTIONS,
   LOOP_PRESETS,
-  PREDICTION_QUESTION,
+  predictionQuestionFor,
   buildProgram,
   inputKey,
   parseCountBits,
@@ -51,7 +51,7 @@ export interface LoopTracerProps {
 const selectClass =
   "h-10 min-w-0 rounded-md border border-border bg-card px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const inputClass =
-  "h-10 w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-10 w-full min-w-0 rounded-md border border-input bg-card px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const mono = "font-mono [font-variant-ligatures:none]";
 const panel = "rounded-xl border border-border bg-card p-3";
 const chipClass = "inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-0.5 text-sm text-foreground tabular-nums";
@@ -448,7 +448,7 @@ export default function LoopTracer({ preset = "for-continue-break", presets }: L
           {inputError}
         </p>
       ) : run ? (
-        <PredictionPrompt question={PREDICTION_QUESTION} options={options} resetKey={resetKey}>
+        <PredictionPrompt question={predictionQuestionFor(program)} options={options} resetKey={resetKey}>
           {() => <Trace key={resetKey} run={run} stepKey={resetKey} />}
         </PredictionPrompt>
       ) : null}

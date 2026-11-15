@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeTrace } from "@/components/visual-system/CodeTrace";
 import { OutcomeGroups, type OutcomeGroup } from "@/components/visual-system/OutcomeGroups";
@@ -145,8 +145,14 @@ function Matrix({ matrix, revealed, selected, onSelect, refs }: MatrixProps) {
       <tbody>
         {matrix.map((row, ri) => (
           <tr key={WAIT_FORMS[ri]}>
-            <th scope="row" className={cn("break-words px-1 py-1 text-left text-xs font-medium text-foreground", mono)}>
-              {WAIT_FORM_INFO[WAIT_FORMS[ri]].waitCode}
+            <th scope="row" className={cn("px-1 py-1 text-left text-xs font-medium text-foreground", mono)}>
+              {/* Break only at spaces, so "wait (ev.triggered)" never leaves ")" alone on a line. */}
+              {WAIT_FORM_INFO[WAIT_FORMS[ri]].waitCode.split(" ").map((word, wi) => (
+                <Fragment key={wi}>
+                  {wi > 0 ? " " : null}
+                  <span className="whitespace-nowrap">{word}</span>
+                </Fragment>
+              ))}
             </th>
             {row.map((cell, ci) => {
               const key = cellKey(cell.form, cell.waiterStart);

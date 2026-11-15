@@ -59,9 +59,9 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
               <span className="w-7 shrink-0 select-none pt-px text-right text-xs text-code-muted" aria-hidden>
                 {i + 1}
               </span>
-              <span className="w-8 shrink-0" aria-hidden>
+              <span className="w-9 shrink-0" aria-hidden>
                 {owner && line.text ? (
-                  <span className={cn("inline-block border px-1 text-[9px] font-bold leading-4", owner.panelClassName)}>{owner.tag}</span>
+                  <span className={cn("inline-block border px-1 text-xs font-bold leading-4", owner.panelClassName)}>{owner.tag}</span>
                 ) : null}
               </span>
               <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">

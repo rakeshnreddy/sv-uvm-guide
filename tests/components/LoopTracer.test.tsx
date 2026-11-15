@@ -235,6 +235,12 @@ describe("LoopTracer", () => {
     expect(legend).toHaveTextContent(PASS_DEFINITION);
   });
 
+  it("a repeat loop, with no continue or break, leaves the pass definition out", () => {
+    render(<LoopTracer preset="repeat-1101" />);
+    const legend = screen.getByText((_, el) => el?.tagName === "LEGEND");
+    expect(legend).not.toHaveTextContent(PASS_DEFINITION);
+  });
+
   it("an n with x bits shows each bit with the four-state encoding", () => {
     render(<LoopTracer preset="repeat-x" />);
     skip();

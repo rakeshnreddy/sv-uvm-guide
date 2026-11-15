@@ -223,7 +223,7 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
           viewBox={`0 0 620 ${height}`}
           role="img"
           aria-label={`Process lanes up to t = ${step.time} ns: ${summary}.`}
-          className="min-w-[300px] w-full text-foreground"
+          className="min-w-[620px] w-full text-foreground"
         >
           {niceTicks(maxTime).map((t) => (
             <g key={t}>
@@ -1102,7 +1102,7 @@ function ExploreMode({ scenarios, initial, treeView = false }: { scenarios: Expl
   // pause instead of up front. A run with no such statement keeps the up-front question.
   const treeCheckpoints = useMemo(() => (treeView ? findTreeCheckpoints(result, prepared) : []), [treeView, result, prepared]);
   const treeMode = treeCheckpoints.length > 0;
-  const treeStatements = [...new Set(treeCheckpoints.map((cp) => cp.statement))].join(" or ");
+  const treeStatements = [...new Set(treeCheckpoints.map((cp) => cp.statement.replace(/;$/, "")))].join(" or ");
 
   const body = (
         <div className="space-y-4">
@@ -1465,7 +1465,8 @@ export default function ForkJoinVisualizer({ scenario: scenarioProp, scenarios: 
   const scenarios: ForkJoinScenarioId[] | undefined = scenariosProp ?? presetConfig?.scenarios;
   const treeView = treeViewProp ?? Boolean(presetConfig);
   const available = scenarios
-    ? allScenarios.filter((s) => scenarios.includes(s.id))
+    ? // Keep the order the lesson passes, so the picker matches the lesson's walkthrough.
+      scenarios.map((id) => allScenarios.find((s) => s.id === id)).filter((s): s is ExploreScenario => Boolean(s))
     : isTreeScenarioId(scenario)
       ? [...exploreScenarios, getExploreScenario(scenario)]
       : exploreScenarios;

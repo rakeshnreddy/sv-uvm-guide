@@ -1076,6 +1076,15 @@ export const PASS_DEFINITION = "A pass that ends early with continue or break st
 /** The question asked before the trace is shown. */
 export const PREDICTION_QUESTION = `How many passes does the body make, and what does the console print? ${PASS_DEFINITION}`;
 
+/**
+ * The question for one program: the pass definition is added only where a pass
+ * can end early, a for or foreach loop or code that uses continue or break.
+ */
+export function predictionQuestionFor(program: Pick<LoopProgram, "form" | "code">): string {
+  const canEndEarly = program.form === "for" || program.form === "foreach" || program.code.some((line) => /\b(continue|break)\b/.test(line));
+  return canEndEarly ? PREDICTION_QUESTION : "How many passes does the body make, and what does the console print?";
+}
+
 /** Caption for where the test sits, shown with the flowchart. */
 export const TEST_PLACEMENT_TEXT: Record<TestPlacement, string> = {
   before: "Test before the body: the loop may run zero times.",

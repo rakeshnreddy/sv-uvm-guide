@@ -423,7 +423,7 @@ function RegionPicker({ lineId, code, picks, onToggle, disabled, grade }: { line
               aria-pressed={on}
               onClick={() => onToggle(r)}
               className={cn(
-                "inline-flex min-h-9 items-center rounded-md border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed motion-reduce:transition-none [@media(pointer:coarse)]:min-h-10",
+                "inline-flex min-h-10 sm:min-h-9 items-center rounded-md border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed motion-reduce:transition-none [@media(pointer:coarse)]:min-h-10",
                 on ? "border-primary border-l-2 bg-card font-medium text-foreground" : "border-border bg-card text-muted-foreground hover:bg-accent",
               )}
             >

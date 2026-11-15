@@ -168,7 +168,7 @@ export default function ProcessTreeView({
                 {currentPid === node.pid ? <rect x={x} y={y + 6} width={3} height={BOX_H - 12} rx={1.5} className="fill-primary" /> : null}
                 {pickable ? (
                   <text x={x + 10} y={y + 21} fontSize={13} className={picked ? "fill-primary" : "fill-muted-foreground"}>
-                    {picked ? "●" : "○"}
+                    {picked ? "☑" : "☐"}
                   </text>
                 ) : null}
                 <text
@@ -240,7 +240,7 @@ export default function ProcessTreeView({
                   )}
                 >
                   <span aria-hidden className={picked ? "text-primary" : "text-muted-foreground"}>
-                    {picked ? "●" : "○"}
+                    {picked ? "☑" : "☐"}
                   </span>
                   {node.label}
                 </button>

@@ -14,6 +14,7 @@ import {
   MISCONCEPTION_FEEDBACK,
   PASS_DEFINITION,
   PREDICTION_QUESTION,
+  predictionQuestionFor,
   PROGRAM_MISCONCEPTIONS,
   TOOL_CHOICE,
   ZERO_DELAY_BUDGET,
@@ -524,6 +525,12 @@ describe("sv-loop-model · prediction options", () => {
   it("the question says a pass that ends early with continue or break still counts", () => {
     expect(PREDICTION_QUESTION).toContain(PASS_DEFINITION);
     expect(PASS_DEFINITION).toMatch(/continue or break still counts/);
+  });
+
+  it("adds the pass definition only where a pass can end early", () => {
+    expect(predictionQuestionFor(buildProgram("for-jumps", DEFAULT_INPUTS))).toContain(PASS_DEFINITION);
+    expect(predictionQuestionFor(buildProgram("foreach", DEFAULT_INPUTS))).toContain(PASS_DEFINITION);
+    for (const id of ["repeat-count", "while", "do-while"] as const) expect(predictionQuestionFor(buildProgram(id, DEFAULT_INPUTS))).not.toContain(PASS_DEFINITION);
   });
 
   it("every program lists only misconceptions that have feedback", () => {

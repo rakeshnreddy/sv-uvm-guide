@@ -38,7 +38,7 @@ const panel = "rounded-xl border border-border bg-card p-3";
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-40 motion-reduce:transition-none";
 const inputClass =
-  "h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring font-mono [font-variant-ligatures:none]";
+  "h-10 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring font-mono [font-variant-ligatures:none]";
 /** The shared primitives size some buttons below 40 px: size them for touch from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
 const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
