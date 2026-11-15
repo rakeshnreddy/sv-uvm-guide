@@ -273,12 +273,12 @@ describe("the 1024 to 1279 px placeholder height", () => {
   });
 
   it("picks the variant's mid height, then the interactive's, then the wider height", () => {
-    expect(lazyMdxInteractivePlaceholder("PolymorphismDispatchVisualizer", { section: "cast" }).midHeight).toBe(1010);
+    expect(lazyMdxInteractivePlaceholder("PolymorphismDispatchVisualizer", { section: "cast" }).midHeight).toBe(1000);
     expect(lazyMdxInteractivePlaceholder("InterviewQuestionPlayground").midHeight).toBe(
       lazyMdxInteractiveMeta.InterviewQuestionPlayground!.midHeight,
     );
     // No measured value: the default, like the wider height.
-    expect(lazyMdxInteractivePlaceholder("DeferredReportVisualizer").midHeight).toBe(DEFAULT_INTERACTIVE_HEIGHT);
+    expect(lazyMdxInteractivePlaceholder("SystemVerilogDataTypesAnimation").midHeight).toBe(DEFAULT_INTERACTIVE_HEIGHT);
   });
 
   it("lets one instance state its own mid height, falls back to its own wider height, and keeps the prop from the interactive", () => {
@@ -289,7 +289,7 @@ describe("the 1024 to 1279 px placeholder height", () => {
 
   it("hands the slot all three heights", () => {
     const props = lazyMdxSlotProps("ObjectHandleVisualizer", { mode: "bug" });
-    expect(props).toMatchObject({ name: "ObjectHandleVisualizer", height: 731, midHeight: 731, mobileHeight: 878 });
+    expect(props).toMatchObject({ name: "ObjectHandleVisualizer", height: 723, midHeight: 723, mobileHeight: 875 });
     expect(props.componentProps).toEqual({ mode: "bug" });
   });
 });

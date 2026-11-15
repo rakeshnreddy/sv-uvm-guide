@@ -71,7 +71,7 @@ export function ProtocolWaveform({
   return (
     <figure
       className={cn(
-        'not-prose my-6 overflow-hidden rounded-2xl border border-border bg-card shadow-card',
+        'not-prose my-8 overflow-hidden rounded-2xl border border-border bg-card shadow-card',
         className,
       )}
       data-testid="protocol-waveform"

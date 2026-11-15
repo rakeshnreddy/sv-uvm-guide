@@ -93,7 +93,7 @@ const DataTypeQuiz: React.FC<DataTypeQuizProps> = ({ questions }) => {
 
   return (
     <>
-      <Card className="my-10 border-primary/40 bg-background/90 shadow-xl" data-testid="data-type-quiz">
+      <Card className="my-8 border-primary/40 bg-background/90 shadow-xl" data-testid="data-type-quiz">
         <CardHeader className="space-y-4">
           <CardTitle className="text-2xl">Data Type Detective</CardTitle>
           <p className="text-sm text-muted-foreground">

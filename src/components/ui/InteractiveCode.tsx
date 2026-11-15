@@ -533,7 +533,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   return (
     <div
       data-testid="interactive-code"
-      className="interactive-code my-6 rounded-xl border bg-card p-4 text-card-foreground shadow-card"
+      className="interactive-code my-8 rounded-xl border bg-card p-4 text-card-foreground shadow-card"
     >
       {/* The editor is dark in both modes (DESIGN.md section 3), so its frame uses the code-surface roles. */}
       <div className="code-section relative mb-4 overflow-hidden rounded-lg border border-code-border bg-code-surface">

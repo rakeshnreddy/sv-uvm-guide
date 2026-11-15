@@ -57,7 +57,9 @@ describe('AMBA curriculum content coverage', () => {
 
   it('keeps each AMBA visualizer embedded in its curriculum page', () => {
     Object.entries(expectedVisualizerTags).forEach(([moduleId, tag]) => {
-      expect(readModule(moduleId), `${moduleId} should embed ${tag}`).toContain(tag);
+      // An embed may carry its own placeholder heights (placeholderHeight and the like); they do not change what it embeds.
+      const content = readModule(moduleId).replace(/\s+placeholder(?:Mid|Mobile)?Height=\{\d+\}/g, '');
+      expect(content, `${moduleId} should embed ${tag}`).toContain(tag);
     });
   });
 
