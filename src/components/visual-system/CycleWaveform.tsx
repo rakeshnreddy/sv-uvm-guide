@@ -5,6 +5,7 @@ import React, { useId } from "react";
 import { cn } from "@/lib/utils";
 
 import { DiagramScrollFrame } from "./BlockDiagram";
+import { depthFill, FigureDepthDefs, FigureTitleBar, levelFill, rimStroke } from "./figure-depth";
 
 export type CycleValue = number | string | undefined;
 
@@ -55,6 +56,8 @@ interface CycleWaveformProps {
   title: string;
   /** Width of one cycle in px (default 44). */
   cycleWidth?: number;
+  /** Show the title in a strip at the top of the panel (DESIGN.md section 14). The MDX kit sets it. */
+  showTitle?: boolean;
   className?: string;
 }
 
@@ -129,6 +132,7 @@ export function BitCell({
   y,
   cover = [],
   clock = false,
+  depthId,
 }: {
   x0: number;
   x1: number;
@@ -139,6 +143,8 @@ export function BitCell({
   y: number;
   cover?: [number, number][];
   clock?: boolean;
+  /** The id of the drawing's <FigureDepthDefs>: with it a high level is lit (DESIGN.md section 14). */
+  depthId?: string;
 }) {
   const stroke = clock ? "stroke-muted-foreground/80" : high ? "stroke-fig-cyan" : "stroke-fig-slate";
   return (
@@ -146,6 +152,11 @@ export function BitCell({
       {high && !clock
         ? uncoveredSpans(x0, x1, cover).map(([a, b]) => <rect key={a} x={a} y={hi} width={b - a} height={lo - hi} className="fill-fig-cyan-fill" stroke="none" />)
         : null}
+      {/* Depth: the fill deepens toward the high level, and the level itself is a lit trace. */}
+      {high && !clock && depthId
+        ? uncoveredSpans(x0, x1, cover).map(([a, b]) => <rect key={`lit-${a}`} aria-hidden x={a} y={hi} width={b - a} height={lo - hi} fill={levelFill(depthId)} stroke="none" className="fig-fx" />)
+        : null}
+      {high && !clock && depthId ? <path aria-hidden d={`M${x0},${y} H${x1}`} className="fig-fx fig-trace fig-trace-flat stroke-fig-cyan" strokeWidth={6} /> : null}
       {edgeFrom !== null ? <line x1={x0} x2={x0} y1={edgeFrom} y2={y} className={stroke} /> : null}
       <line x1={x0} x2={x1} y1={y} y2={y} className={stroke} />
     </g>
@@ -153,15 +164,18 @@ export function BitCell({
 }
 
 /** One cycle of a bus: an indigo outline with a faint indigo fill, a crossing where the value changes, and the value in text. */
-export function BusCell({ x0, x1, hi, lo, changed, label, notch = 3, textSize = "text-[10.5px]" }: { x0: number; x1: number; hi: number; lo: number; changed: boolean; label: string | null; notch?: number; textSize?: string }) {
+export function BusCell({ x0, x1, hi, lo, changed, label, notch = 3, textSize = "text-[10.5px]", depthId }: { x0: number; x1: number; hi: number; lo: number; changed: boolean; label: string | null; notch?: number; textSize?: string; depthId?: string }) {
   const mid = (hi + lo) / 2;
   const left = changed ? x0 + notch : x0;
   const outline = changed ? `M${x0},${mid} L${left},${hi} L${x1},${hi} M${x0},${mid} L${left},${lo} L${x1},${lo}` : `M${x0},${hi} L${x1},${hi} M${x0},${lo} L${x1},${lo}`;
   const area = changed ? `M${x0},${mid} L${left},${hi} L${x1},${hi} L${x1},${lo} L${left},${lo} Z` : `M${x0},${hi} L${x1},${hi} L${x1},${lo} L${x0},${lo} Z`;
   return (
     <g>
+      {/* Depth: the bus is an object in the indigo body hue, lighter at the top, with a lit top edge. */}
+      {depthId ? <path aria-hidden d={area} fill={depthFill(depthId, "indigo")} stroke="none" className="fig-fx" /> : null}
       <path d={area} className="fill-fig-indigo-fill" stroke="none" />
       <path d={outline} className="stroke-fig-indigo" strokeWidth={1.5} fill="none" strokeLinejoin="round" />
+      {depthId ? <path aria-hidden d={`M${left + 1},${hi + 1.5} H${x1}`} stroke={rimStroke(depthId)} strokeWidth={1} fill="none" className="fig-fx" /> : null}
       {label !== null ? (
         <text x={x0 + notch + 3} y={mid} dominantBaseline="middle" className={cn("fill-fig-indigo-text font-mono font-medium [font-variant-ligatures:none]", textSize)}>
           {label}
@@ -187,6 +201,7 @@ export function CycleWaveform({
   caption,
   title,
   cycleWidth = 44,
+  showTitle = false,
   className,
 }: CycleWaveformProps) {
   const id = useId();
@@ -203,19 +218,24 @@ export function CycleWaveform({
     .map((h) => [edgeX(h.from) - W * 0.35, edgeX(h.to) + W * 0.35]);
 
   return (
-    <figure className={cn("glass-liquid p-2", className)} data-figure-kit="timing">
-      <DiagramScrollFrame label={title} initiallyScrolls={false}>
+    <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="timing">
+      {showTitle ? <FigureTitleBar title={title} /> : null}
+      <DiagramScrollFrame label={title} initiallyScrolls={false} className="fig-stage ring-inset">
         <svg
           width={width}
           height={height}
           viewBox={`0 0 ${width} ${height}`}
           role="group"
           aria-label={`${title}. ${edges} clock edges.`}
-          className="block"
+          className="mx-auto block"
         >
           <defs>
             <XHatch id={`${id}-hatch`} />
+            <FigureDepthDefs id={id} hues={["indigo"]} width={width} height={height} level />
           </defs>
+
+          {/* The screen the traces are drawn on sits lower than the panel. */}
+          <rect aria-hidden x={LABEL_W - 2} y={MARKER_H - 4} width={edges * W + 8} height={signals.length * ROW_H + 4} rx={6} className="fig-fx fig-well" stroke="none" />
 
           {/* The label column and the row rules, so the signal names line up like a waveform viewer's. */}
           <rect x={0} y={MARKER_H - 4} width={LABEL_W - 4} height={signals.length * ROW_H + 4} rx={6} className="fill-foreground/[0.035]" />
@@ -309,9 +329,9 @@ export function CycleWaveform({
                         const high = isHigh(v);
                         const y = high ? hi : lo;
                         const py = isHigh(prev) ? hi : isUnknown(prev) || isHighZ(prev) ? mid : lo;
-                        return <BitCell x0={x0} x1={x1} hi={hi} lo={lo} high={high} edgeFrom={changed ? py : null} y={y} cover={cyanCover} />;
+                        return <BitCell x0={x0} x1={x1} hi={hi} lo={lo} high={high} edgeFrom={changed ? py : null} y={y} cover={cyanCover} depthId={id} />;
                       }
-                      return <BusCell x0={x0} x1={x1} hi={hi} lo={lo} changed={changed} label={changed || k === 0 ? show(v) : null} />;
+                      return <BusCell x0={x0} x1={x1} hi={hi} lo={lo} changed={changed} label={changed || k === 0 ? show(v) : null} depthId={id} />;
                     })();
                     if (!signal.editable || signal.kind !== "bit" || !onToggle) return <g key={k}>{cell}</g>;
                     return (
@@ -379,7 +399,7 @@ export function CycleWaveform({
           )}
         </svg>
       </DiagramScrollFrame>
-      <figcaption className="mt-1 text-xs text-muted-foreground">{caption}</figcaption>
+      <figcaption className="fig-caption text-xs text-muted-foreground">{caption}</figcaption>
       {/* sr-only on a wrapper: tables ignore the 1px width sr-only relies on and would overflow. */}
       <div className="sr-only">
       <table>

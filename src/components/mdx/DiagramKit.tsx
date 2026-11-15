@@ -113,6 +113,7 @@ export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellW
         minWidth={readableMinWidth(layout.width)}
         showLegend={showLegend}
         showRoleKey
+        showTitle
       />
       {layout.problems.length ? <DiagramProblems problems={layout.problems} /> : null}
       {SHOW_LAYOUT_WARNINGS && layout.warnings.length ? <DiagramProblems variant="layout" problems={layout.warnings.map((w) => w.message)} /> : null}
@@ -154,6 +155,7 @@ export function TimingDiagram({ title, caption, edges, signals, markers, highlig
         markers={markers}
         highlights={highlights}
         cycleWidth={cycleWidth}
+        showTitle
       />
       {problems.length ? <DiagramProblems problems={problems} /> : null}
       {typeof caption === "string" ? null : <Caption>{caption}</Caption>}
@@ -174,7 +176,7 @@ interface SequenceDiagramProps {
 export function SequenceDiagram({ title, caption, participants, messages, numbered, columnWidth, className }: SequenceDiagramProps) {
   return (
     <figure className={cn("not-prose my-6", className)} data-diagram="sequence">
-      <SequenceDiagramView title={title} participants={participants} messages={messages} numbered={numbered} columnWidth={columnWidth} showRoleKey />
+      <SequenceDiagramView title={title} participants={participants} messages={messages} numbered={numbered} columnWidth={columnWidth} showRoleKey showTitle />
       <Caption>{caption}</Caption>
     </figure>
   );

@@ -5,7 +5,8 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 import { EDGE_STYLES, edgeLabelBox, nodeKindTags, PHONE_FIT_WIDTH, pointAlong, portPosition, routeEdges, type Point } from "./diagram-layout";
-import { assignedRoleWords, edgeToneOf, edgeTones, effectiveRole, roleStyles, stateStyles, tagChipWidth, type AssignedRole, type EdgeTone, type FigureRole } from "./figure-colours";
+import { assignedRoleWords, edgeToneOf, edgeTones, effectiveRole, roleHue, roleStyles, stateHue, stateStyles, tagChipWidth, type AssignedRole, type EdgeTone, type FigureRole } from "./figure-colours";
+import { FigureDepthDefs, FigureTitleBar, glowFilter, ObjectBody, ObjectGlow, ObjectRim, ObjectShadow, shadowFilter, type DepthHue } from "./figure-depth";
 
 export { nodeKindTags, pointAlong };
 
@@ -108,6 +109,13 @@ interface BlockDiagramProps {
    * looked up (roleKeyEntries). The MDX kit sets it; visualizers leave it off.
    */
   showRoleKey?: boolean;
+  /**
+   * Show the title in a strip at the top of the panel (DESIGN.md section 14).
+   * The MDX kit sets it; visualizers, which sit under their own heading, leave
+   * it off. The strip is hidden from assistive technology, because the drawing
+   * already carries the title as its name.
+   */
+  showTitle?: boolean;
   /**
    * Accessible role of the SVG. "img" (static pictures: the MDX kit) names it
    * with <title> and describes it with <desc>; "group" (the default, for
@@ -213,9 +221,9 @@ export function roleKeyEntries(nodes: LegendNode[]): LegendEntry[] {
 export function DiagramLegend({ entries, as: Tag = "figcaption", className }: { entries: LegendEntry[]; as?: "figcaption" | "div"; className?: string }) {
   if (!entries.length) return null;
   return (
-    <Tag className={cn("flex flex-wrap gap-x-4 gap-y-1.5 px-1 text-xs text-muted-foreground", className)} data-testid="diagram-legend">
+    <Tag className={cn("flex flex-wrap gap-x-2 gap-y-1.5 text-xs leading-5 text-muted-foreground", className)} data-testid="diagram-legend">
       {entries.map((entry) => (
-        <span key={`${entry.type}-${entry.text}`} className="inline-flex items-center gap-1.5">
+        <span key={`${entry.type}-${entry.text}`} className="fig-chip">
           <LegendSwatch entry={entry} />
           <span>{entry.text}</span>
         </span>
@@ -375,6 +383,31 @@ function StateMark({ node, state, width, height }: { node: DiagramNode; state: "
   );
 }
 
+/**
+ * The focal part of a figure with no state (DESIGN.md section 14): the one
+ * part where the most data lines arrive (two or more, and no tie), which is
+ * where the figure's flows meet (a compare, a scoreboard, a multiplexor). It
+ * rises and takes a soft glow in its own hue; it never takes a state colour.
+ * A figure that shows a state (active, error, ok) has its focus already, and
+ * a figure with no such meeting point has none: its data lines lead.
+ */
+export function focalNodeId(nodes: DiagramNode[], ports: DiagramPort[], edges: DiagramEdge[]): string | null {
+  if (nodes.some((n) => n.state === "active" || n.state === "error" || n.state === "ok")) return null;
+  const leafOf = (ref: string) => {
+    const node = nodes.find((n) => n.id === ref) ?? nodes.find((n) => n.id === ports.find((p) => p.id === ref)?.nodeId);
+    return node && !node.container && (node.state ?? "normal") === "normal" ? node.id : null;
+  };
+  const arrivals = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.style !== "data" || edge.state === "dim") continue;
+    const to = leafOf(edge.to);
+    if (to) arrivals.set(to, (arrivals.get(to) ?? 0) + 1);
+  }
+  const ranked = [...arrivals.entries()].sort((a, b) => b[1] - a[1]);
+  if (!ranked.length || ranked[0][1] < 2 || (ranked.length > 1 && ranked[1][1] === ranked[0][1])) return null;
+  return ranked[0][0];
+}
+
 /** One filled and one open arrowhead per edge colour, so each arrowhead takes its line's colour. */
 export function EdgeMarkers({ id }: { id: string }) {
   return (
@@ -415,6 +448,7 @@ export function BlockDiagram({
   minWidth = 320,
   showLegend = false,
   showRoleKey = false,
+  showTitle = false,
   role = "group",
   description,
   spreadAnchors = false,
@@ -432,20 +466,57 @@ export function BlockDiagram({
       .map((c) => c.id),
   );
   const ordered = [...nodes].sort((a, b) => Number(Boolean(b.container)) - Number(Boolean(a.container)));
+  // Depth (DESIGN.md section 14): which hue each part is lit in, which part is the focus, which parts rise.
+  const focalId = focalNodeId(nodes, ports, edges);
+  const hueOf = (node: DiagramNode): DepthHue | null => {
+    const state = node.state ?? "normal";
+    if (state === "dim") return null;
+    return state === "normal" ? roleHue[effectiveRole(node.kind, node.role)] : stateHue[state];
+  };
+  const radiusOf = (node: DiagramNode) => {
+    const look = roleStyles[effectiveRole(node.kind, node.role)];
+    return node.container ? look.containerRadius : look.radius;
+  };
+  const raised = (node: DiagramNode) => node.id === focalId || node.id === selectedId || node.state === "active" || node.state === "error";
+  const leaves = ordered.filter((n) => !n.container);
+  const lit = leaves.filter((n) => hueOf(n) !== null);
+  const glowing = lit.filter((n) => n.id === focalId || (n.state !== undefined && n.state !== "normal"));
   const a11y =
     role === "img"
       ? { role: "img", "aria-labelledby": `${id}-title`, "aria-describedby": description ? `${id}-desc` : undefined }
       : { role: "group", "aria-label": title };
 
   return (
-    <figure className={cn("glass-liquid p-2", className)} data-figure-kit="block">
-      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH}>
+    <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="block">
+      {showTitle ? <FigureTitleBar title={title} /> : null}
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage ring-inset">
         <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth }} className="block h-auto w-full" {...a11y}>
           {role === "img" ? <title id={`${id}-title`}>{title}</title> : null}
           {role === "img" && description ? <desc id={`${id}-desc`}>{description}</desc> : null}
           <defs>
             <EdgeMarkers id={id} />
+            <FigureDepthDefs id={id} hues={lit.map((n) => hueOf(n) as DepthHue)} width={width} height={height} />
           </defs>
+
+          {/* Containers sit lower than what they hold: a well under each one. */}
+          <g aria-hidden className="fig-fx">
+            {ordered
+              .filter((n) => n.container && n.state !== "dim")
+              .map((n) => (
+                <rect key={n.id} x={n.x} y={n.y} width={n.w} height={n.h} rx={radiusOf(n)} className="fig-well" stroke="none" />
+              ))}
+          </g>
+          {/* One blurred pass for every shadow, one for every glow. */}
+          <g aria-hidden className="fig-fx fig-fx-blur" filter={shadowFilter(id)}>
+            {lit.map((n) => (
+              <ObjectShadow key={n.id} x={n.x} y={n.y} w={n.w} h={n.h} rx={radiusOf(n)} rise={raised(n) ? 7 : 3} />
+            ))}
+          </g>
+          <g aria-hidden className="fig-fx fig-fx-blur" filter={glowFilter(id)}>
+            {glowing.map((n) => (
+              <ObjectGlow key={n.id} hue={hueOf(n) as DepthHue} x={n.x} y={n.y} w={n.w} h={n.h} rx={radiusOf(n)} soft={n.id === focalId || n.state === "ok"} />
+            ))}
+          </g>
 
           {ordered.map((node) => {
             const state = node.state ?? "normal";
@@ -459,6 +530,7 @@ export function BlockDiagram({
             const radius = node.container ? look.containerRadius : look.radius;
             const selected = selectedId === node.id;
             const strong = state === "active" || state === "error";
+            const hue = node.container ? null : hueOf(node);
             const body = (
               <>
                 <rect
@@ -511,7 +583,7 @@ export function BlockDiagram({
                       <StepLabelText label={node.label} digitsClass="fill-background" />
                     </text>
                     {node.sublabel ? (
-                      <text x={node.x + node.w / 2} y={node.y + node.h / 2 + 13} textAnchor="middle" className="fill-muted-foreground text-[9.5px]">
+                      <text x={node.x + node.w / 2} y={node.y + node.h / 2 + 13} textAnchor="middle" className="fill-foreground/80 text-[9.5px]">
                         {node.sublabel}
                       </text>
                     ) : null}
@@ -522,6 +594,7 @@ export function BlockDiagram({
                     {node.badge}
                   </text>
                 ) : null}
+                {hue ? <ObjectRim id={id} x={node.x} y={node.y} w={node.w} h={node.h} rx={radius} /> : null}
                 {state === "ok" || state === "error" ? <StateMark node={node} state={state} width={width} height={height} /> : null}
                 {selectable || selected ? (
                   <>
@@ -548,10 +621,18 @@ export function BlockDiagram({
                 ) : null}
               </>
             );
-            if (!selectable) return <g key={node.id} data-fig-role={nodeRole}>{body}</g>;
+            const under = hue ? <ObjectBody id={id} hue={hue} x={node.x} y={node.y} w={node.w} h={node.h} rx={radius} /> : null;
+            if (!selectable)
+              return (
+                <React.Fragment key={node.id}>
+                  {under}
+                  <g data-fig-role={nodeRole}>{body}</g>
+                </React.Fragment>
+              );
             return (
+              <React.Fragment key={node.id}>
+              {under}
               <g
-                key={node.id}
                 data-fig-role={nodeRole}
                 role="button"
                 tabIndex={0}
@@ -568,6 +649,7 @@ export function BlockDiagram({
               >
                 {body}
               </g>
+              </React.Fragment>
             );
           })}
 
@@ -580,8 +662,11 @@ export function BlockDiagram({
             const tone = edgeTones[toneKey];
             // Plain connections are drawn at 1.5 px; styles with an arrowhead keep the width the geometry measures.
             const baseWidth = style.marker ? style.width : Math.max(1.5, style.width);
+            // A line that carries data, and any line in a state, is a lit trace: a soft band in its colour under it.
+            const lit = edge.state !== "dim" && (edge.style === "data" || edge.state === "active" || edge.state === "error");
             return (
               <g key={edge.id}>
+                {lit ? <path aria-hidden d={`M${pts.map((p) => p.join(",")).join(" L")}`} className={cn("fig-fx fig-trace", tone.stroke)} strokeWidth={7} /> : null}
                 <polyline
                   points={pts.map((p) => p.join(",")).join(" ")}
                   fill="none"
@@ -593,8 +678,8 @@ export function BlockDiagram({
                 />
                 {labelBox ? (
                   <g>
-                    <rect x={labelBox.x} y={labelBox.y} width={labelBox.w} height={labelBox.h} rx={4} className="fill-card" />
-                    <rect x={labelBox.x} y={labelBox.y} width={labelBox.w} height={labelBox.h} rx={4} className={cn(tone.chip, tone.chipEdge)} strokeWidth={1} />
+                    <rect x={labelBox.x} y={labelBox.y} width={labelBox.w} height={labelBox.h} rx={5} className="fill-card" />
+                    <rect x={labelBox.x} y={labelBox.y} width={labelBox.w} height={labelBox.h} rx={5} className={cn(tone.chip, tone.chipEdge)} strokeWidth={1} />
                     <StepLabelBadge label={edge.label ?? ""} cx={mid[0]} baseline={mid[1] + 3} charW={EDGE_CHAR_W} height={12} className={tone.text} />
                     <text x={mid[0]} y={mid[1] + 3} textAnchor="middle" className={cn("font-mono text-[10px] [font-variant-ligatures:none]", tone.text)}>
                       <StepLabelText label={edge.label ?? ""} digitsClass="fill-card font-semibold" />
@@ -651,7 +736,7 @@ export function BlockDiagram({
           })}
         </svg>
       </DiagramScrollFrame>
-      <DiagramLegend entries={legend} className="mt-2" />
+      <DiagramLegend entries={legend} className="fig-legend" />
     </figure>
   );
 }

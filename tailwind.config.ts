@@ -50,6 +50,8 @@ function figColours(): Record<string, string> {
       [hue, role(`fig-${hue}`)],
       [`${hue}-text`, role(`fig-${hue}-text`)],
       [`${hue}-fill`, `hsl(var(--fig-${hue}-fill))`],
+      // The deep hue an object is filled with (DESIGN.md section 14).
+      [`${hue}-body`, role(`fig-${hue}-body`)],
     ]),
   );
 }
@@ -146,7 +148,13 @@ const config: Config = {
         // and fig-generic, the neutral tint of the current tier for nodes with no role.
         fig: {
           ...figColours(),
-          generic: "color-mix(in srgb, hsl(var(--tier-current)) 20%, hsl(var(--muted-foreground)))",
+          // The tier share is --fig-tier-mix (DESIGN.md section 14): 46% in rich, 28% in calm.
+          generic: "color-mix(in srgb, hsl(var(--tier-current)) var(--fig-tier-mix, 46%), hsl(var(--muted-foreground)))",
+          // The ordered ramp for cost, time, severity and stage (DESIGN.md section 14).
+          ...Object.fromEntries([1, 2, 3, 4, 5].map((step) => [`ramp-${step}`, role(`fig-ramp-${step}`)])),
+          "ramp-text": role("fig-ramp-text"),
+          // The ramp as an object fill (text-fig-ramp-3-body on a gradient), for an ordered part that carries text.
+          ...Object.fromEntries([1, 2, 3, 4, 5].map((step) => [`ramp-${step}-body`, role(`fig-ramp-${step}-body`)])),
           "generic-fill": "hsl(var(--tier-current) / 0.045)",
         },
         // Glass tokens as colours, for the rare part that needs one on its own (a divider inside a glass menu).

@@ -281,12 +281,12 @@ The light strokes replace values that were below 3:1 on the light page (cyan-500
 | Testbench (`test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence`) | amber, rounded (radius 14, the most the tag chip allows), its tag on the chip. `fifo` is side-overridable: an RTL FIFO or buffer with `role: "design"` draws as design and keeps its FIFO chip (see "Assigning roles in lessons") |
 | Interface (`interface`) | indigo, radius 8, `IF` chip: the pins it carries are multi-bit values |
 | Register model (`reg`) | teal, radius 8, `REG` chip: the testbench's expected copy of the registers (the mirror). `reg` is side-overridable: a hardware register with `role: "design"` draws as design and keeps its REG chip |
-| No role (`generic` with no `role`) | a neutral tint of the lesson's tier: the tier colour mixed 20% into the secondary colour as the stroke, the tier at 4.5% as the fill, no chip. It carries no meaning, so it stays near-neutral and never reads as a role or state |
+| No role (`generic` with no `role`) | a tint of the lesson's tier: the tier colour mixed into the secondary colour as the stroke (`--fig-tier-mix`: 46% in rich, 28% in calm; it was a fixed 20% before section 14), the tier at 4.5% as the fill, no chip. It carries no meaning, so it never takes a full fill and never reads as a role or state (section 14, "Parts with no role") |
 | State | active cyan, error rose, ok emerald, dim at half opacity: the state wins over the role (fill, stroke and chip); active and error strokes are 2.2 px. Ok and error also carry a shape: a ✓ or ✕ in the card colour on a 6.5 px disc of the state colour at the node's top-right corner (kept inside the drawing), because emerald and rose are close under deuteranopia |
 | Container | the role colour as a faint tint (4 to 5%) and a dashed 1.5 px border; its tag on a chip before the name. A container inside another container has no fill, only the dashed role border and chip, so nested tints (TEST, ENV, AGT) do not stack into one wash |
 | Badge (top right) | amber text, as before ("the amber badges" in E-SOC-1) |
 | Tag chip | JetBrains Mono 9 px at 600 on the role's soft fill laid over the node's fill, radius 3; the tag text in the role's text colour |
-| Edges | data indigo, solid, filled head; control dotted with an open head, amber where either end is a testbench node (get_next_item, start, grab) and the strong neutral (foreground at 75%) elsewhere, so a decoder's selects between design blocks never read as testbench traffic; causal (call order) the strong neutral (foreground at 75%), dashed, open head; structural the secondary neutral, plain, 1.5 px. Active cyan, error rose, dim faint, whatever the style. Each arrowhead takes its line's colour |
+| Edges | data indigo, solid, filled head; control dotted with an open head, amber where either end is a testbench node (get_next_item, start, grab) and the strong neutral (foreground at 75%) elsewhere, so a decoder's selects between design blocks never read as testbench traffic; causal (call order) the strong neutral (foreground at 75%), dashed, open head; structural the tier tint of parts with no role (`fig-generic`; the secondary neutral before section 14), plain, 1.5 px. Active cyan, error rose, dim faint, whatever the style. Each arrowhead takes its line's colour |
 | Edge label | a chip on a solid card surface, with the edge colour's soft fill and a hairline in the edge colour, the label in the edge's text colour |
 | Numbered step | a label that starts "N. " (a node label or an edge label) shows its number on a filled pill badge, as in sequence diagrams: the strong neutral (foreground at 80%) with the digits in the page colour on a node, the edge's text colour with the digits in the card colour on an edge label. The text stays exactly as written: the digits are drawn over the badge and the "." is transparent, so widths and the layout tests do not change. The badge is placed from the 0.6 em mono advance (6.9 px for 11.5 px node labels, 6 px for 10 px edge labels) |
 | Ports | the UVM symbols in the strong neutral on the card surface; an error port rose, an active port cyan; the imp ● stays solid |
@@ -419,4 +419,103 @@ A lesson pass may colour a figure that the kit or the CSS leaves neutral, withou
 
 ### Modern, not noisy
 
-Soft tinted fills under stronger strokes; one radius scale (tags 3, square design 3, other nodes 8, testbench 14, containers up to 16); 1.5 px or more for every stroke that carries meaning; no glow, no decorative gradient, no shadow under shapes and no new animation.
+Soft tinted fills under stronger strokes; one radius scale (tags 3, square design 3, other nodes 8, testbench 14, containers up to 16); 1.5 px or more for every stroke that carries meaning; no new animation. Section 14 replaces the rest of this rule as first written ("no glow, no decorative gradient, no shadow under shapes"): it says exactly which gradients, shadows and glows a figure takes, and forbids the others.
+
+## 14. Figure art direction
+
+Owner request on 2026-11-15, after section 13 was live: "where can i see the colors. ? i still see black and white ... they seems to have been added with no intentionality to it and are generic. i need to see the intentionality, colors , themses, 3d elements, glassy panel themes wherever possible." A uniform tint was not enough. This section adds to section 13 and changes none of its meanings, words or geometry. One sentence holds the rule: **a figure is an instrument panel: quiet glass around it, lit objects inside it, one focal part.**
+
+The direction comes from the product (the method of the `unslop` skill), not from a trend:
+
+- **Product.** A course that teaches engineers to verify chips with SystemVerilog and UVM.
+- **Character.** Exact, lit from within, layered.
+- **World.** The verification lab: waveform viewers, logic analysers, the glass of test equipment, a die under a microscope.
+- **Moments.** The figures. The page chrome and the prose stay quiet (sections 1 to 12); the richness goes into the figure.
+- **Signature.** The lit trace: a line that carries data glows like a trace on a screen, and the title strip opens with a small lit indicator in the tier colour.
+
+### The six rules
+
+1. **Intent.** A figure makes one point, and one part carries it: the focal part. It rises (a deeper shadow) and takes a glow; everything else recedes. In the kit the focal part is, in this order: a part in a state (active, error, ok) or the selected part; else the one part where the most data lines arrive (two or more, no tie), which is where the figure's flows meet (a compare, a scoreboard, a multiplexor); else no part, and the data lines lead. A focal part keeps its own colour and never takes a state colour. Nothing is plain grey: structure with no protected meaning takes a tint of the lesson's tier.
+2. **Glass panel.** Every figure sits in a panel: the liquid glass of section 12, a hairline, the sheen at the top edge, its own tier field behind the drawing (the tier's field colour from the top left, its neighbour from the bottom right), a title strip where the figure has a title, and a legend strip of chips. No backdrop blur: the panel paints its own field, so the three-layer limit of section 11 holds whatever a lesson holds.
+3. **Depth.** Parts are objects, not outlines: a gradient in their own hue, lighter at the top; a 1 px lit rim just inside the top edge; a soft shadow under them. Containers and waveform screens sit lower (a well). The focal, active, error or selected part sits higher (shadow offset 7 instead of 3). A line that carries data is a lit trace: a band in its colour under the line (7 px in architecture diagrams, 6 px in sequence and timing diagrams); the line and its arrowhead keep the widths section 13 measures. Structural lines recede into the tier tint.
+4. **Colour on purpose.** The protected meanings stay. A gradient stays inside one hue. An ordered scale (cost, time, severity, stage) uses the ramp below and nothing else. Every colour has a legend chip or a direct label.
+5. **3D only where the subject has layers or space** (mask layers, a layered testbench, memory, a stack): an isometric drawing in SVG. Never as decoration.
+6. **Two settings of one design**, `calm` and `rich`, set by `data-fig-style` on the page root (or on any element, for its subtree). Rich is the default. Both hold every floor.
+
+### Tokens
+
+In all four theme blocks of `globals.css` (dark, light, the no-JavaScript light copy, print). Rich values; calm scales them.
+
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `--fig-<hue>-body` | slate `215 24% 22%`, cyan `190 78% 16%`, rose `348 60% 21%`, amber `32 78% 22%`, violet `258 56% 30%`, indigo `234 54% 28%`, teal `172 70% 14%`, emerald `158 62% 15%` | slate `215 16% 47%`, cyan `188 86% 53%`, rose `350 89% 75%`, amber `38 92% 50%`, violet `258 90% 66%`, indigo `239 84% 67%`, teal `173 80% 69%`, emerald `160 84% 59%` | the hue an object is filled with: deep in dark mode and pale in light mode, so the label, sublabel, tag and outline keep their floors on it |
+| `--fig-obj-top` / `--fig-obj-bottom` | `0.88` / `0.34` | `0.04` / `0.2` | the alpha of the body hue over the card at the top and bottom of an object; the top is the lighter end in both modes |
+| `--fig-obj-highlight` | `0 0% 100% / 0.3` | `0 0% 100% / 0.95` | the lit rim |
+| `--fig-obj-shadow` | `224 50% 2% / 0.62` | `222 40% 28% / 0.24` | the shadow under an object (one blurred pass per figure) |
+| `--fig-well` | `224 50% 2% / 0.12` | `220 30% 40% / 0.014` | containers and waveform screens |
+| `--fig-stage` | `0.26` | `0.05` | the tier field inside a panel, at its strongest stop; never above the page field of section 11 |
+| `--fig-glow` | `0.5` | `0.3` | the glow of the focal or state part (one blurred pass per figure) |
+| `--fig-trace` | `0.24` | `0.16` | the band under a data line |
+| `--fig-ramp-1` to `-5`, `--fig-ramp-text` | `312 30% 54%`, `314 44% 60%`, `316 62% 67%`, `318 80% 73%`, `320 96% 80%`; text `318 90% 84%` | `312 34% 52%`, `314 46% 46%`, `316 58% 40%`, `318 72% 34%`, `320 84% 27%`; text `318 76% 30%` | the ordered ramp |
+| `--fig-ramp-1-body` to `-5-body` | `312 26% 23%`, `314 36% 25%`, `316 46% 28%`, `318 54% 30%`, `320 66% 33%` | `312 40% 62%`, `314 55% 58%`, `316 68% 54%`, `318 80% 50%`, `320 90% 46%` | the ramp as an object fill, for an ordered part that carries text (a stage plate): used like the `-body` hues, at `--fig-obj-top` and `--fig-obj-bottom`, with the step's own ramp colour as its outline |
+
+Tailwind: `text-fig-<hue>-body`, `fill-fig-ramp-1` to `-5`, `stroke-fig-ramp-N`, `fill-fig-ramp-text`, `text-fig-ramp-N-body`. `fig-generic` now reads `--fig-tier-mix`.
+
+**The ramp is fuchsia** (hues 312 to 320), the one hue family no protected meaning uses, so a cost or severity scale never reads as design, testbench, error or a signal level, even in a figure that also shows signals. More is further from the page: lighter in dark mode, darker in light mode, each step at least 1.15:1 from the one before and 3:1 on every figure surface. At most five steps. A ramp mark always has its value or label beside it, and the ramp is never used for categories. One exception, used in F1A: in a lesson whose subject is the ordered quantity itself, one ramp step may mark the parts that incur it (the mask layers a fix has to remake are what the fix costs, so they are drawn in `ramp-4`), as long as a texture and a label carry the category, the other categories stay in the tier tint, and the figures being compared are themselves in order (0, 2, then 4 lit layers). That gives the lesson one colour story: fuchsia is what it costs.
+
+### Calm and rich
+
+`data-fig-style="calm"` or `"rich"` sets four variables; nothing else differs.
+
+| Variable | Rich (default) | Calm | Scales |
+|---|---|---|---|
+| `--fig-level` | `1` | `0.45` | object gradients, the stage field, the title tint; shadows, rims and traces (from 40% of their strength up) |
+| `--fig-glow-level` | `1` | `0.3` | glows and the indicator's halo |
+| `--fig-tier-mix` | `46%` | `28%` | how much of the tier colour the rim of a part with no role, and a structural line, takes |
+| `--fig-panel-drop` | `--glass-shadow` | `--shadow-card` | the panel's drop shadow |
+
+To switch: `document.documentElement.dataset.figStyle = "calm"` (or remove it for rich). Every floor is tested at full strength, and calm only lowers alphas toward the surfaces that section 13 already tests, so both hold.
+
+### Classes
+
+Panel (HTML): `fig-panel` (with `glass-liquid`), `fig-titlebar`, `fig-stage`, `fig-legend`, `fig-chip`, `fig-caption`. Drawing (SVG): `fig-fx` (every decorative element: dropped in forced colours), `fig-fx-blur` (the two blurred groups: also dropped in print), `fig-stop-top`, `fig-stop-bottom`, `fig-grad-quiet`, `fig-stop-level`, `fig-stop-none`, `fig-stop-shade` (a solid mark with no text on it, such as a bar, shaded toward its base with the object shadow, so its top is the lighter end in both modes), `fig-rim-top`, `fig-rim-end`, `fig-shadow`, `fig-well`, `fig-glow`, `fig-glow-soft`, `fig-trace`, `fig-trace-flat`, `fig-rail`, and for isometric faces `fig-face-top`, `fig-face-left`, `fig-face-right`. The kit draws them from `src/components/visual-system/figure-depth.tsx` (`FigureDepthDefs`, `ObjectBody`, `ObjectRim`, `ObjectShadow`, `ObjectGlow`, `FigureTitleBar`).
+
+### The kit, as built
+
+No lesson is edited; every kit figure changes.
+
+- **Panel and title strip.** The MDX kit passes `showTitle`; the strip shows the figure's `title` (already its accessible name) after a lit indicator in the tier colour, on the tier field at the field's own alpha. The strip is `aria-hidden`, because the drawing announces the same title; it carries `data-fig-title`, so a text comparison can leave it out. Visualizers, which sit under their own heading, do not show it.
+- **Architecture diagrams.** A part is an opaque card base, the body gradient in its role's hue (a state's hue wins), the soft fill and outline of section 13, and the rim. Containers get a well. Data lines and lines in a state get the trace band. The legend is a strip of chips. The sublabel is the primary colour at 80% (it was the secondary colour), so it holds 4.5:1 on the deeper fill.
+- **Parts with no role** are clear glass: the tier's field colour at 40% of the object strengths, with the tier-tinted rim. They never take a full tier fill, because the tier hues sit on role hues (tier 3 violet on design, tier 4 amber on testbench, tier 1 teal on the register model).
+- **Sequence diagrams.** Participant headers are objects; each lifeline stands on a 10 px rail in its role's hue; a call (solid) is a lit trace, while a return (dashed) and an async send (open head) stay plain, so the three still differ at a glance.
+- **Timing diagrams.** The traces sit on a screen (a well), centred in the panel; the fill under a high level deepens toward the level, and the level is a lit trace; a bus is an object in the indigo body hue with a lit top edge. Both are left out where a cyan band or the cursor already tints the column, as section 13 requires.
+
+### Hand-drawn figures
+
+The same parts, written by hand: wrap the SVG in `glass-liquid fig-panel` with a `fig-titlebar` (only the figure's existing title) and a `fig-stage`; give a marked box (`data-fig="<role> tint"`) a gradient from its own `<linearGradient class="text-fig-<hue>-body">` with `fig-stop-top` and `fig-stop-bottom` stops; put the one focal mark in a `fig-glow` group; draw ordered marks in `fill-fig-ramp-N`. Every added element is `fig-fx` or carries no text. The rules of section 13 ("Assigning roles in lessons") still decide which part takes which role.
+
+**Isometric drawings.** Axes at 30 degrees: one unit along x is (0.866, 0.5), along y (−0.866, 0.5), up (0, −1). Each layer is a plate 8 to 12 px thick with three faces in its role's colour (`currentColor`): `fig-face-top` 34%, `fig-face-left` 20%, `fig-face-right` 10%, each with the role's 1.5 px stroke. Light comes from the top left in every figure. Layers stack upward with a gap that lets the layer below show; where the side faces carry a texture that must be read (a hatch), the plates may be thicker than the gap (F1A: plates 7 and 13 units thick, 4 apart), because a thin face cannot show the texture. The lit layers lift clear of the quiet ones (F1A: 5 units more) and take the glow. Labels sit beside the stack on leader lines, never on a face. The stack may be drawn as a cut block, so its two side faces are the cross-section and anything inside a layer (a cell, a via) is drawn on the cut face. A plate that does not exist yet is a dashed wireframe with only its visible edges, no fill and no shadow. Draw each plate in place, not with `<use>`: in Chromium a rule that reaches into a figure through its ancestors (`[data-lesson-article] svg …`, the forced-colour rules among them) does not reach a `<use>` copy, so a reused plate kept its theme colours in forced colours.
+
+### The first lesson, drawn by hand (F1A)
+
+Three figures were redesigned by hand on 2026-11-15 as the worked example of this section. Words, numbers, `<title>`, `<desc>`, captions and aria attributes are unchanged (a script compares the text of each figure before and after); only the geometry inside the same `viewBox` and the paint changed.
+
+- **One colour story for the lesson: fuchsia is what it costs.** The ramp climbs across the five stages in the strip, lights the mask layers a fix has to remake, and colours the bars of the cost chart. Teal (the tier) is structure and the one focal line; cyan stays "selected".
+- **The strip ("Where a bug can be found").** Five stage plates are objects in `ramp-1` to `ramp-5` (`-body` gradient, ramp outline, rim, shadow). The focal part is the tape-out line: dashed, in the tier colour, with the glow and a flag. Two wells, one each side of the line, hold the plates and what a fix means there, so the line visibly divides the two kinds of fix. The arrow is a wedge that swells and climbs the ramp; in forced colours it is one solid arrow (`fig-solid`).
+- **The mask stacks ("Which mask layers change").** Three isometric cut blocks. New masks are hatched plates in `ramp-4`, lifted and glowing; reused layers are solid plates in the tier tint; layers with no mask yet are dashed wireframes. The count of lit layers (0, 2, 4) is the point. Layer names sit beside the stacks on leader lines.
+- **The cost chart (`InteractiveCostOfBugGraph`).** Each stage keeps one ramp step in both views. A bar is a solid mark with a shade toward its base and a lit rim; the selected stage sits in a cyan cursor column (as in a waveform viewer) with a glow under its bar, and the other bars drop to 60% fill inside a full-strength outline. One faint rule per order of magnitude. The readout names the stage beside a swatch in its ramp step. The frame takes `fig-panel`, so the interactive has the tier field before the learner answers.
+
+
+### Floors and fallbacks
+
+`tests/app/theme-contrast.test.ts` ("figure art direction") checks, in both modes and at full strength: every figure stroke at 3:1 and every figure text at 4.5:1 on the stage (each tier's field at `--fig-stage` over the frame); on an object at both ends of its gradient, the label, the sublabel, the tag on its chip and a badge at 4.5:1 and the outline at 3:1; a bus value on its cell over every surface and the well; a container's tag, name and border three wells deep; a part with no role; the title and indicator on the title strip; legend chips; the ramp.
+
+- **Forced colours.** Everything `fig-fx` and the panel field are not drawn; the strip, chips and isometric faces take system colours. Section 13's rules then draw the figure.
+- **Print.** The blurred shadows and glows and the panel field are not drawn; gradients, rims and traces print with the light values.
+- **Reduced transparency.** The panel field is not drawn (the panel is already solid there).
+- **Reduced motion.** Nothing here moves.
+- **Phone width.** The title wraps; the drawing scrolls inside the stage as before.
+
+### Forbidden
+
+Backdrop blur inside a figure. A gradient that runs from one hue to another. A glow on anything but the focal part, a part in a state, or a data trace. A full tier-hue fill on a part with no role. Gradient text, or depth on text. Any animation. The ramp for something that is not ordered, or a ramp mark with no label. An isometric drawing where the subject has no layers or space. Words in a title strip that are not the figure's own title. Glass or a gradient under lesson prose or code.

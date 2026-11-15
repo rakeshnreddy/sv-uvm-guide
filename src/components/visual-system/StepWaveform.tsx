@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 import { DiagramScrollFrame } from "./BlockDiagram";
 import { BitCell, BusCell, XHatch } from "./CycleWaveform";
+import { FigureDepthDefs } from "./figure-depth";
 
 type WaveValue = number | string | undefined;
 
@@ -45,8 +46,8 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
   const height = signals.length * ROW_H + 18;
 
   return (
-    <figure className={cn("glass-liquid p-2", className)} data-figure-kit="timing">
-      <DiagramScrollFrame label={"Waveform"} initiallyScrolls={false}>
+    <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="timing">
+      <DiagramScrollFrame label={"Waveform"} initiallyScrolls={false} className="fig-stage ring-inset">
         <svg
           width={width}
           height={height}
@@ -57,7 +58,10 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
         >
           <defs>
             <XHatch id={hatch} />
+            <FigureDepthDefs id={id} hues={["indigo"]} width={width} height={height} level />
           </defs>
+          {/* The screen the traces are drawn on sits lower than the panel. */}
+          <rect aria-hidden x={LABEL_W - 2} y={0} width={snapshots.length * STEP_W + 4} height={signals.length * ROW_H} rx={6} className="fig-fx fig-well" stroke="none" />
           {/* The label column and the row rules, so the signal names line up. */}
           <rect x={0} y={0} width={LABEL_W - 4} height={signals.length * ROW_H} rx={6} className="fill-foreground/[0.035]" />
           {signals.map((signal, row) =>
@@ -95,9 +99,9 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
                     const high = v === 1 || v === "1";
                     const y = high ? hi : lo;
                     const py = prev === 1 || prev === "1" ? hi : lo;
-                    return <BitCell key={i} x0={x0} x1={x1} hi={hi} lo={lo} high={high} edgeFrom={changed && !isUnknown(prev) ? py : null} y={y} cover={cursor} clock={isClockName(signal)} />;
+                    return <BitCell key={i} x0={x0} x1={x1} hi={hi} lo={lo} high={high} edgeFrom={changed && !isUnknown(prev) ? py : null} y={y} cover={cursor} clock={isClockName(signal)} depthId={id} />;
                   }
-                  return <BusCell key={i} x0={x0} x1={x1} hi={hi} lo={lo} changed={changed} notch={4} textSize="text-[11px]" label={changed || i === 0 ? String(v) : null} />;
+                  return <BusCell key={i} x0={x0} x1={x1} hi={hi} lo={lo} changed={changed} notch={4} textSize="text-[11px]" label={changed || i === 0 ? String(v) : null} depthId={id} />;
                 })}
               </g>
             );
@@ -125,7 +129,7 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
           </text>
         </svg>
       </DiagramScrollFrame>
-      <figcaption className="mt-1 text-xs text-muted-foreground">{axisLabel}</figcaption>
+      <figcaption className="fig-caption text-xs text-muted-foreground">{axisLabel}</figcaption>
     </figure>
   );
 }

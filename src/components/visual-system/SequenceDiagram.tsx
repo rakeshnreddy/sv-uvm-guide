@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 
 import { DiagramLegend, DiagramScrollFrame, nodeKindTags, roleKeyEntries } from "./BlockDiagram";
 import { layoutSequence, PHONE_FIT_WIDTH, SEQ_CHAR_W, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
-import { assignedRoleWords, effectiveRole, roleStyles, tagChipWidth } from "./figure-colours";
+import { assignedRoleWords, effectiveRole, roleHue, roleStyles, tagChipWidth } from "./figure-colours";
+import { depthFill, FigureDepthDefs, FigureTitleBar, ObjectRim, ObjectShadow, railInk, shadowFilter } from "./figure-depth";
 
 interface SequenceDiagramProps {
   title: string;
@@ -21,6 +22,8 @@ interface SequenceDiagramProps {
    * (roleKeyEntries). The MDX kit sets it.
    */
   showRoleKey?: boolean;
+  /** Show the title in a strip at the top of the panel (DESIGN.md section 14). The MDX kit sets it. */
+  showTitle?: boolean;
   className?: string;
 }
 
@@ -89,7 +92,7 @@ function PrefixedLine({ prefix, line }: { prefix: string; line: string }) {
  * open head, and self-calls loop back. A numbered text version of every step
  * sits under the drawing for screen readers and for anyone who prefers text.
  */
-export function SequenceDiagram({ title, participants, messages, numbered = true, columnWidth, showRoleKey = false, className }: SequenceDiagramProps) {
+export function SequenceDiagram({ title, participants, messages, numbered = true, columnWidth, showRoleKey = false, showTitle = false, className }: SequenceDiagramProps) {
   const id = useId();
   const layout = layoutSequence({ participants, messages, columnWidth, numbered });
   const { width, height, headerHeight, lifelineX } = layout;
@@ -104,10 +107,14 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
     .filter((x): x is string => x !== null);
   const roleDescription = saidRoles.length ? `Roles: ${saidRoles.join("; ")}.` : null;
   const roleKey = showRoleKey ? roleKeyEntries(participants.map((p) => ({ kind: p.kind ?? "generic", role: p.role }))) : [];
+  // Depth (DESIGN.md section 14): each participant is a lit object in its role's hue, standing on a rail.
+  const hues = participants.map((p) => roleHue[effectiveRole(p.kind, p.role)]);
 
   return (
     <div className={cn("space-y-2", className)} data-figure-kit="sequence">
-      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="glass-liquid p-2">
+      <div className="glass-liquid fig-panel">
+      {showTitle ? <FigureTitleBar title={title} /> : null}
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage ring-inset">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           style={{ minWidth }}
@@ -129,9 +136,22 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                 </marker>
               </React.Fragment>
             ))}
+            <FigureDepthDefs id={id} hues={hues} width={width} height={height} />
           </defs>
 
-          {participants.map((p) => {
+          {/* Lifelines stand on rails in their role's hue; the headers cast one blurred shadow pass. */}
+          <g aria-hidden className="fig-fx">
+            {participants.map((p, i) => (
+              <rect key={p.id} x={lifelineX[p.id] - 5} y={headerHeight - 2} width={10} height={height - 6 - headerHeight} rx={5} className={cn("fig-rail", railInk[hues[i]])} stroke="none" />
+            ))}
+          </g>
+          <g aria-hidden className="fig-fx fig-fx-blur" filter={shadowFilter(id)}>
+            {participants.map((p, i) => (
+              <ObjectShadow key={p.id} x={lifelineX[p.id] - 65} y={6} w={130} h={headerHeight - 10} rx={Math.min(roleStyles[effectiveRole(p.kind, p.role)].radius, 12)} />
+            ))}
+          </g>
+
+          {participants.map((p, pi) => {
             const x = lifelineX[p.id];
             const tag = p.kind ? nodeKindTags[p.kind] : "";
             const participantRole = effectiveRole(p.kind, p.role);
@@ -141,6 +161,9 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                 <line x1={x} x2={x} y1={headerHeight} y2={height - 8} className={look.lifeline} strokeDasharray="4 4" strokeWidth={1.5} />
                 <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={cn("fill-card", "stroke-none")} />
                 <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={look.box} strokeWidth={1.5} />
+                {/* The gradient sits just inside the outline, over the card base and the soft fill. */}
+                <rect aria-hidden x={x - 64.25} y={6.75} width={128.5} height={headerHeight - 11.5} rx={Math.max(0, Math.min(look.radius, 12) - 0.75)} fill={depthFill(id, hues[pi])} stroke="none" className="fig-fx" />
+                <ObjectRim id={id} x={x - 65} y={6} w={130} h={headerHeight - 10} rx={Math.min(look.radius, 12)} />
                 {tag ? (
                   <>
                     <rect x={x - 61} y={9} width={tagChipWidth(tag, 8.5)} height={12} rx={3} className={look.chip} />
@@ -153,7 +176,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                   {p.label}
                 </text>
                 {p.sublabel ? (
-                  <text x={x} y={39} textAnchor="middle" className="fill-muted-foreground text-[9px]">
+                  <text x={x} y={39} textAnchor="middle" className="fill-foreground/80 text-[9px]">
                     {p.sublabel}
                   </text>
                 ) : null}
@@ -196,6 +219,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
               const x = m.x1;
               return (
                 <g key={m.index}>
+                  <path aria-hidden d={`M${x},${m.y + 4} H${x + 34} V${m.y + 24} H${x + 6}`} className={cn("fig-fx fig-trace", stroke)} strokeWidth={6} />
                   <path
                     d={`M${x},${m.y + 4} H${x + 34} V${m.y + 24} H${x + 6}`}
                     fill="none"
@@ -218,6 +242,8 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
             const mid = (m.x1 + m.x2) / 2;
             return (
               <g key={m.index}>
+                {/* A call is a lit trace; a return (dashed) and an async send (open head) stay plain lines, so the three still differ at a glance. */}
+                {m.kind === "call" ? <path aria-hidden d={`M${m.x1},${m.y} H${m.x2 - dir * 6}`} className={cn("fig-fx fig-trace", stroke)} strokeWidth={6} /> : null}
                 <line
                   x1={m.x1}
                   x2={m.x2 - dir * 2}
@@ -246,7 +272,8 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
           })}
         </svg>
       </DiagramScrollFrame>
-      <DiagramLegend entries={roleKey} as="div" />
+      <DiagramLegend entries={roleKey} as="div" className="fig-legend" />
+      </div>
       <details className="rounded-lg border border-border px-3 text-sm [&[open]]:pb-2">
         <summary className="min-h-10 cursor-pointer py-2.5 font-medium text-foreground">Steps as text</summary>
         <ol className="mt-2 list-none space-y-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">

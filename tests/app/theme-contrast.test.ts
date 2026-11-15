@@ -57,6 +57,11 @@ const ROLES = [
   "prose-body",
   // Figures (DESIGN.md section 13): a stroke and a text value per meaning.
   ...["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"].flatMap((hue) => [`fig-${hue}`, `fig-${hue}-text`]),
+  // Figure art direction (DESIGN.md section 14): the deep hue an object is filled with, and the ordered ramp.
+  ...["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"].map((hue) => `fig-${hue}-body`),
+  ...[1, 2, 3, 4, 5].map((step) => `fig-ramp-${step}`),
+  "fig-ramp-text",
+  ...[1, 2, 3, 4, 5].map((step) => `fig-ramp-${step}-body`),
 ];
 
 /** Section 11 tokens that are not plain HSL triplets; copied like the roles. */
@@ -75,6 +80,15 @@ const GLASS_TOKENS = [
   "glass-sheen",
   // Figure soft fills (DESIGN.md section 13): a triplet with its alpha.
   ...["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"].map((hue) => `fig-${hue}-fill`),
+  // Figure art direction (DESIGN.md section 14): strengths (plain numbers) and translucent colours.
+  "fig-obj-top",
+  "fig-obj-bottom",
+  "fig-obj-highlight",
+  "fig-obj-shadow",
+  "fig-well",
+  "fig-stage",
+  "fig-glow",
+  "fig-trace",
 ];
 
 const CODE_CHROME = ["code-surface", "code-foreground", "code-muted", "code-border"];
@@ -583,6 +597,21 @@ function figureSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
   ];
 }
 
+/** The tier share in the rim of a part with no role: --fig-tier-mix in rich and in calm (DESIGN.md section 14). */
+const TIER_MIXES = [0.46, 0.28];
+
+/**
+ * The stage of a figure panel (DESIGN.md section 14): the liquid frame with
+ * each tier's field colour at --fig-stage, its strongest stop, over it. Calm
+ * scales the field down, so rich (full strength) is the worst case.
+ */
+function stageSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
+  const stage = parseFloat(vars["fig-stage"]);
+  return figureSurfaces(vars)
+    .filter(([name]) => name.startsWith("frame"))
+    .flatMap(([name, base]) => [1, 2, 3, 4].map((n) => [`stage (field-${n}) on ${name}`, over(rgbOf(vars[`field-${n}`]), stage, base)] as [string, Rgb]));
+}
+
 describe("figure tokens (DESIGN.md section 13)", () => {
   it.each(MODES)("%s mode keeps every figure hue in its family, with a translucent soft fill", (_name, { vars }) => {
     for (const [hue, [lo, hi]] of Object.entries(FIG_HUES)) {
@@ -665,10 +694,13 @@ describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {
     for (const hue of ["cyan", "rose"]) expect(rgbContrast(digits, rgbOf(vars[`fig-${hue}-text`])), `${hue} badge`).toBeGreaterThanOrEqual(4.5);
   });
 
-  it.each(TIERS)("%s: the neutral tint for nodes with no role (20% tier in the secondary colour) holds 3:1 as a stroke", (tier) => {
-    const stroke = over(rgbOf(vars[tier]), 0.2, rgbOf(vars["muted-foreground"]));
-    for (const [surface, base] of figureSurfaces(vars)) {
-      expect(rgbContrast(stroke, over(rgbOf(vars[tier]), 0.045, base)), `${tier} generic stroke on ${surface}`).toBeGreaterThanOrEqual(3);
+  // Section 14 raised the tier share from a fixed 20% to --fig-tier-mix: 46% in rich, 28% in calm.
+  it.each(TIERS)("%s: the tier tint for nodes with no role (46% or 28% tier in the secondary colour) holds 3:1 as a stroke", (tier) => {
+    for (const share of TIER_MIXES) {
+      const stroke = over(rgbOf(vars[tier]), share, rgbOf(vars["muted-foreground"]));
+      for (const [surface, base] of [...figureSurfaces(vars), ...stageSurfaces(vars)]) {
+        expect(rgbContrast(stroke, over(rgbOf(vars[tier]), 0.045, base)), `${tier} generic stroke at ${share} on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 });
@@ -742,5 +774,189 @@ describe("solid figure marks (DESIGN.md section 13)", () => {
         expect(rgbContrast(fill, base), `${role} solid on ${surface}`).toBeGreaterThanOrEqual(3);
       }
     });
+  });
+});
+
+/*
+ * Figure art direction (DESIGN.md section 14): the glass panel with its tier
+ * field and title strip, parts as lit objects, wells, traces, the ordered
+ * ramp, and the calm and rich settings. Every floor is checked at full
+ * strength (rich); calm scales the same tokens down.
+ */
+const ART_HUES = Object.keys(FIG_HUES) as Array<keyof typeof FIG_HUES>;
+
+/** An object's surface at one end of its gradient: the card, the body hue at `alpha`, then the role's soft fill. */
+function objectFill(vars: Record<string, string>, hue: string, alpha: number, base: Rgb = rgbOf(vars.card)): Rgb {
+  const fill = hsla(vars[`fig-${hue}-fill`]);
+  return over(rgbOf(fill.triplet), fill.alpha, over(rgbOf(vars[`fig-${hue}-body`]), alpha, base));
+}
+
+describe("figure art direction (DESIGN.md section 14)", () => {
+  const art = css.slice(css.indexOf("Figure art direction (DESIGN.md section 14). A figure is an instrument"), css.indexOf("Print uses the light values whatever the mode on screen"));
+
+  it("has the rich setting as the default and calm as a scaled copy of it, set by data-fig-style", () => {
+    const rich = /:root,\s*\[data-fig-style="rich"\]\s*\{([^}]*)\}/.exec(art)?.[1] ?? "";
+    const calm = /\[data-fig-style="calm"\]\s*\{([^}]*)\}/.exec(art)?.[1] ?? "";
+    const read = (block: string, key: string) => parseFloat(new RegExp(`--${key}:\\s*([\\d.]+)`).exec(block)?.[1] ?? "NaN");
+    expect(read(rich, "fig-level")).toBe(1);
+    expect(read(rich, "fig-glow-level")).toBe(1);
+    for (const key of ["fig-level", "fig-glow-level"]) {
+      expect(read(calm, key), key).toBeGreaterThan(0);
+      expect(read(calm, key), key).toBeLessThan(1);
+    }
+    expect(TIER_MIXES).toEqual([read(rich, "fig-tier-mix") / 100, read(calm, "fig-tier-mix") / 100]);
+    const config = readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
+    expect(config).toContain('generic: "color-mix(in srgb, hsl(var(--tier-current)) var(--fig-tier-mix, 46%), hsl(var(--muted-foreground)))"');
+    expect(config).toContain("role(`fig-${hue}-body`)");
+    expect(config).toContain("role(`fig-ramp-${step}`)");
+  });
+
+  it("adds no blurred layer, and drops its decoration in forced colours and its blurs and field in print", () => {
+    expect(art).not.toMatch(/backdrop-filter/);
+    expect(art).toMatch(/@media \(forced-colors: active\)\s*\{\s*\.fig-fx,\s*\.fig-panel::before\s*\{\s*display: none;/);
+    expect(art).toMatch(/@media print\s*\{\s*\.fig-fx-blur,\s*\.fig-panel::before\s*\{\s*display: none;/);
+    expect(art).toMatch(/@media \(prefers-reduced-transparency: reduce\)\s*\{\s*\.fig-panel::before\s*\{\s*display: none;/);
+    expect(art).not.toMatch(/animation|transition/);
+  });
+
+  it.each(MODES)("%s mode keeps each body hue in its family and the strengths in range", (_name, { vars }) => {
+    for (const [hue, [lo, hi]] of Object.entries(FIG_HUES)) {
+      const h = parseFloat(vars[`fig-${hue}-body`]);
+      expect(h, `fig-${hue}-body`).toBeGreaterThanOrEqual(lo);
+      expect(h, `fig-${hue}-body`).toBeLessThanOrEqual(hi);
+    }
+    for (const key of ["fig-obj-top", "fig-obj-bottom", "fig-stage", "fig-glow", "fig-trace"]) {
+      expect(parseFloat(vars[key]), key).toBeGreaterThan(0);
+      expect(parseFloat(vars[key]), key).toBeLessThanOrEqual(1);
+    }
+    // The stage field never exceeds the page field of section 11.
+    for (const n of [1, 2, 3, 4]) expect(parseFloat(vars["fig-stage"])).toBeLessThanOrEqual(parseFloat(vars[`field-${n}-alpha`]));
+  });
+
+  it("lights an object from above in both modes: the top of the gradient is the lighter end", () => {
+    for (const [, { vars }] of MODES) {
+      for (const hue of ART_HUES) {
+        const top = rgbLuminance(objectFill(vars, hue, parseFloat(vars["fig-obj-top"])));
+        const bottom = rgbLuminance(objectFill(vars, hue, parseFloat(vars["fig-obj-bottom"])));
+        expect(top, `fig-${hue}-body`).toBeGreaterThan(bottom);
+      }
+    }
+  });
+});
+
+describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) => {
+  const ends = [parseFloat(vars["fig-obj-top"]), parseFloat(vars["fig-obj-bottom"])];
+
+  it("on the stage, every figure stroke holds 3:1 and every figure text, primary, secondary, subtle and info text 4.5:1", () => {
+    for (const [surface, base] of stageSurfaces(vars)) {
+      for (const hue of ART_HUES) {
+        expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), base), `fig-${hue} stroke on ${surface}`).toBeGreaterThanOrEqual(3);
+        expect(rgbContrast(rgbOf(vars[`fig-${hue}-text`]), base), `fig-${hue}-text on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const role of ["foreground", "muted-foreground", "subtle-foreground", "info"]) {
+        expect(rgbContrast(rgbOf(vars[role]), base), `${role} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+      // A legend chip: the card at 55% over the stage, with secondary text on it.
+      expect(rgbContrast(rgbOf(vars["muted-foreground"]), over(rgbOf(vars.card), 0.55, base)), `legend chip on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each(ART_HUES)("an object in fig-%s: its label, sublabel, tag, badge and outline hold their floors at both ends of the gradient", (hue) => {
+    for (const alpha of ends) {
+      const body = objectFill(vars, hue, alpha);
+      const fill = hsla(vars[`fig-${hue}-fill`]);
+      const chip = over(rgbOf(fill.triplet), fill.alpha, body);
+      expect(rgbContrast(rgbOf(vars.foreground), body), `label at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      // The sublabel is the primary colour at 80% (fill-foreground/80).
+      expect(rgbContrast(over(rgbOf(vars.foreground), 0.8, body), body), `sublabel at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars[`fig-${hue}-text`]), chip), `tag on its chip at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars["fig-amber-text"]), body), `badge at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), body), `outline at ${alpha}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(ART_HUES)("a cell in fig-%s drawn straight on a figure surface or the stage (a bus value): its text holds 4.5:1 and its outline 3:1", (hue) => {
+    const well = hsla(vars["fig-well"]);
+    for (const [surface, base] of [...figureSurfaces(vars), ...stageSurfaces(vars)]) {
+      for (const under of [base, over(rgbOf(well.triplet), well.alpha, base)]) {
+        for (const alpha of ends) {
+          const cell = objectFill(vars, hue, alpha, under);
+          expect(rgbContrast(rgbOf(vars[`fig-${hue}-text`]), cell), `text at ${alpha} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+          expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), cell), `outline at ${alpha} on ${surface}`).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+  });
+
+  it.each(ART_HUES)("a container in fig-%s, three wells deep on the stage: its tag on its chip and its name hold 4.5:1, its dashed border 3:1", (hue) => {
+    const well = hsla(vars["fig-well"]);
+    const fill = hsla(vars[`fig-${hue}-fill`]);
+    for (const [surface, base] of stageSurfaces(vars)) {
+      let floor = base;
+      for (let depth = 0; depth < 3; depth++) floor = over(rgbOf(well.triplet), well.alpha, floor);
+      const tinted = over(rgbOf(vars[`fig-${hue}`]), 0.05, floor);
+      const chip = over(rgbOf(fill.triplet), fill.alpha, tinted);
+      expect(rgbContrast(rgbOf(vars[`fig-${hue}-text`]), chip), `tag on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars["muted-foreground"]), tinted), `name on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), tinted), `border on ${surface}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each([1, 2, 3, 4])("a part with no role in a tier %s lesson (clear glass: the field colour at 40% of the object strengths): label, sublabel and rim hold their floors", (n) => {
+    for (const alpha of ends) {
+      const body = over(rgbOf(vars[`field-${n}`]), alpha * 0.4, rgbOf(vars.card));
+      expect(rgbContrast(rgbOf(vars.foreground), body), `label at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(over(rgbOf(vars.foreground), 0.8, body), body), `sublabel at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      for (const share of TIER_MIXES) {
+        const rim = over(rgbOf(vars[`tier-${n}`]), share, rgbOf(vars["muted-foreground"]));
+        expect(rgbContrast(rim, over(rgbOf(vars[`tier-${n}`]), 0.045, body)), `rim at ${share}, ${alpha}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("the title strip: the title holds 4.5:1 and the tier indicator 3:1 on the tier field at full strength over the frame", () => {
+    for (const [surface, base] of figureSurfaces(vars).filter(([name]) => name.startsWith("frame"))) {
+      for (const n of [1, 2, 3, 4]) {
+        const strip = over(rgbOf(vars[`field-${n}`]), parseFloat(vars[`field-${n}-alpha`]), base);
+        expect(rgbContrast(rgbOf(vars.foreground), strip), `title on field-${n} over ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(rgbContrast(rgbOf(vars[`tier-${n}`]), strip), `indicator on field-${n} over ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it.each([1, 2, 3, 4, 5])("an ordered object in fig-ramp-%s-body: its label holds 4.5:1 and its ramp outline 3:1 at both ends of the gradient, lit from above, in the ramp's family", (step) => {
+    const hue = `ramp-${step}`;
+    // No soft fill is laid over an ordered object: the body hue over the card is its whole surface.
+    const rampBody = (alpha: number) => over(rgbOf(vars[`fig-${hue}-body`]), alpha, rgbOf(vars.card));
+    const h = parseFloat(vars[`fig-${hue}-body`]);
+    expect(h).toBeGreaterThanOrEqual(300);
+    expect(h).toBeLessThanOrEqual(330);
+    for (const alpha of ends) {
+      const body = rampBody(alpha);
+      expect(rgbContrast(rgbOf(vars.foreground), body), `label at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), body), `outline at ${alpha}`).toBeGreaterThanOrEqual(3);
+    }
+    expect(rgbLuminance(rampBody(ends[0]))).toBeGreaterThan(rgbLuminance(rampBody(ends[1])));
+  });
+
+  it("the ordered ramp: fuchsia (outside every protected family), each step 3:1 on every surface, ordered by lightness, its text 4.5:1", () => {
+    const steps = [1, 2, 3, 4, 5].map((step) => vars[`fig-ramp-${step}`]);
+    for (const value of [...steps, vars["fig-ramp-text"]]) {
+      const h = parseFloat(value);
+      expect(h).toBeGreaterThanOrEqual(300);
+      expect(h).toBeLessThanOrEqual(330);
+      for (const [lo, hi] of Object.values(FIG_HUES)) expect(h >= lo && h <= hi).toBe(false);
+    }
+    for (const [surface, base] of [...figureSurfaces(vars), ...stageSurfaces(vars)]) {
+      steps.forEach((value, i) => expect(rgbContrast(rgbOf(value), base), `fig-ramp-${i + 1} on ${surface}`).toBeGreaterThanOrEqual(3));
+      expect(rgbContrast(rgbOf(vars["fig-ramp-text"]), base), `fig-ramp-text on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+    // More is further from the page: each step moves the same way, by at least 1.15:1 against the step before.
+    const page = rgbLuminance(rgbOf(vars.background));
+    const away = steps.map((value) => Math.abs(rgbLuminance(rgbOf(value)) - page));
+    for (let i = 1; i < steps.length; i++) {
+      expect(away[i], `fig-ramp-${i + 1} is stronger than fig-ramp-${i}`).toBeGreaterThan(away[i - 1]);
+      expect(rgbContrast(rgbOf(steps[i]), rgbOf(steps[i - 1])), `fig-ramp-${i + 1} against fig-ramp-${i}`).toBeGreaterThanOrEqual(1.15);
+    }
   });
 });

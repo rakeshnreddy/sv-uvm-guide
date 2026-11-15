@@ -60,6 +60,19 @@ const PREDICTION_OPTIONS: PredictionOption[] = [
 
 type LadderView = "cost" | "delay";
 
+/*
+ * The ordered ramp (DESIGN.md section 14): one step per discovery stage, the
+ * same step in both views, so a stage keeps its colour and the climb in cost
+ * reads as a climb in colour. Selection is a separate cue (the cyan column,
+ * the ▼ and the bold label), so the selected bar keeps its own step. Class
+ * names are written out in full so Tailwind finds them.
+ */
+const RAMP_FILL = ["fill-fig-ramp-1", "fill-fig-ramp-2", "fill-fig-ramp-3", "fill-fig-ramp-4", "fill-fig-ramp-5"];
+const RAMP_STROKE = ["stroke-fig-ramp-1", "stroke-fig-ramp-2", "stroke-fig-ramp-3", "stroke-fig-ramp-4", "stroke-fig-ramp-5"];
+const RAMP_BG = ["bg-fig-ramp-1", "bg-fig-ramp-2", "bg-fig-ramp-3", "bg-fig-ramp-4", "bg-fig-ramp-5"];
+const RAMP_RING = ["ring-fig-ramp-1/25", "ring-fig-ramp-2/25", "ring-fig-ramp-3/25", "ring-fig-ramp-4/25", "ring-fig-ramp-5/25"];
+const rampStep = (i: number) => Math.min(i, RAMP_FILL.length - 1);
+
 const VIEW_OPTIONS: { value: LadderView; label: string }[] = [
   { value: "cost", label: "Cost" },
   { value: "delay", label: "Delay" },
@@ -99,7 +112,7 @@ function DelayLadder({ index }: { index: number }) {
               <div className={cn("mt-1 h-2 w-full rounded-sm", active ? "bg-background" : "bg-muted")} aria-hidden data-testid={`delay-bar-track-${s.id}`}>
                 <div
                   data-testid={`delay-bar-${s.id}`}
-                  className={cn("h-2 rounded-sm transition-colors motion-reduce:transition-none", active ? "bg-cyan-500/70" : "bg-muted-foreground/25")}
+                  className={cn("h-2 rounded-sm transition-opacity motion-reduce:transition-none", RAMP_BG[rampStep(i)], active ? "ring-[3px]" : "opacity-55", active ? RAMP_RING[rampStep(i)] : null)}
                   style={{ width: `${costBarFraction(s) * 100}%` }}
                 />
               </div>
@@ -133,6 +146,7 @@ const SHORT_LABELS: Record<string, string> = {
 
 function CostExplorer() {
   const sliderId = useId();
+  const fx = `cost-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [index, setIndex] = useState(1);
   const [anchor, setAnchor] = useState<AnchorUsd>(1_000);
   const [view, setView] = useState<LadderView>("cost");
@@ -146,7 +160,13 @@ function CostExplorer() {
   const bottom = 26;
   const left = 8;
   const slot = (W - left * 2) / COST_STAGES.length;
-  const barHeight = (s: (typeof COST_STAGES)[number]) => costBarFraction(s) * (H - top - bottom);
+  const plot = H - top - bottom;
+  const barHeight = (s: (typeof COST_STAGES)[number]) => costBarFraction(s) * plot;
+  const barX = (i: number) => left + i * slot + slot * 0.18;
+  const barW = slot * 0.64;
+  const selectedTop = H - bottom - barHeight(stage);
+  // The cursor column holds the selected bar, its value above and its stage name below; it stops short of the chart's title.
+  const cursorTop = Math.max(15, selectedTop - 20);
 
   const chartLabel = `Relative cost to fix a bug, log scale, illustrative: ${COST_STAGES.map((s) => `${s.label} ${formatMultiplier(s.multiplier)}`).join(", ")}. Selected: ${stage.label}.`;
 
@@ -193,18 +213,65 @@ function CostExplorer() {
       </div>
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <figure className="min-w-0 rounded-xl border border-border bg-card p-3">
+        <figure className="flex min-w-0 flex-col justify-center rounded-xl border border-border bg-card p-3">
           {view === "delay" ? (
             <DelayLadder index={index} />
           ) : (
             <>
               <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
+                <defs>
+                  {/* Depth for a bar: shaded toward its base (so the top is the lighter end in both modes) and a lit top rim. */}
+                  <linearGradient id={`${fx}-shade`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0.25" className="fig-stop-none" />
+                    <stop offset="1" className="fig-stop-shade" />
+                  </linearGradient>
+                  <linearGradient id={`${fx}-rim`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" className="fig-rim-top" />
+                    <stop offset="0.6" className="fig-rim-end" />
+                  </linearGradient>
+                  <filter id={`${fx}-glow`} filterUnits="userSpaceOnUse" x={-16} y={-16} width={W + 32} height={H + 32}>
+                    <feGaussianBlur stdDeviation="5" />
+                  </filter>
+                </defs>
+                {/* One faint rule per order of magnitude: each bar ends on the next rule up. */}
+                <g aria-hidden className="fig-fx">
+                  {COST_STAGES.map((s) => (
+                    <line
+                      key={s.id}
+                      x1={left}
+                      x2={W - left}
+                      y1={H - bottom - barHeight(s)}
+                      y2={H - bottom - barHeight(s)}
+                      className="stroke-fig-generic"
+                      strokeOpacity={0.3}
+                      strokeWidth={1}
+                      strokeDasharray="1.5 4"
+                    />
+                  ))}
+                </g>
+                {/* The selected stage: a cursor column, as in a waveform viewer, and a glow under its bar. */}
+                <rect
+                  aria-hidden
+                  data-testid="cost-cursor"
+                  x={left + index * slot + 2}
+                  y={cursorTop}
+                  width={slot - 4}
+                  height={H - 3 - cursorTop}
+                  rx={6}
+                  className="fig-fx fill-fig-cyan-fill stroke-fig-cyan"
+                  strokeOpacity={0.55}
+                  strokeWidth={1}
+                />
+                <g aria-hidden className="fig-fx fig-fx-blur fig-glow" filter={`url(#${fx}-glow)`}>
+                  <rect x={barX(index) - 2} y={selectedTop - 2} width={barW + 4} height={barHeight(stage) + 2} rx={5} className={RAMP_FILL[rampStep(index)]} stroke="none" />
+                </g>
                 {COST_STAGES.map((s, i) => {
                   const h = barHeight(s);
-                  const x = left + i * slot + slot * 0.18;
-                  const w = slot * 0.64;
+                  const x = barX(i);
+                  const w = barW;
                   const y = H - bottom - h;
                   const active = i === index;
+                  const step = rampStep(i);
                   return (
                     <g key={s.id}>
                       <rect
@@ -214,11 +281,22 @@ function CostExplorer() {
                         width={w}
                         height={h}
                         rx={3}
-                        className={cn(
-                          "transition-colors motion-reduce:transition-none",
-                          active ? "fill-cyan-500/70 stroke-cyan-600 dark:stroke-cyan-300" : "fill-muted-foreground/25 stroke-transparent",
-                        )}
-                        strokeWidth={2}
+                        className={cn("transition-[fill-opacity] motion-reduce:transition-none", RAMP_FILL[step], RAMP_STROKE[step])}
+                        fillOpacity={active ? 1 : 0.6}
+                        strokeWidth={1.5}
+                      />
+                      <rect aria-hidden x={x} y={y} width={w} height={h} rx={3} fill={`url(#${fx}-shade)`} stroke="none" className="fig-fx pointer-events-none" />
+                      <rect
+                        aria-hidden
+                        x={x + 1.25}
+                        y={y + 1.25}
+                        width={w - 2.5}
+                        height={Math.max(0, h - 2.5)}
+                        rx={1.75}
+                        fill="none"
+                        stroke={`url(#${fx}-rim)`}
+                        strokeWidth={1}
+                        className="fig-fx pointer-events-none"
                       />
                       <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
                         {active ? "▼ " : ""}
@@ -230,7 +308,7 @@ function CostExplorer() {
                     </g>
                   );
                 })}
-                <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-border" strokeWidth={1} />
+                <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-fig-generic" strokeOpacity={0.8} strokeWidth={1} />
                 <text x={left} y={12} className="fill-muted-foreground text-[10px]">
                   Relative cost to fix (log scale, illustrative)
                 </text>
@@ -245,7 +323,10 @@ function CostExplorer() {
         <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
           <div>
             <p className="text-label text-muted-foreground">Found at</p>
-            <p className="text-lg font-semibold text-foreground">{stage.label}</p>
+            <p className="flex items-center gap-2.5 text-lg font-semibold text-foreground">
+              <span aria-hidden data-testid="stage-swatch" className={cn("h-2.5 w-2.5 flex-none rounded-[3px] ring-[3px]", RAMP_BG[rampStep(index)], RAMP_RING[rampStep(index)])} />
+              {stage.label}
+            </p>
           </div>
           <p className="text-foreground">
             About <strong>{formatMultiplier(stage.multiplier)}</strong> the cost of catching it at spec review
@@ -294,6 +375,7 @@ const InteractiveCostOfBugGraph = () => (
     summary="A rule of thumb, not data: it shows the order of magnitude, which is what drives verification budgets."
     fidelity="illustration"
     assumptions={ASSUMPTIONS}
+    className="fig-panel"
   >
     <PredictionPrompt
       question="A bug that RTL simulation could have caught escapes to post-silicon instead. Roughly how much more does fixing it cost?"
