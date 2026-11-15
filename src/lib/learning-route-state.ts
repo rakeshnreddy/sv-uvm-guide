@@ -70,6 +70,28 @@ export interface RouteLessonRef {
   stepIndex: number;
 }
 
+/** A lesson on a route, with the route step that holds it ("Step 2 of 6: ..."). */
+export interface RouteLessonLink {
+  href: string;
+  label: string;
+  step: string;
+}
+
+/**
+ * Where a route goes after one lesson, as the lesson page hands it to the
+ * client (src/lib/curriculum/lesson-route-next.ts). `next` is null when the
+ * lesson is the route's last. `prev` is the route's lesson before this one.
+ * `between` names the steps that come before `next` and have practice but no
+ * lessons (for example the Expert route's interview step).
+ */
+export interface RouteNextOption {
+  routeId: RouteId;
+  routeName: string;
+  next: RouteLessonLink | null;
+  prev?: RouteLessonLink;
+  between?: string[];
+}
+
 export type RouteProgress =
   | { status: 'not-started'; index: 0 }
   | { status: 'next'; index: number }

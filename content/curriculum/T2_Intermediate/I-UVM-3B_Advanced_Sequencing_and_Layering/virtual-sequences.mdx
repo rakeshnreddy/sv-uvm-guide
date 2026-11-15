@@ -86,7 +86,7 @@ The map below shows the two ways a virtual sequence reaches the agents. Select e
 <details>
 <summary>After you answer: what the map showed</summary>
 
-- In both architectures the dotted lines are handles and the only item path is the solid pull connection inside each agent, from the driver's port to its sequencer's export.
+- In both architectures the dotted lines are handles and the only item path is the solid pull connection inside each agent, from the driver's `seq_item_port` to its sequencer's `seq_item_export`, which is an imp (drawn ●) because it implements the pull methods.
 - `cfg_seq`'s items are arbitrated on `cfg_sqr`, the handle passed to `c.start()`. The virtual sequencer, when there is one, never sees an item; it is only where `soc_vseq` itself runs. (That rule assumes the handle is not null; a null handle behaves differently, as a later section shows.)
 - The two architectures differ only in *who supplies the handles*: the env (into a virtual sequencer) or the test (into the sequence). The order still comes from `body()` in both.
 
@@ -814,7 +814,7 @@ IEEE 1800.2-2020 §14.2.3.1 says only that `start()` runs the sequence on the gi
 Reading `start()` in uvm-core 2020.3.1 (`uvm_sequence_base.svh`):
 - **Recording.** `begin_tr()` and `end_tr()` run only when `m_sequencer` is non-null, so a virtual sequence started with `start(null)` produces no transaction record of its own. Its children, which have real sequencers, are still recorded ([I-UVM-6](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) covers recording).
 - **Names.** `get_full_name()` prefixes the sequencer's path only when there is a sequencer and no parent, so the sequence is plain `vseq` and its children `vseq.c` and `vseq.d`. Messages and debug dumps are less self-locating; name your sequences well.
-- **`p_sequencer`.** The `` `uvm_declare_p_sequencer `` cast of a null `m_sequencer` succeeds (casting null is legal, IEEE 1800-2023 §8.16), so there is no `DCLPSQ` error; `p_sequencer.cfg_sqr` then fails at run time as a null-handle access reported by the simulator, not by UVM.
+- **`p_sequencer`.** With `start(null)`, `set_sequencer(null)` still runs the `` `uvm_declare_p_sequencer `` cast on a null `m_sequencer`. IEEE 1800-2023 §8.16 does not say whether a cast from a handle variable that holds null succeeds (see [Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls)). On a simulator where it succeeds, there is no `DCLPSQ` error, `p_sequencer` stays null, and `p_sequencer.cfg_sqr` then fails at run time as a null-handle access reported by the simulator, not by UVM. On one where it fails, uvm-core reports `UVM_FATAL [DCLPSQ]` at `start()`. Either way, a virtual sequence that uses `p_sequencer` must not be started with `null`.
 - **Locks.** `lock()` and `grab()` with no argument act on `m_sequencer`; with `start(null)` that is null, which the standard requires to be fatal (§14.2.5.5, §14.2.5.6); uvm-core reports it as `UVM_FATAL [LOCKSEQR]` or `UVM_FATAL [GRAB]` (next item).
 - **Not the objection.** `set_automatic_phase_objection(1)` behaves the same in both styles: it needs `set_starting_phase()` (§14.2.4.1–§14.2.4.4). Only a default sequence started by the sequencer gets a starting phase automatically.
 
@@ -975,7 +975,7 @@ Answer each one before you open the feedback.
       answers: [
         { text: "Nothing: UVM finds the agent sequencers from the item types", correct: false, feedback: "No such lookup exists. The handle fields stay null until assigned." },
         { text: "Copy the agent sequencer handles into the sequence: vseq.cfg_sqr = env.cfg_agt.sqr; vseq.data_sqr = env.data_agt.sqr;", correct: true, feedback: "Correct. That is the defining duty of this style, repeated in every test that starts the sequence." },
-        { text: "Add `uvm_declare_p_sequencer to soc_vseq", correct: false, feedback: "p_sequencer is the other style. With start(null) there is no sequencer to cast, so p_sequencer would be null." },
+        { text: "Add `uvm_declare_p_sequencer to soc_vseq", correct: false, feedback: "p_sequencer is the other style. With start(null) the macro's cast gets a null sequencer, so p_sequencer would be null (and some tools also report DCLPSQ)." },
         { text: "Call vseq.set_sequencer(env.cfg_agt.sqr) so the sequence has somewhere to run", correct: false, feedback: "start(null) overwrites the sequence's sequencer with null again, so this call has no effect, and it never fills the cfg_sqr or data_sqr fields that body() uses." }
       ],
       explanation: "In the start(null) style the sequence holds its own handles and the test fills them. A missing assignment gives UVM_FATAL [SEQ] at the child's first start_item(), or the VSEQ_HANDLES fatal if body() checks first."

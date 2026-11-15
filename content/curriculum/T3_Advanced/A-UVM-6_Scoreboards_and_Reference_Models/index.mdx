@@ -91,7 +91,7 @@ The picture below is the bench this lesson builds in Make It Work. Every name in
   ]}
   ports={[
     { id: "drv.port", node: "drv", side: "bottom", at: 0.6, kind: "port", label: "seq_item_port" },
-    { id: "sqr.export", node: "sqr", side: "top", at: 0.6, kind: "export", label: "seq_item_export" },
+    { id: "sqr.export", node: "sqr", side: "top", at: 0.6, kind: "imp", label: "seq_item_export" },
     { id: "in_mon.ap", node: "in_mon", side: "bottom", at: 0.6, kind: "analysis_port", label: "ap" },
     { id: "prd.in", node: "prd", side: "top", at: 0.6, kind: "analysis_imp", label: "analysis_export" },
     { id: "prd.ap", node: "prd", side: "right", at: 0.8, kind: "analysis_port", label: "ap" },
@@ -150,7 +150,7 @@ uvm_tlm_analysis_fifo #(alu_item) exp_fifo,   act_fifo;    // private buffers
 
 Both forms are legal and common; the visual later on this page and Make It Work use form A, and the lab uses form B, so you practise both. A graded wiring exercise, [scoreboard connector](/exercises/scoreboard-connector), drills the connections; it connects the env straight to the FIFOs' `analysis_export`s, which is legal, while this page prefers exports on the scoreboard so it can change how it buffers without touching the env.
 
-**One rule for both forms: never modify what you receive.** `write()` hands the same handle to every subscriber, and "an implementation of the `write(T)` shall not modify the value passed to it" (§12.2.10.2). A scoreboard that changes a field of a received item corrupts what the coverage collector and every other subscriber see. Predict into a copy, and store items as received.
+**One rule for both forms: never modify what you receive.** `write()` hands the same handle to every subscriber, and "an implementation of the `write(T)` shall not modify the value passed to it" (§12.2.10.2). A scoreboard that changes a field of a received item corrupts what the coverage collector and every other subscriber see. Predict into a copy. Storing a received handle without copying is safe only while every publisher creates a new item per transaction ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), rule 1); when you cannot guarantee that, clone on entry. Copy at one end, not both. In the Make It Work bench both monitors create one item per transfer and the expected items are already the predictor's clones, so the scoreboard stores what it receives.
 
 ### The reference model: three styles
 
@@ -1143,6 +1143,8 @@ package alu_pkg;
 
     virtual function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
+      // Shortcut for brevity: legal, but it reaches inside each agent.
+      // A reusable env promotes through the agent's own ap (I-UVM-2B).
       in_agt.in_mon.ap.connect(prd.analysis_export);  // accepted requests to the model
       prd.ap.connect(scb.exp_imp);                    // expected items
       out_agt.out_mon.ap.connect(scb.act_imp);        // actual results
@@ -1443,7 +1445,7 @@ Each step, where it lives in `alu_sb_tb.sv`, and the false pass or false failure
 ### Expert: configuring `compare()` for a scoreboard
 
 - **The defaults are normative.** A new comparer shows at most one miscompare message (`show_max` 1, §16.3.5.1), at verbosity `UVM_LOW` (§16.3.5.2), with severity `UVM_INFO` (§16.3.5.3), and with a return threshold of 1 (§16.3.6), which lets `do_compare` "return as quickly as possible after the result ... reaches the threshold value, potentially skipping additional field comparisons".
-- **Who honours the threshold.** In uvm-core 2020.3.1 the field macros stop comparing later fields once the result reaches the threshold (`uvm_comparer_defines.svh`); `compare_field_int` and the other `compare_field*` calls in a hand-written `do_compare` do not check it. `set_threshold(0)` asks for every field to be compared, which matters for field-macro items. The standard has the comparer's `flush()` restore the threshold to 1 (§16.3.6), and every top-level `compare()` flushes first (§5.3.9.1). So a portable scoreboard calls `set_threshold(0)` before each `compare()`; in uvm-core 2020.3.1, `flush()` keeps the threshold, so setting it once in `build_phase` is enough there.
+- **Who honours the threshold.** In uvm-core 2020.3.1 the field macros stop comparing later fields once the result reaches the threshold (`uvm_comparer_defines.svh`); `compare_field_int` and the other `compare_field*` calls in a hand-written `do_compare` do not check it. `set_threshold(0)` asks for every field to be compared, which matters for field-macro items. The standard has the comparer's `flush()` restore the threshold to 1 (§16.3.6), and every top-level `compare()` flushes first (§5.3.9.1). So calling `set_threshold(0)` before `compare()` does not help: the flush inside `compare()` undoes it. A portable scoreboard uses a comparer subclass whose `flush()` calls `super.flush()` and re-applies the threshold ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index), Make It Work `scb_comparer`). In uvm-core 2020.3.1, `flush()` keeps the threshold, so setting it once in `build_phase` is enough there. This lesson's item uses a hand-written `do_compare`, so the threshold does not change its result.
 - **A null comparer means the shared default.** `compare(rhs)` with no comparer uses the default comparer policy and flushes it when the active object depth is 0 (§5.3.9.1). Changing the default comparer's severity to `UVM_ERROR` changes it for every `compare()` in the simulation, including library code: prefer a scoreboard-owned comparer, as `alu_scoreboard` does.
 - **Reading the detail.** `get_miscompares()` returns the miscompare messages since the last flush, one per line (§16.3.3.8); `get_result()` returns their number (§16.3.3.9).
 - **Tolerance.** A model with rounding (a DSP filter, floating point) needs a tolerant compare: override `do_compare` to compare within a bound, or compare a derived value; never weaken the compare by removing the field. [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) shows both ways.
@@ -1456,7 +1458,7 @@ The defaults against what `alu_scoreboard` does with its own comparer:
 | `show_max` | 1 (§16.3.5.1) | left at 1 | in uvm-core 2020.3.1 each top-level `compare()` flushes the comparer first, so at most one `MISCMP` message per call; `get_miscompares()` still collects every miscompare |
 | verbosity | `UVM_LOW` (§16.3.5.2) | `set_verbosity(UVM_HIGH)` | the `MISCMP` message is hidden at the default verbosity; `SCB/MISMATCH` carries the detail |
 | severity | `UVM_INFO` (§16.3.5.3) | left at `UVM_INFO` | the verdict comes from `compare_pair()`, which tests the return value and raises `` `uvm_error `` |
-| threshold | 1 (§16.3.6) | `set_threshold(0)` | field-macro items would compare every field; this item's hand-written `do_compare` compares both fields either way (in uvm-core 2020.3.1; per §16.3.6 a flush restores 1) |
+| threshold | 1 (§16.3.6) | `set_threshold(0)` | field-macro items would compare every field; this item's hand-written `do_compare` compares both fields either way (uvm-core 2020.3.1 keeps it across flushes; per §16.3.6 a flush restores 1, so a library that follows the standard literally needs the I-UVM-4 `scb_comparer` pattern) |
 
 ### Expert: uvm-core's built-in comparators
 

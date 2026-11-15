@@ -36,7 +36,7 @@ A few terms from earlier lessons appear on every line of this page:
 - A **component** is a `uvm_component`: it lives from its creation at the start of the simulation to the end, has a place in the testbench hierarchy and runs **phases**, the fixed steps UVM calls on every component (`build_phase`, `connect_phase`, `run_phase` and so on). See [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
 - An **object** is a `uvm_object`: it is created, used and dropped, and has no place in the hierarchy. Items and sequences are objects.
 - `::type_id::create` builds an object or component through the **factory**, so a test can replace its type ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
-- A **TLM port** calls methods that a connected **export** implements ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- A **TLM port** calls methods that an **imp** at the end of its connection implements; an **export** only forwards the call toward an imp. The sequencer's `seq_item_export` is an imp despite its name ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
 
 **Component or object, at a glance.** The two base classes behave differently in every way that matters for this lesson:
 
@@ -66,7 +66,7 @@ The driver *pulls* work. Its `seq_item_port` is a port connected to the sequence
   ]}
   ports={[
     { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
-    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" }
   ]}
   edges={[
     { from: "test", to: "seq", style: "causal", label: "seq.start(env.agt.sqr)" },
@@ -610,7 +610,7 @@ The `` `uvm_do `` family hides the calls you have just learned. IEEE 1800.2 defi
 For an item, `` `uvm_do_with(req, { op == BUS_WRITE; }) `` (or `` `uvm_do(req, , , { op == BUS_WRITE; }) ``, where empty arguments take their defaults) expands to:
 1. `` `uvm_create(req) ``: `create_item()` builds the item through the factory and sets its sequencer.
 2. `start_item(req)`: wait for the grant.
-3. `req.randomize() with { op == BUS_WRITE; }`: on failure it prints only the warning `RNDFLD` and **still sends the item**, with the values it held before the call (a failed `randomize()` changes nothing, IEEE 1800-2023 §18.6.3).
+3. `req.randomize() with { op == BUS_WRITE; }`: on failure it prints only the warning `RNDFLD` and **still sends the item**, with the values it held before the call (a failed `randomize()` changes nothing, IEEE 1800-2023 §18.6.3). [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#expert-randomization-failures-inside-uvm-macros) covers what the driver then receives, and [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug#expert-silent-failures-in-uvm-flows) shows how to promote `RNDFLD` to an error.
 4. `finish_item(req)`: send it and wait for `item_done()`.
 
 For a child sequence, `` `uvm_do(child) `` creates and randomizes the child, then calls `child.start(sequencer, this, priority, 0)`. The final `0` is `call_pre_post`, so the child's `pre_body()` and `post_body()` do not run.
@@ -950,7 +950,7 @@ The sequence's messages appear as `uvm_test_top.env.agt.sqr@@seq`: a sequence re
   ]}
   ports={[
     { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
-    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" }
   ]}
   edges={[
     { from: "drv.port", to: "sqr.export", style: "control", label: "connect" },
@@ -1103,7 +1103,7 @@ The two ways of starting stimulus side by side, from the bullets above:
 <details>
 <summary>Check your prediction</summary>
 
-- **Name capture in inline constraints.** In `req.randomize() with { addr == addr; }`, both names resolve to the item's own `addr`, so the constraint is always true. Unqualified names are looked up in the item first; `local::addr` forces the caller's variable (IEEE 1800-2023 §18.7.1).
+- **Name capture in inline constraints.** In `req.randomize() with { addr == addr; }`, both names resolve to the item's own `addr`, so the constraint is always true. Unqualified names are looked up in the item first; `local::addr` forces the caller's variable (IEEE 1800-2023 §18.7.1). [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#inline-constraints-and-local) teaches this rule in full.
 
 So `req.addr` can be any word-aligned address that `c_word_aligned` allows, not only `8'h40`. Write `addr == local::addr;` to get `8'h40`, as the Make It Work read loop does with `local::rd_addr`.
 
@@ -1334,7 +1334,7 @@ Before you flip the cards, picture the lesson on one page: each role with the on
   ]}
   ports={[
     { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
-    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" }
   ]}
   edges={[
     { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item / item_done" },

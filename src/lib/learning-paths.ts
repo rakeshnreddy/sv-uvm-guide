@@ -61,7 +61,7 @@ export type RoutePracticeItem =
   | { kind: 'lab'; labId: string }
   | { kind: 'page'; href: string }
   | { kind: 'lesson'; module: string; lesson?: string; label: string }
-  | { kind: 'quiz' | 'index' | 'interview'; href: string; label: string };
+  | { kind: 'quiz' | 'index' | 'interview' | 'project'; href: string; label: string };
 
 /** A practice page's kind in the practice map: exercise, interactive, diagram, chart or tool. */
 export type PracticePageKind = PracticePageDefinition['kind'];
@@ -77,6 +77,7 @@ export const PRACTICE_KIND_LABELS: Readonly<Record<PracticeKind, string>> = {
   quiz: 'Quiz',
   index: 'Index',
   interview: 'Interview prep',
+  project: 'Project',
 };
 
 export interface RouteModuleRef {
@@ -190,6 +191,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         ],
         practice: [
           lab('basics-1'),
+          lab('simple-dut-1'),
           practicePage('/practice/visualizations/systemverilog-data-types'),
           practicePage('/visualizations/systemverilog-3d'),
           practicePage('/practice/visualizations/procedural-blocks'),
@@ -212,6 +214,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         ],
         practice: [
           inLesson('F3C_Delta_Cycles_and_Race_Conditions', 'Race debug challenge (in F3C)'),
+          lab('constructs-1'),
           practicePage('/practice/visualizations/interface-signal-flow'),
         ],
         milestones: ['M1'],
@@ -320,7 +323,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         title: 'Check your level',
         kind: 'review',
         summary:
-          'Take the placement quiz, then skim the scheduling, race and clocking-block lessons that trip up working engineers.',
+          'Take the placement quiz, then skim the scheduling, race and clocking-block lessons that trip up working engineers. The quiz does not test these topics, so skim them even if you scored well.',
         modules: [],
         review: [
           'F3A_Simulation_Semantics',
@@ -385,6 +388,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           lab('scoreboard-reference-model'),
           lab('uvm-mini-capstone'),
           lab('callbacks-driver-behavior'),
+          lab('multi-agent-vseq'),
           practicePage('/exercises/scoreboard-connector'),
         ],
         milestones: ['M2', 'M3', 'M5'],
@@ -471,7 +475,11 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         title: 'SoC capstone',
         summary: 'Write and defend a subsystem or SoC verification strategy, and reuse block-level VIP at SoC level.',
         modules: [{ id: 'E-SOC-1_SoC-Level_Verification_Strategies' }],
-        practice: [lab('soc-vip-reuse'), lab('soc-strategy-capstone')],
+        practice: [
+          lab('soc-vip-reuse'),
+          lab('soc-strategy-capstone'),
+          { kind: 'project', href: '/projects#project-m8', label: 'M8 project: single-channel DMA bench' },
+        ],
         milestones: ['M8'],
       },
       {

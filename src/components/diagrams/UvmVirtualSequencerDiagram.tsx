@@ -26,9 +26,9 @@ const AGENT_NODES: DiagramNode[] = [
 ];
 
 const PORTS: DiagramPort[] = [
-  { id: "cfg_sqr.exp", nodeId: "cfg_sqr", side: "right", offset: 0.5, kind: "export" },
+  { id: "cfg_sqr.exp", nodeId: "cfg_sqr", side: "right", offset: 0.5, kind: "imp" },
   { id: "cfg_drv.port", nodeId: "cfg_drv", side: "left", offset: 0.5, kind: "port" },
-  { id: "data_sqr.exp", nodeId: "data_sqr", side: "right", offset: 0.5, kind: "export" },
+  { id: "data_sqr.exp", nodeId: "data_sqr", side: "right", offset: 0.5, kind: "imp" },
   { id: "data_drv.port", nodeId: "data_drv", side: "left", offset: 0.5, kind: "port" },
 ];
 
@@ -101,7 +101,7 @@ const SHARED_INFO: Record<string, NodeInfo> = {
     title: "data_sqr: an agent sequencer",
     text: "data_seq runs here. Whether it runs before, after or alongside cfg_seq is decided only by the virtual sequence's body().",
   },
-  cfg_drv: { title: "cfg_drv", text: "Pulls items with seq_item_port.get_next_item() through the port ■ → export ○ connection made in the agent." },
+  cfg_drv: { title: "cfg_drv", text: "Pulls items with seq_item_port.get_next_item() through the port ■ → imp ● connection made in the agent. The sequencer's seq_item_export is an imp: it implements the pull methods." },
   data_drv: { title: "data_drv", text: "Pulls items with seq_item_port.get_next_item()." },
   cfg_agt: { title: "cfg_agt", text: "An active agent: sequencer, driver and (not drawn) monitor." },
   data_agt: { title: "data_agt", text: "An active agent: sequencer, driver and (not drawn) monitor." },

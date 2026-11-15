@@ -3,18 +3,22 @@
 class my_monitor extends uvm_component;
   `uvm_component_utils(my_monitor)
 
-  virtual my_if vif;
-  int unsigned  n_seen;
+  virtual my_if.mon_mp vif;
+  int unsigned          n_seen;
 
   function new(string name = "my_monitor", uvm_component parent = null);
     super.new(name, parent);
   endfunction
 
   function void build_phase(uvm_phase phase);
+    virtual my_if base_vif;
     super.build_phase(phase);
     // FIX 2: the field name must match the one tb_top publishes.
-    if (!uvm_config_db#(virtual my_if)::get(this, "", "vif", vif))
+    if (!uvm_config_db#(virtual my_if)::get(this, "", "vif", base_vif))
       `uvm_fatal("NO_VIF", "my_monitor could not get its virtual interface from uvm_config_db")
+    // Narrow to the modport view (legal: IEEE 1800-2023 §25.9). my_if declares
+    // modports, so reach mon_cb through mon_mp, not a plain handle (§25.9.2).
+    vif = base_vif;
   endfunction
 
   task run_phase(uvm_phase phase);

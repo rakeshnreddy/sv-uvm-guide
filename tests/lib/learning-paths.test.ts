@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { placementTierRecommendations } from '@/components/assessment/placementQuizData';
 import { curriculumData } from '@/lib/curriculum-data';
 import { getAllLabs } from '@/lib/lab-registry';
 import {
@@ -269,6 +270,14 @@ describe('placement plans', () => {
     expect(plan.startHref).toBe('/curriculum/T2_Intermediate/I-SV-1_OOP/index');
     expect(plan.startStepNumber).toBe(4);
     expect(plan.skim.map((s) => s.code)).toEqual(['F2A', 'F2B', 'F2C', 'F2D', 'F2E', 'F3A', 'F3B', 'F3C', 'F4A', 'F4B', 'F4C']);
+  });
+
+  it('skim the timing review and both deep-dive steps for the Tier 3 placement', () => {
+    const tier3 = placementTierRecommendations.find((t) => t.tier === 3)!;
+    const plan = resolvePlacementPlan(tier3.route, routes);
+    const codes = plan.skim.map((s) => s.code);
+    expect(codes.slice(0, 6)).toEqual(['F3A', 'F3B', 'F3C', 'F4A', 'F4B', 'F4C']);
+    expect(codes).toEqual(expect.arrayContaining(['I-SV-4B', 'I-UVM-3B', 'I-UVM-4']));
   });
 
   it('refuse a skim step that does not come before the start', () => {

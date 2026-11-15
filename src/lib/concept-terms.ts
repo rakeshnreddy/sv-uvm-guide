@@ -736,7 +736,7 @@ export const CONCEPT_TERMS: readonly ConceptTerm[] = [
   {
     slug: 'scoreboard',
     name: 'scoreboard',
-    description: 'The checker that receives observed transactions, compares them with expected ones from a reference model or predictor, and reports every mismatch and every transaction left unmatched at the end of test.',
+    description: 'The checker that receives observed transactions, compares them with expected ones that a predictor gets from a reference model, and reports every mismatch and every transaction left unmatched at the end of test.',
     taughtIn: ['A-UVM-6_Scoreboards_and_Reference_Models/index', 'F2E_First_Self_Checking_Testbench/index'],
     related: ['reference-model', 'analysis-port', 'end-of-test'],
     source: 'spine §5.1',
@@ -744,8 +744,7 @@ export const CONCEPT_TERMS: readonly ConceptTerm[] = [
   {
     slug: 'reference-model',
     name: 'reference model',
-    aliases: ['predictor'],
-    description: 'An independent model of what the DUT should do. Fed the same inputs, it predicts the expected outputs the scoreboard compares against.',
+    description: 'An independent model of what the DUT should do. Fed the same inputs, it predicts the expected outputs the scoreboard compares against. A predictor is the component (or scoreboard method) that calls it for each observed input.',
     taughtIn: ['A-UVM-6_Scoreboards_and_Reference_Models/index'],
     related: ['scoreboard', 'dpi'],
     source: 'spine §5.1',

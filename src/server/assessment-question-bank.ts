@@ -28,8 +28,8 @@ export const assessmentQuestionBanks: Record<AssessmentId, AssessmentDefinition>
     ],
   },
   placement: {
-    assessmentVersion: "placement-v2",
-    scoringVersion: "placement-scoring-v2",
+    assessmentVersion: "placement-v3",
+    scoringVersion: "placement-scoring-v3",
     questions: [
       { id: "foundations-logic-range", optionIds: ["logic", "bit", "byte", "reg"], correctOptionId: "logic" },
       { id: "foundations-always-block", optionIds: ["always_comb", "always_ff", "always", "initial"], correctOptionId: "always_comb" },
@@ -39,7 +39,7 @@ export const assessmentQuestionBanks: Record<AssessmentId, AssessmentDefinition>
       { id: "methodology-config", optionIds: ["get_build", "set_time", "factory", "analysis"], correctOptionId: "get_build" },
       { id: "methodology-passive", optionIds: ["passive", "disable_run", "build_phase", "factory_override"], correctOptionId: "passive" },
       { id: "debug-coverage", optionIds: ["targeted_test", "ignore_bins", "force_coverage", "weight_zero"], correctOptionId: "targeted_test" },
-      { id: "debug-objections", optionIds: ["test_owned", "scoreboard_owned", "global", "fixed_delay"], correctOptionId: "test_owned" },
+      { id: "debug-objections", optionIds: ["scoreboard_drain", "scoreboard_owned", "global", "fixed_delay"], correctOptionId: "scoreboard_drain" },
       { id: "debug-waveform", optionIds: ["seed_waveform", "disable_backpressure", "increase_timeout", "random_seed"], correctOptionId: "seed_waveform" },
     ],
   },

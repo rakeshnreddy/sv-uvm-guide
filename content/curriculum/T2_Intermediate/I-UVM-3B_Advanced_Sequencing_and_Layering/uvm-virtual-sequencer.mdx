@@ -194,7 +194,7 @@ The library calls `m_set_p_sequencer()` whenever the sequence's sequencer is set
 
 Three cases follow from that diagram, and you will meet all three:
 
-**Predict first.** `soc_vseq` declares `` `uvm_declare_p_sequencer(soc_vsqr) `` and its `body()` begins by reading `p_sequencer.cfg_sqr`. A test starts it with each of these arguments: `env.vsqr` (a `soc_vsqr`), `env.cfg_agt.sqr` (a `cfg_sequencer`), and `null`. For each one, write down what `p_sequencer` holds and what happens first. One fact you need for the last case: `$cast` with a `null` source fails only when the two handle types are not cast compatible (IEEE 1800-2023 §8.16).
+**Predict first.** `soc_vseq` declares `` `uvm_declare_p_sequencer(soc_vsqr) `` and its `body()` begins by reading `p_sequencer.cfg_sqr`. A test starts it with each of these arguments: `env.vsqr` (a `soc_vsqr`), `env.cfg_agt.sqr` (a `cfg_sequencer`), and `null`. For each one, write down what `p_sequencer` holds and what happens first. One fact you need for the last case: IEEE 1800-2023 §8.16 guarantees `$cast` success only for the literal `null`, and does not say what happens when a handle variable that holds null is cast to a compatible type ([Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) covers this).
 
 <details>
 <summary>Check your prediction: the three cases</summary>
@@ -203,7 +203,7 @@ Three cases follow from that diagram, and you will meet all three:
 |---|---|---|---|
 | `env.vsqr` (a `soc_vsqr`) | `env.vsqr` | `env.vsqr`, typed as `soc_vsqr` | Works |
 | `env.cfg_agt.sqr` (a `cfg_sequencer`) | `env.cfg_agt.sqr` | cast fails | `UVM_FATAL [DCLPSQ]` at the `start()` call, before `body()` |
-| `null` | `null` | `null`: the cast succeeds because the two handle types are cast compatible, and §8.16 makes a null source fail only when they are not, so there is no `DCLPSQ` | The first `p_sequencer.cfg_sqr` is a null-handle access: a simulator run-time error, not a UVM report |
+| `null` | `null` | `null` in either case. §8.16 does not settle whether this cast succeeds, so the result is tool-dependent | If the cast succeeds, there is no `DCLPSQ`, and the first `p_sequencer.cfg_sqr` is a null-handle access: a simulator run-time error, not a UVM report. If it fails, `UVM_FATAL [DCLPSQ]` at `start()`. Do not start a sequence that uses `p_sequencer` with `null` |
 
 </details>
 
@@ -381,8 +381,8 @@ Most wiring mistakes show up as one of a few signatures. Read the first error, n
 |---|---|---|
 | `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in …` | A child was started with a `null` handle and **no parent argument**, so it has no sequencer at all | Assign the handle in the env's `connect_phase`; check that the agent is active |
 | Configuration runs, then nothing; much later `UVM_FATAL [PH_TIMEOUT] Default timeout of … hit` | A child was started with a `null` handle **and `this` as parent**. uvm-core then gives the child its parent's sequencer, the virtual sequencer, which has no driver, so `start_item()` waits forever | The same wiring fix; add a null check at the top of `body()` (Make It Work) and a short `set_timeout()` in the test |
-| `UVM_FATAL [DCLPSQ] … Error casting p_sequencer…`, at the `start()` call | The virtual sequence was started on a sequencer of another class, for example an agent's sequencer | Start it on `env.vsqr`, or remove `` `uvm_declare_p_sequencer `` and pass handles instead |
-| Simulator run-time error: null object access at `p_sequencer.…` | The sequence was started with `start(null)` but still uses `p_sequencer` | Start it on the virtual sequencer, or use the handles-in-the-sequence style throughout |
+| `UVM_FATAL [DCLPSQ] … Error casting p_sequencer…`, at the `start()` call | The virtual sequence was started on a sequencer of another class, for example an agent's sequencer, or, on some tools, it was started with `start(null)` (the null cast is tool-dependent, §8.16) | Start it on `env.vsqr`, or remove `` `uvm_declare_p_sequencer `` and pass handles instead |
+| Simulator run-time error: null object access at `p_sequencer.…` | The sequence was started with `start(null)` but still uses `p_sequencer` (on tools where the null cast succeeds) | Start it on the virtual sequencer, or use the handles-in-the-sequence style throughout |
 | Compile error: `cfg_sqr` is not a member of `uvm_sequencer_base` | `m_sequencer.cfg_sqr` instead of `p_sequencer.cfg_sqr` | Use `p_sequencer` |
 | Compile error: incompatible types in `vsqr.cfg_sqr = data_agt.sqr` | Handles cross-wired between agents | Assign each handle from its own agent |
 | The handle is `null` although `connect_phase` assigns it | The agent is passive (`UVM_PASSIVE`), so it built no sequencer | Make the agent active, or skip that part of the scenario |
@@ -393,7 +393,7 @@ Most wiring mistakes show up as one of a few signatures. Read the first error, n
 
 - A virtual sequencer is a `uvm_sequencer` with no driver that holds handles to agent sequencers. It forwards nothing, arbitrates nothing and orders nothing.
 - The env builds it in `build_phase` and assigns its handles in `connect_phase`, never in `build_phase`.
-- `` `uvm_declare_p_sequencer(T) `` declares `p_sequencer` of type `T` and casts `m_sequencer` into it when `start()` runs: right type works, wrong type is `DCLPSQ`, `null` gives a silent `null`.
+- `` `uvm_declare_p_sequencer(T) `` declares `p_sequencer` of type `T` and casts `m_sequencer` into it when `start()` runs: right type works, wrong type is `DCLPSQ`, and `null` leaves `p_sequencer` null, with or without `DCLPSQ` depending on the tool (§8.16 does not settle a cast from a variable that holds null).
 - Order across agents comes only from `body()`: sequential `start()` orders, `fork…join` overlaps, `join_none` lets the test end.
 - Handles can also come from the test (`start(null)`) or the configuration database; choose by where you want the wiring and what you are willing to couple to.
 
@@ -719,7 +719,7 @@ The `VSEQ` line is reported through `uvm_test_top.env.vsqr`, the sequencer the v
 | E. D, but start the child with `d.start(p_sequencer.data_sqr)` (no `this`) | `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer…` at 40 ns, as in the explorer |
 | F. Move the two handle assignments into `soc_env.build_phase` | Same as C: both handles are `null` |
 | G. In the test, `vseq.start(env.cfg_agt.sqr)` | `UVM_FATAL [DCLPSQ]` at 0 ns, before `body()` runs |
-| H. In the test, `vseq.start(null)` | A simulator null-access error at the guard's `p_sequencer.cfg_sqr` (wording depends on the tool) |
+| H. In the test, `vseq.start(null)` | Tool-dependent (§8.16 does not settle a cast from a variable that holds null; see the `null` row above): either `UVM_FATAL [DCLPSQ]` at the `start()` call, or a simulator null-access error at the guard's `p_sequencer.cfg_sqr` (wording depends on the tool) |
 
 4. For change D, add `uvm_root::get().set_timeout(1us, 1);` to the test's `build_phase` (Annex F.7.3.3) and rerun. The hang now ends at 1 µs with `PH_TIMEOUT`. A short timeout is the cheapest hang detector you can add to any test.
 
@@ -899,12 +899,12 @@ Answer each one yourself before you open the options' feedback.
     question: "soc_vseq declares uvm_declare_p_sequencer(soc_vsqr). A test starts it with vseq.start(env.cfg_agt.sqr). What happens?",
     objective: 3,
     answers: [
-      { text: "body() runs with p_sequencer set to null, and fails at the first p_sequencer access", correct: false, feedback: "That is what start(null) does. Here m_sequencer is a real object of the wrong class, so the cast fails." },
+      { text: "body() runs with p_sequencer set to null, and fails at the first p_sequencer access", correct: false, feedback: "That is what start(null) can do, on a simulator where the null cast succeeds. Here m_sequencer is a real object of the wrong class, so the cast fails." },
       { text: "It runs normally, because cfg_agt.sqr is also a uvm_sequencer", correct: false, feedback: "p_sequencer must be a soc_vsqr. A cfg_sequencer is a uvm_sequencer, but not a soc_vsqr." },
       { text: "UVM_FATAL [DCLPSQ] during start(), before body() runs", correct: true, feedback: "Right. start() sets the sequencer, the macro's m_set_p_sequencer() casts it to soc_vsqr, the cast fails, and uvm-core reports DCLPSQ." },
       { text: "A compile error, because the argument type does not match", correct: false, feedback: "start() takes any uvm_sequencer_base, so it compiles. The check is a run-time cast." }
     ],
-    explanation: "The macro casts m_sequencer into p_sequencer whenever the sequencer is set. A real object of another class makes the cast fail: DCLPSQ. A null sequencer casts silently to a null p_sequencer."
+    explanation: "The macro casts m_sequencer into p_sequencer whenever the sequencer is set. A real object of another class makes the cast fail: DCLPSQ. A null sequencer leaves p_sequencer null; whether that cast also reports DCLPSQ is tool-dependent, because §8.16 does not settle a cast from a variable that holds null."
   },
   {
     question: "Log: configuration completes at 40 ns, then nothing is printed until UVM_FATAL [PH_TIMEOUT] at 9200 s. soc_vseq starts its children with start(p_sequencer.x_sqr, this) and has no null check. Which cause fits?",

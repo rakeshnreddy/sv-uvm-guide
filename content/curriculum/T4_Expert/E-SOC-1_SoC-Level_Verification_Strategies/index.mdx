@@ -497,7 +497,7 @@ Predict before you open the answer under the diagram: the debug port writes CTRL
 <details>
 <summary>Check your prediction: how many times each write is predicted</summary>
 
-The debug-port write reaches the mirror once, through `dbg_predictor`. The sequence's `ctrl.write()` is predicted twice: once by auto-predict and once more by `cpu_predictor`, because its frontdoor access crosses the CPU bus that `cpu_bus_mon` watches. For most fields the second prediction repeats the first, but a field with a write side effect, such as toggle-on-write, ends up wrong. That is why the snippet below turns auto-predict off once explicit predictors exist.
+The debug-port write reaches the mirror once, through `dbg_predictor`. The sequence's `ctrl.write()` is predicted twice: once by auto-predict and once more by `cpu_predictor`, because its frontdoor access crosses the CPU bus that `cpu_bus_mon` watches. For most fields, W1C and W1S included, the second prediction gives the same value as the first. A toggle field (W1T, or W0T) toggles back and ends up wrong. The "Predicted once, predicted twice" table in [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index) works through each case. That is why the snippet below turns auto-predict off once explicit predictors exist.
 
 </details>
 
@@ -1262,6 +1262,7 @@ package soc_spi_pkg;
       mbx_dec = mbx_decoder::type_id::create("mbx_dec", this);
     endfunction
     function void connect_phase(uvm_phase phase);
+      // Shortcut for brevity: legal, but it reaches inside spi_env (I-UVM-2B)
       spi_env.spi_agent.monitor.ap.connect(mbx_dec.analysis_export);
     endfunction
     // Evidence that the passive monitor is really connected to the busy bus.
@@ -1450,7 +1451,7 @@ Where each step lives in the complete example above:
 
 ### Worked strategy: one page for the DMA subsystem
 
-The planned M8 code capstone verifies a DMA subsystem: a DMA engine with an APB register port and an AXI master port, an AXI interconnect with an AXI-to-APB bridge in front of that register port, an SRAM and a DDR controller model, and a completion interrupt to the CPU. At subsystem level the CPU is a bus-functional model with its own AXI master port into the interconnect, running firmware-style bus scripts. Through the interconnect it reaches both the DMA's registers (via the bridge) and the SRAM.
+This worked example takes a DMA subsystem, the larger setting that the single-channel DMA of the [M8 project](/projects#project-m8) would grow into: a DMA engine with an APB register port and an AXI master port, an AXI interconnect with an AXI-to-APB bridge in front of that register port, an SRAM and a DDR controller model, and a completion interrupt to the CPU. At subsystem level the CPU is a bus-functional model with its own AXI master port into the interconnect, running firmware-style bus scripts. Through the interconnect it reaches both the DMA's registers (via the bridge) and the SRAM.
 
 <ArchitectureDiagram
   title="The DMA subsystem bench, with the mode of each reused piece"
@@ -1499,6 +1500,8 @@ A one-page strategy for it, in the shape of the artifact table:
 
 The firmware contract row is left out on purpose: you write it in the kata in Practice & Reinforce.
 
+The M8 brief itself is smaller: one channel, no interconnect, no bridge and no memory models. There the bench plays the CPU through an active APB agent and answers the memory port with a responder agent, so at M8 both agents stay active. Apply the same reasoning as the Reuse row: an agent goes passive or is disabled only when real RTL or a model drives its interface.
+
 **Checklist before moving on:**
 - [ ] For every interface in your SoC, you can say who drives it in the SoC test and therefore which mode its agent needs, including at least one that stays active.
 - [ ] Your bench fails with a named message if a reused agent is not in the mode you set, and its topology shows no driver under a passive agent.
@@ -1512,7 +1515,7 @@ The firmware contract row is left out on purpose: you write it in the kata in Pr
 
 ### Expert: liveness in simulation versus formal
 
-In `assert property` an unqualified sequence is weak (IEEE 1800-2023 §16.12.2), so `req |-> ##[1:$] resp` can never fail on a finite trace. `strong(...)` and `s_eventually` (§16.12.13) make the obligation strong: in formal, a counterexample is an infinite path (a loop) on which the response never comes, which is exactly the deadlock you want to find. In simulation, a strong obligation still pending when the run ends is reported in a tool-dependent way: some simulators report it as a failure at the end of simulation, some only in a coverage or "incomplete" report. Do not rely on that report for sign-off. The working pattern is a pair: the strong property for formal, and a bounded `##[1:MAX]` safety version for simulation, where `MAX` is a budget the architecture can justify. A bounded property that is too tight fails on legal congestion; one that is too loose detects nothing within the test length. Formal liveness proofs also need **fairness** assumptions (for example, that every slave behind the interconnect eventually asserts its `READY` signals), or the tool finds trivial counterexamples where the environment simply stalls; [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) covers writing those assumptions.
+In `assert property` an unqualified sequence is weak (IEEE 1800-2023 §16.12.2), so `req |-> ##[1:$] resp` can never fail on a finite trace. `strong(...)` and `s_eventually` (§16.12.13) make the obligation strong: in formal, a counterexample is an infinite path (a loop) on which the response never comes, which is exactly the deadlock you want to find. In simulation, the standard calls a strong obligation still unmet when the run ends *pending*, not failed (§16.12.21; [I-SV-4B](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index#property-operators-and-strength) lists the four levels). How a simulator reports it is tool-dependent: some simulators report it as a failure at the end of simulation, some only in a coverage or "incomplete" report. Do not rely on that report for sign-off. The working pattern is a pair: the strong property for formal, and a bounded `##[1:MAX]` safety version for simulation, where `MAX` is a budget the architecture can justify. A bounded property that is too tight fails on legal congestion; one that is too loose detects nothing within the test length. Formal liveness proofs also need **fairness** assumptions (for example, that every slave behind the interconnect eventually asserts its `READY` signals), or the tool finds trivial counterexamples where the environment simply stalls; [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) covers writing those assumptions.
 
 The three forms of the lesson's `a_bresp_*` assertions side by side:
 
@@ -1729,7 +1732,7 @@ Try each one before you open the options.
       { text: "Yes, at the end of the simulation, when the response is still missing", correct: false, feedback: "That describes a strong obligation, and even then end-of-simulation reporting is tool-dependent. This sequence is weak." },
       { text: "Yes, one cycle after the last write beat", correct: false, feedback: "##[1:$] allows any later cycle, so one cycle without BVALID is not a failure." },
       { text: "No: the sequence is weak, so no finite run can fail it", correct: true, feedback: "Right. In assert property the sequence is weak (IEEE 1800-2023 §16.12.2), so it can never fail on a finite run. Use a bounded ##[1:MAX] check in simulation and s_eventually (strong) in formal." },
-      { text: "No, because the property passes vacuously", correct: false, feedback: "The antecedent matched, so the attempt is not vacuous; it is pending for ever." }
+      { text: "No, because the property passes vacuously", correct: false, feedback: "The antecedent matched, so the attempt is not vacuous; it stays open for ever, and because the sequence is weak it still holds at the end of the run (§16.12.21)." }
     ],
     explanation: "An unqualified sequence in assert property is weak, and an unbounded range can always still match later, so no finite trace fails it. Simulation needs a bounded safety check; formal proves the strong form."
   },
@@ -1836,7 +1839,7 @@ In **Block to SoC: VIP Modes** you start from this lesson's bench with the agent
 
 In the **Staff-Level SoC Verification Strategy Review** you write and review a full strategy for an application SoC, against a rubric and a model answer.
 
-**Planned: the M8 code capstone.** A DMA subsystem bench (resets in the middle of transfers, error injection, concurrency and closure) is planned as the milestone M8 code lab. It is not available yet; the strategy capstone above is its planning step.
+**The M8 code capstone.** There is no guided lab with starter code for it yet. Build it now as the self-directed [M8 project](/projects#project-m8): a bench for a single-channel DMA with resets in the middle of transfers, error injection, concurrent traffic and measured closure. The brief lists the required features, the acceptance criteria and the mutants your checks must catch. The strategy capstone above practises the planning method on a full SoC; apply the same method to write the M8 strategy before any code.
 
 ## References & Next Topics
 

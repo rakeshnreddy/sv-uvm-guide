@@ -392,7 +392,7 @@ Every coverage item maps to a vplan line:
 | Every burst type in both directions | `cx_write_burst` (direction × burst) | `ahb_cov` | SINGLE and INCR4 only |
 | Every legal size in every burst type; no size wider than the bus | `cx_burst_size`; `illegal_bins wider_than_bus` on `cp_size` (IEEE 1800-2023 §19.5.6) | `ahb_cov` | 3 of 24 legal cells |
 | Wait states on each burst type: 0, 1, 2–4, 5–16, more than 16 | `cx_waits_burst` | `ahb_cov` | 0 and 1 |
-| ERROR on a first beat and on a later beat, per burst type | `cx_resp_burst_beat`, with `ignore_bins` for SEQ beats of a SINGLE (§19.6.1) | `ahb_cov` | ERROR on a SINGLE |
+| ERROR on a first beat and on a later beat, per burst type | `cx_resp_burst_beat`, with `illegal_bins` for SEQ beats of a SINGLE, which AHB §3.5.1 forbids (IEEE 1800-2023 §19.6.3) | `ahb_cov` | ERROR on a SINGLE |
 | BUSY before a beat: none, one, several | `cp_busy_before` (SEQ beats only) | `ahb_cov` | none, one |
 | Incrementing burst starting near, mid-way or far from a 1KB boundary | `cp_kb_room`: bytes to the next 1KB boundary, 1–16, 17–64, 65–1024 | `ahb_cov` | far only |
 | A waited NONSEQ/SEQ (antecedent of `a_hold_in_wait`) | `c_waited_nonseq_seq` | checker | yes (edges 16 and 20) |
@@ -403,6 +403,8 @@ Every coverage item maps to a vplan line:
 | Every HTRANS value with and without a wait state | `htrans_cov.cx_trans_waited` | checker | 8 of 8 cells |
 
 The last column is the honest report of one directed test: most of the plan is still open. The mid-test reset and the continuing master are holes a reset test ([A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index)) and a second master configuration must fill.
+
+The two excluded sets follow the rule in [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow). A size wider than the bus and a SEQ beat after a SINGLE are both forbidden by the specification (§3.4 and §3.5.1), so both use `illegal_bins`, never `ignore_bins`. The cells leave the denominator either way, but an illegal bin also reports an error if it is ever sampled (IEEE 1800-2023 §19.5.6, §19.6.3). The assertions `a_size_le_bus` and `a_no_busy_after_single` stay the real checks. Use `ignore_bins` only for cells that are legal but unreachable in this bench, or outside the plan line, as in the coverage-line kata near the end of this page.
 
 The "cancel after ERROR" cover property, shaded on the ERROR forensics waveform in the [debug patterns](#debug-patterns) below, needs care: it must name a clock, and it must require a NONSEQ or SEQ on the bus in the first ERROR cycle, or it also matches when IDLE was already on the bus and nothing was cancelled.
 
@@ -1338,8 +1340,10 @@ package ahb_pkg;
       cx_waits_burst: cross cp_waits, cp_burst;
       cx_resp_dir:    cross cp_resp, cp_write;
       cx_resp_burst_beat: cross cp_resp, cp_burst, cp_beat {
-        ignore_bins single_has_no_seq = binsof(cp_burst) intersect {SINGLE} &&
-                                        binsof(cp_beat.later);
+        // [Protocol §3.5.1] a SEQ beat after a SINGLE is forbidden, not unreachable:
+        // illegal_bins (IEEE 1800-2023 §19.6.3); a_no_busy_after_single stays the real check
+        illegal_bins single_has_no_seq = binsof(cp_burst) intersect {SINGLE} &&
+                                         binsof(cp_beat.later);
       }
     endgroup
 
@@ -1447,6 +1451,8 @@ package ahb_pkg;
       cov = ahb_cov::type_id::create("cov", this);
     endfunction
     function void connect_phase(uvm_phase phase);
+      // Shortcut for brevity: legal, but it reaches inside the agent.
+      // A reusable env promotes through the agent's own ap (I-UVM-2B).
       agt.mon.ap.connect(sb.item_imp);
       agt.mon.ap.connect(cov.analysis_export);
     endfunction
@@ -1996,11 +2002,12 @@ end`}
     question: "A colleague's cross of response × burst × beat position (first or later beat) is stuck below 100% after weeks of random tests. Every open cell is a SINGLE burst with a later beat. What should they do?",
     answers: [
       { text: "Run more random seeds until those cells are hit", correct: false, feedback: "They can never be hit: a SINGLE burst has exactly one beat (Table 3-3), so no seed produces a later beat." },
-      { text: "Exclude those cells with ignore_bins in the cross", correct: true, feedback: "Right. Impossible cells only make the number lie. An ignore_bins with binsof(cp_burst) intersect {SINGLE} && binsof(cp_beat.later) removes them (IEEE 1800-2023 §19.6.1), as this page's cx_resp_burst_beat does." },
+      { text: "Mark those cells with illegal_bins in the cross, and keep the checker", correct: true, feedback: "Right. The spec forbids a SEQ beat after a SINGLE (§3.5.1), so the cells are forbidden, not unreachable. An illegal_bins with binsof(cp_burst) intersect {SINGLE} && binsof(cp_beat.later) removes them from the score and reports an error if one is ever sampled (IEEE 1800-2023 §19.6.3), as this page's cx_resp_burst_beat does. a_no_busy_after_single stays the real check." },
+      { text: "Exclude those cells with ignore_bins in the cross", correct: false, feedback: "That closes the number, but ignore_bins drops the cells silently (IEEE 1800-2023 §19.6.2). A master that breaks §3.5.1 would pass in coverage without a word. Forbidden cells take illegal_bins, as The Coverage Closure Loop lesson (I-SV-3B) teaches." },
       { text: "Remove the beat position from the cross", correct: false, feedback: "Then the vplan line 'ERROR on a first beat and on a later beat, per burst type' has no coverage left." },
       { text: "Make the master send SEQ beats after a SINGLE", correct: false, feedback: "That is illegal stimulus: a SINGLE must be followed by IDLE or NONSEQ (§3.5.1), and the checker would reject it." }
     ],
-    explanation: "A coverage model is part of the plan: each cell must be reachable by legal traffic, or be excluded on purpose with ignore_bins (impossible) or illegal_bins (must never happen). Read every hole before you add tests for it.",
+    explanation: "A coverage model is part of the plan: each cell must be reachable by legal traffic, or be excluded on purpose with ignore_bins (legal but unreachable in this design, or out of scope) or illegal_bins (the spec forbids it). Read every hole before you add tests for it.",
     objective: 3
   }
 ]} />
@@ -2050,7 +2057,7 @@ cx_long_waited_later: cross cp_long_burst, cp_waited, cp_beat {
 }
 ```
 
-The cross has 2 × 1 × 2 = 4 cells; `ignore_bins` (IEEE 1800-2023 §19.6.1) removes the two first-beat cells, so the line is two cells: INCR8 and INCR16, each with a waited later beat. The Make It Work run sends only SINGLE and INCR4 bursts, so it hits **0 of 2**: the line is a hole that a burst test with random waits must fill. Gating the whole cross with `iff (t.trans == SEQ)` is an equally good alternative to `ignore_bins`.
+The cross has 2 × 1 × 2 = 4 cells; `ignore_bins` (IEEE 1800-2023 §19.6.2) removes the two first-beat cells, so the line is two cells: INCR8 and INCR16, each with a waited later beat. The Make It Work run sends only SINGLE and INCR4 bursts, so it hits **0 of 2**: the line is a hole that a burst test with random waits must fill. Gating the whole cross with `iff (t.trans == SEQ)` is an equally good alternative to `ignore_bins`.
 
 </details>
 
@@ -2071,7 +2078,7 @@ The flashcards for this lesson follow below, under "Reinforce the essentials". T
 **Primary sources:**
 - Arm IHI0033B.b, AMBA 5 AHB Protocol Specification (AHB5, AHB-Lite): §2.3 slave signals (Table 2-3); §2.4 decoder signals and its Note (multiplexor control retimed to the data phase); Table 2-2 master signals (HWRITE timing; no request or grant); §3.1 basic transfers; §3.2 transfer types (Table 3-1); §3.3 locked transfers; §3.4 transfer size (Table 3-2 and Note); §3.5 burst operation (Table 3-3, alignment, IDLE alignment, the 1KB rule); §3.5.1 burst termination after BUSY; §3.5.2 early burst termination; §3.6 waited transfers, §3.6.1 transfer type changes, §3.6.2 address changes (Figures 3-13 to 3-17); §3.7 protection control; §3.9 secure transfers; §4.1 interconnect; §4.2 address decoding; §4.2.1 default slave; §4.3 read data and response multiplexor (Figure 4-2); §5.1.2 transfer pending (and Note); §5.1.3 ERROR response (Figure 5-1, Table 5-2); §6.1.1 HWDATA; §6.1.2 HRDATA; §6.2.1 to §6.2.3 endianness; §7.1.1 clock (Stable_Between_Clock); §7.1.2 reset; Chapter 8 exclusive transfers.
 - Arm IHI0033C (2021): HWSTRB write strobes and the manager/subordinate terms (named only; the Issue C changes are listed in B-AHB-1).
-- IEEE 1800-2023: §14.13 input sampling; §14.16 synchronous drives; §16.6 Boolean expressions (x and z are false); §16.9.3 sampled value functions (`$past` with a gating expression, `$sampled` in action blocks); §16.12.7 implication; §16.14.1 assert; §16.14.2 assume; §16.14.3 cover; §16.14.8 nonvacuous evaluations; §19.3 covergroup; §19.4 covergroups in classes; §19.5.5 `ignore_bins`; §19.5.6 `illegal_bins`; §19.6 cross coverage; §19.6.1 cross coverage bins (`ignore_bins` in a cross); §19.8.1 `sample` with arguments; §20.9 `$isunknown`; §20.11 assertion control tasks; §23.11 bind (footnote 4 to Syntax 23-9); §25.9 virtual interfaces.
+- IEEE 1800-2023: §14.13 input sampling; §14.16 synchronous drives; §16.6 Boolean expressions (x and z are false); §16.9.3 sampled value functions (`$past` with a gating expression, `$sampled` in action blocks); §16.12.7 implication; §16.14.1 assert; §16.14.2 assume; §16.14.3 cover; §16.14.8 nonvacuous evaluations; §19.3 covergroup; §19.4 covergroups in classes; §19.5.5 `ignore_bins`; §19.5.6 `illegal_bins`; §19.6 cross coverage; §19.6.1 cross coverage bins; §19.6.2 excluding cross products (`ignore_bins` in a cross); §19.6.3 illegal cross products (`illegal_bins` in a cross); §19.8.1 `sample` with arguments; §20.9 `$isunknown`; §20.11 assertion control tasks; §23.11 bind (footnote 4 to Syntax 23-9); §25.9 virtual interfaces.
 - IEEE 1800.2-2020: §6.6 `uvm_report_catcher` (§6.6.5 `catch`); §9.8.1.7 `check_phase`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.1 `uvm_analysis_port`; §12.2.10.2 `uvm_analysis_imp`; §13.2 `uvm_test`; §13.3 `uvm_env`; §13.4 `uvm_agent`; §13.5 `uvm_monitor`; §13.6 `uvm_scoreboard`; §13.9 `uvm_subscriber`; Annex C.4.2 `uvm_config_db`; Annex F.3.2 global reporting functions (F.3.2.1 `uvm_get_report_object` returns `uvm_root`).
 
 **Prerequisites:** [B-AHB-2: AHB Pitfalls & Real-World Failures](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index), [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) and [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index).

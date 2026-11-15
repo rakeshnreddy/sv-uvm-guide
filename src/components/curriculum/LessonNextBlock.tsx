@@ -3,12 +3,14 @@ import React from "react";
 
 import { FLASHCARDS_SECTION } from "@/lib/curriculum/lesson-mdx";
 import type { LessonContext } from "@/lib/curriculum/lesson-context";
+import type { RouteNextOption } from "@/lib/learning-route-state";
 import type { LessonPracticeEntry } from "@/lib/practice-links";
 import { cn } from "@/lib/utils";
 
 import { LessonCompletionToggle } from "./LessonCompletionToggle";
 import LessonPager from "./LessonPager";
 import { secondaryAction } from "./overview-ui";
+import RouteNextLink from "./RouteNextLink";
 
 export interface LessonLabLink {
   href: string;
@@ -36,6 +38,12 @@ export interface LessonNextBlockProps {
   lab?: LessonLabLink | null;
   /** True when the lesson has a flashcard deck with cards: "Review flashcards" goes to it. */
   hasFlashcards?: boolean;
+  /**
+   * Where each learning route goes after this lesson, from routeNextOptions().
+   * A learner who follows one of them in this browser sees "Next on your
+   * <route> route" under the core-path links when the two differ.
+   */
+  routeNext?: readonly RouteNextOption[];
   className?: string;
 }
 
@@ -49,10 +57,13 @@ const QUIET_ACTION_CLASS = cn(secondaryAction, "w-full justify-start text-left s
  * 10, "Next step at the end of every lesson"): a liquid glass panel with
  * "Lesson done", then the next lesson as the one accent action and, beside it
  * and quieter, the module's lab and "Review flashcards" when the lesson has a
- * deck. The previous lesson is a text link under the next one.
+ * deck. The previous lesson is a text link under the next one. For a learner
+ * who follows a route, RouteNextLink adds the route's next and previous
+ * lessons under them when they are not the core-path ones.
  */
-export default function LessonNextBlock({ context, moduleId, lessonSlug, lab, hasFlashcards = false, className }: LessonNextBlockProps) {
+export default function LessonNextBlock({ context, moduleId, lessonSlug, lab, hasFlashcards = false, routeNext, className }: LessonNextBlockProps) {
   const reinforce = Boolean(lab) || hasFlashcards;
+  const pager = <LessonPager context={context} className="md:w-[26rem] md:shrink-0" />;
   return (
     <section
       aria-labelledby="lesson-next-heading"
@@ -66,7 +77,14 @@ export default function LessonNextBlock({ context, moduleId, lessonSlug, lab, ha
         <LessonCompletionToggle moduleId={moduleId} lessonSlug={lessonSlug} />
       </div>
       <div className="mt-6 flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
-        <LessonPager context={context} className="md:w-[26rem] md:shrink-0" />
+        {routeNext && routeNext.length > 0 ? (
+          <div className="flex min-w-0 flex-col gap-4 md:w-[26rem] md:shrink-0">
+            {pager}
+            <RouteNextLink options={routeNext} coreNextHref={context.next?.href} corePrevHref={context.prev?.href} />
+          </div>
+        ) : (
+          pager
+        )}
         {reinforce ? (
           <ul aria-label="Practise this lesson" className="flex min-w-0 flex-col gap-3" data-testid="lesson-reinforce">
             {lab ? (

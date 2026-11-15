@@ -1,6 +1,6 @@
 # Capstone: Senior-Level SoC Verification Strategy Review
 
-This capstone belongs to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). It is the planning step of the milestone M8 code capstone, a DMA subsystem bench that is planned and not yet available: the strategy you write here is the one that bench would implement. (Lab `dma-1` is a smaller, earlier DMA lab in I-UVM-3B, not this capstone.)
+This capstone belongs to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). It is the planning step for the milestone M8 code capstone. The method you practise here, on a full application SoC, is the one you then apply to the smaller DMA design of the self-directed [M8 project](/projects#project-m8). There is no guided lab with starter code for M8 yet. (Lab `dma-1` is a smaller, earlier DMA lab in I-UVM-3B, not this capstone.)
 
 ## Scenario
 

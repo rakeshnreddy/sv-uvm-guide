@@ -149,7 +149,7 @@ Try each one before you open the answer.
 
 ## Stretch: reuse the agent passively
 
-The milestone this lab feeds asks for one agent class reused active in one environment and passive in another. Following the lesson's second bench, write a small RTL block that pushes four words and pops them, a second top module, and a test that sets `is_active` to `UVM_PASSIVE` for `env.agent` and prints the topology at the end of elaboration. Check that the topology has no `sequencer` or `driver`, and that the scoreboard reports `matches=4`.
+Steps 1 to 4 finish the lab, but they exercise only the active agent. Milestone M2 ("Reusable UVM agent, active and passive") also needs this part, so do it if you are using this lab as your M2 gate. The milestone asks for one agent class reused active in one environment and passive in a second. The lab's solution does not include this second bench; the worked reference is the lesson's second bench in [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index), "Reusing the agent passively (the M2 seed)". Following that bench, write a small RTL block that pushes four words and pops them, a second top module, and a test that sets `is_active` to `UVM_PASSIVE` for `env.agent` and prints the topology at the end of elaboration. Check that the topology has no `sequencer` or `driver`, and that the scoreboard reports `matches=4`.
 
 ## References
 

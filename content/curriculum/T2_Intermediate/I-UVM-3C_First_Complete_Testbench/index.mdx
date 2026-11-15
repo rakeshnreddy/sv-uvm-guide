@@ -164,7 +164,7 @@ A UVM bench is many files, but only four compile units. Two kinds of code live i
 | Order | File | Contains | Needs before it |
 |---|---|---|---|
 | 1 | `mem_dut.sv` | module `mem_dut` | nothing |
-| 2 | `mem_if.sv` | interface `mem_if` with `drv_cb` and `mon_cb` | nothing (it must precede the package that names `virtual mem_if`) |
+| 2 | `mem_if.sv` | interface `mem_if` with `drv_cb` and `mon_cb` | nothing (compile it before the package that names `virtual mem_if`: the standard does not require this, but some tools do, so it is the safe order) |
 | — | uvm-core 2020.3.1 | `uvm_pkg` (often precompiled by your simulator) | nothing |
 | 3 | `mem_pkg.sv` | package `mem_pkg`, which includes `mem_item.svh`, `mem_cfg.svh`, `mem_seqs.svh`, `mem_drv.svh`, `mem_mon.svh`, `mem_cov.svh`, `mem_agent.svh`, `mem_sb.svh`, `mem_env.svh`, `mem_tests.svh` | `uvm_pkg`, `mem_if` |
 | 4 | `tb_top.sv` | module `tb_top` | `mem_pkg`, `mem_if`, `mem_dut` |
@@ -1557,10 +1557,10 @@ Every run on this page so far, side by side:
 ### Expert: compilation units, packages and include order
 
 - **What `` `include `` really does.** It pastes text (IEEE 1800-2023 §22.4). The package is then one long scope, so declaration order inside it is the include order. A class used as a type before its declaration is an error unless forward-declared with `typedef class` (§8.27).
-- **Why one package and not `$unit`.** Declarations outside any module or package go into the compilation-unit scope, `$unit` (§3.12.1). Whether two files share one `$unit` depends on whether the tool compiles them together, which is a tool switch. Two copies of the same class in two compilation units are two different types, and a handle of one cannot hold an object of the other. A package is one named scope, compiled once, imported everywhere: the type identity problem disappears.
+- **Why one package and not `$unit`.** Declarations outside any module or package go into the compilation-unit scope, `$unit` (§3.12.1). Whether two files share one `$unit` depends on whether the tool compiles them together, which is a tool switch. Two copies of the same class in two compilation units are two different types, and a handle of one cannot hold an object of the other. A package is one named scope, compiled once, imported everywhere: the type identity problem disappears. This is the two-types trap that [F4A: Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index) owns and teaches in full, in its section on `` `include `` versus `import`. The interview angle and the diagram below apply it to `uvm_config_db`.
 - **What a package may not contain.** Packages hold types, data, tasks, functions and similar declarations, may not contain hierarchical references to the design, and may not refer to items in `$unit` (§26.2). Interfaces and modules are design elements and stay outside.
 - **Import is not elaboration.** `import mem_pkg::*;` makes names visible; it does not create anything. Whether a compiled but unreferenced package is elaborated (and so registers its classes with the factory) is tool-dependent, which is why `tb_top` imports `mem_pkg` even though it names none of its classes.
-- **Interview angle:** "Two engineers each include `my_item.svh` in their own package. What breaks, and how do you fix it?" (Two distinct `my_item` types; a `uvm_config_db#(my_item)` set by one package's code is invisible to a `get()` compiled in the other. Put shared types in one package that both import.)
+- **Interview angle:** "Two engineers each include `my_item.svh` in their own package. What breaks, and how do you fix it?" (Two distinct `my_item` types; a `uvm_config_db#(my_item)` set by one package's code is invisible to a `get()` compiled in the other. Put shared types in one package that both import. F4A explains the type rule behind it.)
 
 <ArchitectureDiagram
   title="One file included into two packages makes two types"
@@ -1759,7 +1759,7 @@ seq_item_port.item_done();
       question: "A run ends with SCB_SUMMARY matches=0 mismatches=0 pending=0. In this lesson's bench, what else does the log show, and is the run a pass?",
       answers: [
         { text: "UVM_ERROR : 0, and it is a pass: nothing mismatched", correct: false, feedback: "Zero mismatches out of zero checks proves nothing. That is exactly why mem_sb's check_phase treats it as an error." },
-        { text: "A BUILDERR fatal, because the scoreboard was not connected", correct: false, feedback: "A missing connection from agt.ap is legal and silent: analysis ports need no connection. Only ports and exports below their minimum report at the end of elaboration." },
+        { text: "A BUILDERR fatal, because the scoreboard was not connected", correct: false, feedback: "A missing connection from agt.ap is legal and silent: analysis ports need no connection. Only ports and exports below their minimum, or above their maximum, report at the end of elaboration." },
         { text: "An SCB_NO_TRAFFIC error from check_phase, so UVM_ERROR : 1 and a fail", correct: true, feedback: "Right. n_reads is 0, so check_phase raises SCB_NO_TRAFFIC. Look next at the end time: 0 ns means no objection; a normal end time means the analysis connection or the stimulus is missing." },
         { text: "A PH_TIMEOUT, because the scoreboard's get() never returned", correct: false, feedback: "A blocked get() never holds a phase open; only objections do, and the scoreboard raises none." }
       ],
@@ -1807,7 +1807,7 @@ seq_item_port.item_done();
         { text: "Both: mon.ap.connect(ap) is missing in the agent", correct: false, feedback: "That would starve the scoreboard silently (like B), but it could not produce A's error, which is about the scoreboard's export." },
         { text: "A: tb_top never set the virtual interface. B: no objection was raised.", correct: false, feedback: "A missing vif gives NOVIF, and a missing objection ends the run at 0 ns with no coverage; neither matches these logs." }
       ],
-      explanation: "uvm_analysis_export is constructed with a minimum of one connection and uvm_analysis_port with a minimum of zero (uvm-core tlm1/uvm_analysis_port.svh), and only minimums are checked at the end of elaboration. Coverage at 100% beside a scoreboard with no traffic points straight at the env's connection.",
+      explanation: "uvm_analysis_export is constructed with a minimum of one connection and uvm_analysis_port with a minimum of zero (uvm-core tlm1/uvm_analysis_port.svh), and both have no maximum. The end-of-elaboration check (resolve_bindings, IEEE 1800.2-2020 §5.5.2.15) reports a count below the minimum or above the maximum, so an unconnected analysis port is legal while an unconnected analysis export is an error. Coverage at 100% beside a scoreboard with no traffic points straight at the env's connection.",
       objective: 4
     },
     {
@@ -1912,7 +1912,7 @@ Each excerpt below comes from this bench with one line changed. Name the failure
 
 ### Lab: the FIFO environment capstone
 
-Build the same architecture yourself, from TODOs, for a small FIFO with a planted ordering bug: an active agent, a factory override of the sequence, an analysis-FIFO scoreboard with accounting, a coverage subscriber, a run that must catch the bug and a run that must be clean. The solution is unlocked separately.
+Build the same architecture yourself, from TODOs, for a small FIFO with a planted ordering bug: an active agent, a factory override of the sequence, an analysis-FIFO scoreboard with accounting, a coverage subscriber, a run that must catch the bug and a run that must be clean. The solution is unlocked separately. Its four steps exercise only the active agent. For milestone M2, also do the lab's last part, "Reuse the agent passively", which repeats this page's second bench for the FIFO: the same agent, passive in a second environment.
 
 <LabLink labId="uvm-mini-capstone" />
 

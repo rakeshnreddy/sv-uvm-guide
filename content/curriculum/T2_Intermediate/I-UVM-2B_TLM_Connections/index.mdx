@@ -273,7 +273,7 @@ So for any wiring mistake, ask three questions in order:
 
 ### Point-to-point: put, get, peek and `uvm_tlm_fifo`
 
-Some connections have exactly one producer and one consumer, which run at their own pace. A **predictor** (a component that computes the expected result) feeding a **reference model**, a model feeding a checker, and two threads inside one component are common examples. For these, put a **`uvm_tlm_fifo #(T)`** between them (§12.2.8.2). It is a `uvm_component` that wraps a SystemVerilog `mailbox` ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)), so the same blocking rules apply:
+Some connections have exactly one producer and one consumer, which run at their own pace. A **predictor** (the component that calls a reference model and publishes expected items; [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) owns both terms) feeding a **scoreboard**, a model feeding a checker, and two threads inside one component are common examples. For these, put a **`uvm_tlm_fifo #(T)`** between them (§12.2.8.2). It is a `uvm_component` that wraps a SystemVerilog `mailbox` ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)), so the same blocking rules apply:
 
 - `put()` blocks while the FIFO is full; `get()` and `peek()` block while it is empty.
 - `try_put()` returns 0 instead of blocking when the FIFO is full; `try_get()` and `try_peek()` return 0 when it is empty.
@@ -345,7 +345,7 @@ if (!get_port.can_peek())                      // ask first, take nothing
   `uvm_info("CONS", "nothing waiting this cycle", UVM_HIGH)
 ```
 
-**Where you meet it.** Inside agents, stimulus normally flows through the sequencer instead ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). Point-to-point FIFOs appear between analysis-side components: a predictor and a reference model, a model and its checker, or a transaction-level model of the design. Choose the size on purpose. Size 1 couples the two sides tightly; size 0 never blocks the producer but can grow without limit if the consumer stops.
+**Where you meet it.** Inside agents, stimulus normally flows through the sequencer instead ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). Point-to-point FIFOs appear between analysis-side components: a predictor and the scoreboard it feeds, a model and its checker, or a transaction-level model of the design. Choose the size on purpose. Size 1 couples the two sides tightly; size 0 never blocks the producer but can grow without limit if the consumer stops.
 
 ### The analysis fabric: `write()` to 0..N subscribers
 
@@ -473,7 +473,7 @@ if (!$cast(pred, t.clone()))                   // clone() returns a uvm_object
 pred.data = t.data + 8'd1;                     // t itself is unchanged
 ```
 
-`clone()` needs the item to implement `do_copy()` (or field macros); [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers shallow and deep copies. Storing a received handle without copying is safe only while every publisher follows rule 1. A scoreboard that stores items for later can clone them as cheap insurance, which is what this site's code style asks for.
+`clone()` needs the item to implement `do_copy()` (or field macros); [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) covers shallow and deep copies. Storing a received handle without copying is safe only while every publisher follows rule 1. A scoreboard that stores items for later clones them on entry when you cannot guarantee that every publisher follows rule 1, for example when it receives items from a VIP you did not write. Copy at one end, not both. [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) owns the scoreboard and states the same rule; its bench stores what it receives, because its monitors create a new item per transfer and its expected items are already the predictor's clones.
 
 ### A subscriber that must wait
 
@@ -1213,7 +1213,7 @@ Answer each one before you open the feedback.
   title="Interview: the scoreboard that never fails"
   question="A scoreboard has reported zero errors on every regression for months. A designer injects an obvious bug and it still passes. What do you check first?"
   options={[
-    { text: "The end-of-elaboration log: UVM reports every unconnected port, so a scoreboard cut off from its monitor would show up there as a Connection Error.", isCorrect: false, feedback: "Only ports and exports below their minimum count are reported. Analysis ports have a minimum of 0 by the standard, and uvm-core 2020.3.1 also builds the driver's seq_item_port with a minimum of 0 (implementation behaviour)." },
+    { text: "The end-of-elaboration log: UVM reports every unconnected port, so a scoreboard cut off from its monitor would show up there as a Connection Error.", isCorrect: false, feedback: "Only ports and exports below their minimum count, or above their maximum, are reported. Analysis ports have a minimum of 0 by the standard, and uvm-core 2020.3.1 also builds the driver's seq_item_port with a minimum of 0 (implementation behaviour)." },
     { text: "Whether the scoreboard checked anything: an analysis port with no subscriber, or a reversed promotion such as ap.connect(mon.ap), is legal and silent, so I look at the match count and make zero checks an error.", isCorrect: true, feedback: "Right. Unconnected analysis ports have a minimum of 0, and analysis ports skip the relationship check, so end of elaboration reports nothing. A summary that fails on zero checks, plus a non-empty-FIFO check, closes the gap." },
     { text: "print_topology(): if the scoreboard is in the tree, it is connected.", isCorrect: false, feedback: "print_topology() shows which components exist, not how they are connected." },
     { text: "The random seed: the bug was probably not exercised.", isCorrect: false, feedback: "Possible, but an obvious injected bug that never fails points first at a checker that sees no data. Verify the checker before blaming the stimulus." }
@@ -1368,7 +1368,7 @@ For a second, guided wiring exercise, try the [scoreboard connector](/exercises/
 
 **Spec.** An in-order bridge copies every `bus_item` from its input bus to its output bus unchanged. `in_agt.ap` publishes what entered, and `out_agt.ap` what left. Write `bridge_scoreboard`:
 1. Declare `exp_imp` and `act_imp` with `` `uvm_analysis_imp_decl(_exp) `` and `` `uvm_analysis_imp_decl(_act) ``.
-2. `write_exp()` stores a copy of each expected item in a queue. `write_act()` pops the oldest expected item, compares it with the actual item, and counts matches and mismatches. An actual item with nothing expected is an error.
+2. `write_exp()` stores a copy of each expected item in a queue (treat `in_agt` as a VIP you did not write, so you cannot rely on rule 1). `write_act()` pops the oldest expected item, compares it with the actual item, and counts matches and mismatches. An actual item with nothing expected is an error.
 3. `check_phase` reports `SCB_SUMMARY matches=N mismatches=M pending=P`, an error if `pending` is not 0, and an error if nothing was checked.
 4. Write the env's two `connect()` lines.
 5. **Part two:** re-implement it with two `uvm_tlm_analysis_fifo`s behind `uvm_analysis_export`s and one `run_phase` loop, as in Make It Work. What does the second version allow that the first does not?
@@ -1403,7 +1403,7 @@ class bridge_scoreboard extends uvm_scoreboard;
   function void write_exp(bus_item t);
     bus_item c;
     if (!$cast(c, t.clone())) `uvm_fatal("SCB", "clone failed")
-    exp_q.push_back(c);                   // store a copy: the publisher keeps t
+    exp_q.push_back(c);                   // store a copy: we do not rely on the publisher following rule 1
   endfunction
 
   function void write_act(bus_item t);

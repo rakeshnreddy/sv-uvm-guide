@@ -70,7 +70,7 @@ The picture shows the VIP built in this lesson. The names match the code in Make
   ]}
   ports={[
     { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
-    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "imp", label: "seq_item_export" },
     { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
     { id: "cov.imp", node: "cov", side: "left", kind: "analysis_imp", label: "analysis_export" },
     { id: "agt.ap", node: "agt", side: "right", at: 0.25, kind: "analysis_port", label: "ap" },
@@ -246,7 +246,7 @@ endfunction
 
 function void connect_phase(uvm_phase phase);
   super.connect_phase(phase);
-  mon.ap.connect(ap);         // the env connects to agt.ap, never to agt.mon.ap
+  mon.ap.connect(ap);         // a reusable env connects to agt.ap, not to agt.mon.ap (I-UVM-2B)
   if (cfg.has_coverage) mon.ap.connect(cov.analysis_export);
   if (get_is_active() == UVM_ACTIVE) begin   // same test as build: handles may be null
     drv.seq_item_port.connect(sqr.seq_item_export);
@@ -1611,6 +1611,9 @@ package apb_selftest_pkg;
 
     function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
+      // Self-test shortcut: legal (analysis ports skip the relationship
+      // check), but it reaches inside master and sb. A shipped env connects
+      // only agent and scoreboard ports (I-UVM-2B, relationship checks).
       master.drv.done_ap.connect(sb.exp_fifo.analysis_export);
       observer.ap.connect(sb.act_fifo.analysis_export);
     endfunction
@@ -2111,7 +2114,7 @@ The `set` and `get` types: parameters and modport.
       question: "A scoreboard stores every transfer it receives from the monitor, then prints them: three transfers to 0x10, 0x14 and 0x18 all print as 0x18. The monitor creates tr once in build_phase and refills it for each transfer. What is the cause?",
       objective: 2,
       answers: [
-        { text: "ap.write(tr) passes a handle, so all stored handles point at the one object, which holds the last transfer", correct: true, feedback: "Right. Create a new item per transfer in the monitor; scoreboards should also copy before storing." },
+        { text: "ap.write(tr) passes a handle, so all stored handles point at the one object, which holds the last transfer", correct: true, feedback: "Right. Create a new item per transfer in the monitor; a scoreboard that cannot rely on every publisher doing that should also copy before storing." },
         { text: "Analysis ports drop writes when the subscriber is busy, so only the last one arrived", correct: false, feedback: "Analysis writes are function calls that complete in zero time; none are dropped. Three writes arrived, carrying the same handle." },
         { text: "The 1step input skew makes the monitor read the last value", correct: false, feedback: "The skew decides when each value is sampled; each transfer was sampled correctly before being overwritten in the shared object." },
         { text: "The scoreboard must compare items with == instead of compare()", correct: false, feedback: "== on handles compares identity. The bug is upstream: there is only one object." }
@@ -2157,7 +2160,7 @@ The `set` and `get` types: parameters and modport.
       answers: [
         { text: "So the interface can import uvm_pkg, which a package cannot do", correct: false, feedback: "Both can import uvm_pkg; apb_pkg does exactly that." },
         { text: "A package cannot contain an interface declaration; the package refers to the interface only through the virtual-interface type", correct: true, feedback: "Right. Package items are types, classes, tasks, functions and similar declarations; interfaces are design elements (IEEE 1800-2023 §26.2)." },
-        { text: "UVM requires interfaces to be compiled after packages", correct: false, feedback: "This is a SystemVerilog rule, not a UVM one, and the usual order is the reverse: the interface before the package that names it." },
+        { text: "UVM requires interfaces to be compiled after packages", correct: false, feedback: "Neither UVM nor IEEE 1800 sets this order. The language requires only that a package be compiled before the files that import it (§26.3), and the usual, safe order is the reverse: the interface before the package that names it." },
         { text: "An interface must be in the same file as tb_top", correct: false, feedback: "No such rule exists. Only a package must be compiled before the files that import it (§26.3). Compiling the interface first is the safe convention, and any file can hold it." }
       ],
       explanation: "The package holds the VIP's classes and types; the interface is a design element instantiated in tb_top. Compile order: UVM, apb_if.sv, apb_pkg.sv, the test package, tb_top.sv."
@@ -2310,7 +2313,11 @@ The `soc-vip-reuse` lab of E-SOC-1 applies passive reuse at SoC level: an SPI ag
 
 <LabLink labId="soc-vip-reuse" />
 
-A milestone lab for this module, LAB-M2 (one valid/ready or APB agent reused as master, responder and passive observer, graded on its `print_topology` signature), is planned.
+Today, milestone M2 on the course routes is gated by the `uvm-mini-capstone` lab from [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index), including its last part, "Reuse the agent passively": the same agent class, active in one environment and passive in a second. That lab does not exercise this module's configuration object as the VIP's API or the responder role.
+
+<LabLink labId="uvm-mini-capstone" />
+
+A fuller milestone lab for this module, LAB-M2 (one valid/ready or APB agent reused as master, responder and passive observer, graded on its `print_topology` signature), is planned.
 
 ## References & Next Topics
 

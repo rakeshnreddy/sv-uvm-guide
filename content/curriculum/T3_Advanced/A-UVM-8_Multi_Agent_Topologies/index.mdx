@@ -708,7 +708,7 @@ A **cross-agent scoreboard** predicts one interface's traffic from what it sees 
 - **Follow the configuration from the bus, not from the test.** The scoreboard learns `MODE = 1` from the configuration monitor at the edge the write completes, so it is right even when someone else's sequence did the write.
 - **Check ordering, not only data.** Data that arrives while `EN = 0` is dropped by the DUT, so a scoreboard that predicted it would report a MISSING item, which looks like a DUT bug. Not predicting it at all would hide a broken test. Reporting it as `ORDER` names the real cause: the stimulus broke the ordering rule. This is the check that catches the mutant test in Make It Work.
 - **Do not infer order from arrival order within one time slot.** Two monitors that call `write()` at the same clock edge do so in an order the standard leaves open (IEEE 1800-2023 §4.7). If a `MODE` write and a data item can be sampled at the same edge, stamp each transaction with its sampling time and apply the configuration by time, or (as here) make the sequence guarantee they never coincide.
-- **Account at the end of the test.** Anything still in `expected[$]` in `check_phase` is an error, and `report_phase` prints one summary line: `SCB_SUMMARY matches=N mismatches=0 pending=0`. [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers matching, ordering and draining in depth, and [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) replaces the hand-written `en`/`mode` state with a register model and its predictor.
+- **Account at the end of the test.** Anything still in `expected[$]` in `check_phase` is an error, and `report_phase` prints one summary line: `SCB_SUMMARY matches=N mismatches=0 pending=0`. [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers matching, ordering and draining in depth. [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) builds a register model that can hold configuration such as `en`/`mode` in place of hand-written state. That lesson uses auto-prediction, which updates the mirror only after the model's own accesses (IEEE 1800.2-2020 §18.2.5.2). To follow every initiator, [Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) adds a `uvm_reg_predictor` fed by a bus monitor (§19.3). It updates the mirror from every write the monitor sees, whoever started it. [Frontdoor vs. Backdoor](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) shows a scoreboard reading the mode from the mirror with `get_mirrored_value()`. Read the mirror only after the predictor has seen the write.
 
 Why the ORDER check earns its place: here are three ways a predictor could treat an input seen while `en = 0`, run against the Make It Work mutant, whose four data items all reach the DUT while `CTRL.EN = 0` (the Expected output in Make It Work traces it).
 
@@ -1322,6 +1322,8 @@ package soc_pkg;
       v_sqr.data_sqr = data_agt.sqr;
       v_sqr.irq_sqr  = irq_agt.sqr;
       if (scb != null) begin
+        // Shortcut to keep the file short: the agents have no promoted ap,
+        // so the env reaches into each agent's monitor (see the note below).
         apb_agt.mon.ap.connect(scb.cfg_imp);
         data_agt.mon.ap.connect(scb.in_imp);
         out_agt.mon.ap.connect(scb.out_imp);
@@ -1531,6 +1533,8 @@ module tb_top;
   end
 endmodule
 ```
+
+**A shortcut in this bench.** These agents follow the A-UVM-7 pattern for modes and sequencers, but to keep the file short they have no promoted `ap`. So `soc_env` connects `apb_agt.mon.ap`, `data_agt.mon.ap` and `out_agt.mon.ap` directly, and the diagram above labels the ports `mon.ap`. This is legal: analysis ports skip the connection relationship check. But the env now depends on each agent's internal name `mon`. An agent you ship gives itself an `ap`, connects `mon.ap.connect(ap)` in its own `connect_phase`, and the env connects `apb_agt.ap`, as in [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index). [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index#expert-relationship-checks-are-off-by-default) explains why.
 
 **The run in order.** `soc_vseq::body()` as a picture: each step's number is the number of its comment in the code.
 

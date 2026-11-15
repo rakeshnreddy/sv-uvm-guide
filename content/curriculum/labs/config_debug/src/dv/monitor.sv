@@ -2,17 +2,19 @@
 class my_monitor extends uvm_component;
   `uvm_component_utils(my_monitor)
 
-  virtual my_if vif;
-  int unsigned  n_seen;
+  virtual my_if.mon_mp vif;
+  int unsigned          n_seen;
 
   function new(string name = "my_monitor", uvm_component parent = null);
     super.new(name, parent);
   endfunction
 
   function void build_phase(uvm_phase phase);
+    virtual my_if base_vif;
     super.build_phase(phase);
-    if (!uvm_config_db#(virtual my_if)::get(this, "", "mon_vif", vif))
+    if (!uvm_config_db#(virtual my_if)::get(this, "", "mon_vif", base_vif))
       `uvm_fatal("NO_VIF", "my_monitor could not get its virtual interface from uvm_config_db")
+    vif = base_vif;   // narrow to the monitor's modport view
   endfunction
 
   task run_phase(uvm_phase phase);

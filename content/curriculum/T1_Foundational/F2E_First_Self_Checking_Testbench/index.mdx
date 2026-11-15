@@ -138,7 +138,9 @@ The whole bench lives in one module, `tb_top`. It has no ports: it is the top of
 | Comparison | the checker and `check_result()` | Compare each result with `!==` and count it. |
 | Verdict and end | `report()`, `$finish`, a watchdog with `$fatal` | One summary line; every run ends. |
 
-**In a real testbench.** A UVM bench in Tier 2 splits the same jobs into classes: a driver drives, a monitor takes over the checker's reading of `out_valid` and `sum`, a predictor plays `model_add()`, a scoreboard plays `exp_q` and the compare, and a test (with its sequences) chooses the stimulus. The diagram's tags name those roles, so this bench is the skeleton you will recognise later.
+**Reading `#(...)`.** `W` and `BUG` are module **parameters**: constants fixed at elaboration, before time 0. A `parameter` declared in the module's `#(...)` parameter port list, as in `module adder_reg #(parameter int W = 8, parameter int BUG = 0)`, can be overridden by name for each instance, as in `adder_reg #(.W(W), .BUG(1)) dut (...)` (IEEE 1800-2023 §23.10.2). A `localparam`, such as `W` and `TIMEOUT` inside `tb_top`, is a named constant that no instance can override (§6.20.4). This is all the bench needs. [F4A: Parameters](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index#parameters-one-module-many-shapes) teaches the full rules.
+
+**In a real testbench.** A UVM bench in Tier 2 splits the same jobs into classes: a driver drives, a monitor takes over the checker's reading of `out_valid` and `sum`, a reference model plays `model_add()` and a predictor calls it for each input, a scoreboard plays `exp_q` and the compare, and a test (with its sequences) chooses the stimulus. The diagram's tags name those roles, so this bench is the skeleton you will recognise later.
 
 Later in this lesson, the lab after the `exp_q` trace runs this diagram edge by edge: each block lights up when it acts, and selecting a block shows its line of `tb_top`.
 
@@ -738,7 +740,7 @@ exp_q.push_back(exp_t'{a: a_val, b: b_val, sum: model_add(a_val, b_val)});
 e = exp_q.pop_front();
 if (sum !== e.sum) begin fail_cnt++; $error(...); end else pass_cnt++;`}
   mistake="Driving DUT inputs with = at the active clock edge (races the flop's read, §4.7/§4.8), or comparing with != (an X result whose known bits agree evaluates to 1'bx and takes the else branch into pass_cnt++, §11.4.5/§12.4)."
-  inTestbench="In Tier 2 UVM, send() becomes the driver, the checker's sampling becomes the monitor, model_add() becomes the predictor, and exp_q plus check_result() become the scoreboard."
+  inTestbench="In Tier 2 UVM, send() becomes the driver, the checker's sampling becomes the monitor, model_add() becomes the reference model that a predictor calls, and exp_q plus check_result() become the scoreboard."
 >
   <svg
     viewBox="0 0 260 132"
@@ -1507,7 +1509,7 @@ After `send(3, 4)` produces `sum = 7` at edge 4 (45 ns), `send_invalid(50, 60)` 
 | 4 (lowest) | `rst_n && !ld && !en` | `count` (holds) | `test_hold()` (`en=0, ld=0` while `d` changes) |
 
 **Requirements:**
-- Write `cnt4` with a `BUG` parameter for two mutants from your plan, for example a wrap at 14 instead of 15, and a load that ignores `d[3]`.
+- Write `cnt4` with a `BUG` parameter for two mutants from your plan, for example a wrap at 14 instead of 15, and a load that ignores `d[3]`. Copy the pattern of the `adder_reg` header and its `case (BUG)`; *Reading `#(...)`* above and [F4A: Parameters](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index#parameters-one-module-many-shapes) explain the syntax.
 - Write `tb_top` with the same skeleton: time units, a clock, a reset, `<=` drives, a model, `!==` checks, a summary line, a watchdog and `+TEST=` selection.
 - Turn your F1B plan into directed tests: one test task per plan row (reset mid-count, increment, hold, load, load priority with `ld` and `en` high together including at 15, the wrap from 15 to 0, and the expert reset-priority row). Rows that F1B marks Random get a directed test here; [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) shows how to randomize them.
 - Decide what the model is. A counter has state, so the expected value is a model register that you update every cycle from the same inputs, not a queue of independent answers.

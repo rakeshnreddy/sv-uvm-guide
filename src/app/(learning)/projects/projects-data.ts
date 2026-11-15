@@ -125,7 +125,7 @@ export const PROJECT_BRIEFS: readonly ProjectBrief[] = [
   },
   {
     milestone: 'M2',
-    goal: 'Write one UVM agent for a valid/ready stream and reuse it, unchanged, as an active instance on the input side and a passive instance on the output side of the same environment.',
+    goal: 'Write one UVM agent for a valid/ready stream and reuse it, unchanged, as an active instance on the input side and a passive instance on the output side of the same environment. This is the one-environment form of M2; I-UVM-3C and the uvm-mini-capstone lab reuse the agent passively in a second environment instead. Both show the same thing: one agent class, changed only through its configuration.',
     dut: {
       name: 'Valid/ready stream buffer',
       description:

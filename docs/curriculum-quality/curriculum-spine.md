@@ -2473,7 +2473,7 @@ Consistent with the [README](README.md#the-target-lesson):
 10. **Reporting.**
     - `` `uvm_* `` macros in UVM code; `$display` and severity tasks only in non-UVM code.
     - Interface assertions in VIP report through UVM, or say why not.
-11. **Objects.** Monitors publish a new object per transaction. Scoreboards copy before storing. Compare by value.
+11. **Objects.** Monitors publish a new object per transaction. Scoreboards copy before storing unless every publisher creates a new object per transaction (copy at one end, not both). Compare by value.
 12. **Names.** `_if`, `vif`, `_cfg`, `_item`, `_seq`, `_sqr`, `_drv`, `_mon`, `_agent`, `_env`, `_test`, `_sb`, `_pkg`, `clk`, `rst_n`. Parameters in UPPER_CASE.
 13. **Comments** explain *why*, not *what*.
 14. **Expected output.** Every Make It Work example shows its log in a `text` block titled "Expected output". Say whether it came from a real run (name the simulator and version) or is illustrative. Milestone signatures:

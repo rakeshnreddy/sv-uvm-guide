@@ -23,6 +23,7 @@ import {
   loadCurriculumLesson,
 } from "@/lib/curriculum/lesson-loader";
 import { LESSON_PRACTICE_SLOT, lessonRehypePlugins, lessonRemarkPlugins } from "@/lib/curriculum/lesson-mdx";
+import { routeNextOptions } from "@/lib/curriculum/lesson-route-next";
 import { resolveCurriculumRequest } from "@/lib/curriculum/lesson-urls";
 import type { TocEntry } from "@/lib/curriculum/remark-heading-ids";
 import { getDeckCards } from "@/lib/flashcard-decks";
@@ -168,6 +169,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
           lessonSlug={topicSlug}
           lab={lessonLab(practice)}
           hasFlashcards={Boolean(flashcardDeck && flashcardDeck.cards.length > 0)}
+          routeNext={routeNextOptions(sectionSlug, topicSlug)}
         />
       </div>
     </PageShell>

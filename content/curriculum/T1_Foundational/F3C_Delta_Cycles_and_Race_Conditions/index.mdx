@@ -1270,12 +1270,14 @@ In order B every strobed `q` equals the strobed `din`: the flop took the value t
 
 **Objective:** build an interface and a monitor that sample correctly even when the DUT is written badly.
 
+**Before you start.** This kata is easiest after [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index). F4B teaches how to declare an interface, instantiate it and connect a module to its signals. F4C teaches how to choose clocking-block skews. If you come here first, base the interface and its `mon_cb` on the preview snippet in Build Your Mental Model. An interface is instantiated like a module: `pipe_if bus (clk);` makes an instance named `bus`, and `bus.din` names its `din` signal. The worked solution names the instance `bus`, not `vif`, because F4B keeps `vif` for a virtual-interface handle.
+
 **Requirements:**
 - Write a DUT with a single clocked process that uses `=`: `always @(posedge clk) q = din;` (deliberately bad). Keep it to one process. A DUT whose own processes talk through `=` races internally, and no testbench can fix that.
-- Write an interface with a `mon_cb` clocking block, and a monitor that records `{din, q}` pairs every cycle. The monitor must wait on `@(vif.mon_cb)`, never on `@(posedge clk)`, before it reads `vif.mon_cb` (§14.13).
-- Add a naive second monitor that reads the raw `vif.din` and `vif.q` after `@(posedge clk)`.
+- Write an interface with a `mon_cb` clocking block, and a monitor that records `{din, q}` pairs every cycle. The monitor must wait on `@(bus.mon_cb)`, never on `@(posedge clk)`, before it reads `bus.mon_cb` (§14.13).
+- Add a naive second monitor that reads the raw `bus.din` and `bus.q` after `@(posedge clk)`.
 - Prove with logs that the clocking-block monitor records the same pairs whichever order the DUT and the monitors run in: swap their order in the source. Show that the naive monitor's `q` can change.
-- Choose the clocking-block defaults yourself, and justify them in a comment that cites the clause. Give every design element in the file a time unit.
+- Choose the clocking-block defaults yourself (F4C teaches the options; the preview snippet shows one choice), and justify them in a comment that cites the clause. Give every design element in the file a time unit.
 
 **What to reflect on:**
 - What does the monitor record for `q` on the edge where `q` changes, and why is that the right answer for a scoreboard?
@@ -1295,10 +1297,10 @@ In order B every strobed `q` equals the strobed `din`: the flop took the value t
   spreadAnchors
   nodes={[
     { id: "top", label: "tb_top", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
-    { id: "drv", label: "driver", sublabel: "vif.din <= 8'(i);", kind: "driver", col: 0, row: 0 },
+    { id: "drv", label: "driver", sublabel: "bus.din <= 8'(i);", kind: "driver", col: 0, row: 0 },
     { id: "dut", label: "bad_dut", sublabel: "q = din;", kind: "dut", col: 1, row: 0 },
     { id: "ifc", label: "pipe_if", sublabel: "din, q, clocking block mon_cb", kind: "interface", col: 0, row: 1, colSpan: 2 },
-    { id: "cb", label: "CB monitor", sublabel: "@(vif.mon_cb)", kind: "monitor", col: 0, row: 2 },
+    { id: "cb", label: "CB monitor", sublabel: "@(bus.mon_cb)", kind: "monitor", col: 0, row: 2 },
     { id: "raw", label: "RAW monitor", sublabel: "@(posedge clk)", kind: "monitor", col: 1, row: 2 }
   ]}
   edges={[
@@ -1334,15 +1336,15 @@ module tb_top;
   logic clk = 1'b0;
   always #5 clk = ~clk;            // rising edges at 5, 15, 25, 35 and 45 ns
 
-  pipe_if vif (clk);
-  bad_dut dut (.clk(clk), .din(vif.din), .q(vif.q));
+  pipe_if bus (clk);               // an interface instance, not a virtual-interface handle (F4B)
+  bad_dut dut (.clk(clk), .din(bus.din), .q(bus.q));
 
   // Driver: a new value after each rising edge, written with <= (lands in NBA).
   initial begin
-    vif.din = 8'd0;                // time 0: no clock edge yet, so nothing races
+    bus.din = 8'd0;                // time 0: no clock edge yet, so nothing races
     for (int i = 1; i <= 3; i++) begin
       @(posedge clk);
-      vif.din <= 8'(i);
+      bus.din <= 8'(i);
     end
     repeat (2) @(posedge clk);
     #1 $finish;
@@ -1350,14 +1352,14 @@ module tb_top;
 
   // Clocking-block monitor: wait on the clocking event, then read clockvars only.
   initial forever begin
-    @(vif.mon_cb);
-    $display("%0d CB  din=%0d q=%0d", $time, vif.mon_cb.din, vif.mon_cb.q);
+    @(bus.mon_cb);
+    $display("%0d CB  din=%0d q=%0d", $time, bus.mon_cb.din, bus.mon_cb.q);
   end
 
   // Naive monitor, for comparison: raw reads after the raw edge race the DUT.
   initial forever begin
     @(posedge clk);
-    $display("%0d RAW din=%0d q=%0d", $time, vif.din, vif.q);
+    $display("%0d RAW din=%0d q=%0d", $time, bus.din, bus.q);
   end
 endmodule
 ```

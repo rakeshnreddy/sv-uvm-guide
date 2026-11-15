@@ -42,8 +42,8 @@ export interface PlacementResults {
   recommendedTier: PlacementTierRecommendation;
 }
 
-export const PLACEMENT_ASSESSMENT_VERSION = 'placement-v2';
-export const PLACEMENT_SCORING_VERSION = 'placement-scoring-v2';
+export const PLACEMENT_ASSESSMENT_VERSION = 'placement-v3';
+export const PLACEMENT_SCORING_VERSION = 'placement-scoring-v3';
 
 export interface PlacementTierRecommendation {
   /** The curriculum tier the learner is ready for (1–4). */
@@ -84,10 +84,10 @@ export const placementQuestions: PlacementQuestion[] = [
   },
   {
     id: 'foundations-always-block',
-    prompt: 'Which procedural block guarantees a combinational sensitivity list without accidentally inferring latches?',
+    prompt: 'Which procedural block infers its own sensitivity list and asks tools to warn when its body would infer a latch?',
     category: 'foundations',
     difficulty: 'intro',
-    rationale: '`always_comb` automatically tracks RHS signals and emits errors when latches sneak in.',
+    rationale: '`always_comb` infers its sensitivity from what the body reads, and tools should warn when latched behaviour can be inferred (IEEE 1800-2023 §9.2.2.2). A path that leaves an output unassigned still infers a latch, so assign every output at the top of the block. See F2C, Procedural Code and Flow Control.',
     options: [
       { id: 'always_comb', label: '`always_comb`', isCorrect: true },
       { id: 'always_ff', label: '`always_ff`', isCorrect: false },
@@ -126,12 +126,12 @@ export const placementQuestions: PlacementQuestion[] = [
   {
     id: 'methodology-driver',
     prompt:
-      'During a sequence-driver handshake you notice the driver keeps pulling the same item even after `item_done`. Which fix aligns with the UVM handshake contract?',
+      'Your driver drives an item, loops back to `get_next_item()`, and receives the same item again. The sequence never returns from `finish_item()`, and the test ends only at the phase timeout. Which fix aligns with the UVM handshake contract?',
     category: 'methodology',
     difficulty: 'intermediate',
-    rationale: 'Drivers must call `seq_item_port.item_done()` after completing a transaction so the sequencer releases it.',
+    rationale: 'Each `get_next_item()` needs exactly one `seq_item_port.item_done()`. Without it the item stays in the sequencer FIFO and `get_next_item()` returns it again. See I-UVM-3A, "The classic mistake: a missing item_done()".',
     options: [
-      { id: 'item_done', label: 'Call `seq_item_port.item_done()` once the response is ready', isCorrect: true },
+      { id: 'item_done', label: 'Call `seq_item_port.item_done()` once for every `get_next_item()`', isCorrect: true },
       { id: 'grab', label: 'Use `seq_item_port.grab()` before every item', isCorrect: false },
       { id: 'disable', label: 'Disable the sequencer arbitration by forcing mode to lock', isCorrect: false },
       { id: 'raise_objection', label: 'Raise an objection before pulling the next item', isCorrect: false },
@@ -184,9 +184,9 @@ export const placementQuestions: PlacementQuestion[] = [
       'A passive scoreboard still has pending comparisons when the stimulus sequence finishes. Which ownership model keeps phase completion predictable?',
     category: 'debug',
     difficulty: 'intermediate',
-    rationale: 'The test or virtual sequence owns the objection. The scoreboard exposes pending work and coordinates through phase_ready_to_end, a completion event, or an agreed drain policy.',
+    rationale: 'The test owns the main objection and drops it when its stimulus ends. Only the scoreboard knows what is still outstanding, so it raises its own objection in phase_ready_to_end (IEEE 1800.2-2020 §13.1.4.3.2) and drops it when idle or after a bounded wait. A permanent objection hangs the run, and a fixed delay is a guess. See I-UVM-1C (Ending cleanly) and A-UVM-6 (End-of-test accounting and draining).',
     options: [
-      { id: 'test_owned', label: 'Let the test or virtual sequence own the objection and wait on scoreboard completion state', isCorrect: true },
+      { id: 'scoreboard_drain', label: 'The test drops its objection when stimulus ends; the scoreboard raises a temporary objection in phase_ready_to_end while comparisons are pending and drops it when idle or after a bounded timeout', isCorrect: true },
       { id: 'scoreboard_owned', label: 'Give the passive scoreboard a permanent run-phase objection', isCorrect: false },
       { id: 'global', label: 'Force-clear all objections when stimulus ends', isCorrect: false },
       { id: 'fixed_delay', label: 'Add a fixed delay before dropping the test objection', isCorrect: false },
@@ -233,8 +233,14 @@ const tierThresholds: PlacementTierRecommendation[] = [
     label: 'Tier 3: Advanced',
     summary:
       'Your SystemVerilog and UVM fundamentals are solid. Next come complete environments: scoreboards, VIP, callbacks, multi-agent topologies, register models and the AMBA protocols.',
-    focus: 'Skim the Tier 2 deep dives you have not met at work, then build environments on the Practitioner route.',
-    route: { tier: 3, routeId: 'practitioner', startStepId: 'environments', skimStepIds: ['deeper-sv', 'deeper-uvm'] },
+    focus:
+      'The quiz does not test scheduling regions, races or clocking blocks, so skim those Tier 1 lessons first. Then skim the Tier 2 deep dives you have not met at work: A-UVM-8 builds on the virtual sequences in I-UVM-3B, and A-UVM-6 on the comparer policy in I-UVM-4. Starting here skips milestone M4, the coverage closure loop of the SystemVerilog deep dives.',
+    route: {
+      tier: 3,
+      routeId: 'practitioner',
+      startStepId: 'environments',
+      skimStepIds: ['check-level', 'deeper-sv', 'deeper-uvm'],
+    },
   },
   {
     tier: 2,

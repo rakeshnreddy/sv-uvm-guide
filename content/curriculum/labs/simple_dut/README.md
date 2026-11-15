@@ -40,7 +40,7 @@ On every rising edge of `clk`:
 - **R3.** If `in_valid` is 1, `sum` becomes `a + b` when that is at most 255, and 255 when it is larger.
 - **R4.** If `in_valid` is 0, `sum` keeps its value.
 
-Only R3 differs from F2E's `adder_reg`. The parameter `BUG` plants a known bug for step 7; leave it at 0 until then.
+Only R3 differs from F2E's `adder_reg`. The parameter `BUG` plants a known bug for step 7; leave it at 0 until then. `BUG` is declared in the DUT's `#(...)` parameter port list, so the instance in `tb_top` sets it by name with `#(.W(W), .BUG(0))`; the `localparam` constants in `tb_top` cannot be overridden that way. [F4A: Parameters](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index#parameters-one-module-many-shapes) teaches the rules.
 
 ## Step 1: Run the starter
 
