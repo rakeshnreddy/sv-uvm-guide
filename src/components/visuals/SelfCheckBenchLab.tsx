@@ -482,7 +482,7 @@ function BenchCode({
 }
 
 const ANATOMY_LAYOUT = layoutGridDiagram({
-  nodes: ANATOMY_NODES.map((n) => ({ id: n.id, label: n.label, sublabel: n.sublabel, kind: n.kind, col: n.col, row: n.row, colSpan: n.colSpan, rowSpan: n.rowSpan, container: n.container })),
+  nodes: ANATOMY_NODES.map((n) => ({ id: n.id, label: n.label, sublabel: n.sublabel, kind: n.kind, col: n.col, row: n.row, colSpan: n.colSpan, rowSpan: n.rowSpan, container: n.container, role: n.role })),
   edges: ANATOMY_EDGES.map((e) => ({ id: e.id, from: e.from, to: e.to, style: e.style, label: e.label })),
   ...ANATOMY_GRID,
 });

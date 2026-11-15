@@ -614,6 +614,21 @@ describe("figure tokens (DESIGN.md section 13)", () => {
     expect(css).toContain('[data-lesson-article] svg :is(text, tspan)[fill="rgb(225,29,72)"] { fill: hsl(var(--fig-rose-text)); }');
     expect(css).toMatch(/@media \(forced-colors: active\)\s*\{\s*:is\(\[data-figure-kit\], \[data-lesson-article\]\) svg :is\(text, tspan\) \{\s*fill: CanvasText;/);
   });
+
+  it("keeps solid marks in hand-drawn figures solid in forced colours, after the soft-fill Canvas rule", () => {
+    const block = css.slice(css.indexOf("Forced colours: figures draw in the system colours"));
+    const canvas = block.indexOf("fill: Canvas;");
+    const solid = block.indexOf('[data-lesson-article] svg :is(rect, path, circle, ellipse, polygon):is([fill="currentColor"], [fill^="rgb("]):not([fill-opacity], [opacity], [data-figure-kit] *)');
+    expect(canvas).toBeGreaterThan(-1);
+    expect(solid).toBeGreaterThan(canvas);
+    expect(block.slice(solid)).toMatch(/^[^{]*\[data-lesson-article\] svg marker \[fill="currentColor"\] \{\s*fill: CanvasText;/);
+  });
+
+  it("maps the low-contrast Tailwind 500 strokes in hand-drawn figures to the figure tokens", () => {
+    for (const hue of ["amber", "cyan", "rose", "violet", "emerald", "indigo"]) {
+      expect(css).toContain(`[data-lesson-article] svg .stroke-${hue}-500 { stroke: hsl(var(--fig-${hue})); }`);
+    }
+  });
 });
 
 describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {

@@ -1404,6 +1404,8 @@ export interface AnatomyNodeSpec {
   colSpan?: number;
   rowSpan?: number;
   container?: boolean;
+  /** Text-free colour role, as the lesson's kit figure of the same bench draws it (testbench for the generic bench parts). */
+  role?: "design" | "testbench";
   /** CodeTrace key the node jumps to. */
   codeKey: string;
 }
@@ -1422,14 +1424,14 @@ export const ANATOMY_GRID = { cellWidth: 150, cellHeight: 56, gapX: 110, gapY: 4
 export const ANATOMY_NODES: readonly AnatomyNodeSpec[] = [
   { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 5, container: true, codeKey: "tb-module" },
   { id: "tests", label: "test_*()", sublabel: "chosen by +TEST=", kind: "test", col: 0, row: 0, codeKey: "run-one" },
-  { id: "gen", label: "clock + reset", sublabel: "always #5, reset_dut()", kind: "generic", col: 1, row: 0, codeKey: "clk-always" },
+  { id: "gen", label: "clock + reset", sublabel: "always #5, reset_dut()", kind: "generic", role: "testbench", col: 1, row: 0, codeKey: "clk-always" },
   { id: "stim", label: "send() / idle()", sublabel: "drive with <=", kind: "driver", col: 0, row: 1, codeKey: "send-drive" },
   { id: "dut", label: "dut", sublabel: "adder_reg", kind: "dut", col: 1, row: 1, codeKey: "dut-inst" },
   { id: "model", label: "model_add()", sublabel: "from the spec", kind: "model", col: 0, row: 2, codeKey: "model-add" },
   { id: "q", label: "exp_q[$]", sublabel: "oldest first", kind: "fifo", col: 0, row: 3, codeKey: "exp-decl" },
   { id: "chk", label: "checker", sublabel: "always @(posedge clk)", kind: "scoreboard", col: 1, row: 3, codeKey: "chk-always" },
-  { id: "wdog", label: "watchdog", sublabel: "#(TIMEOUT), $fatal", kind: "generic", col: 0, row: 4, codeKey: "main-wdog" },
-  { id: "rpt", label: "report()", sublabel: "PASS=n FAIL=m", kind: "generic", col: 1, row: 4, codeKey: "report" },
+  { id: "wdog", label: "watchdog", sublabel: "#(TIMEOUT), $fatal", kind: "generic", role: "testbench", col: 0, row: 4, codeKey: "main-wdog" },
+  { id: "rpt", label: "report()", sublabel: "PASS=n FAIL=m", kind: "generic", role: "testbench", col: 1, row: 4, codeKey: "report" },
 ];
 
 export const ANATOMY_EDGES: readonly AnatomyEdgeSpec[] = [
