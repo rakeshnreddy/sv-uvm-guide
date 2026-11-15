@@ -21,7 +21,7 @@ sources:
 
 - **What it is:** **ACE** (AXI Coherency Extensions, AMBA 4) adds hardware cache coherency to AXI: extra signals on the AXI read and write channels, plus three snoop channels into every master that has a cache (Arm IHI0022E Part C). **CHI** (Coherent Hub Interface, AMBA 5) does the same job as a layered, packet-based protocol built for large interconnects such as rings and meshes (Arm IHI0050E.b).
 - **Why it matters:** When several caches can hold copies of the same memory, the question is no longer only "is this interface legal?" but "do all the caches together still agree on the newest value?". No checker that looks at one interface can answer that. Coherency changes what your scoreboard models, what your assertions see and how you debug.
-- **The Analogy:** A team shares one design document stored on a file server. Anyone may keep a read-only printout (a **Shared** copy). Only one person at a time may hold the editable copy (a **Unique** copy). Whoever has edited it and not yet uploaded owes the server an upload (a **Dirty** copy). A **snoop** is the coordinator saying "hand me your latest edits" or "shred your printout". *Where it breaks:* the unit is a cache line (a block of bytes, 64 bytes in CHI), not a document; copies are destroyed or downgraded, never updated in place; and a "clean" printout can still differ from the server when someone else owes the upload.
+- **The Analogy:** A team shares one design document stored on a file server. Anyone may keep a read-only printout (a **Shared** copy). Only one person at a time may hold the editable copy (a **Unique** copy). Whoever has edited it and not yet uploaded owes the server an upload (a **Dirty** copy). A **snoop** is the coordinator saying "hand me your latest edits" or "shred your printout". The table below says where the analogy breaks; the unit is a cache line (a block of bytes, 64 bytes in CHI), not a document.
 
 **The analogy at a glance.** Each row maps one part of the story to its ACE meaning; the last column is where the analogy stops working.
 
@@ -34,7 +34,7 @@ sources:
 
 One limit applies to every row: the unit is a cache line, not a document.
 
-The folder name of this lesson says "Future Protocols". That is historical: ACE was first released in the AMBA AXI and ACE specification Issue D on 28 October 2011, and CHI Issue A on 12 June 2014, with the first public CHI issue (B) on 4 August 2017 (IHI0022H.c and IHI0050E.b change histories). Both are current AMBA protocols.
+The folder name of this lesson says "Future Protocols". That is historical: ACE was first released in the AMBA AXI and ACE specification Issue D on 28 October 2011, and CHI Issue A on 12 June 2014, with the first public CHI issue (B) on 4 August 2017 (IHI0022E and IHI0050E.b change histories). Both are current AMBA protocols.
 
 **You will be able to:**
 1. Explain the coherency problem (a stale copy and a dirty copy of the same line) and how snoops through the interconnect solve it.
@@ -53,7 +53,7 @@ The folder name of this lesson says "Future Protocols". That is historical: ACE 
 - **Cache, cache line.** A cache is a small fast memory next to a processor that keeps copies of recently used memory. It stores data in fixed-size blocks called **cache lines** (often 64 bytes). Coherency is tracked per line, never per byte.
 - **Load, store, hit, miss.** A processor *loads* (reads) and *stores* (writes). A **hit** means the line is already in the cache; a **miss** means it must be fetched.
 - **Write-back cache.** A store updates only the cached copy; main memory is updated later, when the line is written back or evicted (removed to make room). Until then the cache holds the only up-to-date copy. This is why stale memory exists at all.
-- **Master, interconnect, slave.** The master starts a transaction, the interconnect routes it and the slave answers. IHI0022E, the issue this track cites, uses master and slave. Later Arm issues (IHI0022H.b onwards) say *manager* and *subordinate*, and CHI says *Requester*, *Completer* and *Subordinate* for the same roles.
+- **Master, interconnect, slave.** The master starts a transaction, the interconnect routes it and the slave answers. IHI0022E, the issue this track cites, uses master and slave. Later Arm issues (IHI0022H.b onwards, not checked against the source texts used for this lesson) say *manager* and *subordinate*, and CHI says *Requester*, *Completer* and *Subordinate* for the same roles.
 - **Shareable.** A memory location that the caches of several masters may hold. Only Shareable accesses need coherency.
 - **Coherent.** "Regions of memory are coherent if writes to the same memory location by two components are observable in the same order by all components" (IHI0022E §C1.1; the same sentence opens IHI0050E.b §1.5). Hardware coherency removes the need for software to flush and invalidate caches by hand (**software cache maintenance**).
 - **Snoop.** A request from the interconnect to a cached master asking it to look up a line in its cache and supply it, downgrade it or remove it.
@@ -147,7 +147,7 @@ They combine into five states (Table C1-2):
 
 <ArchitectureDiagram
   title="The five ACE states and the transitions traced in this lesson"
-  caption="I on the left; then the Unique column and the Shared column; Dirty on top, Clean below. Each arrow is one step you will trace. I → UC: a load (ReadShared answered with RRESP 00). UC → UD: a store, with no transaction. UD → SD: snooped by a ReadShared, the cache keeps the dirty copy. SC → UC: a CleanUnique before a store. UD → I: a WriteBack."
+  caption="I on the left; then the Unique column and the Shared column; Dirty on top, Clean below. Each arrow is one step you will trace. I → UC: a load that finds no other copy (the ReadShared transaction, traced later). UC → UD: a store, with no transaction. UD → SD: snooped, the cache keeps the dirty copy (you will see which snoop does this). SC → UC: a CleanUnique before a store. UD → I: a WriteBack."
   cellWidth={120}
   gapX={100}
   legend={false}
@@ -483,7 +483,10 @@ An RN-I also sends its subset of snoopable requests to an HN-F (§1.3, "IO Coher
 
 **Credit-based flow control.** AXI and ACE move every beat with a VALID/READY handshake: the receiver can stall the sender in the same cycle. CHI's link layer uses **L-Credits** instead (§14.2.1). The receiver gives the transmitter one credit by pulsing that channel's **LCRDV** signal for one cycle; each flit the transmitter sends (FLITV high) consumes one credit; a receiver may hand out between 1 and 15 credits per channel and "must guarantee that it can accept all the flits for which it has issued L-Credits". A credit "cannot be used in the cycle it is received". There is no READY: a transmitter with no credit simply waits.
 
-**Predict before you look at the waveform.** The transmitter starts with no credit, and the receiver pulses LCRDV once at each of edges 1, 2 and 5. At which edges may the transmitter send a request flit, and would a flit at edge 5 be legal? Write your answer down, then check it against the picture.
+**Predict before you look at the waveform.** The transmitter starts with no credit, and the receiver pulses LCRDV once at each of edges 1, 2 and 5. At which edges may the transmitter send a request flit, and would a flit at edge 5 be legal? Write your answer down, then open the check.
+
+<details>
+<summary>Check your prediction</summary>
 
 <TimingDiagram
   title="CHI L-Credit flow control on one REQ channel"
@@ -504,9 +507,6 @@ An RN-I also sends its subset of snoopable requests to an HN-F (§1.3, "IO Coher
   ]}
 />
 
-<details>
-<summary>Check your prediction</summary>
-
 Edges 2, 3 and 6. Each credit can be used from the edge after it arrives: the credits from edges 1 and 2 carry the flits at edges 2 and 3, and the credit from edge 5 carries the flit at edge 6. A flit at edge 5 would be illegal, because at that edge the transmitter holds no usable credit: the credit arriving at edge 5 "cannot be used in the cycle it is received" (§14.2.1).
 
 </details>
@@ -517,7 +517,7 @@ Edges 2, 3 and 6. Each credit can be used from the edge after it arrives: the cr
 
 **Direct Cache Transfer (DCT).** In ACE, snoop data always goes to the interconnect on CD and then to the requester on R. In CHI the Home may send a *forwarding* snoop, and the snooped RN-F then sends the data **straight to the requester**, removing a hop (§1.7). Here is the specification's ReadShared example with a dirty line (§5.1.3, Figure 5-4). RN-F0 (Invalid) issues ReadShared; RN-F1 holds the line UD.
 
-**Predict before the picture:** which node sends the data to RN-F0, and who is responsible for the dirty line afterwards?
+**Predict before the picture:** RN-F1 forwards the line to RN-F0. In which state does each RN-F end, what does RN-F1 send the Home, and who is responsible for the dirty line afterwards?
 
 <details>
 <summary>Check your prediction</summary>
@@ -542,7 +542,7 @@ Edges 2, 3 and 6. Each credit can be used from the edge after it arrives: the cr
   ]}
 />
 
-**Debrief.** The expected snoop for ReadShared is SnpSharedFwd (Table 4-24); the Home may also use SnpShared, SnpClean, SnpNotSharedDirty or their Fwd forms, but not an invalidating snoop such as SnpCleanInvalid, and a non-forwarding snoop cannot produce forwarded data (§4.4). There is no separate Comp from the Home for this read: a read completes with CompData (or the RespSepData plus DataSepResp pair) (§4.5.1), and ReadShared also needs the requester's CompAck. So the answer to the prediction: RN-F1 sends the data straight to RN-F0, and the Home, not RN-F0, takes the duty to update memory, because RN-F1 passed it the dirty line (PD).
+**Debrief.** The expected snoop for ReadShared is SnpSharedFwd (Table 4-24); the Home may also use SnpShared, SnpClean, SnpNotSharedDirty or their Fwd forms, but not an invalidating snoop such as SnpCleanInvalid, and a non-forwarding snoop cannot produce forwarded data (§4.4). There is no separate Comp from the Home for this read: a read completes with CompData (or the RespSepData plus DataSepResp pair) (§4.5.1), and ReadShared also needs the requester's CompAck. So the answer to the prediction: RN-F1 sends the data straight to RN-F0, both RN-Fs end SC, RN-F1 sends the Home SnpRespData_SC_PD_Fwded_SC, and the Home, not RN-F0, takes the duty to update memory, because RN-F1 passed it the dirty line (PD).
 
 **Compare: the same read without DCT.** If the Home sends the non-forwarding SnpShared, the data must travel through the Home. Below is one permitted flow: SnpRespData_SC_PD is a permitted (not the expected) response of a UD line to SnpShared (§4.8, Table 4-42; the expected one is SnpRespData_SD, which keeps the dirty line at RN-F1).
 
@@ -602,7 +602,7 @@ An AXI checker asks local questions: is VALID stable until READY, does the burst
 
 The coherency rules are **global**: "a Unique line is in only one cache" is a statement about *all* caches at once. A port checker on cache A sees A move to UD and finds nothing wrong; a port checker on cache B sees B move to SC and finds nothing wrong. Only a component that sees both ports can see that UD next to SC breaks the single-writer rule. That is the third misconception on this page: **coherency cannot be checked per interface.**
 
-**The same moment seen three ways.** The same blindness hits the single-owner rule. A holds the line UD. B issues ReadShared, the interconnect sends A a ReadShared snoop, and A answers PassDirty=0, IsShared=1, so A keeps the dirty copy as SD. A buggy interconnect still gives B RRESP[3:2] = `11` (IsShared 1, PassDirty 1), so B also takes SD:
+**The same moment seen three ways.** The same blindness hits the single-owner rule. A holds the line UD after its own store to a UC copy. B issues ReadShared, the interconnect sends A a ReadShared snoop, and A answers PassDirty=0, IsShared=1, so A keeps the dirty copy as SD. A buggy interconnect still gives B RRESP[3:2] = `11` (IsShared 1, PassDirty 1), so B also takes SD:
 
 | Viewpoint | What it sees | Verdict |
 |---|---|---|
@@ -684,7 +684,7 @@ The first illegal row names the transaction to open in the waveform: B's ReadSha
 - Coherency means all caches observe writes to a location in one order; without it, a write-back cache hides newer data from other masters (objective 1).
 - ACE describes copies with Unique/Shared and Clean/Dirty; a Unique copy is the only copy, and at most one copy is Dirty. Clean does not mean "equal to memory".
 - ACE adds AR/AW coherency signals, RRESP[3:2], the AC/CR/CD snoop channels and RACK/WACK to an AXI port; ACE-Lite adds only the AR/AW signals.
-- Reads are snooped so the newest data comes back and the states follow CRRESP and RRESP[3:2]; stores first make the line Unique (ReadUnique, CleanUnique or MakeUnique), and dirty data always has exactly one owner, a cache or the interconnect (objective 2).
+- Reads are snooped so the newest data comes back and the states follow CRRESP and RRESP[3:2]; stores first make the line Unique (ReadUnique, CleanUnique or MakeUnique), and the duty to update memory sits with at most one party, a cache or the interconnect (objective 2).
 - CHI does the same job with layers, nodes (RN, HN, SN, MN), four credited channels and Direct Cache Transfer (objective 3).
 - The checker is global: monitors on every port feed one line model that checks single writer, single owner and golden data (objective 4).
 
@@ -929,7 +929,7 @@ RACK and WACK are single-cycle pulses that the interconnect must accept in that 
 
 <TimingDiagram
   title="RACK after a two-beat read, and the snoop window it closes"
-  caption="Each column is one rising ACLK edge; values are those sampled at that edge. The read's two R transfers happen at edges 1 and 2 (RLAST at 2). RACK is a one-cycle pulse sampled at edge 3, the earliest legal cycle; later is legal too, but it must not be delayed to wait for another transaction (§C3.3). From the response until RACK, the interconnect must not snoop this master for this line (§C6.2); from edge 4, after RACK, it may snoop this master for this line again. Illustrative timing."
+  caption="Each column is one rising ACLK edge; values are those sampled at that edge. The read's two R transfers happen at edges 1 and 2 (RLAST at 2). RACK is a one-cycle pulse sampled at edge 3, the earliest legal cycle; later is legal too, but it must not be delayed to wait for another transaction (§C3.3). The shaded band, from the response until RACK, is the window in which the interconnect must not snoop this master for this line (§C6.2); from edge 4, after RACK, it may snoop this master for this line again. Illustrative timing."
   edges={6}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -1121,7 +1121,7 @@ Each question names the objective it checks.
         { text: "ACE is current, but CHI is still an unreleased draft specification.", correct: false, feedback: "CHI has had public issues since B (4 August 2017); IHI0050E.b dates from August 2021." },
         { text: "CHI replaced AXI in AMBA 5, so ACE and AXI are both obsolete today.", correct: false, feedback: "AXI and ACE continue in later issues of IHI0022; CHI is for larger coherent systems." }
       ],
-      explanation: "The IHI0022H.c change history lists Issue D (28 October 2011) as the first release of the AXI and ACE specification; the IHI0050E.b change history lists Issue A (12 June 2014) and the first public Issue B (4 August 2017).",
+      explanation: "The IHI0022E change history lists Issue D (28 October 2011) as the first release of the AXI and ACE specification; the IHI0050E.b change history lists Issue A (12 June 2014) and the first public Issue B (4 August 2017).",
       objective: 1
     },
     {
@@ -1312,7 +1312,7 @@ Sources: Table C5-8, §C6.4 and Table C4-9 (step 1); §C4.7.1, Tables C5-1, C5-3
 
 </details>
 
-**Debug variant (run 1, step 3).** A buggy interconnect sends a **ReadOnce** snoop instead of ReadShared, and A answers IsShared=1. What state is each cache in, which rule is broken, and which line of the Make It Work checker reports it?
+**Debug variant (run 1, step 3).** A buggy interconnect sends a **ReadOnce** snoop instead of ReadShared, and A answers IsShared=1. What state is each cache in, which rule is broken, and which line of the Make It Work checker reports it? This is the mutant that `tb_top` replays; answer from the tables first, then check it against the Make It Work output.
 
 <details>
 <summary>Answer</summary>
@@ -1407,7 +1407,7 @@ Then continue with the clinic in [B-AMBA-F3](/curriculum/T3_Advanced/B-AMBA-F3_I
 
 **Primary sources**
 - Arm IHI0022E, AMBA AXI and ACE Protocol Specification, Part C (ACE and ACE-Lite): §C1.1 coherency overview (§C1.1.2 usage cases); §C1.2.3 cache state model, cache state rules and Table C1-2; §C1.3.1 to §C1.3.4 signals, channels, acknowledges and channel usage examples (Tables C1-3 to C1-5); §C1.4.2 to §C1.4.7 transaction groups; §C1.6.1 domains; §C3.1 (§C3.1.1 and Table C3-2 domains, Table C3-7 read encodings, Table C3-8 write encodings, §C3.1.5 line size, Table C3-10); §C3.2 read response (Tables C3-15, C3-16); §C3.3 RACK; §C3.5 WACK; §C3.6 snoop address channel (Table C3-20 ACSNOOP encodings); §C3.7 snoop response (Table C3-22); §C3.9 snoop channel dependencies; §C4.2 snoop filtering; §C4.3 state changes (§C4.3.2 coherent store); §C4.5.3 to §C4.5.6 ReadClean, ReadNotSharedDirty, ReadShared and ReadUnique (Tables C4-9 and C4-11); Tables C4-13, C4-17 and C4-24; §C4.6.1 CleanUnique; §C4.7.1 MakeUnique; §C5.1 (Table C5-1 mapping, §C5.1.1 permitted snoops, Table C5-2 alternatives); §C5.2 (Tables C5-3, C5-4, C5-6; §C5.2.3 memory update in progress; §C5.2.5 non-blocking requirements); §C5.3 (Tables C5-8 and C5-9); §C6.2.1 read and write acknowledge; §C6.4 interconnect responses (Table C6-2); §C6.5.3 permission to update main memory; §C6.6.1 interconnect non-blocking requirements; §C11.1 ACE-Lite.
-- Arm IHI0022H.c (2021) moves ACE to Part D (Chapter D1 "About ACE", with the cache state model in §D1.2.3) and, from H.b, uses Manager and Subordinate; its change history dates Issue D (the first AXI and ACE release) to 28 October 2011. Section numbers on this page are Issue E numbers.
+- Arm IHI0022H.c (2021), not checked against the source texts used for this lesson, moves ACE to Part D (Chapter D1 "About ACE", with the cache state model in §D1.2.3) and, from H.b, uses Manager and Subordinate; the IHI0022E change history dates Issue D (the first AXI and ACE release) to 28 October 2011. Section numbers on this page are Issue E numbers.
 - Arm IHI0050E.b, AMBA 5 CHI Architecture Specification (2021): change history; §1.1.2 layers (Table 1-1); §1.2 topology; §1.3 terminology; §1.5 and §1.5.1 coherence and the 64-byte line; §1.5.2 cache state model; §1.6 node types; §1.7 DMT, DCT, DWT; §2.11 Request Retry; §4.1 cache line states; §4.4 snoop selection (Table 4-24); §4.5.1 completion response; §4.5.3 snoop response; §4.5.4 miscellaneous responses (CompAck); §4.11.1 snoop handling at an RN-F; §5.1.3 read with DCT (Figure 5-4); §8.1.1 DVM flow; §13.4 channels (Table 13-1) and §13.4.1 channel dependencies; §13.9.3 snoop flit (Table 13-8); §13.9.4 data flit; §14.2.1 L-Credit flow control.
 - IEEE 1800-2023, SystemVerilog: §16.6 Boolean expressions in concurrent assertions; §16.14 where concurrent assertions may appear; §8 classes; §7.8 associative arrays.
 - IEEE 1800.2-2020, UVM: Annex B.5.22 `` `uvm_analysis_imp_decl ``.

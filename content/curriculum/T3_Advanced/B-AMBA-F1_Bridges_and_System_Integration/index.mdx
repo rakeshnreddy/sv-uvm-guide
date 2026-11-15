@@ -128,14 +128,15 @@ sources:
     <line x1="282.5" y1="86" x2="282.5" y2="106" stroke="currentColor" strokeDasharray="3 3" fill="none" />
     <line x1="320" y1="86" x2="320" y2="106" stroke="currentColor" strokeWidth="1.6" fill="none" />
     <rect x="38.75" y="90" width="37.5" height="12" rx="2" fill="currentColor" fillOpacity="0.35" stroke="currentColor" />
-    <text x="20" y="120" fontSize="10" fill="currentColor" textAnchor="middle">0x0000</text>
-    <text x="57.5" y="120" fontSize="10" fill="currentColor" textAnchor="middle">0x0400</text>
+    <text x="4" y="120" fontSize="10" fill="currentColor" textAnchor="start">0x0000</text>
+    <text x="50" y="120" fontSize="10" fill="currentColor" textAnchor="start">0x0400</text>
     <text x="170" y="120" fontSize="10" fill="currentColor" textAnchor="middle">0x1000</text>
     <text x="320" y="120" fontSize="10" fill="currentColor" textAnchor="middle">0x2000</text>
   </svg>
   <figcaption className="mt-2 text-sm text-muted-foreground">**The two boundary rules on one address line** (8KB, one fence per KB). Top: a legal AHB INCR from 0x0880 to 0x0BFF stays between two 1KB fences. Bottom: a legal AXI INCR of 256 words from 0x0200 to 0x05FF crosses the 1KB fence at 0x0400 but stays inside its 4KB page. Every 4KB boundary is also a 1KB boundary, so a burst that obeys the AHB rule also obeys the AXI rule, but not the other way round: the bottom burst would need a split at 0x0400 on AHB.</figcaption>
 </figure>
 
+- **Memory types.** **Device** memory holds peripheral registers whose accesses have side effects, so its transfers must not be merged, split or prefetched (IHI0033B.b §3.8.4); **Normal** memory behaves like RAM. **Device-nE** and **Device-E** are the two AHB5 Device types: the E suffix means an early write response, from an intermediate point, is permitted, and nE means the response must come from the final destination (IHI0033B.b §3.8, Table 3-6). AHB5 encodes the types in `HPROT`, AXI in `AxCACHE` (IHI0022E A4.4, Table A4-5); [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index) covers them in depth.
 - **Posted and non-posted write.** A **posted** write is reported complete to the master as soon as the bridge has buffered it. A **non-posted** write is reported complete only when the far side has answered.
 - **Reference model and scoreboard.** A **reference model** (or predictor) computes what the design under test (DUT) should do; a **scoreboard** compares that prediction with what the DUT did ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 - **CDC.** A **clock domain crossing** is any signal that leaves logic clocked by one clock and is sampled by logic on another, unrelated clock.
@@ -183,7 +184,7 @@ Every row of this table is a translation the bridge must do, and so a place wher
 | Buses or channels | One address and control bus, plus separate `HWDATA` and `HRDATA` buses, pipelined (§3.1) | Five channels with independent handshakes: AW, W, B, AR, R (A3.2) |
 | Flow control | Only the slave's `HREADYOUT`, and only in the data phase; "a slave cannot request that the address phase is extended" (§1.3) | VALID/READY on every channel (A3.2.1) |
 | Outstanding transfers | One address phase overlapping one data phase | Many transactions; ordering by ID (A5.3) |
-| Burst length known up front | Yes for SINGLE, INCR4/8/16, WRAP4/8/16; **no** for INCR, "incrementing burst of undefined length" (Table 3-3) | Always: `AxLEN + 1` transfers; INCR 1 to 256, all other types 1 to 16 (A3.4.1) |
+| Burst length known up front | Yes for SINGLE, INCR4/8/16, WRAP4/8/16; **no** for INCR, "incrementing burst of undefined length" (Table 3-3) | Always: `AxLEN + 1` transfers; INCR 1 to 256, FIXED 1 to 16, WRAP 2, 4, 8 or 16 (A3.4.1) |
 | Boundary rule | No incrementing burst across 1KB (§3.5) | No burst across 4KB (A3.4.1) |
 | Alignment | Every transfer aligned to its size (§3.5) | The first transfer may be unaligned (A3.4.3) |
 | Write strobes | None in Issue B.b (Issue C adds an optional `HWSTRB`) | `WSTRB`, one bit per byte lane (A3.4.3) |
@@ -201,13 +202,13 @@ The bridge also maps the control fields. For an AHB-to-AXI bridge:
 | `AxSIZE` | `HSIZE` | Smaller when the AXI bus is narrower (downsizing) |
 | `AxCACHE[0]` (Bufferable) | `HPROT[2]` (Bufferable) | AHB Table 3-4; AXI A4.3 (Tables A4-3, A4-4) and Table A4-5 |
 | `AxCACHE[1]` (Modifiable) | `HPROT[3]` (Modifiable) | Issue A of AHB called this bit Cacheable (§3.7) |
-| `AxCACHE[3:2]` | `HPROT[6:4]` only if the AHB5 Extended_Memory_Types property is True | Otherwise a system choice |
+| `AxCACHE[3:2]` | `HPROT[5:4]` (Lookup, Allocate) through the memory types of Table 3-6 and Table A4-5, only if the AHB5 Extended_Memory_Types property is True; `HPROT[6]` (Shareable) has no AXI4 `AxCACHE` bit | Otherwise a system choice |
 | `AxPROT[0]` (Privileged) | `HPROT[1]` | A4.7 Table A4-6 |
 | `AxPROT[1]` (Non-secure) | `HNONSEC` (AHB5 Secure_Transfers, §3.9) | Otherwise a system choice |
 | `AxPROT[2]` (Instruction) | `!HPROT[0]` | `HPROT[0]` high means a data access |
 | AW or AR | `HWRITE` | |
 
-**The other direction.** An AXI-to-AHB bridge applies the same table backwards: `HPROT[0]` = `!AxPROT[2]`, `HPROT[1]` = `AxPROT[0]`, `HPROT[2]` = `AxCACHE[0]` and `HPROT[3]` = `AxCACHE[1]`. What the AHB side has no signal for is lost: `AxPROT[1]` needs the AHB5 `HNONSEC` signal, and the cache attributes in `AxCACHE[3:2]` have an AHB equivalent only with the AHB5 Extended_Memory_Types property (`HPROT[6:4]`, Tables 3-5 and 3-6). Both protocols also keep these fields fixed: `HPROT` must stay constant throughout a burst (§3.7), and no modification may change `AxPROT` (IHI0022E A4.3.1), so every piece of a split carries the same value.
+**The other direction.** An AXI-to-AHB bridge applies the same table backwards: `HPROT[0]` = `!AxPROT[2]`, `HPROT[1]` = `AxPROT[0]`, `HPROT[2]` = `AxCACHE[0]` and `HPROT[3]` = `AxCACHE[1]`. What the AHB side has no signal for is lost: `AxPROT[1]` needs the AHB5 `HNONSEC` signal, and the cache attributes in `AxCACHE[3:2]` have an AHB equivalent only with the AHB5 Extended_Memory_Types property (`HPROT[5:4]` through the Table 3-6 memory types; Shareable `HPROT[6]` has no AXI4 source). Both protocols also keep these fields fixed: `HPROT` must stay constant throughout a burst (§3.7), and no modification may change `AxPROT` (IHI0022E A4.3.1), so every piece of a split carries the same value.
 
 **Pitfall: "AHB is one multiplexed channel."** It is not: AHB has separate write-data and read-data buses (§3.1). What it lacks is per-channel handshakes and outstanding transactions. A bridge model that serializes AHB reads and writes on "one channel" is modelling the wrong bus.
 
@@ -268,7 +269,7 @@ a_ahb_no_1kb_cross: assert property (@(posedge HCLK) disable iff (!HRESETn)
 
 <TimingDiagram
   title="An undefined-length AHB INCR write: the length is known only at the end"
-  caption="HBURST is INCR throughout and HREADY is high at every edge. Transfers are accepted at edges 0, 1 and 2, with their write data one edge later. At edge 3 the master signals BUSY (its address shows the next transfer, 0x8C); at edge 4 it drives IDLE."
+  caption="x-axis: rising HCLK edges 0 to 5. HBURST is INCR throughout and HREADY is high at every edge. Transfers are accepted at edges 0, 1 and 2, with their write data one edge later. At edge 3 the master signals BUSY (its address shows the next transfer, 0x8C); at edge 4 it drives IDLE."
   edges={6}
   cycleWidth={64}
   signals={[
@@ -306,7 +307,7 @@ Both cases move the same 128-byte block (0x0100 to 0x017F); only where the AHB b
 | 0x0100 (the wrap boundary) | 0x100, 0x108, … 0x178 | one INCR of 32 at 0x0100: bytes 0x0100 to 0x017F |
 | 0x0140 | 0x140, 0x148, … 0x178, then 0x100, 0x108, … 0x138 | INCR16 at 0x0140 (bytes 0x0140 to 0x017F), then INCR16 at 0x0100 (bytes 0x0100 to 0x013F) |
 
-**Use the explorer now.** `BridgeTranslationExplorer` runs a tested model of both bridge directions. Pick each of the first five scenarios (the AHB→AXI ones), **predict** how many AXI bursts come out, and only then reveal. The last of the five, *Debug: 0x0FE0 INCR8*, is a trap: check the input before you count anything. Then edit the fields to find the boundaries yourself.
+**Use the explorer now.** `BridgeTranslationExplorer` runs a tested model of both bridge directions. Apply the rules you just read: pick each of the first five scenarios (the AHB→AXI ones) and commit to how many AXI bursts come out before you reveal it. The new cases are the *Debug: 0x0FE0 INCR8* trap and the fields you edit. The last of the five, *Debug: 0x0FE0 INCR8*, is a trap: check the input before you count anything. Then edit the fields to find the boundaries yourself.
 
 <BridgeTranslationExplorer />
 
@@ -369,7 +370,7 @@ An aligned AXI4 INCR of transfers of 4 bytes or less spans at most 1KB (256 × 4
 - **Unaligned start**: AXI's first transfer may be unaligned (A3.4.3), but every AHB transfer must be aligned to its size (§3.5). The bridge sends the first partial transfer as smaller aligned SINGLEs. An AXI INCR4 of words at 0x1001 becomes a byte SINGLE at 0x1001, a halfword SINGLE at 0x1002, then a 3-transfer INCR at 0x1004.
 - **Sparse or all-zero `WSTRB`**: IHI0033B.b has no write strobes, so a write whose strobes do not cover whole aligned transfers must go out as narrower aligned transfers, and a transfer with all strobes low, which a master may use to "disable further writing" (A3.4.1), writes nothing and can be skipped.
 
-**Use the explorer again.** Scroll back to [the explorer above](#ahb-to-axi-what-forces-a-split). Pick *AXI INCR16 across 1KB*, *AXI unaligned start* and *AXI WRAP4*, predict each count, and reveal. Then set AxBURST to FIXED and predict once more.
+**Use the explorer again.** Scroll back to [the explorer above](#ahb-to-axi-what-forces-a-split). Check the cases above in the explorer: pick *AXI INCR16 across 1KB*, *AXI unaligned start* and *AXI WRAP4*, predict each count, and reveal. Then set AxBURST to FIXED, and change AxADDR and AxLEN to find a case the text did not cover; predict each before revealing.
 
 <details>
 <summary>Debrief: check your four predictions</summary>
@@ -421,7 +422,7 @@ An **AHB-to-AXI bridge** receives AXI responses and must express them on AHB:
 
 <TimingDiagram
   title="AHB-to-AXI bridge: an AHB INCR4 read where the second AXI beat returns SLVERR"
-  caption="The AXI read has ARLEN = 3 (4 beats); ARREADY and RREADY are high throughout, so the AR handshake is at edge 1 and each R beat is accepted at the edge it is shown. AHB beat 1 completes with OKAY and D1 at edge 3, where the SEQ to 0x44 is accepted. The second R beat carries RRESP = SLVERR. Follow HRESP, HREADY and HTRANS from edge 4."
+  caption="x-axis: rising edges 0 to 6 of one clock (HCLK = ACLK). The AXI read has ARLEN = 3 (4 beats); ARREADY and RREADY are high throughout, so the AR handshake is at edge 1 and each R beat is accepted at the edge it is shown. AHB beat 1 completes with OKAY and D1 at edge 3, where the SEQ to 0x44 is accepted. The second R beat carries RRESP = SLVERR. Read HRESP, HREADY and HTRANS from edge 4 onward before you answer."
   edges={7}
   cycleWidth={64}
   signals={[
@@ -439,8 +440,8 @@ An **AHB-to-AXI bridge** receives AXI responses and must express them on AHB:
   markers={[
     { edge: 1, tone: "info", label: "AR handshake (ARREADY high); beat 1 waits for data", short: "AR" },
     { edge: 3, tone: "pass", label: "beat 1 completes OKAY with D1; SEQ 0x44 accepted", short: "D1" },
-    { edge: 4, tone: "fail", label: "ERROR cycle 1: HRESP ERROR, HREADY low", short: "ERR1" },
-    { edge: 5, tone: "fail", label: "ERROR cycle 2: HREADY high; master drives IDLE (cancel)", short: "ERR2" }
+    { edge: 4, tone: "info", label: "edge 4", short: "4" },
+    { edge: 5, tone: "info", label: "edge 5", short: "5" }
   ]}
 />
 
@@ -448,6 +449,8 @@ An **AHB-to-AXI bridge** receives AXI responses and must express them on AHB:
 
 <details>
 <summary>Check your prediction</summary>
+
+Edge 4 is ERROR cycle 1 (`HRESP` ERROR, `HREADY` low); edge 5 is ERROR cycle 2 (`HREADY` high), where the master's IDLE replaces 0x48.
 
 Edge 4, where `HRESP` is ERROR with `HREADY` low: the first cycle of the two-cycle ERROR. And yes: 0x48 is on the bus but not accepted, because `HREADY` is low, so the master replaces it with IDLE during the ERROR, which is sampled at edge 5 (§3.5.2). Beat 2 thus ends at edge 5 with ERROR. The bridge still accepts R beats 3 and 4 (edges 4 and 5, `RLAST` on beat 4) and drops them, because an AXI burst cannot be cut short.
 
@@ -552,13 +555,11 @@ Bridge -> AXI slave (AXI master interface)
 Bridge -> AHB master
   5. Non-posted: the bridge has held HREADYOUT low on the last data phase; it
      now completes it with OKAY, or with the two-cycle ERROR if BRESP is an error.
-     Posted: every beat already completed with OKAY in step 2, so a BRESP error
-     must be reported another way (interrupt, error status register).
 ```
 
 <TimingDiagram
   title="Non-posted AHB INCR4 write through an AHB-to-AXI bridge, with BRESP = SLVERR"
-  caption="AWREADY, WREADY and BREADY are high throughout, so each AXI handshake happens at the edge its VALID is shown. Beats 1 to 3 complete with OKAY at edges 1 to 3. The bridge holds HREADY low on beat 4 from edge 4 while the AXI write finishes (OKAY during the wait, §5.1.2); the master holds HWDATA = D3 (§6.1.1). BRESP = SLVERR arrives at edge 7, so beat 4 ends with the two-cycle ERROR at edges 8 and 9."
+  caption="x-axis: rising edges 0 to 9 of one clock (HCLK = ACLK). AWREADY, WREADY and BREADY are high throughout, so each AXI handshake happens at the edge its VALID is shown. Beats 1 to 3 complete with OKAY at edges 1 to 3. The bridge holds HREADY low on beat 4 from edge 4 while the AXI write finishes (OKAY during the wait, §5.1.2); the master holds HWDATA = D3 (§6.1.1). BRESP = SLVERR arrives at edge 7, so beat 4 ends with the two-cycle ERROR at edges 8 and 9."
   edges={10}
   cycleWidth={64}
   signals={[
@@ -590,6 +591,8 @@ Bridge -> AHB master
 Nothing of this write: beat 4 already completed with OKAY at edge 4, and the AHB bus is free for other transfers. The SLVERR at edge 7 can only reach software through an interrupt or a status register.
 
 </details>
+
+In the posted case, every beat already completed with OKAY in step 2, so a BRESP error must be reported another way (interrupt, error status register).
 
 | Write policy | When the AHB master sees the last beat complete | What happens to a SLVERR or DECERR in `BRESP` |
 |---|---|---|
@@ -939,7 +942,7 @@ a_ahb_liveness: assert property (@(posedge HCLK) disable iff (!HRESETn)
 
 <TimingDiagram
   title="A liveness property that passes on a hang"
-  caption="The bridge accepts a NONSEQ at edge 1 and then never raises HREADYOUT. The property 'HTRANS == NONSEQ |-> s_eventually HREADY' is satisfied at edge 1 itself by the HREADY that accepted the transfer, so it passes. The corrected property starts at edge 2 and is still pending at the end, so it is never satisfied: a formal tool reports a counterexample, and a simulator can report the unfinished attempt at end of test (tool-dependent)."
+  caption="x-axis: rising HCLK edges 0 to 5. The bridge accepts a NONSEQ at edge 1 and then never raises HREADYOUT. The property 'HTRANS == NONSEQ |-> s_eventually HREADY' is satisfied at edge 1 itself by the HREADY that accepted the transfer, so it passes. The corrected property starts at edge 2 and is still pending at the end, so it is never satisfied: a formal tool reports a counterexample, and a simulator can report the unfinished attempt at end of test (tool-dependent)."
   edges={6}
   cycleWidth={64}
   signals={[
@@ -954,11 +957,16 @@ a_ahb_liveness: assert property (@(posedge HCLK) disable iff (!HRESETn)
   ]}
 />
 
-`|->` starts the consequent at the antecedent's end point (§16.12.7), and `s_eventually` holds if its operand holds "at a current or future clock tick" (§16.12.13). The accepting `HREADY` is that current tick, so the old property never looks at the data phase. In this single-slave picture `HREADY` equals the bridge's `HREADYOUT`.
+`|->` starts the consequent at the antecedent's end point (§16.12.7), and `s_eventually` holds if "there exists a current or future clock tick at which" its operand is true (§16.12.13). The accepting `HREADY` is that current tick, so the old property never looks at the data phase. In this single-slave picture `HREADY` equals the bridge's `HREADYOUT`.
 
-For a formal proof the environment needs **assumptions** (`assume property`, §16.14.2): the tool explores only input behaviour the assumptions allow, and in simulation an assumption is checked like an assertion. A bridge needs two kinds: the AHB master rules on the AHB port (best taken from an AHB master assertion IP used as assumptions, including the 1KB rule), and **fairness** on the AXI side, meaning the slave eventually raises its READY signals and eventually answers with `BVALID` and `RVALID`. Without fairness the tool proves nothing about liveness, because a slave that never answers is a legal counterexample.
+For a formal proof the environment needs **assumptions** (`assume property`, §16.14.2): the tool explores only input behaviour the assumptions allow, and in simulation an assumption is checked like an assertion.
 
-**Predict first:** which side's rules become assumptions, and which become assertions? Sort the four groups (AHB master rules, the bridge's AHB slave obligations, AXI slave rules, the bridge's AXI master obligations) before you look at the picture.
+**Predict first:** which side's rules become assumptions, and which become assertions? Sort the four groups (AHB master rules, the bridge's AHB slave obligations, AXI slave rules, the bridge's AXI master obligations) before you open the answer.
+
+<details>
+<summary>Check your prediction</summary>
+
+A bridge needs two kinds: the AHB master rules on the AHB port (best taken from an AHB master assertion IP used as assumptions, including the 1KB rule), and **fairness** on the AXI side, meaning the slave eventually raises its READY signals and eventually answers with `BVALID` and `RVALID`. Without fairness the tool proves nothing about liveness, because a slave that never answers is a legal counterexample.
 
 <ArchitectureDiagram
   title="Formal setup for an AHB-to-AXI bridge: assume the environment, assert the bridge"
@@ -984,7 +992,11 @@ For a formal proof the environment needs **assumptions** (`assume property`, §1
   ]}
 />
 
-**Debrief.** The rules of whatever drives the bridge's inputs become assumptions; the rules the bridge itself must follow become assertions. Liveness needs fairness because, without it, "the slave never answers" is a legal input and a counterexample to every liveness property. The snippet below adds two fairness assumptions on `ACLK`, for the read channels, and the two covers that show the proof is not vacuous:
+**Debrief.** The rules of whatever drives the bridge's inputs become assumptions; the rules the bridge itself must follow become assertions. Liveness needs fairness because, without it, "the slave never answers" is a legal input and a counterexample to every liveness property.
+
+</details>
+
+The snippet below adds two fairness assumptions on `ACLK`, for the read channels, and the two covers that show the proof is not vacuous:
 
 ```systemverilog
 // snippet: assumptions and covers for a formal run (AHB-to-AXI direction)
@@ -1003,7 +1015,7 @@ c_wrap16_dw: cover property (@(posedge HCLK) disable iff (!HRESETn)
   HSEL && HREADY && HTRANS == 2'b10 && HBURST == 3'b110 && HSIZE == 3'b011);
 ```
 
-`cover property` (§16.14.3) counts the evaluation attempts in which the property succeeds; a formal tool searches for a trace in which it does. If a cover can never succeed, an assumption (or a bug) has removed that behaviour, and every assertion that depends on it passes without checking anything. Write-side fairness is subtler: a slave may legally wait for `WVALID` before it raises `AWREADY` (A3.3.1), so an unconditional `AWVALID |-> s_eventually AWREADY` forbids that slave, and with it the handshake deadlock you want to find. [Expert: formal verification of a bridge that converges](#expert-formal-verification-of-a-bridge-that-converges) shows a version that keeps it, and covers the rest.
+`cover property` (§16.14.3) counts the evaluation attempts in which the property succeeds; a formal tool searches for a trace in which it does. If a cover can never succeed, an assumption (or a bug) has removed that behaviour, and every assertion that depends on it passes without checking anything. Write-side fairness is subtler: a slave may legally wait for `WVALID` before it raises `AWREADY` (A3.3.1), so an unconditional `AWVALID |-> s_eventually AWREADY` rules out a slave that waits for `WVALID` forever, and with it the handshake deadlock you want to find. [Expert: formal verification of a bridge that converges](#expert-formal-verification-of-a-bridge-that-converges) shows a version that keeps it, and covers the rest.
 
 **Coverage.** Cover the translation cases, not just the traffic: direction × burst type (SINGLE, INCR4/8/16, WRAP4/8/16, undefined INCR, AXI FIXED and WRAP2) × length class (1, 2 to 16, 17 to 256, more than 256) × size × boundary relation (inside, ends exactly at, crosses 1KB) × alignment × response (OKAY, SLVERR, DECERR, and their beat position) × posting × memory type (`HPROT[3:2]`, or `AxCACHE[1:0]` on the AXI side) × backpressure on each AXI channel. Every assertion's antecedent needs a `cover property` too, or a clean run may mean nothing was checked. A covergroup for the AXI-to-AHB direction, sampled once per AXI burst by the AXI monitor, shows the shape (IEEE 1800-2023 §19.3, §19.5, §19.6, §19.8.1):
 
@@ -1431,7 +1443,7 @@ A bridge suits formal well, because its rules are local and precise, but a naive
     AWVALID && (WVALID || w_offered) |-> s_eventually AWREADY);
   ```
 
-  Against a bridge whose `WVALID` waits for `AWREADY`, the antecedent never holds, so the tool may keep `AWREADY` low, and `a_ahb_liveness` fails as soon as the bridge can take no more AHB data: the deadlock is found. An unconditional `AWVALID |-> s_eventually AWREADY` would force `AWREADY` high and prove the deadlocking bridge live. The lab's `AXI_SLAVE_WAITS_FOR_W` slave uses the same `aw_gate` logic in simulation.
+  Against a bridge whose `WVALID` waits for `AWREADY`, the antecedent never holds, so the tool may keep `AWREADY` low, and `a_ahb_liveness` fails as soon as the bridge can take no more AHB data: the deadlock is found. An unconditional `AWVALID |-> s_eventually AWREADY` would force `AWREADY` high and prove the deadlocking bridge live. The lab's `+define+AXI_SLAVE_WAITS_FOR_W` slave uses the same logic in simulation: its register `aw_gate` in `testbench.sv` is `w_offered` under another name, and it drives `AWREADY`.
 - **Over-constraint hides bugs:** an assumption such as `HSIZE <= 3'b010` ("transfers are at most a word") looks harmless, but it removes the 64-bit WRAP16 downsizing case, so the WRAP→INCR bug can never be reached. Every assumption needs a `cover property` (§16.14.3) on the behaviour it might exclude.
 - **Data integrity with a tracked byte:** let the tool choose a symbolic address and data byte, written once on the AHB side; assert that the AXI side writes that byte to that address, exactly once and in order. That proves the transformation for every address, unlike a byte count, which passes with wrong data or a wrong address.
 - **Convergence:** deep buffers, 256-transfer counters and asynchronous FIFOs make full proofs expensive. Reduce parameters (a shallower buffer, a smaller maximum length), prove bounded properties, and say which. How far a given engine gets is **tool-dependent**.

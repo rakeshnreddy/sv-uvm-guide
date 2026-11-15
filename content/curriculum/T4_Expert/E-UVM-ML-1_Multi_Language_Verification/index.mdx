@@ -31,18 +31,18 @@ sources:
 
 <ArchitectureDiagram
   title="The container-port analogy, and where it breaks"
-  caption="Read the left column top to bottom: the generic payload (the container) leaves a UVM socket (a berth), and the bridge library (the customs office) unpacks it and repacks it for the SystemC socket. The right column is where the analogy breaks. Each kernel has its own scheduler and its own phases, and the timing is not inside the payload: it travels as a separate annotation, the delay argument of b_transport, which the bridge converts too. Someone must still decide whose clock counts and who ends the test."
+  caption="Read the left column top to bottom: the generic payload (the container) leaves a UVM socket (a berth), and the bridge library (the customs office) unpacks it and repacks it for the SystemC socket. The right column is where the analogy breaks. Each kernel has its own scheduler and its own phases, and the timing is not inside the payload: it travels as a separate annotation, a separate delay value passed with each call, which the bridge converts too. Someone must still decide whose clock counts and who ends the test."
   cellWidth={150}
   gapX={56}
   nodes={[
     { id: "qa-sv", label: "SystemVerilog kernel", kind: "env", col: 0, row: 0, colSpan: 2, container: true },
     { id: "qa-svsock", label: "UVM socket", sublabel: "a berth", kind: "generic", col: 0, row: 0 },
-    { id: "qa-svtime", label: "SV time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 0, state: "dim" },
+    { id: "qa-svtime", label: "SV time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 0 },
     { id: "qa-bridge", label: "bridge library", sublabel: "customs: unpack, repack", kind: "generic", col: 0, row: 1, state: "active" },
     { id: "qa-ann", label: "timing annotation", sublabel: "travels beside the payload", kind: "generic", col: 1, row: 1 },
     { id: "qa-sc", label: "SystemC kernel", kind: "env", col: 0, row: 2, colSpan: 2, container: true },
     { id: "qa-scsock", label: "SystemC socket", sublabel: "a berth", kind: "generic", col: 0, row: 2 },
-    { id: "qa-sctime", label: "SC time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 2, state: "dim" }
+    { id: "qa-sctime", label: "SC time and phases", sublabel: "own scheduler", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
     { from: "qa-svsock", to: "qa-bridge", style: "data", label: "payload" },
@@ -156,7 +156,7 @@ TLM-1 ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)) m
 | Attribute | Accessors | Rule (1800.2 §12.3.4.2.7 to §12.3.4.2.14) |
 |---|---|---|
 | command | `set_command`, `set_write`, `set_read`, `get_command` | `UVM_TLM_READ_COMMAND`, `UVM_TLM_WRITE_COMMAND` or `UVM_TLM_IGNORE_COMMAND` (§12.3.4.1.1). Set by the initiator only. |
-| address | `set_address`, `get_address` | 64-bit start address. A target that cannot use it returns `UVM_TLM_ADDRESS_ERROR_RESPONSE`. |
+| address | `set_address`, `get_address` | 64-bit start address. A target that cannot use it shall return an error status; the recommended one is `UVM_TLM_ADDRESS_ERROR_RESPONSE`. |
 | data | `set_data`, `get_data` | A `byte unsigned` dynamic array. The initiator supplies it, also for a read; the target overwrites it only for a read. |
 | data length | `set_data_length`, `get_data_length` | Number of bytes to transfer. Never 0; to move nothing, use the ignore command. |
 | byte enables | `set_byte_enable`, `set_byte_enable_length` | `8'hFF` enables a byte, `8'h00` disables it. An empty array means byte enables are not used. |
@@ -178,9 +178,9 @@ The response status rule is the one that catches people. `UVM_TLM_INCOMPLETE_RES
 <ArchitectureDiagram
   title="Socket anatomy: forward and backward paths"
   caption="Solid arrows are transport calls; ■ is a port and ● an imp. Top row, non-blocking: the initiator socket is a forward port that has a backward imp, and the target socket is a forward imp that has a backward port, so nb_transport_fw goes forward and the target can call nb_transport_bw back (§12.3.5.3, §12.3.5.4). Bottom row, blocking: the initiator socket is a forward port and the target socket a forward imp, with no backward path except the payload contents (§12.3.5.1, §12.3.5.2). You connect the initiator socket to the target socket; calling connect on a target terminator socket is an error (§12.3.5.1.4). Pass-through sockets, not drawn, carry the same paths across a hierarchy boundary."
-  cellWidth={120}
+  cellWidth={110}
   cellHeight={76}
-  gapX={150}
+  gapX={130}
   nodes={[
     { id: "sk-nbi", label: "initiator", sublabel: "nb initiator socket", kind: "generic", col: 0, row: 0 },
     { id: "sk-nbt", label: "target", sublabel: "nb target socket", kind: "generic", col: 1, row: 0 },
@@ -202,18 +202,21 @@ The response status rule is the one that catches people. `UVM_TLM_INCOMPLETE_RES
   ]}
 />
 
-**3. Blocking transport.** `b_transport(t, delay)` executes the whole transaction in one task call (§12.3.2.2.3). The call marks the transaction's first timing point and the return marks its last. The **timing annotation** `delay` "allows the timing points to be offset from the simulation times at which the task call and return are executed". So a target can report "this took 10 ns" by adding to `delay` and return at once, without waiting. This is the **loosely-timed (LT)** style: a model reports its latency instead of spending it. `delay` is a `uvm_tlm_time` object, a class with `incr`, `decr`, `get_realtime` and `get_abstime` (`typedef uvm_time uvm_tlm_time`, §5.6), so the target's change is visible to the caller.
+**3. Blocking transport.** `b_transport(t, delay)` executes the whole transaction in one task call (§12.3.2.2.3). The call marks the transaction's first timing point and the return marks its last. The **timing annotation** `delay` "allows the timing points to be offset from the simulation times at which the task call and return are executed". So a target can report "this took 10 ns" by adding to `delay` and return at once, without waiting. This is the **loosely-timed (LT)** style: a model reports its latency instead of spending it. `delay` is a `uvm_tlm_time` object, a class with `incr`, `decr`, `get_realtime` and `get_abstime` (`typedef uvm_time uvm_tlm_time`, §12.3.9; the class `uvm_time` and its methods are §5.6), so the target's change is visible to the caller.
 
 **4. Non-blocking transport** spreads one transaction over several calls, `nb_transport_fw` from initiator to target and `nb_transport_bw` back, each carrying a **TLM phase** (`BEGIN_REQ`, `END_REQ`, `BEGIN_RESP`, `END_RESP`, §12.3.3.1) and returning a **sync value**: `UVM_TLM_ACCEPTED`, `UVM_TLM_UPDATED` or `UVM_TLM_COMPLETED` (§12.3.3.2). A TLM phase is a step in one transaction's protocol; it has nothing to do with UVM phases such as `run_phase`. Push Further walks through it; the blocking form is what most reference models use.
 
-**Predict first.** In the bench below, the client calls `b_transport` at 0 ns. The target calls the C++ model through DPI, adds 10 ns to `delay`, sets the status to OK and returns. At what simulation time does `b_transport` return, and what time does the client's next transaction start? Write your answer, then read the diagram.
+**Predict first.** In the bench below, the client calls `b_transport` at 0 ns. The target calls the C++ model through DPI, adds 10 ns to `delay`, sets the status to OK and returns. At what simulation time does `b_transport` return, and what time does the client's next transaction start? Write your answer, then open the timeline.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the timeline</summary>
 
 <SequenceDiagram
   title="One blocking transport with a timing annotation"
   caption="b_transport returns at the simulation time it was called (0 ns). The 10 ns annotation is information for the caller; this client honours it by waiting before its next transaction, which therefore starts at 10 ns."
   participants={[
     { id: "client", label: "client", sublabel: "initiator socket", kind: "generic" },
-    { id: "target", label: "target", sublabel: "ref_mem_target", kind: "generic" },
+    { id: "target", label: "target", sublabel: "DPI-backed target", kind: "generic" },
     { id: "model", label: "C++ model", sublabel: "via DPI", kind: "model" }
   ]}
   messages={[
@@ -231,7 +234,9 @@ The response status rule is the one that catches people. `UVM_TLM_INCOMPLETE_RES
 
 **What the diagram shows.** The call and return happen at 0 ns, and so does the DPI call inside it (§35.5.1.1). The annotation is not a wait: `b_transport` may consume time if the target chooses to wait, but this one does not. The caller decides what to do with the 10 ns. This client waits it out, so its log lines are 10 ns apart. A faster, **temporally decoupled** client would keep adding annotations and synchronize later.
 
-**Predict first: waiting versus temporal decoupling.** Keep the same target: it adds 10 ns to `delay` and returns at once. Client A is `ref_client`: it creates a new `delay` for every call and runs `#(delay.get_realtime(1ns))` after each return. Client B, a variant, makes three calls back to back at 0 ns, passes the same `delay` object to all three without resetting it, and waits once, after the third return, for the value `delay` then holds. For each client, at what simulation time is each `b_transport` called, and when does its last wait end?
+</details>
+
+**Predict first: waiting versus temporal decoupling.** Keep the same target: it adds 10 ns to `delay` and returns at once. Client A, like the client in the timeline above (the bench's `ref_client` in Make It Work), creates a new `delay` for every call and runs `#(delay.get_realtime(1ns))` after each return. Client B, a variant, makes three calls back to back at 0 ns, passes the same `delay` object to all three without resetting it, and waits once, after the third return, for the value `delay` then holds. For each client, at what simulation time is each `b_transport` called, and when does its last wait end?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show both clients on one time axis</summary>
@@ -400,7 +405,7 @@ With UVM-ML OA, *when* each call runs is the part that breaks benches. The diagr
     { kind: "note", from: "top", to: "ml", label: "Wrong: no component or socket exists yet, so nothing is connected", tone: "error" },
     { from: "top", to: "ml", label: "uvm_ml_run_test(tops)" },
     { kind: "divider", label: "build_phase" },
-    { kind: "self", from: "env", label: "create client; sock = new(...)" },
+    { kind: "self", from: "env", label: "create client (client builds its sock)" },
     { kind: "divider", label: "phase_ended(build)" },
     { from: "env", to: "ml", label: "ml_tlm2#()::register(client.sock)" },
     { kind: "divider", label: "connect_phase" },
@@ -426,7 +431,7 @@ A mixed bench has two schedulers. Three questions decide whether it behaves.
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the answer</summary>
 
-**Test B.** Each of its calls returns as soon as the target accepts the request, so its loop finishes and drops the objection while responses are still outstanding, and `run_phase` ends at that drop. Test A is safe without extra code: once `b_transport` returns, the transaction is presumed executed (1800.2 §12.3.2.2.3), so the last return comes after the model's last result. To make test B safe, count the outstanding transactions and drop the objection only after the last one completes, or let the SystemC side hold objections through the bridge.
+**Test B.** Each of its calls returns as soon as the target accepts the request, so its loop finishes and drops the objection while responses are still outstanding, and, with no drain time or phase_ready_to_end hook, `run_phase` ends at that drop. Test A is safe without extra code: once `b_transport` returns, the transaction is presumed executed (1800.2 §12.3.2.2.3), so the last return comes after the model's last result. To make test B safe, count the outstanding transactions and drop the objection only after the last one completes, or let the SystemC side hold objections through the bridge.
 
 </details>
 
@@ -440,7 +445,7 @@ A mixed bench has two schedulers. Three questions decide whether it behaves.
   ]}
   messages={[
     { kind: "divider", label: "build" },
-    { kind: "self", from: "sv", label: "create client, sock = new(...)" },
+    { kind: "self", from: "sv", label: "create client (client builds its sock)" },
     { kind: "self", from: "sc", label: "construct module and socket" },
     { kind: "divider", label: "connect, then end_of_elaboration" },
     { from: "sv", to: "br", label: "register and connect sock" },
@@ -457,7 +462,7 @@ A mixed bench has two schedulers. Three questions decide whether it behaves.
 
 **Debrief.** The diagram puts registration in build and connect, and traffic in `run_phase`, which matches both libraries' documented flows. It deliberately draws no barrier around `run_phase` in both languages: that guarantee is library-, version- and tool-dependent. The robust design gives end-of-test ownership to one side. Either the SystemVerilog test waits for the model's last response before it drops its objection (natural with `b_transport`, which returns only when the model is done), or the SystemC side raises and drops objections through the bridge (UVMC's Command API).
 
-**See the same trap on one kernel.** The end-of-test explorer below is a single-language model of uvm-core 2020.3.1, not a bridge, but the rule it shows is the one question 3 depends on. Choose the **Lost response** scenario: the test drops its objection at 400 ns and the last response reaches the scoreboard 30 ns later. Predict when `run_phase` ends before you look at the timeline, then compare it with **phase_ready_to_end**, where the scoreboard holds the phase open until that response arrives.
+**See the same trap on one kernel.** The end-of-test explorer below is a single-language model of uvm-core 2020.3.1, not a bridge, but the rule it shows is the one question 3 depends on. Choose the **Lost response** scenario: the test drops its objection at 400 ns and the last response reaches the scoreboard 30 ns later. Predict when `run_phase` ends before you look at the timeline. After you check, switch to **phase_ready_to_end** and see what changes.
 
 <UvmPhasingDiagram />
 
@@ -763,7 +768,7 @@ Each access logs at its call time (0, 10, 20 ns) because the client waits out th
 |---|---|---|
 | The initiator presets the status | `gp.set_response_status(UVM_TLM_INCOMPLETE_RESPONSE);` in `ref_client::access` | 1800.2 §12.3.4.2.11 |
 | A target that does not implement byte enables answers with an error | `if (t.get_byte_enable_length() != 0)` → `UVM_TLM_BYTE_ENABLE_ERROR_RESPONSE` | §12.3.4.2.12 (the recommended status) |
-| Check the length against the array before indexing | `if (t.get_data_length() != 4 \|\| bytes.size() < 4)` → `UVM_TLM_GENERIC_ERROR_RESPONSE` | §12.3.4.2.4, §12.3.4.2.10 |
+| Check the length against the array before indexing | `if (t.get_data_length() != 4 \|\| bytes.size() < 4)` → `UVM_TLM_GENERIC_ERROR_RESPONSE` | §12.3.4.2.10 (length); §12.3.4.2.4 (`do_pack` fatal when it exceeds the array) |
 | The command decides the direction; ignore executes nothing | `case (t.get_command())` with `default: ;` | §12.3.4.1.1, §12.3.4.2.8 |
 | Read data goes into the payload's own copy | `t.set_data(bytes);` in the read branch | IEEE 1800-2023 §7.6 |
 | Latency is reported, not spent | `delay.incr(10ns, 1ns);` | §12.3.2.2.3 |
@@ -907,7 +912,7 @@ Every bridge converts, and conversion is where silent bugs live.
 - **Generic payloads.** UVMC predefines the converter. UVM-ML OA serializes objects with packing routines, normally from the UVM field macros, and requires the field registration order to match on both sides (Cadence 2018 §V). `uvm_tlm_generic_payload::do_pack` packs address, command, data length, DMI hint, data, status, byte-enable length, byte enables and streaming width, in that order, and does **not** pack extensions by default (§12.3.4.2.4).
 - **Extensions.** A GP extension must exist in both languages. With UVM-ML OA, class names must match or be paired with `uvm_ml::set_type_match("sv:vip_transfer_gp_ext", "sc:transfer_gp_ext")` (Cadence 2018 Example 10).
 - **The data array.** 1800.2 leaves byte order to you: "use a consistent mechanism to both fill the payload data array and later extract data from it" (§12.3.4.2.9). The worked example chose little-endian on both sides.
-- **Packed structs over DPI.** The first member of a packed struct is the most significant (IEEE 1800-2023 §7.2.1), and DPI passes it as the canonical `svBitVecVal` array whose first element holds the 32 least significant bits (Annex H.7.7). A C struct declares its first member at the lowest address. Copy one onto the other and the fields come out reversed.
+- **Packed structs over DPI.** The first member of a packed struct is the most significant (IEEE 1800-2023 §7.2.1), and DPI passes it as the canonical `svBitVecVal` array whose first element holds the 32 least significant bits (Annex H.7.7). A C struct declares its first member at the lowest address. Copy one onto the other and each field gets the wrong bytes.
 
 A traced example. SystemVerilog passes `typedef struct packed { bit [7:0] opcode; bit [23:0] addr; } cmd_t;` with `opcode = 8'h5A` and `addr = 24'h001234` to an import `function void send_cmd(input cmd_t c)`, which C receives as `const svBitVecVal* c`.
 
@@ -985,9 +990,9 @@ A traced example. SystemVerilog passes `typedef struct packed { bit [7:0] opcode
 
 </details>
 
-The rule: convert field by field with shifts and masks, and test the converter with a pattern whose every field differs.
+The rule: convert field by field with shifts and masks (here `opcode = (c[0] >> 24) & 0xFF`, `addr = c[0] & 0xFFFFFF`), and test the converter with a pattern whose every field differs.
 
-**Check your DPI type instincts.** The explorer below models IEEE 1800-2023 DPI. In its first panel, choose `bit [7:0] x` and predict which C type arrives before you reveal it, then compare the answer with the way `cmd_t` arrived above. In its second panel, the scenario "task blocks on a socket" is the "Simulation freezes" row of the debugging table in Build Your Mental Model.
+**Check your DPI type instincts.** The explorer below models IEEE 1800-2023 DPI. In its first panel, choose `bit [7:0]` and predict which C type arrives before you reveal it, then compare the answer with the way `cmd_t` arrived above. In its second panel, the scenario "task blocks on a socket" is the "Simulation freezes" row of the debugging table in Build Your Mental Model.
 
 <DPIBoundaryInspector />
 
@@ -1032,9 +1037,9 @@ Answer each one before you open the feedback.
   title="Interview: DPI or a TLM bridge?"
   question="The architecture team gives you a SystemC loosely-timed model of a DMA engine with a TLM-2.0 target socket and two SC_THREADs. The algorithm team gives you a C++ function that computes a frame checksum. How do you connect each one to your UVM bench?"
   options={[
-    { text: "DPI for both: DPI can call any C++ code, so it is always enough.", isCorrect: false, feedback: "DPI calls functions in zero time. The DMA model has its own processes and sockets that need the SystemC kernel; reaching it through DPI means hand-written glue around sc_find_object and a friend declaration, as Cadence's 2018 comparison shows." },
-    { text: "A TLM bridge for the SystemC model, connecting a UVM initiator socket to its target socket; DPI with an extern C wrapper for the checksum function.", isCorrect: true, feedback: "Correct. Match the option to the model's shape: sockets and processes need a kernel and a bridge, a pure function needs only DPI." },
-    { text: "Bind a uvm_tlm_b_initiator_socket directly to the SystemC socket, because UVM TLM-2 is SystemC TLM-2.0.", isCorrect: false, feedback: "IEEE 1800.2 says UVM's TLM is based on the OSCI work but is not an exact replication. Different classes, languages and time types need a bridge." },
+    { text: "DPI for both: DPI can call any C++ code, including SystemC modules and their threads, so it is always enough.", isCorrect: false, feedback: "DPI calls functions in zero time. The DMA model has its own processes and sockets that need the SystemC kernel; reaching it through DPI means hand-written glue around sc_find_object and a friend declaration, as Cadence's 2018 comparison shows." },
+    { text: "A TLM bridge from a UVM initiator socket to the SystemC model's target socket; DPI with an extern C wrapper for the checksum.", isCorrect: true, feedback: "Correct. Match the option to the model's shape: sockets and processes need a kernel and a bridge, a pure function needs only DPI." },
+    { text: "Bind a uvm_tlm_b_initiator_socket directly to the SystemC socket, because UVM TLM-2 is SystemC TLM-2.0 under another name.", isCorrect: false, feedback: "IEEE 1800.2 says UVM's TLM is based on the OSCI work but is not an exact replication. Different classes, languages and time types need a bridge." },
     { text: "Rewrite both models in SystemVerilog so that no boundary exists.", isCorrect: false, feedback: "That throws away the main benefit, an independent model from another team, and creates a second model that can drift." }
   ]}
 />
@@ -1043,10 +1048,10 @@ Answer each one before you open the feedback.
   title="Interview: the mixed bench that ends early"
   question="Your UVM test drops its objection after sending 100 transactions through a bridge. The log shows the SystemC model still printing responses after report_phase, and some checks never ran. What happened, and how do you fix it?"
   options={[
-    { text: "The bridge is broken; switch libraries.", isCorrect: false, feedback: "The bridge did its job. The end-of-test ownership was never planned." },
-    { text: "Add a #10us delay before dropping the objection.", isCorrect: false, feedback: "A guessed delay hides the race until the model gets slower. Synchronize on responses or objections instead." },
+    { text: "The bridge is broken, because a working bridge would have kept both run_phases aligned; switch libraries.", isCorrect: false, feedback: "The bridge did its job. The end-of-test ownership was never planned." },
+    { text: "Add a #10us delay before dropping the objection, so that the model always has enough time to finish its last responses before run_phase ends and report_phase runs its checks.", isCorrect: false, feedback: "A guessed delay hides the race until the model gets slower. Synchronize on responses or objections instead." },
     { text: "SystemC always ends its simulation first, so the log is misleading.", isCorrect: false, feedback: "The log shows real work after report_phase. Nothing in either standard makes SystemC end first." },
-    { text: "Nothing covered the model's work with an objection: SV ended run_phase while the model was busy. Make the test wait for every response (for example by using b_transport, which returns only when done) or raise objections from SystemC through the bridge.", isCorrect: true, feedback: "Correct. run_phase ends when the last objection drops. Cross-language objection behaviour is library- and tool-dependent, so own it explicitly." }
+    { text: "Nothing covered the model's work with an objection, so SV ended run_phase while it was busy. Wait for every response, or raise objections from SystemC through the bridge.", isCorrect: true, feedback: "Correct. To wait for every response, for example use b_transport, which returns only when done. run_phase ends when the last objection drops. Cross-language objection behaviour is library- and tool-dependent, so own it explicitly." }
   ]}
 />
 
@@ -1054,9 +1059,9 @@ Answer each one before you open the feedback.
   title="Interview: UVM Connect or UVM-ML OA?"
   question="Your team must reuse a SystemC model and also an existing e verification component. Which library fits, and what do you check first?"
   options={[
-    { text: "UVM-ML OA, because it supports UVM-SV, SystemC and e frameworks; first check that your simulator and the library version support the features you need, such as run-time phase synchronization.", isCorrect: true, feedback: "Correct. UVM-ML OA covers e, and its feature support is version- and simulator-dependent (Xcelium-only run-time sub-phase sync in 1.9, per HPE 2018)." },
-    { text: "UVM Connect, because it is the Synopsys standard for all languages.", isCorrect: false, feedback: "UVM Connect comes from Mentor Graphics, now Siemens EDA, is not a standard, and connects SystemC and SystemVerilog only." },
-    { text: "Either one: both are ratified Accellera standards with identical support on every simulator.", isCorrect: false, feedback: "Neither is a standard, and support differs by simulator and version." },
+    { text: "UVM Connect, because it is the Synopsys standard for connecting all verification languages, e included, on any simulator.", isCorrect: false, feedback: "UVM Connect comes from Mentor Graphics, now Siemens EDA, is not a standard, and connects SystemC and SystemVerilog only." },
+    { text: "Either one: both are ratified Accellera standards, maintained by active working groups, with identical support on every simulator.", isCorrect: false, feedback: "Neither is a standard, and support differs by simulator and version." },
+    { text: "UVM-ML OA, which supports UVM-SV, SystemC and e; first check that your simulator and library version support what you need, such as run-time phase synchronization.", isCorrect: true, feedback: "Correct. UVM-ML OA covers e, and its feature support is version- and simulator-dependent (Xcelium-only run-time sub-phase sync in 1.9, per HPE 2018)." },
     { text: "Neither: e cannot be mixed with SystemVerilog.", isCorrect: false, feedback: "UVM-ML OA exists precisely to mix UVM-e with UVM-SV and SystemC." }
   ]}
 />
@@ -1067,12 +1072,12 @@ Answer each one before you open the feedback.
   title="One seam, any language behind it"
   rule="Choose the crossing by the model's shape (DPI for an untimed function, a bridge for a SystemC model with sockets and processes, co-simulation for a separate program); at a TLM-2 seam the initiator presets UVM_TLM_INCOMPLETE_RESPONSE, the target shall replace it before b_transport returns, and the delay annotation is an offset that the caller acts on, not a wait."
   code={"gp.set_response_status(UVM_TLM_INCOMPLETE_RESPONSE);\nsock.b_transport(gp, delay);   // delay: an offset, not a wait\nok = gp.is_response_ok();\ngp.get_data(bytes);            // read data is in the payload's copy\n#(delay.get_realtime(1ns));    // the client chooses to honour it"}
-  mistake="Assuming DPI is always enough, reading the annotation as time that already passed, never setting the status in the target (the client sees INCOMPLETE), copying a packed struct with memcpy (fields reversed), or letting the SystemVerilog test drop its last objection while the foreign model is still busy."
+  mistake="Assuming DPI is always enough, reading the annotation as time that already passed, never setting the status in the target (the client sees INCOMPLETE), copying a packed struct with memcpy (byte order reversed, so the fields get the wrong bytes), or letting the SystemVerilog test drop its last objection while the foreign model is still busy."
   inTestbench="A C++ or SystemC reference model behind the predictor: the client talks only to a TLM-2 target socket, so ref_mem_target (DPI) can later be swapped for a bridge to a SystemC model without touching the client, and the test owns end of test by waiting for every b_transport to return."
 >
   <ArchitectureDiagram
     title="The Make It Work seam"
-    caption="Solid arrows are transport calls. The client sees only its initiator socket. Today ref_mem_target answers through DPI; in Part C a bridge to a SystemC model takes its place, and the client code does not change."
+    caption="Solid arrows are transport calls; the dashed arrow is the Part C alternative, not a second connection. The client sees only its initiator socket. Today ref_mem_target answers through DPI; in Part C a bridge to a SystemC model takes its place, and the client code does not change."
     cellWidth={140}
     gapX={100}
     nodes={[
@@ -1082,7 +1087,7 @@ Answer each one before you open the feedback.
     ]}
     edges={[
       { from: "vr-client", to: "vr-dpi", style: "data", label: "b_transport" },
-      { from: "vr-client", to: "vr-sc", style: "data", label: "b_transport" }
+      { from: "vr-client", to: "vr-sc", style: "causal", label: "or: b_transport" }
     ]}
   />
 </VisualRecap>
@@ -1095,8 +1100,8 @@ Answer each one before you open the feedback.
       question: "The architecture team hands you a SystemC TLM-2.0 loosely-timed model with a target socket and its own SC_THREAD processes. Which integration fits best?",
       objective: 1,
       answers: [
-        { text: "Call its member functions through DPI imports from the predictor, because DPI can reach any C++ code and is always sufficient.", correct: false, feedback: "DPI calls functions in zero time; it does not run the model's SystemC processes or bind its sockets. You would end up hand-writing a bridge." },
-        { text: "Run it in the simulator's SystemC kernel and connect a UVM initiator socket to its target socket through a TLM bridge (UVM Connect, UVM-ML OA or a vendor interface).", correct: true, feedback: "Correct. Sockets and processes need a kernel; the bridge converts the payloads." },
+        { text: "Call its member functions through DPI imports from the predictor, because DPI can reach any C++ code, including SystemC modules, and is always sufficient.", correct: false, feedback: "DPI calls functions in zero time; it does not run the model's SystemC processes or bind its sockets. You would end up hand-writing a bridge." },
+        { text: "Run it in the simulator's SystemC kernel and connect a UVM initiator socket to its target socket through a TLM bridge.", correct: true, feedback: "Correct. Sockets and processes need a kernel; the bridge (UVM Connect, UVM-ML OA or a vendor interface) converts the payloads." },
         { text: "Connect a uvm_tlm_b_initiator_socket directly to the SystemC socket, since they are the same library.", correct: false, feedback: "IEEE 1800.2 says UVM's TLM is not an exact replication of SystemC's. They are different classes in different languages." },
         { text: "Rewrite the model as SystemVerilog classes first, so the whole bench runs in one language and one kernel.", correct: false, feedback: "Possible, but it discards an independent model and creates a second one that can drift." }
       ],
@@ -1106,10 +1111,10 @@ Answer each one before you open the feedback.
       question: "The algorithm team ships uint32_t frame_crc(const uint8_t* p, int n) in C++. You need expected CRCs in your scoreboard. What is the simplest correct integration?",
       objective: 1,
       answers: [
-        { text: "Wrap it in a SystemC module and connect it with UVM Connect.", correct: false, feedback: "Works, but adds a kernel, a library and a converter to call one function." },
+        { text: "Wrap it in a SystemC module with a TLM-2.0 target socket, and connect that socket to the predictor through UVM Connect.", correct: false, feedback: "Works, but adds a kernel, a library and a converter to call one function." },
         { text: "Run it as a separate process and talk to it over sockets.", correct: false, feedback: "Co-simulation adds a link and synchronization for a pure function." },
         { text: "Write an extern \"C\" wrapper that catches every exception, import it with import \"DPI-C\", and call it from the predictor.", correct: true, feedback: "Correct. A function of its inputs that owns no time is exactly what DPI is for (IEEE 1800-2023 §35.5.1.1, §35.5.1.6)." },
-        { text: "Load it through a UVM-ML OA backplane so phases stay aligned.", correct: false, feedback: "The function has no phases. A backplane is overkill here." }
+        { text: "Load it through a UVM-ML OA backplane, so that the function's phases stay aligned with the UVM phases of the rest of the bench.", correct: false, feedback: "The function has no phases. A backplane is overkill here." }
       ],
       explanation: "DPI is the cheapest standard crossing and fits untimed functions. The wrapper must use C linkage and stop exceptions at the boundary."
     },
@@ -1117,9 +1122,9 @@ Answer each one before you open the feedback.
       question: "Predict: at 100 ns the client calls sock.b_transport(gp, delay). The target adds 10 ns to delay with delay.incr(10ns, 1ns), sets UVM_TLM_OK_RESPONSE and returns without any wait. When does the call return, and what does delay tell the client?",
       objective: 2,
       answers: [
-        { text: "It returns at 110 ns, because b_transport waits for the annotated 10 ns before returning, and delay is reset to 0.", correct: false, feedback: "The annotation offsets the timing point from the call time; it is not executed as a wait (§12.3.2.2.3)." },
-        { text: "It returns at 100 ns, and delay now says the transaction's end point is 10 ns after the call; the client may wait it out or keep accumulating it.", correct: true, feedback: "Correct. The call and return happen at 100 ns; the client decides what to do with the 10 ns." },
-        { text: "It returns at 100 ns, and the annotation is discarded because b_transport is blocking.", correct: false, feedback: "delay is a uvm_tlm_time object shared with the caller, so the target's change is visible after the return." },
+        { text: "It returns at 110 ns, because b_transport waits for the annotated 10 ns before it returns to the caller, and delay is then reset to 0.", correct: false, feedback: "The annotation offsets the timing point from the call time; it is not executed as a wait (§12.3.2.2.3)." },
+        { text: "It returns at 100 ns; delay now says the end point is 10 ns after the call, and the client may wait it out or keep accumulating it.", correct: true, feedback: "Correct. The call and return happen at 100 ns; the client decides what to do with the 10 ns." },
+        { text: "It returns at 100 ns, and the annotation is discarded because b_transport is blocking, so delay still reads 0 for the client.", correct: false, feedback: "delay is a uvm_tlm_time object shared with the caller, so the target's change is visible after the return." },
         { text: "It never returns, because b_transport must consume simulated time.", correct: false, feedback: "A target may consume time inside b_transport but is not required to; this one returns at once." }
       ],
       explanation: "IEEE 1800.2-2020 §12.3.2.2.3: the call marks the first timing point and the return the last, and the annotation offsets those points from the simulation times of call and return. No wait happened, so the return is at 100 ns."
@@ -1128,9 +1133,9 @@ Answer each one before you open the feedback.
       question: "An initiator calls nb_transport_fw(gp, ph, delay) with ph = BEGIN_REQ, and the target returns UVM_TLM_ACCEPTED. What is true now?",
       objective: 2,
       answers: [
-        { text: "The transaction is complete.", correct: false, feedback: "Only UVM_TLM_COMPLETED, or the final phase, ends it." },
+        { text: "The transaction is complete, because ACCEPTED tells the initiator that the target has finished executing it.", correct: false, feedback: "Only UVM_TLM_COMPLETED, or the final phase, ends it." },
         { text: "The initiator must resend BEGIN_REQ.", correct: false, feedback: "ACCEPTED means the call was taken; resending would start a second request." },
-        { text: "The transaction is in progress with the phase unchanged; the target will later call nb_transport_bw with the next phase, such as END_REQ or BEGIN_RESP.", correct: true, feedback: "Correct. A call always marks a phase transition; an ACCEPTED return does not (§12.3.2, §12.3.3.2)." },
+        { text: "In progress, phase unchanged; the next transition comes later, on the backward path.", correct: true, feedback: "Correct. A call always marks a phase transition; an ACCEPTED return does not (§12.3.2, §12.3.3.2). The target will later call nb_transport_bw with the next phase, such as END_REQ or BEGIN_RESP." },
         { text: "The target has written a new phase into ph.", correct: false, feedback: "That is what UVM_TLM_UPDATED signals, not ACCEPTED." }
       ],
       explanation: "The sync value of the return says whether the return itself changed the phase: ACCEPTED (no), UPDATED (yes, new phase in the ref argument) or COMPLETED (done)."
@@ -1139,7 +1144,7 @@ Answer each one before you open the feedback.
       question: "Debug: after sock.b_transport(gp, delay) returns, the client logs status=INCOMPLETE, although the target's log shows it wrote the data to the model. What is the most likely cause?",
       objective: 2,
       answers: [
-        { text: "The data length was 0.", correct: false, feedback: "A zero length is illegal, but the target would normally report an error status, not leave INCOMPLETE." },
+        { text: "The initiator set a data length of 0, which is illegal, so the transfer was never attempted.", correct: false, feedback: "A zero length is illegal, but the target would normally report an error status, not leave INCOMPLETE." },
         { text: "b_transport returned before the transaction executed.", correct: false, feedback: "Once b_transport returns, the transaction is presumed executed (§12.3.2.2.3)." },
         { text: "INCOMPLETE is normal for writes; only reads set OK.", correct: false, feedback: "The target sets the status for every command." },
         { text: "The target never called set_response_status, so the status still holds the initiator's UVM_TLM_INCOMPLETE_RESPONSE.", correct: true, feedback: "Correct. The target shall set the status before b_transport returns (§12.3.4.2.11); INCOMPLETE means no target claimed it." }
@@ -1151,9 +1156,9 @@ Answer each one before you open the feedback.
       objective: 3,
       answers: [
         { text: "UVM Connect is a Synopsys VCS product, and UVM-ML is part of IEEE 1800.2.", correct: false, feedback: "UVM Connect came from Mentor Graphics, now Siemens EDA. IEEE 1800.2 defines UVM TLM-2, not a multi-language library." },
-        { text: "Both are ratified Accellera standards with identical behaviour on all simulators.", correct: false, feedback: "Neither is a standard. UVM-ML OA came out of an Accellera working group that is now inactive, and support differs by simulator." },
-        { text: "UVM Connect came from Mentor Graphics (now Siemens EDA) under Apache 2.0; UVM-ML OA came from Cadence and AMD; both are open-source libraries, not standards.", correct: true, feedback: "Correct, per the UVMC release notes and Cadence's DVCon Europe 2018 paper." },
-        { text: "UVM-ML OA was written by Mentor and UVM Connect by Cadence.", correct: false, feedback: "Swapped. UVM-ML OA: Cadence and AMD. UVM Connect: Mentor." }
+        { text: "Both are ratified Accellera standards, maintained by active working groups, with identical behaviour on all simulators.", correct: false, feedback: "Neither is a standard. UVM-ML OA came out of an Accellera working group that is now inactive, and support differs by simulator." },
+        { text: "UVM Connect came from Mentor Graphics (now Siemens EDA) under Apache 2.0; UVM-ML OA from Cadence and AMD; both are open-source libraries, not standards.", correct: true, feedback: "Correct, per the UVMC release notes and Cadence's DVCon Europe 2018 paper." },
+        { text: "UVM-ML OA was written by Mentor Graphics under Apache 2.0, and UVM Connect was written by Cadence and AMD.", correct: false, feedback: "Swapped. UVM-ML OA: Cadence and AMD. UVM Connect: Mentor." }
       ],
       explanation: "Origins: UVMC from Mentor (Siemens EDA), Apache 2.0, 2012; UVM-ML OA from Cadence and AMD, open source since 2012. Neither is an IEEE or Accellera standard."
     },
@@ -1161,10 +1166,10 @@ Answer each one before you open the feedback.
       question: "A UVM-ML OA 1.9 bench relies on run-time sub-phase synchronization (reset_phase through shutdown_phase) between SystemVerilog and another framework on Xcelium. The project must move to a different simulator. What should the team expect?",
       objective: 3,
       answers: [
-        { text: "Identical behaviour: multi-language frameworks are supported the same way on every simulator.", correct: false, feedback: "HPE reported run-time sub-phase synchronization in 1.9 for Cadence Xcelium only." },
+        { text: "Identical behaviour: multi-language frameworks are supported the same way on every simulator, so the bench needs no re-qualification at all.", correct: false, feedback: "HPE reported run-time sub-phase synchronization in 1.9 for Cadence Xcelium only." },
         { text: "Switching to UVM 1.2 fixes it.", correct: false, feedback: "The limitation is in the multi-language library and the simulator, not the UVM version." },
         { text: "Nothing changes, because UVM has no run-time sub-phases.", correct: false, feedback: "UVM defines the run-time sub-phases from reset_phase to shutdown_phase in parallel with run_phase." },
-        { text: "It must be re-qualified; plan its own synchronization, for example a synchronizer that holds an objection until the other side lets the phase advance.", correct: true, feedback: "Correct. This is what HPE built for exactly this gap (DVCon US 2018)." }
+        { text: "Re-qualify it, and plan its own synchronizer (for example one that holds an objection until the other side lets the phase advance).", correct: true, feedback: "Correct. This is what HPE built for exactly this gap (DVCon US 2018)." }
       ],
       explanation: "Library features are version- and simulator-dependent: up to 1.8 unsupported, 1.9 Xcelium-only (Pertuit et al., DVCon US 2018). Re-qualify and own the synchronization."
     },
@@ -1172,9 +1177,9 @@ Answer each one before you open the feedback.
       question: "Debug: with UVM Connect, the SystemVerilog side calls uvmc_tlm #()::connect(client.sock, \"ref_mem\") and the SystemC side calls uvmc_connect(model.sock, \"refmem\"). What happens?",
       objective: 4,
       answers: [
-        { text: "They connect anyway: when lookup strings differ, UVMC falls back to matching the ports' hierarchical names.", correct: false, feedback: "UVMC matches registered lookup strings, and these differ." },
-        { text: "The SystemC kernel retries the match at every delta cycle until both strings agree, so the first transport is late.", correct: false, feedback: "There is no retry: matching happens once, at elaboration." },
-        { text: "The ports are not connected: lookup strings are global and must match exactly, so expect an error during elaboration for a registered port with no match.", correct: true, feedback: "Correct. 'ref_mem' and 'refmem' are different strings. The exact message text is library-dependent." },
+        { text: "They connect anyway: when lookup strings differ, UVMC falls back to matching the ports' hierarchical names, so the pair is still found.", correct: false, feedback: "UVMC matches registered lookup strings, and these differ." },
+        { text: "The SystemC kernel retries the match at every delta cycle until both strings agree, so the first transport arrives late but still arrives.", correct: false, feedback: "There is no retry: matching happens once, at elaboration." },
+        { text: "They are not connected: lookup strings are global and must match exactly, so expect an elaboration error for the unmatched port.", correct: true, feedback: "Correct. 'ref_mem' and 'refmem' are different strings. The exact message text is library-dependent." },
         { text: "Only analysis ports need matching strings; TLM-2 sockets connect by type.", correct: false, feedback: "Every UVMC connection needs a matching lookup string." }
       ],
       explanation: "UVMC documentation: lookup strings are global across SC and SV, matching ports are connected just before end_of_elaboration, and an unmatched registered port is an error."
@@ -1183,10 +1188,10 @@ Answer each one before you open the feedback.
       question: "You are planning a bench whose SystemC reference model takes several microseconds of simulated time to produce some responses. Which plan item prevents the test from ending while the model is still busy?",
       objective: 4,
       answers: [
-        { text: "Give end-of-test ownership to one side explicitly: the test drops its objection only after every transport has returned, or the SystemC side raises and drops objections through the bridge.", correct: true, feedback: "Correct. run_phase ends when the last objection drops; somebody must hold one for the model's work." },
-        { text: "Set a large drain time on the objection so that the phase waits long enough to cover the slowest response you have seen.", correct: false, feedback: "A guessed margin breaks when the model gets slower. Synchronize instead." },
+        { text: "Set a large drain time on the objection so that the phase waits long enough to cover the slowest response you have seen in any regression so far.", correct: false, feedback: "A guessed margin breaks when the model gets slower. Synchronize instead." },
         { text: "Nothing: the bridge always keeps both languages' run_phase aligned.", correct: false, feedback: "That guarantee is library-, version- and tool-dependent, and not verified for UVM-ML OA run_phase objections." },
-        { text: "Run the SystemC model in a separate process, so that ending the UVM test cannot cut off its outstanding work.", correct: false, feedback: "A separate process makes synchronization harder, not easier." }
+        { text: "Give end-of-test ownership to one side explicitly: the test drops its objection only after every transport has returned, or the SystemC side raises and drops objections through the bridge.", correct: true, feedback: "Correct. run_phase ends when the last objection drops; somebody must hold one for the model's work." },
+        { text: "Run the SystemC model in a separate process, so that ending the UVM test cannot cut off any work the model still has outstanding.", correct: false, feedback: "A separate process makes synchronization harder, not easier." }
       ],
       explanation: "End-of-test ownership is a planning decision. With blocking transport the test can simply wait for each return; otherwise use the bridge's objection support, such as UVMC's Command API."
     }
@@ -1295,7 +1300,7 @@ For each, name the symptom you would see, the cause and the fix before you open 
 ## References & Next Topics
 
 **Primary sources**
-- IEEE 1800.2-2020: Introduction (UVM TLM "not an exact replication" of SystemC TLM); §5.6 `uvm_time` (§5.6.2.2, §5.6.2.6 `incr`, §5.6.2.8 `get_abstime`); §12.3.1 general; §12.3.2 transport interfaces (§12.3.2.2.1 `nb_transport_fw`, §12.3.2.2.2 `nb_transport_bw`, §12.3.2.2.3 `b_transport`); §12.3.3.1 `uvm_tlm_phase_e`; §12.3.3.2 `uvm_tlm_sync_e`; §12.3.4.1.1 command; §12.3.4.1.2 response status; §12.3.4.2 generic payload (§12.3.4.2.4 `do_pack`, §12.3.4.2.6 to §12.3.4.2.14 attributes, §12.3.4.2.34 DMI hint); §12.3.4.5 extensions; §12.3.5 sockets (§12.3.5.1.3, §12.3.5.1.4).
+- IEEE 1800.2-2020: Introduction (UVM TLM "not an exact replication" of SystemC TLM); §5.6 `uvm_time` (§5.6.2.2, §5.6.2.6 `incr`, §5.6.2.8 `get_abstime`); §12.3.9 `uvm_tlm_time`; §12.3.1 general; §12.3.2 transport interfaces (§12.3.2.2.1 `nb_transport_fw`, §12.3.2.2.2 `nb_transport_bw`, §12.3.2.2.3 `b_transport`); §12.3.3.1 `uvm_tlm_phase_e`; §12.3.3.2 `uvm_tlm_sync_e`; §12.3.4.1.1 command; §12.3.4.1.2 response status; §12.3.4.2 generic payload (§12.3.4.2.4 `do_pack`, §12.3.4.2.6 to §12.3.4.2.14 attributes, §12.3.4.2.34 DMI hint); §12.3.4.5 extensions; §12.3.5 sockets (§12.3.5.1.3, §12.3.5.1.4).
 - uvm-core 2020.3.1: `src/tlm2/uvm_tlm2_generic_payload.svh`, `uvm_tlm2_ifs.svh`, `uvm_tlm2_sockets.svh`, `uvm_tlm2_sockets_base.svh`, `uvm_tlm2_imps.svh`, `uvm_tlm_time.svh`; `src/base/uvm_port_base.svh` (connection errors).
 - IEEE 1800-2023: §7.2.1 packed structures; §7.6 array assignments; Clause 35 DPI (§35.5.1.1 instant completion, §35.5.1.4 memory management, §35.5.1.6 C++ exceptions, §35.5.2 pure functions, §35.5.3 context tasks and functions); Annex H (H.7.7 canonical representation, H.8.4 passing by reference, H.11.3 packed struct example); Annex J (loading libraries).
 - IEEE 1666-2023, SystemC, including TLM-1 and TLM-2.0 (part of the standard since 1666-2011). No clause numbers are cited here.

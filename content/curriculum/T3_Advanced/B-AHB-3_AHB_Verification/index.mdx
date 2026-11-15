@@ -57,7 +57,7 @@ Terms from earlier lessons are linked; the AHB terms are used exactly as Arm IHI
 - **Verification plan (vplan):** the list of features and situations that must be shown to work, each mapped to a check and a coverage item ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
 - **Responder:** a slave-side TB component that answers transfers (wait states, OKAY or ERROR, read data) instead of starting them.
 
-The first five terms in one picture: two writes, A and B, back to back on a bus where no slave waits.
+Transfer, address and data phase, acceptance, the pipeline and HTRANS in one picture: two writes, A and B, back to back on a bus where no slave waits (the wait-state case comes in [The pipelined monitor](#the-pipelined-monitor)).
 
 <TimingDiagram
   title="Anatomy of two pipelined AHB transfers"
@@ -86,7 +86,7 @@ The environment below is the one built in Make It Work, with the same names. The
 
 <ArchitectureDiagram
   title="The AHB slave verification environment built on this page"
-  caption="The checker sees pins, the scoreboard sees transactions. ahb_smoke_test builds ahb_env. ahb_mon samples the bus through the clocking block mon_cb and publishes one ahb_item per completed transfer on its analysis port ap; ahb_sb receives it on item_imp and ahb_cov on analysis_export, each through write(t). ahb_master_bfm drives the pins through mst_cb, and u_chk, an ahb_protocol_checker bound inside ahb_sram_slave, reads the same pins."
+  caption="ahb_smoke_test builds ahb_env. ahb_mon samples the bus through the clocking block mon_cb and publishes one ahb_item per completed transfer on its analysis port ap; ahb_sb receives it on item_imp and ahb_cov on analysis_export, each through write(t). ahb_master_bfm drives the pins through mst_cb, and u_chk, an ahb_protocol_checker bound inside ahb_sram_slave, reads the same pins."
   gapX={96}
   nodes={[
     { id: "env", label: "ahb_env", kind: "env", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true, badge: "in ahb_smoke_test" },
@@ -113,7 +113,14 @@ The environment below is the one built in Make It Work, with the same names. The
   ]}
 />
 
-Each layer owns one question, and no two layers own the same one:
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief of the prediction:** the scoreboard reports the wrong read data; the checker stays silent, because no pin rule was broken.
+
+</details>
+
+The checker sees pins, the scoreboard sees transactions. Each layer owns one question, and no two layers own the same one:
 
 | Concern | Checker | Monitor | Scoreboard | Coverage |
 |---|---|---|---|---|
@@ -125,8 +132,6 @@ Each layer owns one question, and no two layers own the same one:
 | Which planned situations ran | — | — | — | **owns** |
 
 **Misconception: "the checker and the scoreboard both own data ordering, so each double-checks the other."** They do not. The checker owns **pin-level protocol legality** (including multi-cycle rules such as hold-in-wait and the ERROR pair) and never data correctness; it cannot know what data *should* be at an address. The scoreboard owns **which data belongs to which transfer** and where each transfer went; it never re-checks pin timing. If both owned a rule, a failure would be reported twice with two different messages, and a fix to one would leave the other silently out of date. Each AHB interface has at most one data phase in flight and completes transfers in the order it accepts them (§3.1), so ordering on a single interface is a pin-level fact the monitor relies on; ordering *across* an interconnect is the scoreboard's job.
-
-**Debrief of the prediction:** the scoreboard reports the wrong read data; the checker stays silent, because no pin rule was broken.
 
 ### Transactions: beat items and burst items
 
@@ -187,7 +192,10 @@ A **passive monitor** never drives a pin. Its whole job is the pairing rule from
 3. **Complete** the pending item at the next edge with HREADY high: take HWDATA (write) or HRDATA (read) and HRESP at that edge (§3.1, §6.1.1, §6.1.2), publish it, and only then accept the next address phase at the same edge.
 4. **Flush** on reset: a transfer that reset cuts off never completes (§7.1.2), so drop it.
 
-**Predict before you look at the picture:** write A is accepted at edge 1, the slave holds HREADY low at edge 2 and high at edge 3, and B is already on the bus at edges 2 and 3. At which edge does the monitor publish A, and with which HWDATA?
+**Predict:** write A is accepted at edge 1, the slave holds HREADY low at edge 2 and high at edge 3, and B is already on the bus at edges 2 and 3. At which edge does the monitor publish A, and with which HWDATA?
+
+<details>
+<summary>Check your prediction: the pairing trace</summary>
 
 <TimingDiagram
   title="Monitor pairing across one wait state"
@@ -220,6 +228,8 @@ The same run as a traced table:
 | 4 | IDLE | 1 | B | complete B with HWDATA at edge 4 | none |
 
 **Debrief:** A is published at edge 3 with DA. The master holds write data valid until the transfer completes (§6.1.1), so DA is on the bus at edges 2 and 3; for a read, only the completing edge is guaranteed to carry valid data (§6.1.2).
+
+</details>
 
 The core of the monitor loop, sampling through the clocking block `mon_cb`:
 
@@ -292,14 +302,14 @@ endproperty
 - **`p_hold_in_wait`** replaces a plain `$stable(HTRANS)`, which fires on legal behaviour. A waited NONSEQ or SEQ must not change (§3.6.1, §3.6.2), except that a master cancelling after the first ERROR cycle drives IDLE and may change the address (§3.5.2, §3.6.2). A waited IDLE may become NONSEQ, and a waited BUSY may become SEQ (or, in an undefined-length INCR, IDLE or NONSEQ) (§3.6.1), so IDLE and BUSY never start this property; BUSY has its own, `p_busy_in_wait`.
 - **Misconception: "HTRANS must be stable through every wait state."** Only a waited NONSEQ or SEQ is held, and even that one may become IDLE in the second ERROR cycle. Writing the naive rule produces false failures on the legal traffic of §3.6.1 Figures 3-13 to 3-15 and on every cancel after ERROR.
 - **`p_error_second_needs_first`** is the only one of the two ERROR properties that sees a slave driving ERROR for a single cycle with HREADY high. The forward property, `p_error_first_then_second`, needs HREADY low to start, so on that bug it never starts an attempt and passes vacuously.
-- **`$past(expr, 1, beat_accepted)`** in the SEQ checks returns the value at the most recent earlier edge where a beat was accepted (IEEE 1800-2023 §16.9.3), which is the previous beat even if BUSY cycles or wait states came between.
+- **`$past(expr, 1, beat_accepted)`**, where `beat_accepted` is the checker's wire `HREADY && (HTRANS inside {NONSEQ, SEQ})`, in the SEQ checks returns the value at the most recent earlier edge where a beat was accepted (IEEE 1800-2023 §16.9.3), which is the previous beat even if BUSY cycles or wait states came between.
 - **The 1KB check runs per beat**, with WRAP bursts exempt. A start-address formula fires on legal WRAP bursts and cannot size an undefined-length INCR. The rule itself is taught in [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index).
 
 **Apply the gated `$past` to this page's own run.** The figure shows edges 8 to 12 of the Make It Work run, renumbered 0 to 4 (the INCR4 trace table above has the same cycles): beats 0x14 and 0x18 of the INCR4 write, a BUSY that carries the next address, 0x1C, while beat 0x18 waits, and then beat 0x1C. `beat_accepted` is the checker's wire `HREADY && (HTRANS inside {NONSEQ, SEQ})`, and `a_seq_addr_increments` checks `HADDR == $past(HADDR, 1, beat_accepted) + (32'd1 << HSIZE)` at every edge with HREADY high and a non-WRAP SEQ.
 
 <TimingDiagram
   title="The previous beat across a BUSY and a wait state"
-  caption="The x-axis counts rising edges; values[k] is sampled at rising edge k, and edges 0 to 4 here are edges 8 to 12 of the Make It Work run. The burst is an INCR4 of words (HSIZE = 2, so each beat is 4 bytes). beat_accepted is high at the three edges where a beat is accepted."
+  caption="The x-axis counts rising edges; values[k] is sampled at rising edge k, and edges 0 to 4 here are edges 8 to 12 of the Make It Work run. The burst is an INCR4 of words (HSIZE = 2, so each beat is 4 bytes). The accepted row is the checker's wire beat_accepted, high at the three edges where a beat is accepted."
   edges={5}
   cycleWidth={60}
   signals={[
@@ -307,7 +317,7 @@ endproperty
     { name: "HTRANS", kind: "bus", values: ["SEQ", "SEQ", "BUSY", "BUSY", "SEQ"] },
     { name: "HADDR", kind: "bus", values: ["0x14", "0x18", "0x1C", "0x1C", "0x1C"] },
     { name: "HREADY", kind: "bit", values: [1, 1, 0, 1, 1] },
-    { name: "beat_accepted", kind: "bit", values: [1, 1, 0, 0, 1] }
+    { name: "accepted", kind: "bit", values: [1, 1, 0, 0, 1] }
   ]}
   markers={[
     { edge: 0, tone: "sample", label: "beat 0x14 accepted", short: "beat" },
@@ -338,10 +348,15 @@ endproperty
 2. **Two-cycle ERROR.** With the master set to *cancels*, what is on HTRANS in the second ERROR cycle, and does `p_hold_in_wait` fail?
 3. **Debug: one-cycle ERROR.** Which of the two ERROR properties fails?
 
+<details>
+<summary>Check your three predictions</summary>
+
 **Debrief:**
 1. The waited BUSY changes to SEQ while HREADY is still low. That is legal for a fixed-length burst (§3.6.1, Figure 3-14). `p_ctrl_stable (old)` fails on it; `p_busy_in_wait` passes, and it is not vacuous: its antecedent, a waited BUSY, actually occurred.
 2. IDLE: the master saw ERROR with HREADY low and cancels the transfer waiting on the address bus (§3.5.2, §5.1.3). `p_hold_in_wait` passes through its cancel exception; the naive check fails.
 3. Only `p_error_second_needs_first`. `p_error_first_then_second` never starts, which is why a checker needs both directions.
+
+</details>
 
 **Attaching the checker to the design.** Three ways, from most to least common:
 - **`bind`** it into the DUT module, as Make It Work does: `bind ahb_sram_slave ahb_protocol_checker u_chk (.HCLK, .HRESETn, ...);`. The port expressions are resolved inside the target module, so the checker reads the slave's own ports and the RTL source is never touched (IEEE 1800-2023 §23.11).
@@ -431,7 +446,7 @@ Three rules make the scoreboard trustworthy:
 
 <ArchitectureDiagram
   title="An interconnect scoreboard with one monitor per port"
-  caption="Two master ports and two slave ports are drawn; every other port gets a monitor in the same way. The master-port monitors feed the predictor, which uses the address map to say on which slave port each transfer must appear, with the same address, direction, size and data; for an unmapped NONSEQ or SEQ it predicts an ERROR from the default slave (§4.2.1). The slave-port monitors feed the actual transfers. The scoreboard matches them in order per interface (§3.1), and across interfaces by address and master."
+  caption="Two master ports and two slave ports are drawn; every other port gets a monitor in the same way. The master-port monitors feed the predictor, which uses the address map to say on which slave port each transfer must appear, with the same address, direction, size and data; for an unmapped NONSEQ or SEQ it predicts an ERROR from the default slave (§4.2.1). The slave-port monitors feed the actual transfers. Responses that the interconnect itself gives (the default slave's ERROR, and read data returning to a master) are compared from the master-port monitors. The scoreboard matches them in order per interface (§3.1), and across interfaces by address and master."
   spreadAnchors
   nodes={[
     { id: "mm0", label: "mon M0", sublabel: "master port 0", kind: "monitor", col: 0, row: 0 },
@@ -471,6 +486,9 @@ The `ahb_master_bfm` in Make It Work exercises the master knobs: back-to-back tr
 
 **Predict:** a responder must answer the transfer accepted at edge k with ERROR. When must its driver drive HREADYOUT low with HRESP high?
 
+<details>
+<summary>Check your prediction</summary>
+
 <SequenceDiagram
   title="A pre-fetched slave response, from sequence to pins"
   caption="The response item (how many waits, and whether to answer ERROR) is fetched before the transfer arrives. The rsp_sqr lane is a uvm_sequencer #(ahb_rsp_item); vif.rsp_cb is the slave interface's clocking block. Look at where the drives to vif.rsp_cb sit relative to edge k, the edge that accepts the transfer. Between transfers HREADYOUT stays high, which gives IDLE and BUSY their zero-wait OKAY."
@@ -495,6 +513,10 @@ The `ahb_master_bfm` in Make It Work exercises the master knobs: back-to-back tr
     { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
   ]}
 />
+
+**Debrief:** in the time step of edge k itself. In the picture, the drives to `vif.rsp_cb` (steps 6 to 8) follow the edge-k divider with no clock wait before the first of them; for an ERROR with no OKAY waits, step 7 is that first drive. The clocking-block drive takes effect at that edge (IEEE 1800-2023 §14.16), so the cycle sampled at edge k + 1 is the first ERROR cycle. A driver that waits for edge k + 1 to look at the address leaves HREADYOUT high in the first data-phase cycle, and the transfer completes with OKAY at k + 1: too late.
+
+</details>
 
 ```systemverilog
 // snippet: responder item, sequence and driver. The agent's sequencer is a plain
@@ -565,8 +587,6 @@ class ahb_slv_drv extends uvm_driver #(ahb_rsp_item);
 endclass
 ```
 
-**Debrief:** in the time step of edge k itself. In the picture, the drives to `vif.rsp_cb` (steps 6 to 8) follow the edge-k divider with no clock wait before the first of them; for an ERROR with no OKAY waits, step 7 is that first drive. The clocking-block drive takes effect at that edge (IEEE 1800-2023 §14.16), so the cycle sampled at edge k + 1 is the first ERROR cycle. A driver that waits for edge k + 1 to look at the address leaves HREADYOUT high in the first data-phase cycle, and the transfer completes with OKAY at k + 1: too late.
-
 The test configures the responder and starts it. The sequence never ends, so it must not hold an objection: start it in a `fork ... join_none` and let the test's own traffic hold the objection, or the run phase never ends ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) explains the pitfall).
 
 ```systemverilog
@@ -592,9 +612,9 @@ This responder chooses waits and errors **before** it sees the address, which is
   ]}
   messages={[
     { from: "rdrv", to: "rsqr", label: "get_next_item(req)" },
+    { from: "rseq", to: "rsqr", label: "FIFO get (blocks)" },
     { kind: "divider", label: "@(vif.rsp_cb): edge k accepts a transfer" },
     { kind: "async", from: "rmon", to: "rsqr", label: "FIFO write: address phase" },
-    { from: "rseq", to: "rsqr", label: "FIFO get" },
     { kind: "return", from: "rsqr", to: "rseq", label: "address phase" },
     { kind: "self", from: "rseq", label: "decide: waits, OKAY or ERROR" },
     { from: "rseq", to: "rsqr", label: "start_item, finish_item(req)" },
@@ -645,7 +665,7 @@ Four patterns turn a failing AHB waveform into a cause. Each starts from what th
 **1. The HREADY trace: who is holding the bus?** When the bus stalls, follow HREADY back to the slave driving it. HREADY is not a wire from one slave: it is the multiplexor's choice among all slaves' HREADYOUT.
 
 <ArchitectureDiagram
-  title="Where HREADY comes from (IHI0033B.b Figure 4-2)"
+  title="Where HREADY comes from (IHI0033B.b Figures 4-1 and 4-2)"
   caption="The decoder turns HADDR into one HSELx per slave. The multiplexor routes HREADYOUT, HRESP and HRDATA of the slave that owns the current data phase to the master as HREADY, HRESP and HRDATA; its select is the decoder's selection retimed to the data phase (§2.4 Note). HREADY also goes back to every slave as an input (not drawn), which is why one waiting slave stalls the whole bus."
   gapX={96}
   nodes={[
@@ -716,7 +736,7 @@ Steps: find the edge where HREADY went low; find the last earlier edge with HREA
 
 <TimingDiagram
   title="Latency of one transfer at a master port"
-  caption="One master port of a multi-layer interconnect; values[k] is sampled at edge k. A is first on the port at edge 1 and is accepted there at once. The interconnect then holds HREADY low at this port for three edges, for example while another master's locked sequence uses the same slave; how an interconnect does this is product-specific (§4.1; tool-dependent). A completes at edge 5. The shaded band is the latency the monitor reports for A, 4 cycles, which the test compares with this master's budget."
+  caption="One master port of a multi-layer interconnect; values[k] is sampled at edge k. A is first on the port at edge 1 and is accepted there at once. The interconnect then holds HREADY low at this port for three edges, for example while another master's locked sequence uses the same slave; how an interconnect does this is product-specific (§4.1: the specification leaves multi-master interconnects to the implementation). A completes at edge 5. The shaded band is the latency the monitor reports for A, 4 cycles, which the test compares with this master's budget."
   edges={6}
   cycleWidth={60}
   signals={[
@@ -1505,7 +1525,7 @@ Compile `ahb_if.sv`, `ahb_sram_slave.sv`, `ahb_master_bfm.sv`, `ahb_protocol_che
 
 ### Expected output
 
-Illustrative: derived by tracing the code edge by edge, not from a simulator run (no simulator was available for this program). The UVM banner and the per-phase lines are left out; the time format depends on your `$timeformat`.
+Illustrative: derived by tracing the code edge by edge, not from a simulator run (no simulator was available for this program). The UVM banner, the per-phase lines, the file(line) prefix that `` `uvm_info `` adds to each message, and the UVM_INFO header line and UVM_INFO count of the report summary are left out; the time format depends on your `$timeformat`.
 
 ```text
 UVM_INFO @ 0 ns: reporter [RNTST] Running test ahb_smoke_test...
@@ -1640,13 +1660,13 @@ Write down your six predictions (the check or message, and the time), then open 
 
 <ArchitectureDiagram
   title="One protocol checker per port in a multi-layer system"
-  caption="Two masters and two slaves are drawn; every other port gets a checker in the same way. Each master-port checker runs the master rules and the beat count of fixed-length bursts, with acceptance at HREADY high and HTRANS[1]. Each slave-port checker also needs that slave's HSELx for acceptance (§4.2), checks the slave obligations only while that slave owns the data phase, and runs no beat count, because the interconnect may end a burst early at a slave port (§3.5.2). The bullets below give the reasons. Lines are plain connections."
+  caption="Two master ports and two slave ports are drawn, each box being that port's checker; every other port gets a checker in the same way. Each master-port checker runs the master rules and the beat count of fixed-length bursts, with acceptance at HREADY high and HTRANS[1]. Each slave-port checker also needs that slave's HSELx for acceptance (§4.2), checks the slave obligations only while that slave owns the data phase, and runs no beat count, because the interconnect may end a burst early at a slave port (§3.5.2). The bullets below give the reasons. Lines are plain connections."
   nodes={[
-    { id: "pm0", label: "master 0", sublabel: "master-port checker", kind: "generic", col: 0, row: 0 },
-    { id: "pm1", label: "master 1", sublabel: "master-port checker", kind: "generic", col: 1, row: 0 },
+    { id: "pm0", label: "M0 port", sublabel: "master-port checker", kind: "generic", col: 0, row: 0 },
+    { id: "pm1", label: "M1 port", sublabel: "master-port checker", kind: "generic", col: 1, row: 0 },
     { id: "pic", label: "interconnect", sublabel: "multi-layer", kind: "dut", col: 0, row: 1, colSpan: 2 },
-    { id: "ps0", label: "slave 0", sublabel: "slave-port checker", kind: "generic", col: 0, row: 2 },
-    { id: "ps1", label: "slave 1", sublabel: "slave-port checker", kind: "generic", col: 1, row: 2 }
+    { id: "ps0", label: "S0 port", sublabel: "slave-port checker", kind: "generic", col: 0, row: 2 },
+    { id: "ps1", label: "S1 port", sublabel: "slave-port checker", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
     { from: "pm0", to: "pic", style: "structural" },
@@ -1940,7 +1960,7 @@ end`}
     objective: 4
   },
   {
-    question: "The log has three '[AHB-CHK] one-cycle ERROR' lines printed by the simulator, but the UVM summary says UVM_ERROR : 0 and the regression marks the test as passed. Why?",
+    question: "The log has three '[AHB_CHK] one-cycle ERROR' lines printed by the simulator, but the UVM summary says UVM_ERROR : 0 and the regression marks the test as passed. Why?",
     answers: [
       { text: "The failures were vacuous", correct: false, feedback: "A vacuous success prints nothing; these are real failures." },
       { text: "disable iff turned the errors into warnings", correct: false, feedback: "disable iff cancels attempts during reset; it never changes severity." },

@@ -70,7 +70,7 @@ This page uses one small DUT throughout, a timer peripheral called `timer_regs`,
 - The **built-in backdoor**: the register model looks up the register's HDL path and calls the UVM HDL access routines `uvm_hdl_read()` and `uvm_hdl_deposit()` (§19.6). A **deposit** sets the signal's value directly, as a debugger would, without any bus cycle. These routines are written in C and reached through the **DPI** (the Direct Programming Interface between SystemVerilog and C). The C side uses the simulator's **VPI** (the Verilog Procedural Interface, a C API for looking at and changing simulation objects).
 - A **user backdoor**: a class you write (`uvm_reg_backdoor`, §19.5) for registers the built-in routines cannot reach. It is also covered below.
 
-The picture shows both paths in the environment that Make It Work builds. Follow the top path for a frontdoor access and the left path for a backdoor access, and notice which components each one passes.
+The picture shows both paths in the environment that Make It Work builds. Follow the centre column down (ral → adapter → sqr → drv → bus → dut) for a frontdoor access, and the edge along the left side for a backdoor access, and notice which components each one passes.
 
 <ArchitectureDiagram
   title="Frontdoor and backdoor paths from a register call to the DUT"
@@ -152,7 +152,7 @@ A traced example for the timer, with `ral.configure(null, "tb_top.dut")` in the 
     <text x="138" y="32" fontSize="10" textAnchor="end" fill="currentColor">4</text>
     <text x="146" y="32" fontSize="10" fill="currentColor">3</text>
     <text x="243" y="32" fontSize="10" textAnchor="end" fill="currentColor">1</text>
-    <text x="294" y="32" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+    <text x="338" y="32" fontSize="10" textAnchor="end" fill="currentColor">0</text>
     <rect x="10" y="38" width="130" height="30" fill="url(#fvb-ctrl-gap-hatch)" stroke="currentColor" strokeOpacity="0.6" />
     <rect x="140" y="38" width="105" height="30" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
     <rect x="245" y="38" width="95" height="30" fill="rgba(139,92,246,0.15)" stroke="rgb(139,92,246)" />
@@ -214,12 +214,21 @@ This is the heart of the lesson. Each table starts from the state in its title, 
 | `irq.poke(st, 0)` | 0 | 0 | none |
 | `irq.write(st, 1, UVM_FRONTDOOR)` | 0 | 0, set by the predictor | one write |
 
+Before you read the rules, predict: a backdoor `write()` first *reads* CTRL through the backdoor, and only then deposits anything. Why must the register model read before it deposits, when `poke()` does not?
+
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** The read is there because some policies depend on the current value. W1C clears only the bits written as 1, and RO keeps whatever the register already holds, so the model must know the current value before it can compute the result. `poke()` needs no read because it applies no policy. The policy step is uvm-core's internal function `XpredictX`, which is not part of IEEE 1800.2-2020; never call it yourself.
+
+</details>
+
 Three rules generate every row:
 1. **`poke()` and `peek()` are raw.** `poke(v)` deposits `v` as it is, read-only bits included. `peek()` samples the stored value and changes nothing in the DUT. Both then set the mirror to that raw value, with no access policy applied.
 2. **Backdoor `write()` and `read()` imitate a bus access.** IEEE 1800.2-2020 §18.4.4.9 says a backdoor write mimics "the effect of writing the register through a physical access", for example read-only bits remain unchanged. §18.4.4.10 says a backdoor read mimics a physical read, for example clear-on-read bits are set to 0. uvm-core 2020.3.1 implements a backdoor `write(v)` as three steps: read the current value through the backdoor, apply each field's policy to (current, `v`), and deposit the result. A backdoor `read()` reads, then deposits 0 into RC-family fields and all ones into RS-family fields (fields that a read sets).
 3. **Only the frontdoor is seen by the monitor**, so only the frontdoor rows involve the register predictor, and the predictor applies the access policy to what it observes.
 
-The sequence diagram shows rule 1 and rule 2 side by side, with the real calls uvm-core makes. Before you read it, predict: in the backdoor `write()`, why must the register model *read* CTRL before it deposits anything?
+The sequence diagram shows rule 1 and rule 2 side by side, with the real calls uvm-core makes.
 
 <SequenceDiagram
   title="Backdoor write() versus poke() on CTRL"
@@ -248,8 +257,6 @@ The sequence diagram shows rule 1 and rule 2 side by side, with the real calls u
   ]}
 />
 
-**Debrief.** The read is there because some policies depend on the current value. W1C clears only the bits written as 1, and RO keeps whatever the register already holds, so the model must know the current value before it can compute the result. `poke()` needs no read because it applies no policy. The policy step is uvm-core's internal function `XpredictX`, which is not part of IEEE 1800.2-2020; never call it yourself.
-
 **The standard and uvm-core use different words.** IEEE 1800.2-2020 says `poke()` and `peek()` are "affected by the auto-prediction configuration value" (§18.4.4.11, §18.4.4.12). It says the same of `read()` (§18.4.4.10), and for `write()` that "Auto-prediction (See 18.2.5.2) shall determine how the mirror value is updated" (§18.4.4.9). uvm-core 2020.3.1, the Accellera reference implementation, predicts after every successful backdoor access whatever the auto-predict setting (`src/reg/uvm_reg.svh`, tasks `do_write`, `do_read`, `poke` and `peek`). This page teaches the uvm-core behaviour. Code that must be portable checks `get_mirrored_value()` instead of assuming either reading. Push Further lists all three places where the two disagree.
 
 ### Try it: poke, peek and read in the register model lab
@@ -263,10 +270,15 @@ Predict, then click:
 
 <RalRegisterMapVisualizer />
 
+<details>
+<summary>Check your predictions</summary>
+
 **Debrief.**
 1. In the lab both columns show `'hFFFF_FFFF`. The lab's CTRL stores its reserved bits, so the poke lands in all 32 bits and creates a state no bus write can create. In the timer, bits 31:4 have no storage, so the same poke leaves the DUT at `'h0000_000F` while the mirror says `'hFFFF_FFFF`. Either way `poke()` trusted you completely.
 2. `peek()` returns 3 and leaves the DUT at 3; the mirror becomes 3. The frontdoor `read()` returns 3 and clears the DUT to 0, and the predictor, applying RC, sets the mirror to 0. The lab's `read()` is a frontdoor read. A backdoor `read()` would also clear the DUT, as the OVF table shows.
 3. The lab logs the uvm-core error `No backdoor access available to poke register` and changes nothing; the status is `UVM_NOT_OK`. Remember this message: "When there is no path" shows the one case where uvm-core does not fail like this.
+
+</details>
 
 ### Mistake 1: treating every backdoor call as `poke()`
 
@@ -287,62 +299,64 @@ The opposite mistake is to expect `poke()` to respect policies: `ctrl.poke(st, '
 The calls behave very differently when a register has neither an HDL path nor a user backdoor (uvm-core 2020.3.1, `src/reg/uvm_reg.svh`, functions `Xcheck_accessX`, `poke` and `peek`):
 
 <figure className="not-prose my-6">
-  <svg viewBox="0 0 350 380" role="img" aria-label="Decision flow for a register access in uvm-core 2020.3.1. Start: write, read, mirror and update take a door argument; poke and peek are always the backdoor. Gate 1: UVM_DEFAULT_DOOR becomes the block's default door, from its parents, else UVM_FRONTDOOR; if the door is not the backdoor, the call is a bus access the monitor sees. Gate 2: is a backdoor available, a user backdoor or an HDL path? If not, poke and peek give UVM_ERROR and UVM_NOT_OK, and the other calls give UVM_WARNING and run as a frontdoor access. Gate 3: do the map rights allow it, RW or WO for a write, RW or RO for a read? poke and peek skip this gate. If not, UVM_NOT_OK with no message and nothing deposited. Then the access goes through the HDL path or the user backdoor class, and on success do_predict updates the mirror." style={{ width: "100%", maxWidth: 420 }}>
+  <svg viewBox="0 0 350 411" role="img" aria-label="What a register call does when it asks for the backdoor: a decision flow in uvm-core 2020.3.1. Start: write, read, mirror and update take a door argument; poke and peek are always the backdoor. poke and peek resolve no door and start at gate 2. Gate 1: UVM_DEFAULT_DOOR becomes the block's default door, from its parents, else UVM_FRONTDOOR; if the door is not the backdoor, the call is a bus access the monitor sees. Gate 2: is a backdoor available, a user backdoor or an HDL path? If not, poke and peek give UVM_ERROR and UVM_NOT_OK, and the other calls give UVM_WARNING and run as a frontdoor access. Gate 3: do the map rights allow it, RW or WO for a write, RW or RO for a read? poke and peek skip this gate. If not, UVM_NOT_OK with no message and nothing deposited. Then the access goes through the HDL path or the user backdoor class, and on success do_predict updates the mirror." style={{ width: "100%", maxWidth: 420 }}>
     <defs>
       <marker id="fvb-door-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
       </marker>
     </defs>
-    <rect x="8" y="8" width="334" height="36" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
-    <text x="16" y="23" fontSize="10" fill="currentColor">write(), read(), mirror(), update(): a door argument</text>
-    <text x="16" y="37" fontSize="10" fill="currentColor">poke(), peek(): always the backdoor</text>
-    <path d="M 98 44 L 98 62" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <rect x="8" y="64" width="180" height="48" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
-    <text x="16" y="79" fontSize="10" fill="currentColor">1. DEFAULT becomes the block's</text>
-    <text x="16" y="92" fontSize="10" fill="currentColor">default door (parents, else</text>
-    <text x="16" y="105" fontSize="10" fill="currentColor">FRONTDOOR). The backdoor?</text>
-    <path d="M 188 88 L 200 88" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="195" y="83" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
-    <rect x="202" y="64" width="140" height="48" rx="6" fill="rgba(100,116,139,0.10)" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="210" y="79" fontSize="10" fill="currentColor">Frontdoor: a bus</text>
-    <text x="210" y="92" fontSize="10" fill="currentColor">access that the</text>
-    <text x="210" y="105" fontSize="10" fill="currentColor">monitor sees</text>
-    <path d="M 98 112 L 98 132" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="105" y="126" fontSize="10" fill="currentColor">yes</text>
-    <rect x="8" y="134" width="180" height="60" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
-    <text x="16" y="150" fontSize="10" fill="currentColor">2. Is a backdoor available?</text>
-    <text x="16" y="163" fontSize="10" fill="currentColor">A user backdoor, or an</text>
-    <text x="16" y="176" fontSize="10" fill="currentColor">HDL path (has_hdl_path())</text>
-    <path d="M 188 164 L 200 164" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="195" y="159" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
-    <rect x="202" y="134" width="140" height="60" rx="6" fill="rgba(244,63,94,0.08)" stroke="rgb(244,63,94)" />
-    <text x="210" y="149" fontSize="10" fill="currentColor">poke/peek: UVM_ERROR,</text>
-    <text x="210" y="161" fontSize="10" fill="currentColor">UVM_NOT_OK</text>
-    <text x="210" y="174" fontSize="10" fill="currentColor">others: UVM_WARNING,</text>
-    <text x="210" y="186" fontSize="10" fill="currentColor">then a frontdoor access</text>
-    <path d="M 98 194 L 98 214" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="105" y="208" fontSize="10" fill="currentColor">yes</text>
-    <rect x="8" y="216" width="180" height="48" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
-    <text x="16" y="231" fontSize="10" fill="currentColor">3. Map rights allow it? Write:</text>
-    <text x="16" y="244" fontSize="10" fill="currentColor">RW or WO; read: RW or RO.</text>
-    <text x="16" y="257" fontSize="10" fill="currentColor">poke() and peek() skip this</text>
-    <path d="M 188 240 L 200 240" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="195" y="235" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
-    <rect x="202" y="216" width="140" height="48" rx="6" fill="rgba(244,63,94,0.08)" stroke="rgb(244,63,94)" />
-    <text x="210" y="231" fontSize="10" fill="currentColor">UVM_NOT_OK with</text>
-    <text x="210" y="244" fontSize="10" fill="currentColor">no message; nothing</text>
-    <text x="210" y="257" fontSize="10" fill="currentColor">is deposited</text>
-    <path d="M 98 264 L 98 284" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <text x="105" y="278" fontSize="10" fill="currentColor">yes</text>
-    <rect x="8" y="286" width="180" height="34" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
-    <text x="16" y="300" fontSize="10" fill="currentColor">Access through the HDL path</text>
-    <text x="16" y="313" fontSize="10" fill="currentColor">or the user backdoor class</text>
-    <path d="M 98 320 L 98 334" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
-    <rect x="8" y="336" width="180" height="36" rx="6" fill="rgba(16,185,129,0.10)" stroke="rgb(16,185,129)" />
-    <text x="16" y="351" fontSize="10" fill="currentColor">On success, do_predict()</text>
-    <text x="16" y="364" fontSize="10" fill="currentColor">updates the mirror</text>
+    <text x="8" y="16" fontSize="10" fontWeight="600" fill="currentColor">What a register call does when it asks for the backdoor</text>
+    <rect x="8" y="26" width="334" height="36" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="16" y="41" fontSize="10" fill="currentColor">write(), read(), mirror(), update(): a door argument</text>
+    <text x="16" y="55" fontSize="10" fill="currentColor">poke(), peek(): always the backdoor</text>
+    <path d="M 98 62 L 98 80" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <rect x="8" y="82" width="180" height="61" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="16" y="97" fontSize="10" fill="currentColor">1. UVM_DEFAULT_DOOR becomes</text>
+    <text x="16" y="110" fontSize="10" fill="currentColor">the block's default (parents,</text>
+    <text x="16" y="123" fontSize="10" fill="currentColor">else UVM_FRONTDOOR). Is the</text>
+    <text x="16" y="136" fontSize="10" fill="currentColor">door UVM_BACKDOOR?</text>
+    <path d="M 188 112 L 200 112" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="195" y="107" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
+    <rect x="202" y="82" width="140" height="48" rx="6" fill="rgba(100,116,139,0.10)" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="210" y="97" fontSize="10" fill="currentColor">Frontdoor: a bus</text>
+    <text x="210" y="110" fontSize="10" fill="currentColor">access that the</text>
+    <text x="210" y="123" fontSize="10" fill="currentColor">monitor sees</text>
+    <path d="M 98 143 L 98 163" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="105" y="157" fontSize="10" fill="currentColor">yes</text>
+    <rect x="8" y="165" width="180" height="60" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="16" y="181" fontSize="10" fill="currentColor">2. Is a backdoor available?</text>
+    <text x="16" y="194" fontSize="10" fill="currentColor">A user backdoor, or an</text>
+    <text x="16" y="207" fontSize="10" fill="currentColor">HDL path (has_hdl_path())</text>
+    <path d="M 188 195 L 200 195" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="195" y="190" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
+    <rect x="202" y="165" width="140" height="60" rx="6" fill="rgba(244,63,94,0.08)" stroke="rgb(244,63,94)" />
+    <text x="210" y="180" fontSize="10" fill="currentColor">poke/peek: UVM_ERROR,</text>
+    <text x="210" y="192" fontSize="10" fill="currentColor">UVM_NOT_OK</text>
+    <text x="210" y="205" fontSize="10" fill="currentColor">others: UVM_WARNING,</text>
+    <text x="210" y="217" fontSize="10" fill="currentColor">then a frontdoor access</text>
+    <path d="M 98 225 L 98 245" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="105" y="239" fontSize="10" fill="currentColor">yes</text>
+    <rect x="8" y="247" width="180" height="48" rx="6" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="16" y="262" fontSize="10" fill="currentColor">3. Map rights allow it? Write:</text>
+    <text x="16" y="275" fontSize="10" fill="currentColor">RW or WO; read: RW or RO.</text>
+    <text x="16" y="288" fontSize="10" fill="currentColor">poke() and peek() skip this</text>
+    <path d="M 188 271 L 200 271" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="195" y="266" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
+    <rect x="202" y="247" width="140" height="48" rx="6" fill="rgba(244,63,94,0.08)" stroke="rgb(244,63,94)" />
+    <text x="210" y="262" fontSize="10" fill="currentColor">UVM_NOT_OK with</text>
+    <text x="210" y="275" fontSize="10" fill="currentColor">no message; nothing</text>
+    <text x="210" y="288" fontSize="10" fill="currentColor">is deposited</text>
+    <path d="M 98 295 L 98 315" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <text x="105" y="309" fontSize="10" fill="currentColor">yes</text>
+    <rect x="8" y="317" width="180" height="34" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <text x="16" y="331" fontSize="10" fill="currentColor">Access through the HDL path</text>
+    <text x="16" y="344" fontSize="10" fill="currentColor">or the user backdoor class</text>
+    <path d="M 98 351 L 98 365" fill="none" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#fvb-door-arrow)" />
+    <rect x="8" y="367" width="180" height="36" rx="6" fill="rgba(16,185,129,0.10)" stroke="rgb(16,185,129)" />
+    <text x="16" y="382" fontSize="10" fill="currentColor">On success, do_predict()</text>
+    <text x="16" y="395" fontSize="10" fill="currentColor">updates the mirror</text>
   </svg>
-  <figcaption className="text-sm text-muted-foreground">Read it top to bottom; each dashed box is a test, and its "no" exit is the outcome on the right. Gate 1 is in `Xcheck_accessX` (calling the block's `get_default_door()`), gate 2 in `Xcheck_accessX` for `write()`/`read()` and in `poke()`/`peek()` themselves, gate 3 in `do_write`/`do_read` (uvm-core 2020.3.1, `uvm_reg.svh`). For a backdoor `write()`, uvm-core makes the backdoor read that the policy step needs before gate 3; that read changes nothing in the DUT. The empty path list of Push Further passes all three gates and touches nothing.</figcaption>
+  <figcaption className="text-sm text-muted-foreground">Read it top to bottom; each dashed box is a test, and its "no" exit is the outcome on the right. Gate 1 is in `Xcheck_accessX` (calling the block's `get_default_door()`), gate 2 in `Xcheck_accessX` for `write()`/`read()` and in `poke()`/`peek()` themselves, gate 3 in `do_write`/`do_read` (uvm-core 2020.3.1, `uvm_reg.svh`). For a backdoor `write()`, uvm-core makes the backdoor read that the policy step needs before gate 3; that read changes nothing in the DUT. The empty path list of Push Further passes all three gates and touches nothing. `poke()` and `peek()` resolve no door: they start at gate 2.</figcaption>
 </figure>
 
 | Call with `UVM_BACKDOOR` on a register with no backdoor | What happens |
@@ -419,6 +433,9 @@ ral.chan_cfg.set_frontdoor(fd, ral.default_map);
 
 Predict before you read on: auto-predict is off and an explicit predictor watches the bus. After `ral.chan_cfg.write(st, 'h5A)`, whose mirrors change?
 
+<details>
+<summary>Check your prediction</summary>
+
 <SequenceDiagram
   title="A write through a user frontdoor"
   caption="The target register hands the access to chan_fd, which makes two ordinary register writes. The monitor and the predictor see two bus writes, to INDEX and to DATA, and nothing addressed to chan_cfg."
@@ -449,6 +466,8 @@ Predict before you read on: auto-predict is off and an explicit predictor watche
 - call `ral.chan_cfg.predict(v)` from the test after the access returns; or
 - model a register array behind an index/data pair as `uvm_reg_indirect_data` (§18.7). uvm-core ships a frontdoor for it, and its register predictor forwards observed DATA accesses to the selected register (`uvm_reg_indirect.svh`, `uvm_reg_predictor.svh`).
 
+</details>
+
 Two more rules: a register with a user frontdoor can never be accessed one field at a time (uvm-core warns and accesses the whole register), and `set_frontdoor()` applies to one map, so a register in two maps needs it once per map where it is needed.
 
 ### User backdoors: `uvm_reg_backdoor`
@@ -457,7 +476,7 @@ Sometimes the built-in backdoor cannot reach a register: the RTL is encrypted, t
 
 <ArchitectureDiagram
   title="Built-in backdoor versus user backdoor"
-  caption="Left, the built-in backdoor of uvm-core 2020.3.1: the register calls the uvm_hdl_* routines through the DPI, a C back end chosen at compile time for the simulator looks the name up with vpi_handle_by_name() and deposits with vpi_put_value() and vpiNoDelay, so it works only if the name resolves and the simulator grants access. Right, the user backdoor below: the register calls your class, which reaches the storage through functions the IP exports; no HDL name is looked up. Both are zero time, and in both the register predicts its own mirror afterwards."
+  caption="Left, the built-in backdoor of uvm-core 2020.3.1: the register calls the uvm_hdl_* routines through the DPI, a C back end chosen at compile time for the simulator looks the name up with vpi_handle_by_name() and deposits with vpi_put_value() and vpiNoDelay (uvm_hdl_read() reads with vpi_get_value(); the figure shows the deposit path), so it works only if the name resolves and the simulator grants access. Right, the user backdoor below: the register calls your class, which reaches the storage through functions the IP exports; no HDL name is looked up. Both are zero time here (a user backdoor's tasks could consume time if written to), and in both the register predicts its own mirror afterwards."
   nodes={[
     { id: "reg1", label: "ral.ctrl", sublabel: "has an HDL path", kind: "reg", col: 0, row: 0 },
     { id: "hdl", label: "uvm_hdl_deposit()", sublabel: "and uvm_hdl_read(): DPI", kind: "generic", col: 0, row: 1 },
@@ -531,7 +550,7 @@ The messages below are the uvm-core 2020.3.1 texts. Those in the third row come 
 | `[RegModel] No backdoor access available for register '…' . Using frontdoor instead.` | Same cause, on `write`/`read`/`mirror`/`update` | Same fix. Until then the call is a bus access: the monitor and coverage see it |
 | `unable to locate hdl path (tb_top.dut.enq)` with "Either the name is incorrect, or you may not have PLI/ACC visibility to that name", then `[PREDICT_NOK] status UVM_NOT_OK; skip prediction.` | The path names nothing: a typo, renamed RTL, an unnamed generate block, a different hierarchy; or the simulator was not told to allow access to that signal (tool-dependent) | Print `get_full_hdl_path()` and compare with the design; enable signal access as your simulator's manual describes |
 | `[UVM_HDL_DEPOSIT] uvm_hdl DPI routines are compiled off. Recompile without +define+UVM_HDL_NO_DPI` (a fatal; the ID names the routine, such as `UVM_HDL_READ`) | UVM was compiled with `UVM_HDL_NO_DPI`, which replaces the HDL routines with stubs | Recompile UVM without it and link its DPI library |
-| `[RegModel] Block does not have hdl path defined for abstraction 'RTL'` | The block was never given a path for that kind | `ral.configure(null, "tb_top.dut")` or `ral.add_hdl_path(…)` |
+| `[RegModel] Block does not have hdl path defined for abstraction 'RTL'` | The block has no path of that kind: its `configure()` was never called, or the call asked for a kind (for example `"GATE"`) that was never added. (`configure(null, "")` does not cause this; it records an empty path, see Push Further.) | `ral.configure(null, "tb_top.dut")` or `ral.add_hdl_path(…)` |
 | No message; `write(…, UVM_BACKDOOR)` returns `UVM_NOT_OK` | Map rights: a backdoor write needs RW or WO, a read needs RW or RO | Check the rights in `add_reg()`; use `poke()` for set-up of an RO-mapped register |
 | No message, status `UVM_IS_OK`, but the DUT never changes and `peek()` returns 0 | An empty path list: see Push Further | Run the path check below |
 | `Backdoor read of register … with multiple HDL copies: values are not the same` | A register with two copies whose values differ | Find which copy the design really uses, or deposit both |
@@ -1049,8 +1068,9 @@ The monitor counts 2 transfers for six steps and about a dozen register calls. T
 
 <TimingDiagram
   title="reg_if during the fvb_seq run"
-  caption="x-axis: rising edges of clk, 10 ns apart; edge 0 is at 25 ns, the edge where fvb_seq starts. Each value is what the clocking blocks sample at that edge (addr and rdata in hex; X: not driven yet). ● at edge 0: steps 1, 2 and 3 and the poke of step 4, all backdoor and all at 25 ns, with no bus activity. ◆ edge 1: reg_drv drives step 4's read of OVF. ▼ edge 2: the DUT acts and reg_mon samples sel = 1, transfer 1, with rdata 3; the DUT clears CNT at this edge. ● edge 3: item_done(), then step 5 runs through the backdoor at 55 ns, again with no bus activity. ◆ edge 4 and ▼ edge 5: step 6's frontdoor read of CTRL, transfer 2, with rdata F. Monitor count: 2."
+  caption="x-axis: rising edges of clk, 10 ns apart; edge 0 is at 25 ns, the edge where fvb_seq starts. Each value is what the clocking blocks sample at that edge (addr and rdata in hex; X: not driven yet; rdata is 0 while addr is X, because the case in timer_regs falls to its default). ● at edge 0: steps 1, 2 and 3 and the poke of step 4, all backdoor and all at 25 ns, with no bus activity. ◆ edge 1: reg_drv drives step 4's read of OVF. ▼ edge 2: the DUT acts and reg_mon samples sel = 1, transfer 1, with rdata 3; the DUT clears CNT at this edge. ● edge 3: item_done(), then step 5 runs through the backdoor at 55 ns, again with no bus activity. ◆ edge 4 and ▼ edge 5: step 6's frontdoor read of CTRL, transfer 2, with rdata F. Monitor count: 2."
   edges={7}
+  cycleWidth={36}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "sel", kind: "bit", values: [0, 0, 1, 0, 0, 1, 0] },
@@ -1189,9 +1209,9 @@ IEEE 1800.2-2020 §19.6 defines only the routines (`uvm_hdl_check_path`, `uvm_hd
 
 <TimingDiagram
   title="A frontdoor write versus a backdoor deposit, in hypothetical RTL"
-  caption="x-axis: rising edges of clk; each value is the one sampled at that edge. The RTL is hypothetical, not timer_regs: wr_ctrl is sel && wr && addr == 'h00, and the flop job_start <= wr_ctrl && wdata[0] starts a job. ◆ edge 1: a frontdoor write of EN = 1 is on the bus, so at edge 2 en_q is 1 and job_start pulses (✓). ● edge 4: a backdoor deposit of en_q = 0, made between edges 3 and 4. ✕ edge 6: a backdoor deposit of en_q = 1, made between edges 5 and 6: the level changes, but wr_ctrl stays 0, so job_start never pulses and no job starts. Logic that uses the en_q level sees both deposits."
+  caption="x-axis: rising edges of clk; each value is the one sampled at that edge. The RTL is hypothetical, not timer_regs: wr_ctrl is sel && wr && addr == 'h00, and the flop job_start <= wr_ctrl && wdata[0] starts a job, and en_q <= wdata[0] whenever wr_ctrl is 1. ◆ edge 1: a frontdoor write of EN = 1 is on the bus, so at edge 2 en_q is 1 and job_start pulses (✓). ● edge 4: a backdoor deposit of en_q = 0, made between edges 3 and 4. ✕ edge 6: a backdoor deposit of en_q = 1, made between edges 5 and 6: the level changes, but wr_ctrl stays 0, so job_start never pulses and no job starts. Logic that uses the en_q level sees both deposits."
   edges={8}
-  cycleWidth={36}
+  cycleWidth={32}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "wr_ctrl", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
@@ -1207,7 +1227,7 @@ IEEE 1800.2-2020 §19.6 defines only the routines (`uvm_hdl_check_path`, `uvm_hd
 />
 
 - **Events the RTL expects.** A deposit changes stored bits and nothing else. A write strobe that starts a job, a parity or ECC bit computed on the write path, a shadow copy captured at write time, a synchronizer into another clock domain: none of them see a backdoor write. Logic that reads the stored level does. Whether a poked GO bit starts anything is a property of the RTL, not of UVM.
-- **Same-time races.** If a deposit happens in the same time slot as a clock edge, and the RTL assigns that variable at that edge, which one wins is not defined (IEEE 1800-2023 §4.7). A counter that the RTL updates every cycle overwrites a deposit at the next edge. Deposit while the logic is idle or between edges, as Make It Work does after reset.
+- **Same-time races.** If a deposit happens in the same time slot as a clock edge, and the RTL assigns that variable at that edge, which one wins is not defined (IEEE 1800-2023 §4.7). A counter that the RTL updates every cycle overwrites a deposit at the next edge. Deposit while the logic is idle or between edges. Make It Work's deposits land at the 25 ns and 55 ns edges, but they are safe because `timer_regs` assigns none of those variables at those edges (`sel` is 0, and `hw_ovf` and `hw_done` are tied to 0).
 - **Nets.** For a net, a `vpi_put_value()` without a delay overrides the resolved value only "until one of the drivers of the net changes value" (IEEE 1800-2023 §38.34). A backdoor deposit on a continuously driven net therefore lasts only until its driver changes. `uvm_hdl_force()` (§19.6.2.3) holds a value until `uvm_hdl_release()`, but the register backdoor never forces, and a forgotten force is a bug of its own.
 
 ### Expert: Active mirroring through a backdoor left the standard
@@ -1225,7 +1245,7 @@ Attempt each question before you open the feedback.
     { text: "Agree: poke() and backdoor write() leave the DUT and the mirror in the same state, and poke() is faster.", isCorrect: false, feedback: "They differ on RO bits, on bits with no storage, and on W1C, W1S and similar fields: poke() deposits raw values and puts them in the mirror, so the end-of-test checks start failing for reasons that are not design bugs." },
     { text: "Keep backdoor write() for configuration, and use poke() only for hardware-owned states or error injection. The read step is what lets write() honour each field's policy, and it costs zero simulation time.", isCorrect: true, feedback: "Right. Both doors are zero-time; the read is a VPI lookup, not a bus cycle. If set-up speed really matters, a block-level update(st, UVM_BACKDOOR) writes only registers whose desired value differs from the mirror." },
     { text: "Switch both set-up and checks to poke() and peek(), so the whole test runs in zero time.", isCorrect: false, feedback: "Then nothing ever proves the address decode, the bus protocol or the adapter. Keep a frontdoor proof of every register in the regression." },
-    { text: "Disagree, because poke() does not update the mirror and every poke would need a predict().", isCorrect: false, feedback: "In uvm-core 2020.3.1 poke() predicts the mirror itself. The objection to poke() here is that it ignores the access policies, not the mirror." }
+    { text: "Disagree, because poke() does not update the mirror: every poke would need a predict(), or the end-of-test mirror(UVM_CHECK) calls would fail.", isCorrect: false, feedback: "In uvm-core 2020.3.1 poke() predicts the mirror itself. The objection to poke() here is that it ignores the access policies, not the mirror." }
   ]}
 />
 
@@ -1233,9 +1253,9 @@ Attempt each question before you open the feedback.
   title="Interview: RTL passes, gates fail"
   question="A backdoor-heavy test passes on RTL. On the gate-level netlist every peek() fails with an error that the HDL path cannot be located. What happened, and how do you design the model so both runs work?"
   options={[
-    { text: "Synthesis renamed or flattened the registers, so the RTL paths name nothing. Add gate-level paths under a second kind, such as add_hdl_path(..., \"GATE\") and gate-level slices, and select it with set_default_hdl_path(\"GATE\") or by passing the kind to each call.", isCorrect: true, feedback: "Right. Kinds exist for exactly this (IEEE 1800.2-2020 §18.1.6.1). Also re-check simulator visibility options for the netlist run, which are tool-dependent." },
     { text: "The gate-level run needs auto-predict turned on.", isCorrect: false, feedback: "Prediction does not affect whether a backdoor path can be found." },
-    { text: "Backdoor access is impossible on gate-level netlists; switch every access to the frontdoor.", isCorrect: false, feedback: "Many flows use backdoors on netlists with gate-level paths. It is a path problem, not a fundamental limit." },
+    { text: "Backdoor access is impossible on gate-level netlists, because synthesis removes every register name; switch every access to the frontdoor.", isCorrect: false, feedback: "Many flows use backdoors on netlists with gate-level paths. It is a path problem, not a fundamental limit." },
+    { text: "Synthesis renamed or flattened the registers, so the RTL paths name nothing. Add gate-level paths under a second kind, such as add_hdl_path(..., \"GATE\") and gate-level slices, and select it with set_default_hdl_path(\"GATE\") or by passing the kind to each call.", isCorrect: true, feedback: "Right. Kinds exist for exactly this (IEEE 1800.2-2020 §18.1.6.1). Also re-check simulator visibility options for the netlist run, which are tool-dependent." },
     { text: "The block root is missing, so recompile with +define+UVM_HDL_NO_DPI.", isCorrect: false, feedback: "UVM_HDL_NO_DPI removes the HDL routines entirely; every backdoor call would then fail with a fatal." }
   ]}
 />
@@ -1244,10 +1264,10 @@ Attempt each question before you open the feedback.
   title="Interview: the flaky interrupt test"
   question="An interrupt test sometimes misses an overflow event. The checker calls ovf.mirror(st, UVM_CHECK, UVM_BACKDOOR) every 1 us 'to keep the mirror fresh without bus traffic'. CNT is RC. Explain the flakiness."
   options={[
-    { text: "A backdoor mirror() mimics a bus read, so it clears CNT in the DUT. Events counted before each mirror() are wiped, and the interrupt logic may never see the count it waits for. Use peek() to look.", isCorrect: true, feedback: "Right (IEEE 1800.2-2020 §18.4.4.10, §18.4.4.14). In uvm-core the mirror also keeps the pre-clear value, so the model and the DUT disagree as well." },
     { text: "The backdoor is slower than the frontdoor, so the checker falls behind.", isCorrect: false, feedback: "The built-in backdoor takes zero simulation time." },
+    { text: "A backdoor mirror() mimics a bus read, so it clears CNT in the DUT. Events counted before each mirror() are wiped, and the interrupt logic may never see the count it waits for. Use peek() to look.", isCorrect: true, feedback: "Right (IEEE 1800.2-2020 §18.4.4.10 sets clear-on-read bits to 0 on a backdoor read; §18.4.4.14 says mirror() reads the register, though its backdoor sentence speaks of mimicking a write; uvm-core's mirror() reads through do_read()). In uvm-core the mirror also keeps the pre-clear value, so the model and the DUT disagree as well." },
     { text: "mirror(UVM_CHECK) on a volatile field raises false errors.", isCorrect: false, feedback: "A volatile field is not compared at all. The problem is the clear, not the compare." },
-    { text: "The register predictor sees the backdoor reads and predicts CNT twice.", isCorrect: false, feedback: "The predictor never sees backdoor accesses; there is no bus transfer." }
+    { text: "The register predictor sees the backdoor reads and predicts CNT twice, so the mirror runs ahead of the DUT and the checker misses the event.", isCorrect: false, feedback: "The predictor never sees backdoor accesses; there is no bus transfer." }
   ]}
 />
 
@@ -1305,7 +1325,7 @@ Answer from the rules, not from the tables. Every question maps to one objective
   {
     question: "A test calls ral.irq.write(st, 1, UVM_BACKDOOR). The log shows: UVM_WARNING ... [RegModel] No backdoor access available for register 'ral.irq' . Using frontdoor instead. What happened?",
     answers: [
-      { text: "Nothing was written and st is UVM_NOT_OK", correct: false, feedback: "That is what poke() and peek() do without a backdoor. write(), read(), mirror() and update() fall back to the frontdoor instead." },
+      { text: "Nothing was written and st is UVM_NOT_OK, because write() without a backdoor fails exactly as poke() does", correct: false, feedback: "That is what poke() and peek() do without a backdoor. write(), read(), mirror() and update() fall back to the frontdoor instead." },
       { text: "irq has neither an HDL path nor a user backdoor, so the write ran as a bus write: the monitor saw it and the predictor updated the mirror", correct: true, feedback: "Right (uvm_reg.svh, Xcheck_accessX). The test still passes, but the access is slower and shows up in bus coverage and scoreboards. Add the path." },
       { text: "The HDL path names a signal that does not exist", correct: false, feedback: "A wrong path is reported by the simulator interface layer ('unable to locate hdl path' in the uvm-core reference versions), and the call fails. This warning means there is no path at all." },
       { text: "UVM was compiled with UVM_HDL_NO_DPI", correct: false, feedback: "That produces a fatal error from the stub routine (for example UVM_HDL_READ), not this warning." }
@@ -1317,9 +1337,9 @@ Answer from the rules, not from the tables. Every question maps to one objective
     question: "ctrl.poke() returns UVM_NOT_OK. The log shows an error that the HDL path tb_top.dut.ctrl_q cannot be located, then [PREDICT_NOK] status UVM_NOT_OK; skip prediction. The register has a path. What is the most likely cause, and the first step?",
     answers: [
       { text: "The path names nothing the simulator can reach: the RTL has no ctrl_q (it uses en_q and mode_q), or signal access was not enabled. Print get_full_hdl_path() and compare it with the design.", correct: true, feedback: "Right. The error comes from the simulator interface layer, whose exact text is tool-dependent; the PREDICT_NOK warning shows the register then skipped its prediction." },
-      { text: "The register has no path at all; add one with configure()", correct: false, feedback: "With no path, uvm-core reports 'No backdoor access available to poke register' and never reaches the simulator. Here a path exists but names nothing." },
+      { text: "The register has no path at all, so the simulator cannot find it; add the block path with configure() and the slices with add_hdl_path_slice()", correct: false, feedback: "With no path, uvm-core reports 'No backdoor access available to poke register' and never reaches the simulator. Here a path exists but names nothing." },
       { text: "The mirror is stale; call predict() before the poke()", correct: false, feedback: "The mirror has nothing to do with whether a deposit can reach the signal." },
-      { text: "The map rights are RO, so the poke() is refused", correct: false, feedback: "Rights affect backdoor write() and read(), silently. poke() does not check rights, and a rights failure prints nothing." }
+      { text: "The map rights for CTRL are RO, so poke() refuses the deposit and the register then skips its prediction", correct: false, feedback: "Rights affect backdoor write() and read(), silently. poke() does not check rights, and a rights failure prints nothing." }
     ],
     explanation: "Three different messages, three different causes: no path at all (RegModel error or fallback warning), a path that names nothing (simulator interface error, tool-dependent text), and the HDL routines compiled out (fatal).",
     objective: 3
@@ -1338,9 +1358,9 @@ Answer from the rules, not from the tables. Every question maps to one objective
   {
     question: "A key register lives inside encrypted RTL whose internal names the simulator will not resolve. The IP exports two functions, through a bound interface, that read and set the key. How do you give the register a backdoor?",
     answers: [
-      { text: "Extend uvm_reg_frontdoor and call the two functions from body()", correct: false, feedback: "A frontdoor replaces the bus path. The functions are a backdoor: no bus transfer, no simulation time." },
+      { text: "Extend uvm_reg_frontdoor, call the two functions from body(), and attach it with key.set_frontdoor(fd, ral.default_map)", correct: false, feedback: "A frontdoor replaces the bus path. The functions are a backdoor: no bus transfer, no simulation time." },
       { text: "Extend uvm_reg_backdoor: override write() (do_pre_write() first, do_post_write() last) and read_func(), and attach it with key.set_backdoor(bkdr)", correct: true, feedback: "Right (IEEE 1800.2-2020 §19.5, §18.4.6.2). The register needs no HDL path, and poke(), peek() and backdoor write()/read() all go through your class." },
-      { text: "Add the encrypted signal's name with add_hdl_path_slice() and enable visibility", correct: false, feedback: "Encrypted RTL is exactly what the built-in routines cannot reach; the name will not resolve." },
+      { text: "Add the encrypted signal's name with add_hdl_path_slice() and enable read and write visibility for it in the simulator options", correct: false, feedback: "Encrypted RTL is exactly what the built-in routines cannot reach; the name will not resolve." },
       { text: "Override uvm_reg::poke() in the register class", correct: false, feedback: "That would cover poke() only, and bypass the prediction and callbacks the register model wraps around every backdoor access. The supported hook is a uvm_reg_backdoor." }
     ],
     explanation: "User frontdoors change how the bus is used; user backdoors change how storage is reached. Both plug into the normal register calls, so tests do not change.",
@@ -1349,10 +1369,10 @@ Answer from the rules, not from the tables. Every question maps to one objective
   {
     question: "A scoreboard learns CTRL.MODE from bus writes seen by the monitor. The test switches MODE with ral.ctrl.write(st, v, UVM_BACKDOOR). What happens, and what is the fix?",
     answers: [
-      { text: "Nothing goes wrong: the register predictor republishes backdoor writes on its reg_ap", correct: false, feedback: "The register predictor only publishes what the monitor observed. A backdoor write produces no bus transfer." },
+      { text: "Nothing goes wrong: the register predictor republishes backdoor writes on its reg_ap, so the scoreboard receives the new MODE like any other write", correct: false, feedback: "The register predictor only publishes what the monitor observed. A backdoor write produces no bus transfer." },
       { text: "Nothing goes wrong if set_auto_predict(1) is on, because auto-predict makes the monitor see register-model accesses", correct: false, feedback: "Auto-predict only updates the mirror for the register model's own frontdoor calls. It never creates bus traffic and never sees other masters' accesses either." },
       { text: "The scoreboard keeps the old MODE and reports false mismatches. Let it read the mode from the register model (ral.ctrl.mode.get_mirrored_value()), or finish backdoor set-up before it starts checking.", correct: true, feedback: "Right. The mirror is correct (uvm-core predicts the backdoor write), but nothing on the bus told the scoreboard." },
-      { text: "The DUT ignores the change until a bus write confirms it", correct: false, feedback: "The stored value changes at once; logic that uses the level sees it. Only logic triggered by the write event itself misses it." }
+      { text: "The DUT ignores the change until a bus write confirms it, so the scoreboard and the DUT both keep the old MODE and still agree", correct: false, feedback: "The stored value changes at once; logic that uses the level sees it. Only logic triggered by the write event itself misses it." }
     ],
     explanation: "Backdoor accesses are invisible downstream of the pins: monitors, register predictors, bus coverage and bus-fed scoreboards. The register model is the one place that knows.",
     objective: 5
@@ -1360,10 +1380,10 @@ Answer from the rules, not from the tables. Every question maps to one objective
   {
     question: "A test must start with 200 configuration registers programmed, then check status registers (some RC) between traffic bursts without disturbing the DUT. Which plan is sound?",
     answers: [
-      { text: "poke() all 200 registers, and check status with backdoor read()", correct: false, feedback: "poke() ignores the access policies, and a backdoor read() clears RC fields in the DUT." },
+      { text: "poke() all 200 registers for speed, then check status with backdoor read() between bursts, which takes no bus time", correct: false, feedback: "poke() ignores the access policies, and a backdoor read() clears RC fields in the DUT." },
       { text: "Backdoor update() or write() for the set-up; peek() and a comparison with the expected value for the status checks; and a frontdoor access test of every register somewhere in the regression", correct: true, feedback: "Right. Fast set-up that honours the policies, non-destructive checks, and one frontdoor proof of the decode and bus path." },
-      { text: "Frontdoor for everything, because backdoor writes skip the access policies", correct: false, feedback: "Backdoor write() honours the policies (§18.4.4.9). Frontdoor everywhere works, but wastes simulation time." },
-      { text: "Backdoor mirror(UVM_CHECK) for the status checks, because it compares without bus traffic", correct: false, feedback: "A backdoor mirror() mimics a read, so it clears RC status bits in the DUT." }
+      { text: "Frontdoor for everything, set-up and status checks alike, because backdoor writes skip the access policies and only the bus can be trusted", correct: false, feedback: "Backdoor write() honours the policies (§18.4.4.9). Frontdoor everywhere works, but wastes simulation time." },
+      { text: "Backdoor update() for the set-up, then backdoor mirror(UVM_CHECK) for the status checks, because it compares without bus traffic", correct: false, feedback: "A backdoor mirror() mimics a read, so it clears RC status bits in the DUT." }
     ],
     explanation: "Match the door to the purpose: backdoor write/update to configure, poke for hard states, peek to look, frontdoor to prove the bus path.",
     objective: 5
@@ -1419,7 +1439,7 @@ After this body: CTRL is `'h5` in the DUT and the mirror, CNT is unchanged (and 
 
 </details>
 
-### Kata 2 (debug challenge): the backdoor that never touched the DUT
+### Kata 2 (debug challenge): a backdoor test that passes
 
 Someone changed the environment of Make It Work to `ral.configure(null, "")` and forgot to add the path elsewhere. The test still reports `UVM_ERROR :    0`. Here is its log (illustrative, traced by hand from the uvm-core 2020.3.1 source):
 
@@ -1441,7 +1461,7 @@ Compare it with the expected output. Which lines differ, what do they tell you, 
 <details>
 <summary>Reveal the worked solution</summary>
 
-**What differs.** Steps 1 and 2 report the DUT as `00000000` instead of `0000000f`, and steps 3 and 4 return 0 instead of 3. The three `GET_MIRRORED_VAL/VOL` warnings are the same in both logs: they come from `show()` printing volatile mirrors, not from the missing path.
+**What differs.** Steps 1 and 2 report the DUT as `00000000` instead of `0000000f`, and steps 3 and 4 return 0 instead of 3. The mirror also differs in step 1 (`ffffffff` instead of `0000000f`) and step 3 (`00000000` instead of `00000003`). The three `GET_MIRRORED_VAL/VOL` warnings are the same in both logs: they come from `show()` printing volatile mirrors, not from the missing path.
 
 The two logs side by side, step by step (✗ marks a value that differs):
 

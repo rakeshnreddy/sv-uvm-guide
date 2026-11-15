@@ -37,9 +37,9 @@ sources:
     { id: "qt-edge", label: "Edge cases", sublabel: "volunteered", kind: "generic", col: 0, row: 1 }
   ]}
   edges={[
-    { from: "qt-rule", to: "qt-risk", style: "causal", label: "then" },
-    { from: "qt-risk", to: "qt-proof", style: "causal", label: "then" },
-    { from: "qt-proof", to: "qt-edge", style: "causal", label: "then" }
+    { from: "qt-rule", to: "qt-risk", style: "causal" },
+    { from: "qt-risk", to: "qt-proof", style: "causal" },
+    { from: "qt-proof", to: "qt-edge", style: "causal" }
   ]}
 />
 
@@ -57,7 +57,7 @@ sources:
 
 ### Words you need first
 
-All of these were taught in the prerequisite lessons; this is a one-line reminder of each.
+All of these were taught in earlier lessons (the prerequisites, and B-AMBA-F2 for snoops); this is a one-line reminder of each.
 
 - **Master and slave:** the master starts transactions; the slave answers them. This lesson uses the words of IHI0022E (AXI) and IHI0033B.b (AHB). Later Arm issues say **manager** and **subordinate** for the same two roles.
 - **Channel, handshake:** AXI has five **channels**: write address (AW), write data (W), write response (B), read address (AR) and read data (R). Each moves information with a **handshake**: the source drives `VALID`, the destination drives `READY`, and a transfer happens at a rising clock edge where both are high (IHI0022E §A3.2.1).
@@ -171,7 +171,7 @@ When a simulation hangs or a checker fires, do not start with random internal DU
 
 <ArchitectureDiagram
   title="The triage ladder"
-  caption="Follow the dashed arrows in number order: step 1 at the top left, step 2 to its right, step 3 below it, step 4 back on the left, then steps 5 and 6 on the bottom row. Go on to the next step only when this one is clean; each clean step rules out a class of bug. The sublabel is the clause to check against."
+  caption="Follow the dashed arrows in number order: step 1 at the top left, step 2 to its right, step 3 below it, step 4 back on the left, then steps 5 and 6 on the bottom row. The numbered list below says what to check at each step. The sublabel is the clause to check against."
   legend={false}
   nodes={[
     { id: "tr-hs", label: "1. Handshakes", sublabel: "VALID held, §A3.2.1", kind: "generic", col: 0, row: 0 },
@@ -182,11 +182,11 @@ When a simulation hangs or a checker fires, do not start with random internal DU
     { id: "tr-own", label: "6. Bug owner", sublabel: "the table below", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
-    { from: "tr-hs", to: "tr-ph", style: "causal", label: "clean" },
-    { from: "tr-ph", to: "tr-dep", style: "causal", label: "clean" },
-    { from: "tr-dep", to: "tr-pay", style: "causal", label: "clean" },
-    { from: "tr-pay", to: "tr-ord", style: "causal", label: "clean" },
-    { from: "tr-ord", to: "tr-own", style: "causal", label: "clean" }
+    { from: "tr-hs", to: "tr-ph", style: "causal" },
+    { from: "tr-ph", to: "tr-dep", style: "causal" },
+    { from: "tr-dep", to: "tr-pay", style: "causal" },
+    { from: "tr-pay", to: "tr-ord", style: "causal" },
+    { from: "tr-ord", to: "tr-own", style: "causal" }
   ]}
 />
 
@@ -209,7 +209,7 @@ When a simulation hangs or a checker fires, do not start with random internal DU
 | AHB ERROR that lasts one cycle | slave | IHI0033B.b §5.1.3 |
 | An assertion fires on a waited IDLE that becomes NONSEQ | checker | IHI0033B.b §3.6.1 |
 
-#### Drill 1: an AHB address changes during a wait state
+#### Drill 1: an AHB burst that stalls
 
 **Predict before you read on.** In this waveform, edges are numbered from 0 at the first rising `HCLK` edge shown, and each column shows the value sampled at that edge. The burst is an INCR4 of word (4-byte) transfers. `HRESP` 0 is OKAY and 1 is ERROR. At which edge does someone first break a rule, and whose bug is it?
 
@@ -278,7 +278,7 @@ endproperty
 
 On Drill 1 its attempt that starts at edge 2 fails at edge 3, because `HADDR` changed and `$past(HRESP)` is 0. On the legal trace the attempt that starts at edge 2 passes at edge 3 through its cancel branch. (`$stable` and `$past` compare with the value sampled at the previous clock edge, IEEE 1800-2023 §16.9.3.)
 
-#### Drill 2: AXI write data that never ends
+#### Drill 2: an AXI write that never gets its response
 
 **Predict.** `AWREADY` and `WREADY` are high throughout. At which edge is the first rule broken, by whom, and why does `BVALID` never come?
 
@@ -324,7 +324,7 @@ On Drill 1 its attempt that starts at edge 2 fails at edge 3, because `HADDR` ch
   ]}
   markers={[
     { edge: 2, tone: "info", label: "edge 2: a 2-beat W burst ends before any AW; the burst-counting checker stores its length" },
-    { edge: 3, tone: "fail", label: "edge 3: AW handshake; the count-from-AW checker starts here and has missed both beats, while the burst-counting checker pairs the stored 2-beat burst now (2 = AWLEN + 1), resp_owed 1" },
+    { edge: 3, tone: "fail", label: "edge 3: AW handshake; a checker that counts from AW has missed both beats" },
     { edge: 4, tone: "pass", label: "edge 4: BVALID after both handshakes (§A3.3.1), resp_owed back to 0, nothing reported" }
   ]}
 />
@@ -719,12 +719,12 @@ The waveform shows the same law at a small scale: one read issued every 2 cycles
 
 **Pitfall: "16 ID values means at most 16 outstanding reads."** No. Several outstanding reads may share an ID; they simply complete in order (§A5.3.1). The ID width limits how many reads can complete *out of order* relative to each other, not how many can be in flight.
 
-**The same law, written another way.** [B-AXI-3's sizing item](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index#expert-sizing-outstanding-depth-and-id-width) measures latency L to the *first* beat and adds the B beats of the burst itself: N ≥ (L + B) / B. Here latency is measured to `RLAST`, so it already includes the burst, and the estimate is N = latency / B = 120 / 4 = 30. The two give the same answer; say which latency you mean.
+**The same law, written another way.** [B-AXI-3's sizing item](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index#expert-sizing-outstanding-depth-and-id-width) measures latency L to the *first* beat and adds the B beats of the burst itself: N ≥ (L + B) / B. Here latency is measured to `RLAST`, so it already includes the burst, and the estimate is N = latency / B = 120 / 4 = 30. The two agree to within one read; say which latency you mean. Each read holds its slot for about L + B cycles. Taking the latency to `RLAST` as roughly L + B makes L about 116 here, and (116 + 4) / 4 = 30; with back-to-back beats `RLAST` comes at L + B − 1, so L is 117 and the bound is just over 30.
 
 | Latency you measured | Estimate | With this example |
 |---|---|---|
 | From the AR handshake to the `RLAST` beat (120 cycles) | N = latency / B | 120 / 4 = 30 |
-| From the AR handshake to the first R beat, L (B-AXI-3's form: each read holds its slot for about L + B cycles, taking the latency to `RLAST` as roughly L + B, so L is about 116 here; with back-to-back beats `RLAST` comes at L + B − 1, so L is 117 and the bound is just over 30) | N ≥ (L + B) / B | (116 + 4) / 4 = 30 |
+| From the AR handshake to the first R beat, L (B-AXI-3's form; L ≈ 117 with back-to-back beats) | N ≥ (L + B) / B | (117 + 4) / 4 = 30.25, so 31 |
 
 **Deadlock checklist.** A deadlock needs a cycle of waits. Look for each of these:
 1. A `VALID` that waits for `READY` (forbidden, §A3.2.1, §A3.3.1). The experiment above showed the classic case.
@@ -1445,7 +1445,7 @@ Six traces, **two minutes each**: time yourself (the page has no timer). For eac
 
 <InterviewQuestionPlayground
   title="Triage 4 of 6: AHB error response"
-  question="At edge 4 the first transfer's data phase ends with HREADY 1 and HRESP OKAY. At edge 5 the second transfer's data phase ends with HREADY 1 and HRESP ERROR. No edge shows HRESP ERROR with HREADY 0."
+  question="At edge 4 the first transfer's data phase ends with HREADY 1 and HRESP OKAY. At edge 5 the second transfer's data phase ends with HREADY 1 and HRESP ERROR."
   options={[
     { text: "Legal: HRESP ERROR with HREADY high ends the transfer.", correct: false, feedback: "That is only the second cycle of an ERROR; the first cycle, with HREADY low and HRESP ERROR, is missing." },
     { text: "Edge 5, master: it must not issue a transfer that the slave will answer with ERROR.", correct: false, feedback: "Errors are the slave's response; the master cannot prevent them." },
@@ -1597,7 +1597,7 @@ The flashcards below drill the rules table, the triage order, the checker trap a
 - Arm IHI0022E, *AMBA AXI and ACE Protocol Specification* (issue E, 2013): §A3.1.2 reset; §A3.2.1 handshake process; §A3.2.2 channel signaling requirements (`WLAST`, default `READY`); §A3.3 relationships between the channels (W before AW; realignment note); §A3.3.1 dependencies between channel handshake signals (write dependencies; AXI4 write response dependency); §A3.4.1 address structure (burst length, burst types, 4KB, no early termination); §A3.4.4 read and write response structure (EXOKAY, SLVERR, DECERR, default slave); §A5.3 transaction ordering, §A5.3.1 read ordering, §A5.3.2 normal write ordering, §A5.3.4 read and write interaction (when a transaction counts as complete), §A5.3.5 interconnect use of transaction identifiers, §A5.3.6 width of transaction ID fields; §A5.4 removal of write interleaving support, §A5.4.1 removal of WID (write data in address order); §A7.2.2 exclusive access from the perspective of the master; §A7.2.3 exclusive access from the perspective of the slave (the monitor); §A7.2.5 slaves that do not support exclusive access (the write always updates memory); §B1.1 definition of AXI4-Lite; §B1.2.1 bridge requirements of AXI4-Lite slaves; §B1.3 conversion mechanism; §B1.4 conversion, protection and detection; §C1.2.3 cache state model; §C1.3.4 channel usage examples (loads; a store removes all other copies); §C3.7 snoop response channel signaling (a Clean holder need not transfer data); Table C5-3 required snoop transaction behavior (a Dirty holder must transfer data); §C5.2.3 memory update in progress; §C5.2.5 non-blocking requirements for a snooped master.
 - Arm IHI0033B.b, *AMBA 5 AHB Protocol Specification*: §2.3 slave signals (`HREADYOUT`); §2.5 multiplexor signals (`HREADY`); §3.1 basic transfers; §3.2 transfer types (IDLE, BUSY, NONSEQ, SEQ; a SEQ address wraps in a wrapping burst); §3.5 burst operation (Table 3-3 burst types, 1KB rule, size alignment), §3.5.1 burst termination after a BUSY transfer, §3.5.2 early burst termination; §3.6 waited transfers, §3.6.1 transfer type changes, §3.6.2 address changes; §4.2 address decoding; §5.1.3 ERROR response. These numbers are Issue B.b's, as used across the AHB track. In the later Issue C, burst operation is §3.6 and waited transfers are §3.7 (see the section map in [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index)).
 - Arm IHI0050E.b, *AMBA 5 CHI Architecture Specification*: §2.11 Request Retry (Requester, Completer, RetryAck, protocol credits); §2.11.3 transaction retry flow (PCrdGrant may arrive before RetryAck); §13.9.3 snoop flit (Table 13-8 has no AllowRetry field).
-- IEEE 1800-2023: §14.16 synchronous drives; §16.9.3 sampled value functions (`$stable`, `$past`); §16.14.3 cover statement; §20.10 severity tasks; §21.3.3 formatting data to a string (`$sformatf`).
+- IEEE 1800-2023: §14.16 synchronous drives; §16.9.3 sampled value functions (`$stable`, `$past`); §16.14.3 cover statement; §20.10 severity tasks; §21.2.1.7 string format (`%s` prints no leading zeros); §21.3.3 formatting data to a string (`$sformatf`).
 - J. D. C. Little, "A proof for the queuing formula L = λW", *Operations Research* 9(3), 1961: the queueing result used for sizing (not an AMBA rule).
 
 **Prerequisites:** [B-AXI-6: AXI Verification & Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index), [B-AHB-3: AHB Verification](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) and [B-AMBA-F1: Bridges & System Integration](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index).

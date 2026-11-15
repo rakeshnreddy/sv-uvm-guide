@@ -133,7 +133,7 @@ class alu_scoreboard extends uvm_scoreboard;
 endclass
 ```
 
-**Form B: two `uvm_tlm_analysis_fifo`s and a `run_phase` thread** (§12.2.8.3). Each FIFO accepts every `write()` at once (it is unbounded, and its `write()` is a `try_put` that always succeeds), and the scoreboard's own thread takes items out with `get()`, a task that may wait. The scoreboard exposes two `uvm_analysis_export`s and connects them to its private FIFOs, so the env never reaches inside it:
+**Form B: two `uvm_tlm_analysis_fifo`s and a `run_phase` thread** (§12.2.8.3). Each FIFO accepts every `write()` at once (it is unbounded, §12.2.8.3; in uvm-core 2020.3.1 its `write()` is a `try_put` that always succeeds), and the scoreboard's own thread takes items out with `get()`, a task that may wait. The scoreboard exposes two `uvm_analysis_export`s and connects them to its private FIFOs, so the env never reaches inside it:
 
 ```systemverilog
 // snippet: form B, used by the in-order scoreboard below and by the lab
@@ -203,7 +203,10 @@ import "DPI-C" pure function int unsigned alu_ref_c(input int unsigned op,
 
 The DUT in this lesson, `alu_pipe`, accepts one request per clock and returns its result two rising edges later, in request order, with the request's `tag` (a 4-bit label the DUT copies from input to output). Both monitors sample through the clocking block `mon_cb`, whose inputs are sampled just before each rising edge, as the DUT's own flip-flops see them (`default input #1step`; IEEE 1800-2023 §14.13).
 
-**Predict before you look.** Requests arrive back to back at edges 1, 2 and 3. A bench with a single monitor reads `a`, `b` and `op` from the bus at the edge where it sees `valid_out` high, and publishes them with `result`. Which request's inputs does it pair with the first result? Decide, then read the waveform.
+**Predict before you look.** Requests arrive back to back at edges 1, 2 and 3. A bench with a single monitor reads `a`, `b` and `op` from the bus at the edge where it sees `valid_out` high, and publishes them with `result`. Which request's inputs does it pair with the first result? Decide, then open the waveform.
+
+<details>
+<summary>Check your answer: the waveform</summary>
 
 <TimingDiagram
   title="alu_pipe: requests at edges 1 to 3, results at edges 3 to 5"
@@ -227,6 +230,8 @@ The DUT in this lesson, `alu_pipe`, accepts one request per clock and returns it
 />
 
 **What the waveform shows.** The single monitor pairs R1 with A3: by the time a result appears, the request bus has moved on. It only looked right in benches whose driver held each request for the whole latency. Two monitors, each sampling its own side when its own valid is high, with the pairing done in the scoreboard by tag or by order, are correct for any traffic. The same reasoning tells you where to predict: at edge 1, when `in_mon` sees the request accepted.
+
+</details>
 
 ### In-order matching and comparing by value
 
@@ -331,9 +336,9 @@ The same `check_phase` reports nothing, because the only record of E3 was a loca
 </details>
 
 **Comparing by value.** `act == exp` on two class handles is true only when both refer to the **same object** (IEEE 1800-2023 §8.4, §11.4.5). An expected item and an actual item are always two objects, so `==` is always false for them, whatever their fields; `compare()` is what compares values (IEEE 1800.2-2020 §5.3.9.1). Four details decide whether `compare()` protects you:
-- **Check its return value.** By default a miscompare is reported as a `UVM_INFO` message with ID `MISCMP`, at verbosity `UVM_LOW`, and only the first one is shown (§16.3.5.1–§16.3.5.3). `UVM_INFO` never fails a test: if you ignore the `bit` that `compare()` returns, the test passes with miscompares in its log.
+- **Check its return value.** By default a miscompare is reported as a `UVM_INFO` message (ID `MISCMP` in uvm-core 2020.3.1), at verbosity `UVM_LOW`, and only the first one is shown (§16.3.5.1–§16.3.5.3). `UVM_INFO` never fails a test: if you ignore the `bit` that `compare()` returns, the test passes with miscompares in its log.
 - **Compare what the output side carries.** An actual item has a tag and a result, not the operands. `alu_item::do_compare()` therefore compares `tag` and `result` only. If your item uses the `` `uvm_field_* `` macros instead, flag input-only fields `UVM_NOCOMPARE` (Annex F.2.1.9), or every compare fails on fields the output monitor never fills.
-- **Compare 4-state values with `!==` semantics.** `compare_field_int` uses case inequality, so an X on `result` is a miscompare; a hand-written `act.result != exp.result` would give X, which an `if` treats as false, and hide it.
+- **Compare 4-state values with `!==` semantics.** `compare_field_int` uses case inequality in uvm-core 2020.3.1 (`base/uvm_comparer.svh`), so an X on `result` is a miscompare; a hand-written `act.result != exp.result` would give X, which an `if` treats as false, and hide it.
 - **Use your own comparer when you want detail.** Make It Work passes a scoreboard-owned `uvm_comparer` to `compare()` and puts `get_miscompares()` (§16.3.3.8) into its own `` `uvm_error ``.
 
 **Four ways to write the check, against three answers from the DUT.** The expected item is always correct; each column is what the actual item carries. Only the last row raises an error exactly when the DUT is wrong.
@@ -491,7 +496,7 @@ Why each line is there:
 
 **Latency and timeouts: do not wait for the end to find a hang.** A response that never comes is reported by `check_phase`, but only at the end, and only if the run ends normally. Make It Work adds two run-time guards:
 - **A per-item latency watchdog.** `write_exp()` forks `watch(t)`, which waits `max_latency` and reports `SCB/LATE` if that very object (compared with `==`, which is right here: the question is identity) is still queued. The error names the request and the time it went missing, while the run continues.
-- **A global timeout.** The test calls `uvm_root::get().set_timeout(1ms)` (Annex F.7.3.3). If the run hangs, UVM ends it with `UVM_FATAL [PH_TIMEOUT]`. A fatal skips `check_phase` and `report_phase` entirely; in uvm-core 2020.3.1 the run ends through `uvm_root::die()`, which calls every component's `pre_abort()` first (§13.1.4.6). `alu_scoreboard::pre_abort()` prints its `SCB_SUMMARY` there, so even a killed run leaves its counts in the log.
+- **A global timeout.** The test calls `uvm_root::get().set_timeout(1ms)` (Annex F.7.3.3). If the run hangs, UVM ends it with `UVM_FATAL [PH_TIMEOUT]`. A fatal skips `check_phase` and `report_phase` entirely; in uvm-core 2020.3.1 the run ends through `uvm_root::die()`, which calls every component's `pre_abort()` bottom-up and then prints the report summary (Annex F.7.3.2; §13.1.4.6). `alu_scoreboard::pre_abort()` prints its `SCB_SUMMARY` there, so even a killed run leaves its counts in the log.
 
 **Every SCB message the Make It Work `alu_scoreboard` prints, at a glance.** The full class is in Make It Work; this table is the map from a log line back to the code that wrote it.
 
@@ -507,7 +512,7 @@ Why each line is there:
 | `SCB/NO_TRAFFIC` | `UVM_ERROR` | `check_phase()` | when `n_match + n_mismatch == 0` | no counter |
 | `SCB_SUMMARY` | `UVM_INFO` at `UVM_NONE` | `report_phase()`; `pre_abort()` after a fatal | once, at the end | prints `matches`, `mismatches` and `pending` |
 
-Two more lines can appear. With the reset snippet below, `flush_on_reset()` prints `SCB/RESET` at `UVM_LOW` and also raises `SCB/UNEXPECTED`, counted in `pending` through `n_unexpected`. The comparer's own `MISCMP` line is hidden, because the class calls `cmp.set_verbosity(UVM_HIGH)`; `SCB/MISMATCH` carries the detail instead.
+Two more lines can appear. With the reset snippet below, `flush_on_reset()` prints `SCB/RESET` at `UVM_LOW` and also raises `SCB/UNEXPECTED`, counted in `pending` through `n_unexpected`. The comparer's own `MISCMP` line is hidden at the default verbosity, because the class calls `cmp.set_verbosity(UVM_HIGH)`; `SCB/MISMATCH` carries the detail instead.
 
 ### False passes and false failures
 
@@ -527,11 +532,11 @@ A **false pass** is a run that reports success although the DUT is wrong; a **fa
 | A burst of `SCB/MISSING` or `SCB/MISMATCH` right after a mid-test reset | Predictions for requests the reset discarded are still queued | Flush the predictions on reset and count them separately; still check the results already observed (below) |
 | `SCB/MISMATCH` on every request a test injects as illegal on purpose | The model predicts the normal result for an illegal request | Predict the specified error response; never demote `SCB/*` errors for the whole test |
 
-**Aliasing: one object, many handles.** An analysis FIFO, a queue and a `write()` all store or pass **handles**, never copies. A monitor that creates its item once, before its loop, and overwrites it for every transfer publishes the same object again and again; every handle the scoreboard stored then shows the last transfer's values. Try the model below: it is the same bug, with a plain queue in place of the analysis FIFO. **Predict** which line causes it before you click.
+**Aliasing: one object, many handles.** An analysis FIFO, a queue and a `write()` all store or pass **handles**, never copies. Try the model below: it is the same bug, with a plain queue in place of the analysis FIFO. **Predict** which line causes it before you click.
 
 <ObjectHandleVisualizer mode="bug" />
 
-**What it showed, in UVM terms.** Only one `txn` object existed, so every stored handle pointed at it. In a UVM bench the rule has two halves: the **publisher** creates a new item for every transaction (`alu_in_mon` and `alu_out_mon` call `alu_item::type_id::create()` inside their loops) and never touches it after `write()`; the **subscriber** never modifies what it receives (§12.2.10.2) and predicts into a copy (`alu_predictor` calls `clone()`). [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) explains shallow and deep copies.
+**What it showed, in UVM terms.** A monitor that creates its item once, before its loop, and overwrites it for every transfer publishes the same object again and again; every handle the scoreboard stored then shows the last transfer's values. Only one `txn` object existed, so every stored handle pointed at it. In a UVM bench the rule has two halves: the **publisher** creates a new item for every transaction (`alu_in_mon` and `alu_out_mon` call `alu_item::type_id::create()` inside their loops) and never touches it after `write()`; the **subscriber** never modifies what it receives (§12.2.10.2) and predicts into a copy (`alu_predictor` calls `clone()`). [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) explains shallow and deep copies.
 
 **Reset in the middle of a test (basic version).** When reset is asserted, the DUT discards the requests in flight, so their predictions will never be answered. Without care, `check_phase` reports them as missing on a correct DUT. The minimum a scoreboard needs is a flush, called when a reset monitor sees `rst_n` fall. It flushes **expectations, never observations**: a result the DUT produced before the reset is real and is still checked.
 
@@ -1282,12 +1287,22 @@ How to read it:
 
 A scoreboard you have never seen fail is not evidence. Run each mutant and **predict** the first error before you look. Each must fail with its own ID.
 
-| Run | What the planted bug does | The log must show |
-|---|---|---|
-| `+define+MUT_DROP` | Request 10 (tag 9) never gets a result | `SCB/LATE` at 225 ns, `SCB/DRAIN_TIMEOUT` warning, `SCB/MISSING` for tag 9, `pending=1` |
-| `+define+MUT_SUB` | SUB is computed as ADD | `SCB/MISMATCH` for each SUB request with `b` ≠ 0, with the comparer's field detail |
-| `+define+MUT_EXTRA` | The result for request 10 is sent twice, in the idle cycle after it | `SCB/UNEXPECTED` for tag 9 in `check_phase`, `pending=1` |
-| `+UVM_TESTNAME=alu_zero_test` | No stimulus at all | `SCB/NO_TRAFFIC`, `matches=0` |
+| Run | What the planted bug does |
+|---|---|
+| `+define+MUT_DROP` | Request 10 (tag 9) never gets a result |
+| `+define+MUT_SUB` | SUB is computed as ADD |
+| `+define+MUT_EXTRA` | The result for request 10 is sent twice, in the idle cycle after it |
+| `+UVM_TESTNAME=alu_zero_test` | No stimulus at all |
+
+<details>
+<summary>What each mutant must show, and the key log lines</summary>
+
+| Run | The log must show |
+|---|---|
+| `+define+MUT_DROP` | `SCB/LATE` at 225 ns, `SCB/DRAIN_TIMEOUT` warning, `SCB/MISSING` for tag 9, `pending=1` |
+| `+define+MUT_SUB` | `SCB/MISMATCH` for each SUB request with `b` ≠ 0, with the comparer's field detail |
+| `+define+MUT_EXTRA` | `SCB/UNEXPECTED` for tag 9 in `check_phase`, `pending=1` |
+| `+UVM_TESTNAME=alu_zero_test` | `SCB/NO_TRAFFIC`, `matches=0` |
 
 The key lines, from the same hand trace:
 
@@ -1310,6 +1325,8 @@ UVM_INFO @ 255 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=20 mis
 UVM_ERROR @ 0 ns: uvm_test_top.env.scb [SCB/NO_TRAFFIC] no result was compared: this run proves nothing
 UVM_INFO @ 0 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=0 mismatches=0 pending=0
 ```
+
+</details>
 
 Operand values depend on the seed; the IDs, the times and the counts do not, except for `MUT_SUB`, whose number of mismatches is the number of SUB requests in your seed with `b` ≠ 0. Notice three things:
 - **`MUT_DROP` is caught twice.** `SCB/LATE` names the lost request 100 ns after it was accepted, while the run continues; `SCB/MISSING` confirms it at the end. Because the scoreboard is keyed, the other 19 results still match: there is no cascade of mismatches after the lost one.
@@ -1420,13 +1437,13 @@ Each step, where it lives in `alu_sb_tb.sv`, and the false pass or false failure
 - **When it is called.** uvm-core 2020.3.1 waits for the NBA region before each call (`uvm_phase_hopper.svh`), so every zero-time `write()` made in the time step of the last drop has already run: an item accepted at the very edge where the test drops its objection is already counted in `outstanding`.
 - **Drain time interacts with the iterations.** A drain time set on the test applies each time the test's objection count reaches zero, including after the scoreboard's later drop, and a raise during the drain cancels it (§10.5.1.3.7).
 - **What ending kills.** When `run_phase` ends, uvm-core kills the phase's processes (`uvm_phase_hopper.svh`), and `kill()` terminates every descendant process too (IEEE 1800-2023 §9.7). A monitor's late `write()` therefore never happens: the item is not "dropped by the scoreboard", it was never delivered.
-- **Timeout and abort.** The default global timeout "is implementation specific" (Annex F.7.3.3); in uvm-core 2020.3.1 it is `` `UVM_DEFAULT_TIMEOUT ``, 9200 s (`uvm_global_defines.svh`, uvm-core impl.). The timeout raises `UVM_FATAL [PH_TIMEOUT]`; the fatal's exit action calls `pre_abort()` on every component, bottom-up (§13.1.4.6), then prints the report summary. `check_phase` and `report_phase` never run.
+- **Timeout and abort.** The default global timeout "is implementation specific" (Annex F.7.3.3); in uvm-core 2020.3.1 it is `` `UVM_DEFAULT_TIMEOUT ``, 9200 s (`uvm_global_defines.svh`, uvm-core impl.). The timeout raises `UVM_FATAL [PH_TIMEOUT]`; the fatal's exit action calls `pre_abort()` on every component, bottom-up (§13.1.4.6), then prints the report summary (Annex F.7.3.2). `check_phase` and `report_phase` never run.
 - **Interview angle:** "Your test ends at the right time in simulation A and 2 µs late in simulation B, with the same seed and code. Where do you look?" (A `phase_ready_to_end` that raises unconditionally with a delay, re-called up to 20 times; or a drain time hit repeatedly because something raises and drops in a loop.)
 
 ### Expert: configuring `compare()` for a scoreboard
 
 - **The defaults are normative.** A new comparer shows at most one miscompare message (`show_max` 1, §16.3.5.1), at verbosity `UVM_LOW` (§16.3.5.2), with severity `UVM_INFO` (§16.3.5.3), and with a return threshold of 1 (§16.3.6), which lets `do_compare` "return as quickly as possible after the result ... reaches the threshold value, potentially skipping additional field comparisons".
-- **Who honours the threshold.** In uvm-core 2020.3.1 the field macros stop comparing later fields once the result reaches the threshold (`uvm_comparer_defines.svh`); `compare_field_int` and the other `compare_field*` calls in a hand-written `do_compare` do not check it. `set_threshold(0)` asks for every field to be compared, which matters for field-macro items.
+- **Who honours the threshold.** In uvm-core 2020.3.1 the field macros stop comparing later fields once the result reaches the threshold (`uvm_comparer_defines.svh`); `compare_field_int` and the other `compare_field*` calls in a hand-written `do_compare` do not check it. `set_threshold(0)` asks for every field to be compared, which matters for field-macro items. The standard has the comparer's `flush()` restore the threshold to 1 (§16.3.6), and every top-level `compare()` flushes first (§5.3.9.1). So a portable scoreboard calls `set_threshold(0)` before each `compare()`; in uvm-core 2020.3.1, `flush()` keeps the threshold, so setting it once in `build_phase` is enough there.
 - **A null comparer means the shared default.** `compare(rhs)` with no comparer uses the default comparer policy and flushes it when the active object depth is 0 (§5.3.9.1). Changing the default comparer's severity to `UVM_ERROR` changes it for every `compare()` in the simulation, including library code: prefer a scoreboard-owned comparer, as `alu_scoreboard` does.
 - **Reading the detail.** `get_miscompares()` returns the miscompare messages since the last flush, one per line (§16.3.3.8); `get_result()` returns their number (§16.3.3.9).
 - **Tolerance.** A model with rounding (a DSP filter, floating point) needs a tolerant compare: override `do_compare` to compare within a bound, or compare a derived value; never weaken the compare by removing the field. [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) shows both ways.
@@ -1439,7 +1456,7 @@ The defaults against what `alu_scoreboard` does with its own comparer:
 | `show_max` | 1 (§16.3.5.1) | left at 1 | in uvm-core 2020.3.1 each top-level `compare()` flushes the comparer first, so at most one `MISCMP` message per call; `get_miscompares()` still collects every miscompare |
 | verbosity | `UVM_LOW` (§16.3.5.2) | `set_verbosity(UVM_HIGH)` | the `MISCMP` message is hidden at the default verbosity; `SCB/MISMATCH` carries the detail |
 | severity | `UVM_INFO` (§16.3.5.3) | left at `UVM_INFO` | the verdict comes from `compare_pair()`, which tests the return value and raises `` `uvm_error `` |
-| threshold | 1 (§16.3.6) | `set_threshold(0)` | field-macro items would compare every field; this item's hand-written `do_compare` compares both fields either way |
+| threshold | 1 (§16.3.6) | `set_threshold(0)` | field-macro items would compare every field; this item's hand-written `do_compare` compares both fields either way (in uvm-core 2020.3.1; per §16.3.6 a flush restores 1) |
 
 ### Expert: uvm-core's built-in comparators
 
@@ -1504,7 +1521,7 @@ Attempt each question before you open the feedback.
   question="Nightly regressions are green, yet silicon drops responses under back-pressure. The scoreboard log shows 0 mismatches. Which explanation covers the most likely ways the scoreboard passed?"
   options={[
     { text: "The scoreboard saw zero transactions in some tests, never checked leftovers, ignored compare() results, or the run ended before late responses arrived.", correct: true, feedback: "Right. Each of these prints 0 mismatches. The fixes are SCB/NO_TRAFFIC, SCB/MISSING and SCB/UNEXPECTED in check_phase, a checked compare(), and a drain that waits until idle. Then prove it with a drop mutant." },
-    { text: "The regression used too few seeds; more seeds would have found it.", correct: false, feedback: "More seeds help only if the scoreboard can fail. A scoreboard that never counts leftovers passes a dropped response with every seed." },
+    { text: "The regression used too few seeds; more seeds would have hit the back-pressure corner and found it.", correct: false, feedback: "More seeds help only if the scoreboard can fail. A scoreboard that never counts leftovers passes a dropped response with every seed." },
     { text: "The reference model was wrong, because a model always has the same bugs as the RTL.", correct: false, feedback: "Common-mode errors exist, but a dropped response is not a value the model computes: it is an item that never arrived, which accounting, not the model, must catch." },
     { text: "Back-pressure cannot be verified in simulation, only in silicon.", correct: false, feedback: "Back-pressure is ordinary stimulus. The failure here is in the checking, not in what simulation can express." }
   ]}
@@ -1514,9 +1531,9 @@ Attempt each question before you open the feedback.
   title="Interview angle: predict at input or at output"
   question="A DUT has variable latency and reuses IDs. Do you predict when the request is accepted, or when the response arrives?"
   options={[
-    { text: "When the response arrives: only then do you know which request it belongs to.", correct: false, feedback: "Late prediction cannot tell which of two outstanding same-ID requests a response belongs to, cannot detect a response with nothing outstanding, and cannot time out a missing response." },
-    { text: "When the request is accepted, from the input monitor: the expected item then waits in its ID's queue, so ordering, latency and leftovers can all be checked.", correct: true, feedback: "Right. Early prediction is what makes per-ID queues, latency watchdogs and SCB/UNEXPECTED possible. Hold an actual that beats its prediction in the same time step." },
-    { text: "When the sequence randomizes the item, because that is the earliest point.", correct: false, feedback: "The sequence knows intent, not what the DUT accepted. A request that was back-pressured or withdrawn would be predicted anyway." },
+    { text: "When the response arrives, because only then do you know which request it actually belongs to.", correct: false, feedback: "Late prediction cannot tell which of two outstanding same-ID requests a response belongs to, cannot detect a response with nothing outstanding, and cannot time out a missing response." },
+    { text: "When the request is accepted, from the input monitor: the expected item waits in its ID's queue.", correct: true, feedback: "Right. The waiting expected item means ordering, latency and leftovers can all be checked. Early prediction is what makes per-ID queues, latency watchdogs and SCB/UNEXPECTED possible. Hold an actual that beats its prediction in the same time step." },
+    { text: "When the sequence randomizes the item, because that is the earliest point at which its fields are known.", correct: false, feedback: "The sequence knows intent, not what the DUT accepted. A request that was back-pressured or withdrawn would be predicted anyway." },
     { text: "It does not matter as long as compare() is used.", correct: false, feedback: "compare() decides whether two items are equal; when you predict decides which items you can pair and what you can account for." }
   ]}
 />
@@ -1526,9 +1543,9 @@ Attempt each question before you open the feedback.
   question="A colleague ends every test with phase_ready_to_end raising an objection, waiting #100ns, and dropping it. Tests pass. What do you say?"
   options={[
     { text: "It is fine: 100 ns is longer than the DUT's latency.", correct: false, feedback: "It is a guess that breaks when latency grows, and it checks nothing: the phase ends whether or not anything is outstanding." },
-    { text: "It costs about 2 µs per test, because UVM calls phase_ready_to_end again after each drop up to 20 times, and it never checks what is pending. Wait until the outstanding count reaches 0, once, with a watchdog.", correct: true, feedback: "Right. Hold the phase only while work is outstanding, only once (a drained flag), only for run, and bound it with a watchdog so a lost response cannot hang the test." },
+    { text: "It costs about 2 µs per test (re-called up to 20 times) and never checks what is pending; wait for outstanding == 0, once, with a watchdog.", correct: true, feedback: "Right. UVM calls phase_ready_to_end again after each drop, up to 20 times, so wait until the outstanding count reaches 0. Hold the phase only while work is outstanding, only once (a drained flag), only for run, and bound it with a watchdog so a lost response cannot hang the test." },
     { text: "Objections raised in phase_ready_to_end are ignored, so the delay does nothing.", correct: false, feedback: "IEEE 1800.2-2020 §13.1.4.3.2 explicitly allows a component to raise the phase's objection there." },
-    { text: "Replace it with a #100ns before drop_objection in the test.", correct: false, feedback: "Moving the guess to the test does not stop it being a guess, and it still never checks whether anything is pending." }
+    { text: "Replace it with a #100ns before drop_objection in the test, so the delay is applied exactly once per test.", correct: false, feedback: "Moving the guess to the test does not stop it being a guess, and it still never checks whether anything is pending." }
   ]}
 />
 
@@ -1555,7 +1572,7 @@ Attempt each question before you open the feedback.
         { text: "1, because the fields are equal", correct: false, feedback: "That is the misconception: == on class handles does not look at fields." },
         { text: "0, because == on class handles asks whether they refer to the same object", correct: true, feedback: "Right (IEEE 1800-2023 §8.4). Two objects are never ==, however equal their fields. compare() compares values." },
         { text: "It calls act.compare(exp) under the hood", correct: false, feedback: "SystemVerilog has no operator overloading for classes; == never calls a method." },
-        { text: "A compile error: == is not defined for class handles", correct: false, feedback: "== and != are legal on class handles (§8.4); they compare identity, which is why the bug compiles silently." }
+        { text: "A compile error: == is not defined for class handles, only for integral and real values", correct: false, feedback: "== and != are legal on class handles (§8.4); they compare identity, which is why the bug compiles silently." }
       ],
       explanation: "Handle equality is identity. An expected item and an actual item are always separate objects, so act == exp is always 0 and a scoreboard using it fails every compare (or, written as !=, reports every item). Use compare() and check its return value.",
       objective: 2
@@ -1563,7 +1580,7 @@ Attempt each question before you open the feedback.
     {
       question: "An AXI-style DUT may return different IDs in any order but keeps each ID in request order, and two requests with the same ID can be outstanding. Which expected-item structure matches it?",
       answers: [
-        { text: "A single queue shared by all IDs, compared in arrival order", correct: false, feedback: "Legal reordering across IDs makes the oldest item belong to a different ID than the response: false mismatches." },
+        { text: "A single queue shared by all IDs, compared in arrival order, with the oldest item always taken first", correct: false, feedback: "Legal reordering across IDs makes the oldest item belong to a different ID than the response: false mismatches." },
         { text: "An associative array with one slot per ID", correct: false, feedback: "The second outstanding request with the same ID overwrites the first prediction; the first response is then compared with the wrong item." },
         { text: "An associative array of queues keyed by ID, popping the oldest entry for the response's ID", correct: true, feedback: "Right. It accepts every legal reorder across IDs, checks same-ID order, and survives ID reuse." },
         { text: "An unordered list, claiming any pending item that compares equal", correct: false, feedback: "It never false-fails, but a same-ID reorder passes because each response finds some equal item." }
@@ -1574,10 +1591,10 @@ Attempt each question before you open the feedback.
     {
       question: "A scoreboard's phase_ready_to_end raises the run phase's objection, waits #100ns in a forked thread and drops it, every time it is called, with no other condition. What happens at the end of every test?",
       answers: [
-        { text: "UVM calls it again after each drop, up to the default limit of 20 iterations, so it adds about 2 µs to every test and never checks whether anything is pending", correct: true, feedback: "Right (IEEE 1800.2-2020 §13.1.4.3.2, §9.3.1.3.5). Hold the phase only while work is outstanding, and only once." },
-        { text: "It waits 100 ns once, which is safe as long as the DUT answers within 100 ns", correct: false, feedback: "Two misconceptions: it is called again after each drop, and a fixed delay is a guess that checks nothing." },
+        { text: "It is re-called after each drop, up to 20 times: about 2 µs added per test, and nothing pending is checked", correct: true, feedback: "Right (IEEE 1800.2-2020 §13.1.4.3.2, §9.3.1.3.5). UVM calls it again after each drop, up to the default limit of 20 iterations, so it adds about 2 µs to every test and never checks whether anything is pending. Hold the phase only while work is outstanding, and only once." },
+        { text: "It waits 100 ns once, which is safe as long as the DUT answers every request within 100 ns", correct: false, feedback: "Two misconceptions: it is called again after each drop, and a fixed delay is a guess that checks nothing." },
         { text: "Objections raised in phase_ready_to_end are ignored, so it has no effect", correct: false, feedback: "The standard explicitly allows a component to raise the phase's objection there." },
-        { text: "The phase ends as soon as the first call returns, killing the forked thread", correct: false, feedback: "The raised objection keeps the phase open until the forked thread drops it." }
+        { text: "The phase ends as soon as the first call returns, killing the forked thread before it can drop the objection", correct: false, feedback: "The raised objection keeps the phase open until the forked thread drops it." }
       ],
       explanation: "Every raise-and-drop inside phase_ready_to_end triggers another iteration, up to get_max_ready_to_end_iterations() (20 by default). An unconditional delay therefore repeats about 20 times. The correct pattern raises only when outstanding is non-zero, only once, and drops when outstanding reaches 0 or a watchdog expires.",
       objective: 3
@@ -1586,9 +1603,9 @@ Attempt each question before you open the feedback.
       question: "A run's log ends with SCB_SUMMARY matches=0 mismatches=0 pending=0 and UVM_ERROR : 0. What is your verdict?",
       answers: [
         { text: "Pass: no mismatches and nothing pending", correct: false, feedback: "Zero mismatches out of zero compares proves nothing. This is the classic false pass." },
-        { text: "Fail: nothing was compared, and the scoreboard is missing the zero-traffic check that should have raised SCB/NO_TRAFFIC", correct: true, feedback: "Right. Make zero compares an error in check_phase, then find out why nothing arrived: an unconnected port, a monitor waiting on the wrong signal, or a run that ended at 0 ns." },
+        { text: "Fail: nothing was compared, so SCB/NO_TRAFFIC should have fired", correct: true, feedback: "Right. The scoreboard is missing the zero-traffic check that should have raised SCB/NO_TRAFFIC. Make zero compares an error in check_phase, then find out why nothing arrived: an unconnected port, a monitor waiting on the wrong signal, or a run that ended at 0 ns." },
         { text: "Pass, if functional coverage reached its goal", correct: false, feedback: "Coverage says what was stimulated, not what was checked. A monitor can feed coverage while the scoreboard's port is unconnected." },
-        { text: "Inconclusive: rerun with a longer drain time", correct: false, feedback: "A drain time cannot create traffic that never reached the scoreboard." }
+        { text: "Inconclusive: rerun with a longer drain time so that late results have time to reach the scoreboard", correct: false, feedback: "A drain time cannot create traffic that never reached the scoreboard." }
       ],
       explanation: "A scoreboard that saw nothing reports the same counts as one that saw a perfect DUT, which is why zero traffic must be an error. The fix is in the scoreboard (SCB/NO_TRAFFIC), and then in whatever cut the stream.",
       objective: 3
@@ -1596,7 +1613,7 @@ Attempt each question before you open the feedback.
     {
       question: "After a run, every expected item the scoreboard stored shows the data of the last transaction. What is the cause?",
       answers: [
-        { text: "The analysis FIFO is bounded and overwrote its oldest entries", correct: false, feedback: "uvm_tlm_analysis_fifo is always unbounded (IEEE 1800.2-2020 §12.2.8.3); it never overwrites or drops." },
+        { text: "The analysis FIFO is bounded, and once full it overwrote its oldest entries with new ones", correct: false, feedback: "uvm_tlm_analysis_fifo is always unbounded (IEEE 1800.2-2020 §12.2.8.3); it never overwrites or drops." },
         { text: "write() copies only the most recent item into each subscriber", correct: false, feedback: "write() copies nothing: it passes the same handle to every subscriber." },
         { text: "The drain time was too short", correct: false, feedback: "A short drain loses late items; it does not change the data of items already stored." },
         { text: "The input monitor reuses one object, and the scoreboard stored handles to it", correct: true, feedback: "Right. Every stored handle refers to the one object, which holds the last values. The monitor must create a new item per transaction." }
@@ -1608,7 +1625,7 @@ Attempt each question before you open the feedback.
       question: "The input bus can back-pressure a request (hold it waiting) and the sequence can withdraw it before it is accepted. Where should the predictor take its inputs?",
       answers: [
         { text: "From the sequence, when each item is randomized", correct: false, feedback: "The sequence knows intent. A withdrawn request would be predicted and then reported missing." },
-        { text: "From the driver, after item_done()", correct: false, feedback: "The driver knows what it tried to drive, not what the DUT accepted; and checks fed from the driver miss interface bugs." },
+        { text: "From the driver, after item_done(), because by then the request has been driven on the bus", correct: false, feedback: "The driver knows what it tried to drive, not what the DUT accepted; and checks fed from the driver miss interface bugs." },
         { text: "From the input monitor, which publishes a request when the DUT accepts it", correct: true, feedback: "Right. Only the input monitor sees the handshake complete, so the prediction matches exactly what the DUT must answer." },
         { text: "From the output monitor's item, which already holds the inputs", correct: false, feedback: "Predicting from the output is circular: you would be checking the DUT against itself." }
       ],
@@ -1619,8 +1636,8 @@ Attempt each question before you open the feedback.
       question: "The architects maintain a bit-accurate C model of the datapath, with internal state (a history buffer). How should the scoreboard use it?",
       answers: [
         { text: "Rewrite it in SystemVerilog so the bench has one language", correct: false, feedback: "A rewrite duplicates effort and creates a second model that can drift from the architects' one." },
-        { text: "Import it through DPI-C and call it from a predictor component, in DUT order; do not declare it pure, because it has state", correct: true, feedback: "Right. pure is only for nonvoid, input-only functions with no side effects (IEEE 1800-2023 §35.5.2); a stateful model must be called in exactly the DUT's order, from one place." },
-        { text: "Import it as a pure function and call it from both monitors for speed", correct: false, feedback: "A stateful function is not pure, and calling it from two places desynchronises its state from the DUT's order." },
+        { text: "Import it through DPI-C and call it from the predictor in DUT order, without pure", correct: true, feedback: "Right. Call it from a predictor component, in DUT order, and do not declare it pure, because it has state: pure is only for nonvoid, input-only functions with no side effects (IEEE 1800-2023 §35.5.2); a stateful model must be called in exactly the DUT's order, from one place." },
+        { text: "Import it as a pure function and call it from both monitors so each side gets its result sooner, for speed", correct: false, feedback: "A stateful function is not pure, and calling it from two places desynchronises its state from the DUT's order." },
         { text: "Skip prediction and rely on assertions, because C models are slow", correct: false, feedback: "Assertions check time-local rules, not end-to-end data results; the model is exactly what the scoreboard needs." }
       ],
       explanation: "Reuse an existing trusted model through DPI-C, called from the predictor component so calls follow the DUT's order. The pure qualifier is a promise of no side effects, which a model with history cannot keep.",
@@ -1629,10 +1646,10 @@ Attempt each question before you open the feedback.
     {
       question: "A test asserts reset in the middle of traffic, with 3 requests in flight. check_phase reports 3 SCB/MISSING, and the designers say the DUT is right to discard them. What do you change?",
       answers: [
-        { text: "Lengthen the drain watchdog so the 3 responses have time to arrive", correct: false, feedback: "They will never arrive: reset discarded them. Waiting longer only delays the same errors." },
-        { text: "Demote SCB/MISSING to a warning for this test", correct: false, feedback: "That hides every real missing response in the test, including ones unrelated to reset." },
+        { text: "Lengthen the drain watchdog so the 3 missing responses still have time to arrive", correct: false, feedback: "They will never arrive: reset discarded them. Waiting longer only delays the same errors." },
+        { text: "Demote SCB/MISSING to a warning for this test, because the designers have confirmed the discards are legal", correct: false, feedback: "That hides every real missing response in the test, including ones unrelated to reset." },
         { text: "Disable check_phase in tests that use reset", correct: false, feedback: "That removes the accounting that catches dropped responses for the whole test." },
-        { text: "Flush the queued predictions when reset is seen, after checking the results already observed, and report the flushed count separately", correct: true, feedback: "Right. The scoreboard stops expecting what reset discarded, still checks every result the DUT produced before the reset, and the flushed count stays visible in the summary." }
+        { text: "Flush queued predictions at reset, after checking results already observed, and count them separately", correct: true, feedback: "Right. Flush when reset is seen and report the flushed count separately: the scoreboard stops expecting what reset discarded, still checks every result the DUT produced before the reset, and the flushed count stays visible in the summary." }
       ],
       explanation: "A reset discards in-flight work, so the scoreboard must discard the matching predictions, counting them separately; results already observed are real and are still checked. Blanket demotion and disabling check_phase both create false passes; a longer wait changes nothing.",
       objective: 4
@@ -1640,10 +1657,10 @@ Attempt each question before you open the feedback.
     {
       question: "A bench has one monitor: at each edge where it samples valid_out high, it reads a, b and op from the request bus and publishes them with result. alu_pipe answers two edges after a request, and requests arrive every cycle. Which inputs does it pair with the first result?",
       answers: [
-        { text: "The first request's inputs, because the result belongs to it", correct: false, feedback: "The bus does not wait for the result: two edges later it carries a newer request." },
+        { text: "The first request's inputs, because the result belongs to the request that produced it", correct: false, feedback: "The bus does not wait for the result: two edges later it carries a newer request." },
         { text: "The third request's inputs, because the bus already carries a newer request at that edge", correct: true, feedback: "Right. With back-to-back requests, the edge where R1 is sampled is the edge where request 3 is accepted. Use two monitors and pair in the scoreboard." },
-        { text: "X, because valid_in is low when valid_out is high", correct: false, feedback: "With back-to-back traffic valid_in is still high, and the fields hold the newer request, not X." },
-        { text: "It depends on whether the DUT uses nonblocking assignments", correct: false, feedback: "The DUT's coding style does not change which request occupies the bus at that edge." }
+        { text: "X, because valid_in is low by the time valid_out is high, so the request fields are no longer driven", correct: false, feedback: "With back-to-back traffic valid_in is still high, and the fields hold the newer request, not X." },
+        { text: "It depends on whether the DUT uses nonblocking assignments for its pipeline registers", correct: false, feedback: "The DUT's coding style does not change which request occupies the bus at that edge." }
       ],
       explanation: "Inputs and results of a pipelined DUT belong to different edges. A single monitor that reads both at the output edge pairs each result with a later request, which only looked right in benches whose driver held each request for the whole latency.",
       objective: 4
@@ -1651,10 +1668,10 @@ Attempt each question before you open the feedback.
     {
       question: "Before it can compare, your scoreboard must call a reference-model task that waits 3 clock cycles of simulated time. How do you feed the scoreboard?",
       answers: [
-        { text: "Call the model task from write_act()", correct: false, feedback: "write_act() is a function, and a function may not call a task or wait (IEEE 1800-2023 §13.4)." },
+        { text: "Call the model task from write_act()", correct: false, feedback: "write_act() is a function, and a function may not wait or call a task except by spawning it with fork...join_none (IEEE 1800-2023 §13.4, §13.4.4); the scoreboard would then compare before the model's result exists." },
         { text: "Wrap the call in fork...join inside write_exp()", correct: false, feedback: "fork...join waits for its branches, which a function may not do; only fork...join_none is allowed in a function (§13.4.4)." },
         { text: "Two analysis FIFOs feeding a run_phase thread that calls the model task and then compares", correct: true, feedback: "Right. The FIFOs accept every write() at once, and the thread may wait as long as it needs." },
-        { text: "Declare write_exp() as a task in the scoreboard", correct: false, feedback: "The imp calls write_exp() as a function; the analysis interface's write is a function (IEEE 1800.2-2020 §12.2.10.2)." }
+        { text: "Declare write_exp() as a task in the scoreboard so that it can wait for the model to finish", correct: false, feedback: "The imp calls write_exp() as a function; the analysis interface's write is a function (IEEE 1800.2-2020 §12.2.10.2)." }
       ],
       explanation: "Imps run your code inside the publisher's zero-time write() call, so they suit zero-time checks only. A check that must wait needs its own thread, and analysis FIFOs are the buffer between the zero-time write and that thread.",
       objective: 1
@@ -1732,7 +1749,7 @@ foreach (held_q[i])
   `uvm_error("SCB/UNEXPECTED", $sformatf("tag=%0d matched no prediction", held_q[i].tag))
 ```
 
-**3. The fixed version.** Correct DUT: `exp_q[2]` holds A, B after edge 2; edge 3 pops A for A's result (match), edge 4 pops B (match), edge 5 matches C; nothing pending, `SCB_SUMMARY matches=3 mismatches=0 pending=0`. Swapping DUT: at edge 3, B's result is compared with A's prediction (the oldest for tag 2): `SCB/MISMATCH`; at edge 4, A's result with B's prediction: `SCB/MISMATCH`. The same-tag reorder, which is a protocol violation, is caught. A "search any match" scoreboard would have passed it.
+**3. The fixed version.** Correct DUT: `exp_q[2]` holds A, B after edge 2; edge 3 pops A for A's result (match), edge 4 pops B (match), edge 5 matches C; nothing pending, `SCB_SUMMARY matches=3 mismatches=0 pending=0`. Swapping DUT: at edge 3, B's result is compared with A's prediction (the oldest for tag 2): `SCB/MISMATCH`; at edge 4, A's result with B's prediction: `SCB/MISMATCH` (unless A and B compute the same result, in which case the swap is invisible at the outputs and harmless). The same-tag reorder, which is a protocol violation, is caught. A "search any match" scoreboard would have passed it.
 
 </details>
 
@@ -1767,7 +1784,7 @@ For the out-of-order application on a real protocol, continue with the per-ID re
   - §12.2.10.1 `uvm_analysis_port`, §12.2.10.2 `uvm_analysis_imp` ("shall not modify the value passed to it"), §12.2.10.3 `uvm_analysis_export`; Annex B.5.22 `` `uvm_analysis_imp_decl ``;
   - §5.3.9.1 `compare`, §5.3.9.2 `do_compare`; §16.3 `uvm_comparer` (§16.3.3.8 `get_miscompares`, §16.3.3.9 `get_result`, §16.3.5.1–§16.3.5.3 `show_max`, verbosity and severity defaults, §16.3.6 threshold); Annex F.2.1.9 `UVM_NOCOMPARE`;
   - §13.1.4.3.2 `phase_ready_to_end`; §9.3.1.3.3–§9.3.1.3.5 ready-to-end iterations; §9.3.1.7.1 `get_objection`; §10.5.1.3.7 `set_drain_time`;
-  - §9.8.1.6–§9.8.1.8 extract, check and report phases; §13.1.4.6 `pre_abort`; Annex F.7.3.3 `set_timeout`; §6.6 report catchers.
+  - §9.8.1.6–§9.8.1.8 extract, check and report phases; §13.1.4.6 `pre_abort`; Annex F.7.3.2 `die`; Annex F.7.3.3 `set_timeout`; §6.6 report catchers.
 - IEEE 1800-2023: §7.8 and §7.10 associative arrays and queues (§7.8.6 invalid indices, §7.8.7 allocation); §8.4 operations on object handles; §9.4.2 event control (methods in event expressions); §9.4.3 `wait`; §9.7 process control (`kill`); §13.4 functions, §13.4.4 `fork ... join_none` in functions; §14.13 clocking-block input sampling; §35.5.2 `pure` and §35.5.3 `context` DPI imports.
 - Arm IHI0022E: §A5.1 transaction ordering and IDs; §A5.3.1 read-data reordering depth.
 - uvm-core 2020.3.1 (implementation details named on this page): `base/uvm_phase_hopper.svh` (ready-to-end loop, `PH_TIMEOUT`, killing phase processes), `base/uvm_root.svh` (`die()`), `base/uvm_comparer.svh` and `macros/uvm_comparer_defines.svh` (threshold handling), `tlm1/uvm_tlm_fifos.svh` (`write()` as `try_put`), `comps/uvm_in_order_comparator.svh`, `macros/uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`).

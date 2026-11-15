@@ -92,7 +92,7 @@ To answer it, follow a failure on its way to the summary. Every place it can lea
   ]}
 />
 
-Read the left column top to bottom: a checker's `` `uvm_error `` passes the macro's pre-check; the report handler applies any severity override and picks the action; the server runs the report catchers, then drops a CAUGHT or `UVM_NO_ACTION` report or counts it into the summary. A `UVM_EXIT` action or a reached quit count calls `die()`, which prints the summary and ends the run before later phases. Bottom right: a failing assertion with no `else` clause calls `$error`, which goes only to the simulator log, a lane UVM never sees. A checker that compared nothing has nothing to fail, so it issues no error at all. Only a gate that reads both the summary and the log sees every lane.
+Read the left column top to bottom: a checker's `` `uvm_error `` passes the macro's pre-check; the report handler applies any severity override and picks the action; the server runs the report catchers, then drops a CAUGHT or `UVM_NO_ACTION` report or counts it into the summary. A `UVM_EXIT` action or a reached quit count calls `die()`, which prints the summary and ends the run before later phases. Bottom right: a failing assertion with no `else` clause calls `$error`, which goes only to the simulator log, a lane UVM never sees. A checker that compared nothing has nothing to fail, so it issues no error at all. Only a gate that reads the summary, the log and the run's command line sees every lane.
 
 Four mechanisms make a verdict lie. Learn them as a checklist:
 
@@ -113,10 +113,15 @@ Mechanisms 1 to 3 produce false passes. Mechanism 4 produces a true fail with a 
 
 <TelemetryEventBusVisualizer />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the debrief for the three presets</summary>
+
 **Debrief.**
 1. **One error, and the verdict is honest.** The two `CRC` errors are demoted to `UVM_INFO` and still printed, so they are counted as information. The real `SCB` mismatch is counted, and the run fails for the right reason. The `$error` is still invisible to UVM, so the gate must scan for it.
 2. **Zero errors, and the verdict is a lie.** The catcher returns CAUGHT for every `UVM_ERROR`, including the real bug. The catcher summary would show `Number of caught UVM_ERROR reports   :    3`, which is the evidence a gate can check.
 3. **Zero errors, and the verdict is a lie.** The errors are dropped before counting and, because the macros check the action first, never even built. Nothing in the summary shows it; only the command line does.
+
+</details>
 
 **Read the generated code for the Demote preset.** It attaches the catcher to the one component that reports the injected errors, `uvm_report_cb::add(env.agt.mon, catcher)`, in `connect_phase`, and the catcher counts its demotions so that `check_phase` can fail the test when the count is not the expected 2. The next section explains why both matter, and the Make It Work example uses the same pattern.
 
@@ -162,7 +167,7 @@ A **report catcher** is an object of a class derived from `uvm_report_catcher` (
 - Catchers run in registration order. A catcher registered with `add(null, c)` is **type-wide**: it sees reports from every report object. One registered with `add(obj, c)` sees only that object's reports (§10.7.2.3.1).
 - Inside `catch()`, the `get_*` methods read the current report (§6.6.3): `get_severity`, `get_id`, `get_message`, `get_verbosity`, `get_action`, `get_client` (the report object). The protected `set_*` methods change it, and later catchers see the change (§6.6.4): `set_severity`, `set_id`, `set_message`, `set_verbosity`, `set_action`, `set_context`.
 - `catch()` returns **THROW**, which passes the (possibly changed) report on to the next catcher and then to the server, or **CAUGHT**, which ends processing at once: no later catcher runs, and the report is neither printed nor counted (§6.5.1.2.14 a; §6.6.5 defines `catch()` and its return values).
-- The catcher class keeps counts of demoted and caught warnings, errors and fatals, and the server prints them before the report summary (§6.6 overview).
+- The catcher class keeps counts of demoted and caught warnings, errors and fatals (§6.6 overview), and in uvm-core the server prints them just before the report summary (`uvm_report_server.svh`, `m_report_summarize`).
 
 The two return values side by side:
 
@@ -192,9 +197,14 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
     { kind: "note", from: "srv", to: "dem", label: "demoter: UVM_ERROR, ID CRC, text matches, so set_severity(UVM_INFO); demoted++" },
     { kind: "return", from: "dem", to: "srv", label: "THROW" },
     { kind: "note", from: "srv", to: "dem", label: "CAUGHT here would end processing: no later catcher, no count, no display" },
-    { kind: "self", from: "srv", label: "no set_action: INFO default (DISPLAY); counted as INFO, printed" }
+    { kind: "self", from: "srv", label: "no set_action: which action now? (see the answer)" }
   ]}
 />
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+The last step of the figure, completed: with no `set_action()`, the server uses the INFO default (DISPLAY), so the report is counted as INFO and printed.
 
 **Debrief.** No. In uvm-core 2020.3.1, when a catcher changes the severity without calling `set_action()`, and the action was still the old severity's default, the server switches it to the new severity's default action (`uvm_report_catcher.svh`, `process_all_report_catchers`). `UVM_INFO`'s default is `UVM_DISPLAY`, so the demoted report is printed and counted under `UVM_INFO`, and it no longer feeds the quit counter. Call `set_action()` yourself if you want something else.
 
@@ -202,6 +212,8 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
 |---|---|---|---|---|
 | `set_severity(UVM_INFO)` only, with the action still `UVM_ERROR`'s default `UVM_DISPLAY \| UVM_COUNT` | `UVM_INFO`'s default, `UVM_DISPLAY` | Yes | `UVM_INFO` | No |
 | `set_severity(UVM_INFO)` and `set_action(UVM_DISPLAY \| UVM_COUNT)` | `UVM_DISPLAY \| UVM_COUNT`, as set | Yes | `UVM_INFO` | Yes, when a quit count is set |
+
+</details>
 
 **Pitfalls, and why each is wrong:**
 - **The catch-all.** `if (get_severity() == UVM_ERROR) return CAUGHT;` hides every error, the real bug included. A catcher must be **narrow** in the sense [A-UVM-9](/curriculum/T3_Advanced/A-UVM-9_Reset_and_Error_Injection/index) uses: one reporter, one severity and one ID, and a count. This page adds one refinement: match the message pattern too whenever the ID alone does not single out the injected failure, for example when a monitor reports several different checks under one ID. `crc_demoter` matches its message as well; where an ID is used only by the injected check, a catcher without a message match, like A-UVM-9's, is just as narrow.
@@ -249,7 +261,7 @@ Now follow one injected error through a catcher. **Predict first:** if `crc_demo
 | Demote one reviewed warning | `+uvm_set_severity=uvm_test_top.env.agt.drv,CFG,UVM_WARNING,UVM_INFO` | G.2.5; one ID, never a whole severity |
 | Stop at the first error | `+UVM_MAX_QUIT_COUNT=1` | G.2.6; the log then ends at the first failure |
 
-**Predict:** you add `+uvm_set_verbosity=uvm_test_top.env.sbc,SCB,UVM_HIGH,build` (note the spelling of the component) and the `SCB` messages look exactly as before. Recall the last rule of the CI gate above: which word do you search the log for, and what could it mean?
+**Predict:** you add `+uvm_set_verbosity=uvm_test_top.env.sbc,SCB,UVM_HIGH,build` (note the spelling of the component) and the `SCB` messages look exactly as before. Recall rule 6 of [the CI gate](#honest-verdicts-what-uvm_error--0-does-and-does-not-prove): which word do you search the log for, and what could it mean?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the answer</summary>
@@ -272,16 +284,16 @@ UVM can explain itself, but each trace answers one question. Pick by the questio
 | Who is holding the phase open? | `+UVM_OBJECTION_TRACE` | uvm-core | `OBJTN_TRC` lines: a `raised` with no matching `dropped` |
 | The same, from code | `phase.get_objection().get_objectors(list)` | §9.3.1.7.1, §10.5.1.5.1 | the queue of objects still objecting; uvm-core's `display_objections()` prints a table |
 | Did the phase run at all? | `+UVM_PHASE_TRACE` | uvm-core | `No objections raised, skipping phase`; at a timeout, which phases still have objections |
-| Is a component still making progress, long before the timeout? | `uvm_heartbeat` | §10.6 | a fatal `HBFAIL` (uvm-core message ID) naming the component that was silent in the last window |
+| Is a component still making progress, long before the timeout? | `uvm_heartbeat` | §10.6 | a fatal `HBFAIL` (uvm-core message ID); in `UVM_ALL_ACTIVE` mode it names the component that was silent in the last window |
 
-A **heartbeat** (`uvm_heartbeat`, §10.6) watches a list of components: each must raise or drop a heartbeat objection in every window between two triggers of an event, or the heartbeat reports a failure. It finds a stalled agent within one window instead of at the global timeout. Setting one up, and the window rules, are in [hang triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab).
+A **heartbeat** (`uvm_heartbeat`, §10.6) watches a list of components. In `UVM_ALL_ACTIVE` mode (the mode hang triage uses), each must raise or drop a heartbeat objection in every window between two triggers of an event, or the heartbeat reports a failure; the other modes require any one or exactly one. It finds a stalled agent within a window or two instead of at the global timeout. Setting one up, and the window rules, are in [hang triage](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab).
 
 **Reading the output: three traced excerpts.** The lines below follow the message formats in the uvm-core 2020.3.1 source; they are illustrative, not captured from a simulator. Real lines also carry a file name and line number, and the `(type …)` text is formatted by your simulator. **Try each one first:** find the line that answers the trace's question before you open its reveal.
 
 A configuration miss (`+UVM_CONFIG_DB_TRACE`):
 
 ```text
-UVM_INFO @ 0 ns: reporter [CFGDB/SET] Configuration scope='uvm_test_top.env.agt*' name='cfg' (type agt_cfg) set by uvm_test_top = (agt_cfg) ...
+UVM_INFO @ 0 ns: reporter [CFGDB/SET] Configuration scope='uvm_test_top.env.agt*' name='cfg' (type agt_cfg) set accessor=uvm_test_top = (agt_cfg) ...
 UVM_INFO @ 0 ns: reporter [CFGDB/GET] Configuration scope='uvm_test_top.env.agent' name='cfg' (type agt_cfg) read accessor=uvm_test_top.env.agent = null (failed lookup)
 ```
 
@@ -295,8 +307,8 @@ What to look for: compare the `GET` scope with the `SET` scope character by char
 A hang (`+UVM_OBJECTION_TRACE`):
 
 ```text
-UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_test_top raised 1 objection(s) (send 500 beats): count=1  total=1
-UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_top added 1 objection(s) to its total (raised from source object uvm_test_top, send 500 beats): count=0  total=1
+UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_test_top raised 1 run_objection objection(s) (send 500 beats): count=1  total=1
+UVM_INFO @ 0 ns: run_objection [OBJTN_TRC] Object uvm_top added 1 run_objection objection(s) to its total (raised from source object uvm_test_top, send 500 beats): count=0  total=1
 ```
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
@@ -453,8 +465,8 @@ So **a dump started by a trigger records only what happens after the trigger.** 
 **Predict:** in the diagram below, the watchdog fires at edge 8. If run 1 starts dumping at that moment, will its file show `ready` falling?
 
 <TimingDiagram
-  title="A trigger-started dump misses the cause; a rerun window catches it"
-  caption="The lab's bench, shrunk to fit: the sink stalls after 4 beats (the lab uses 300) and the watchdog limit is 4 edges (the lab uses 2000 ns). Values are sampled at each rising edge. Run 1 starts dumping at edge 8 and records edges 8 to 10 only, after ready has already fallen. Run 2 reruns the same seed and build with the window opened at edge 2 (shaded) and records the fall after edge 4. Markers: win (edge 2) is where run 2's window opens; cause (edge 4) is the last transfer, after which ready falls; wdg (edge 8) is the watchdog firing and run 1's dump starting; fatal (edge 10) is the UVM_FATAL [WDG] that ends the run."
+  title="A stalled bus: where a trigger-started dump and a rerun window begin"
+  caption="x-axis: rising clock edges 0 to 11; values are sampled at each rising edge. The lab's bench, shrunk to fit: the sink stalls after 4 beats (the lab uses 300) and the watchdog limit is 4 edges (the lab uses 2000 ns). Run 2 reruns the same seed and build with the window opened at edge 2 (shaded) and records the fall after edge 4. Markers: win (edge 2) is where run 2's window opens; cause (edge 4) is the last transfer, after which ready falls; wdg (edge 8) is the watchdog firing and run 1's dump starting; fatal (edge 10) is the UVM_FATAL [WDG] that ends the run."
   edges={12}
   signals={[
     { name: "clk", kind: "clock" },
@@ -472,7 +484,14 @@ So **a dump started by a trigger records only what happens after the trigger.** 
   highlights={[{ from: 2, to: 10, tone: "info", label: "run 2 window: edges 2 to 10" }]}
 />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+Run 1 starts dumping at edge 8 and records edges 8 to 10 only, after ready has already fallen.
+
 **Debrief.** No. Run 1's dump begins at edge 8, when `ready` has been low for three edges and `accepted` is already stuck at 4; the file shows *that* the bus is stuck, never *why*. Run 2's window starts at edge 2 and shows `accepted` reaching 4 and `ready` falling right after edge 4, which is the bug. The [debug-waveform-trigger lab](/practice/lab/debug-waveform-trigger) builds exactly this, at full size.
+
+</details>
 
 **Single-run alternatives are tool-dependent.** Some simulators can keep recent history in memory and write it out on a trigger, or dump in their own database formats (FSDB, WLF, SHM) with richer controls. These are vendor features outside IEEE 1800-2023: check your tool's documentation, and label them as such in team scripts. `$dumplimit` caps the file size; it does not choose a time window.
 
@@ -717,6 +736,15 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 
 **Break it on purpose.** Predict each result before you run it:
 
+- Corrupt packet 5 as well (`id == 2 || id == 4 || id == 5`).
+- Stop the injection (pass `1'b1` for every packet).
+- Replace the demoter's body with `return (get_severity() == UVM_ERROR) ? CAUGHT : THROW;`.
+- Run with `+UVM_VERBOSITY=UVM_NONE`.
+- Move `uvm_report_cb::add(env.chk, demoter)` into `build_phase`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what the log shows</summary>
+
 | Change | What the log shows |
 |---|---|
 | Corrupt packet 5 as well (`id == 2 \|\| id == 4 \|\| id == 5`) | Three `CRC` lines as `UVM_INFO`, then `UVM_ERROR … [CRC_ACCT] expected 2 injected CRC errors, demoted 3`, and `UVM_ERROR :    1`. The pattern matched an error the test did not inject; the accounting caught it. |
@@ -724,6 +752,8 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 | Replace the demoter's body with `return (get_severity() == UVM_ERROR) ? CAUGHT : THROW;` | No `CRC` lines at all; the catcher summary shows `Number of caught UVM_ERROR reports   :    2`; `CRC_ACCT` reports `demoted 0` and fails the run. Without the accounting, this catch-all would have passed. |
 | Run with `+UVM_VERBOSITY=UVM_NONE` | The run still passes, but `RNTST` and the whole catcher summary disappear: uvm-core issues that summary at `UVM_LOW`. A gate that reads the catcher summary must run at `UVM_LOW` or above. |
 | Move `uvm_report_cb::add(env.chk, demoter)` into `build_phase` | The same passing log, because only `chk` reports `CRC` here. But the catcher is now type-wide (`env.chk` was `null`), so in a full bench it would also demote `CRC` errors from every other component. |
+
+</details>
 
 ### How to write an error-injection test with an honest verdict
 
@@ -773,7 +803,7 @@ Read it the way a gate would: the summary is present, `UVM_ERROR` and `UVM_FATAL
 
 <TimingDiagram
   title="A paused dump shows x, not stale values"
-  caption="x-axis: rising clock edges 0 to 9; each value is the one sampled at that edge, and the counter changes just after each edge. Dumping began with $dumpvars before edge 0. The top bus is the counter in the simulation; the bottom bus is the same counter as the viewer draws it from the VCD file. $dumpoff at edge 2 writes a checkpoint in which every dumped variable is x, and no changes are written until $dumpon at edge 5, which writes each variable's current value (IEEE 1800-2023 §21.7.1.3). Counts 3, 4 and 5 are never in the file. The clk row shows the simulation; because the checkpoint covers every dumped variable, a dumped clk is x in the file's gap too."
+  caption="x-axis: rising clock edges 0 to 9; each value is the one sampled at that edge, and the counter changes just after each edge. Dumping began with $dumpvars before edge 0. The top bus is the counter in the simulation; the bottom bus is the same counter as the viewer draws it from the VCD file. $dumpoff at edge 2 writes a checkpoint in which every dumped variable is x, and no changes are written until $dumpon at edge 5, which writes each variable's current value: the value the counter holds at the end of that time step, 6 (IEEE 1800-2023 §21.7.1.3). Counts 3, 4 and 5 are never in the file. The clk row shows the simulation; because the checkpoint covers every dumped variable, a dumped clk is x in the file's gap too."
   edges={10}
   signals={[
     { name: "clk", kind: "clock" },
@@ -819,7 +849,7 @@ The same checks, sorted by when they can run:
 
 <InterviewQuestionPlayground
   title="Interview angle: the catcher review"
-  question="In code review you find an error-injection test whose catcher is: if (get_severity() == UVM_ERROR && get_id() == 'CRC') begin set_severity(UVM_INFO); end return THROW; registered with uvm_report_cb::add(null, c) in build_phase. The test has passed in every regression for a year. What do you ask for?"
+  question={`In code review you find an error-injection test whose catcher is: if (get_severity() == UVM_ERROR && get_id() == "CRC") begin set_severity(UVM_INFO); end return THROW; registered with uvm_report_cb::add(null, c) in build_phase. The test has passed in every regression for a year. What do you ask for?`}
   options={[
     { text: "Nothing: it returns THROW, so every error stays visible.", isCorrect: false, feedback: "Visible is not the same as checked. With no count, the test passes whether the injection works or not, and add(null, c) makes it demote CRC errors from every component, including real ones." },
     { text: "Change THROW to CAUGHT so the log is quieter.", isCorrect: false, feedback: "That makes it worse: CAUGHT removes the reports from the log and the counts entirely." },
@@ -850,9 +880,9 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
     question: "An error-injection test must ignore the CRC errors it injects but still fail on any other error. Which approach is right?",
     objective: 2,
     answers: [
-      { text: "A catcher registered on the CRC checker that demotes only UVM_ERROR with ID CRC and the expected message, returns THROW, counts demotions, and a check_phase check of that count.", correct: true, feedback: "Right: narrow, visible and accounted. The test fails if the injection stops or an unexpected CRC error appears." },
       { text: "+uvm_set_action=uvm_test_top.*,_ALL_,UVM_ERROR,UVM_NO_ACTION", correct: false, feedback: "That drops every error below the test before counting, real bugs included; through the macros they are never even built." },
-      { text: "A catcher that returns CAUGHT for every UVM_ERROR.", correct: false, feedback: "CAUGHT removes reports from the log and the counts; a catch-all hides the real bug too." },
+      { text: "A catcher that returns CAUGHT for every UVM_ERROR, registered type-wide with add(null, c) so it covers every component that might report a CRC error.", correct: false, feedback: "CAUGHT removes reports from the log and the counts; a catch-all hides the real bug too." },
+      { text: "A catcher registered on the CRC checker that demotes only UVM_ERROR with ID CRC and the expected message, returns THROW, counts demotions, and a check_phase check of that count.", correct: true, feedback: "Right: narrow, visible and accounted. The test fails if the injection stops or an unexpected CRC error appears." },
       { text: "+UVM_VERBOSITY=UVM_NONE", correct: false, feedback: "Verbosity never filters errors: the macros issue them at UVM_NONE." }
     ],
     explanation: "Only a narrow catcher (one reporter, severity and ID, plus the message pattern when that ID is shared, as crc_demoter matches it) removes exactly the expected errors from the error count, and only a count checked by the test proves the injection happened. UVM_NO_ACTION and a catch-all catcher remove every error; verbosity removes none."
@@ -872,8 +902,8 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
     question: "You set the UVM_ERROR action to UVM_DISPLAY only (UVM_COUNT removed). A component then reports two `uvm_error calls. What does the summary show?",
     objective: 1,
     answers: [
+      { text: "UVM_ERROR : 0, because the server counts only reports whose action includes UVM_COUNT, and the quit counter stays at 0 too.", correct: false, feedback: "UVM_COUNT is the quit-count action, not the summary count. The summary counts every executed report." },
       { text: "UVM_ERROR : 2. Every report the server executes is counted; removing UVM_COUNT only stops the errors feeding the quit counter.", correct: true, feedback: "Right. Only CAUGHT and UVM_NO_ACTION remove a report before counting." },
-      { text: "UVM_ERROR : 0, because the errors are no longer counted.", correct: false, feedback: "UVM_COUNT is the quit-count action, not the summary count. The summary counts every executed report." },
       { text: "The run exits at the first error.", correct: false, feedback: "That is UVM_EXIT, or a reached quit count. With UVM_COUNT removed, the quit counter never moves." },
       { text: "Only errors issued before the change are counted.", correct: false, feedback: "There is no such split: every executed report is counted, whenever it is issued." }
     ],
@@ -883,9 +913,9 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
     question: "An SVA in an interface fails with its default action, and the UVM summary shows UVM_ERROR : 0. Why, and what fixes the gate?",
     objective: 1,
     answers: [
-      { text: "The default fail action calls $error, a SystemVerilog severity task that the simulator prints and UVM never counts; route failures with `uvm_error in the else clause, and make the gate scan for simulator-format errors.", correct: true, feedback: "Right: two fixes, one in the TB and one in the gate." },
       { text: "The default verbosity filters assertion messages.", correct: false, feedback: "Verbosity applies only to UVM_INFO reports; an assertion's $error is not a UVM report at all." },
-      { text: "A default report catcher demotes assertion failures.", correct: false, feedback: "UVM registers no catchers by default, and catchers only see UVM reports." },
+      { text: "A default report catcher that UVM registers for interface assertions demotes their failures to UVM_INFO; remove it with a callback_mode(0) call in the test's connect_phase.", correct: false, feedback: "UVM registers no catchers by default, and catchers only see UVM reports." },
+      { text: "The default fail action calls $error, a SystemVerilog severity task that the simulator prints and UVM never counts; route failures with `uvm_error in the else clause, and make the gate scan for simulator-format errors.", correct: true, feedback: "Right: two fixes, one in the TB and one in the gate." },
       { text: "+UVM_VERBOSITY=UVM_NONE hides it from the summary.", correct: false, feedback: "Nothing hides it from the summary: it was never in UVM's counts to begin with." }
     ],
     explanation: "IEEE 1800-2023 §20.10: an assertion with no else clause calls $error. The UVM report server never sees it. Either report through UVM in the action block or have the gate fail on the simulator's own error lines."
@@ -894,8 +924,8 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
     question: "The command line has +uvm_set_severity=uvm_test_top.env.chk,CRC,UVM_ERROR,UVM_WARNING, and crc_demoter only demotes reports whose get_severity() is UVM_ERROR. The test injects 2 CRC errors and checks demoted == 2. Predict the result.",
     objective: 2,
     answers: [
+      { text: "The catcher runs before the handler's override, so it sees the original UVM_ERROR and demotes both to UVM_INFO: demoted 2, CRC_ACCT passes, and so does the test.", correct: false, feedback: "Catchers see the report after the handler's severity override." },
       { text: "The handler turns the errors into warnings before the catcher runs, so the catcher matches nothing: 2 UVM_WARNING CRC reports, demoted 0, and CRC_ACCT fails the test.", correct: true, feedback: "Right. Severity overrides are applied in the handler; catchers run later, in the server, and see the overridden severity." },
-      { text: "The catcher sees the original UVM_ERROR and demotes both to UVM_INFO; the test passes.", correct: false, feedback: "Catchers see the report after the handler's severity override." },
       { text: "Plusargs disable catchers, so the errors count as UVM_ERROR.", correct: false, feedback: "Plusargs do not disable catchers; the override simply changed the severity first." },
       { text: "The catcher undoes the override and the test passes.", correct: false, feedback: "The catcher only matches UVM_ERROR, so it never touches these reports." }
     ],
@@ -971,7 +1001,7 @@ Start with the quiz, which covers all five objectives. Then do the kata, which p
 
 ### Kata: is this verdict honest?
 
-Each item below is one run from a nightly regression: the relevant part of its command line and log. All five were marked **PASS** by an old gate that only checked `UVM_ERROR :    0` and `UVM_FATAL :    0`. For each one, decide whether the pass is honest, name the mechanism if it is not, and write the gate rule that would have caught it.
+Each item below is one run from a nightly regression: the relevant part of its command line and log. All five were marked **PASS** by an old gate that only checked `UVM_ERROR :    0` and `UVM_FATAL :    0`. For each one, decide whether the pass is honest, name the mechanism if it is not, and write the gate rule that would have caught it. The gate's reviewed list of error-injection tests contains only `crc_inject_test`.
 
 **Run A**
 

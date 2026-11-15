@@ -37,7 +37,7 @@ sources:
 
 ## Build Your Mental Model
 
-**How to read this lesson.** The core path is: where your Python runs, what it reads and writes after each trigger, coroutines and tasks, and how to drive and monitor a valid/ready interface. Practitioner depth follows: pyuvm, cost, choosing a flow, pitfalls and debugging. Make It Work builds one bench twice (cocotb, then pyuvm) for the `packet_fifo` from the capstone lab of [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) (lab `uvm-mini-capstone`; the lesson body itself uses a memory, so open the lab if you skipped it). Push Further holds the expert layer.
+**How to read this lesson.** The core path is: where your Python runs, what it reads and writes after each trigger, coroutines and tasks, and how to drive and monitor a valid/ready interface. Practitioner depth follows: pyuvm, cost, choosing a flow, pitfalls and debugging. Make It Work builds one bench twice (cocotb, then pyuvm) for the `packet_fifo` from the capstone lab of [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) (lab `uvm-mini-capstone`; I-UVM-3C's own text uses a memory DUT, not this FIFO, so open the lab if you skipped it). Push Further holds the expert layer.
 
 You need basic Python (functions, classes, `import`) and the UVM structure from [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) and [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index). Everything else is defined below.
 
@@ -67,12 +67,12 @@ The common wrong picture is a Python program in one process talking to a simulat
   nodes={[
     { id: "proc", label: "one simulator process", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
     { id: "pyenv", label: "embedded Python", col: 0, row: 0, rowSpan: 2, container: true },
-    { id: "coro", label: "your coroutines", kind: "test", col: 0, row: 0 },
+    { id: "coro", label: "your coroutines", col: 0, row: 0 },
     { id: "sched", label: "cocotb scheduler", sublabel: "Python", col: 0, row: 1 },
     { id: "gpi", label: "cocotb GPI", sublabel: "C++ library", col: 0, row: 2 },
     { id: "pli", label: "VPI | VHPI | FLI", kind: "interface", col: 1, row: 2 },
     { id: "kernel", label: "simulator kernel", col: 1, row: 1 },
-    { id: "dut", label: "DUT", sublabel: "compiled HDL", kind: "dut", col: 1, row: 0 }
+    { id: "dut", label: "your design", sublabel: "compiled HDL", kind: "dut", col: 1, row: 0 }
   ]}
   edges={[
     { from: "coro", to: "sched", style: "control", label: "await" },
@@ -83,9 +83,14 @@ The common wrong picture is a Python program in one process talking to a simulat
   ]}
 />
 
-Every `await` on a trigger becomes a callback registration. When the event happens, the simulator calls the GPI, the GPI wakes cocotb's scheduler, and the scheduler resumes every coroutine waiting on that trigger. Python then runs until each of those coroutines reaches its next `await`, and only then does control go back to the simulator.
+Every `await` on a trigger becomes a callback registration. When the event happens, the simulator calls the GPI, the GPI wakes cocotb's scheduler, and the scheduler resumes every coroutine waiting on that trigger.
 
 **Predict first.** While your coroutine runs a slow Python loop (say, a large NumPy computation), does simulated time move on without it?
+
+<details>
+<summary>Check: does simulated time move while Python runs?</summary>
+
+Python then runs until each of those coroutines reaches its next `await`, and only then does control go back to the simulator.
 
 <SequenceDiagram
   title="How a cocotb coroutine is resumed by a simulator callback"
@@ -110,6 +115,8 @@ Every `await` on a trigger becomes a callback registration. When the event happe
 />
 
 **Debrief.** No: simulated time is frozen until your Python returns to an `await`. That is also why a Python debugger breakpoint (`breakpoint()`) freezes the whole simulation, and why the cost of a Python bench grows with how often Python is woken and how long it runs each time. The DUT itself always runs at full simulator speed.
+
+</details>
 
 **Where this lives in a real flow.** You compile the DUT with the simulator as usual; cocotb's Makefiles or Python runner add the GPI library to the simulator's command line and point it at your test module. In the simplest flow there is no SystemVerilog `tb_top`: the HDL top level *is* the DUT, and Python drives its ports.
 
@@ -229,7 +236,7 @@ The slave below is ready for a new address again at edge 4, before it sends the 
 
 <TimingDiagram
   title="Wrong: AWVALID held until BVALID gives a second write"
-  caption="AWVALID stays 1 from edge 1 to edge 5 with AWADDR held at A0. AWREADY is 1 at edges 2 and 4, so the same address A0 transfers twice (edges 2 and 4); the master meant one write. Edge 3 is the W transfer and edge 5 the B transfer."
+  caption="AWVALID stays 1 from edge 1 to edge 5 with AWADDR held at A0. AWREADY is 1 at edges 2 and 4, so the same address A0 transfers twice (edges 2 and 4); the master meant one write. Edge 3 is the W transfer and edge 5 the B transfer. AWVALID at edge 5 and WVALID at edges 4 and 5 are new offers that then drop at edge 6 without a handshake, a second breach of §A3.2.1."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -287,6 +294,7 @@ valid.value = 0                  # drop VALID after its handshake
 
 <SequenceDiagram
   title="The handshake loop when READY is LOW for one edge"
+  columnWidth={130}
   caption="Edge 1 and edge 2 are the first two rising edges after the driver writes valid = 1. READY is 0 before edge 1 and 1 before edge 2, so the loop runs twice and the transfer happens at edge 2. Every read happens at End of time step (ReadOnly), and every write is queued and reaches the DUT at the next rising edge."
   participants={[
     { id: "drv", label: "driver coroutine", kind: "driver" },
@@ -303,8 +311,10 @@ valid.value = 0                  # drop VALID after its handshake
     { kind: "divider", label: "rising edge 1" },
     { kind: "note", from: "coco", to: "dut", label: "edge 1: VALID = 1, READY = 0, so no transfer" },
     { from: "coco", to: "drv", label: "resume: ready was 0, loop again" },
+    { kind: "return", from: "drv", to: "coco", label: "await FallingEdge, then ReadOnly" },
     { kind: "divider", label: "falling edge, End of time step" },
     { from: "coco", to: "drv", label: "resume: READY reads 1" },
+    { kind: "return", from: "drv", to: "coco", label: "await RisingEdge" },
     { kind: "divider", label: "rising edge 2" },
     { kind: "note", from: "coco", to: "dut", label: "edge 2: VALID = 1, READY = 1, so one transfer" },
     { from: "coco", to: "drv", label: "resume: ready was 1, break" },
@@ -341,7 +351,10 @@ A monitor must decide, once per cycle, whether a transfer happened and with whic
 
 For the FIFO: at each falling edge the monitor records a push if `push && !full`, and remembers whether a pop will happen (`pop && !empty`). `dout` is registered by the pop, so the popped word is visible at the *next* falling edge. The monitor in the I-UVM-3C capstone lab (`uvm-mini-capstone`) solves the same problem differently: its clocking block reads `dout` with an `input #0` skew at the pop edge itself, in the Observed region after the nonblocking update. cocotb has no clocking blocks, so the Python monitor waits for the next falling edge instead.
 
-**Predict first.** In Make It Work the driver issues write `00`, read, write `A5`, write `5A`, read, read, write `11`, one per cycle. The read accepted at edge 5 pops `A5`. At which edge is `A5` first on `dout`, and at which falling edge does the monitor check it?
+**Predict first.** Number the rising edges from the start of traffic: edge k is at 25 + 10k ns, so edge 1 (35 ns) accepts the first write. In Make It Work the driver issues write `00`, read, write `A5`, write `5A`, read, read, write `11`, one per edge. The read accepted at edge 5 (75 ns) pops `A5`. At which edge is `A5` first on `dout`, and at which falling edge (in ns) does the monitor check it?
+
+<details>
+<summary>Check: when the monitor sees A5</summary>
 
 <TimingDiagram
   title="The first seven operations of the Make It Work traffic, as the monitor sees them"
@@ -367,6 +380,8 @@ For the FIFO: at each falling edge the monitor records a push if `push && !full`
 />
 
 **Debrief.** `A5` is popped at edge 5 (75 ns), so it is on `dout` across edge 6 and the monitor checks it at the 80 ns falling edge, one cycle after it saw `pop && !empty`. The monitor never reads anything right after a rising edge, so the same code gives the same answer on Verilator.
+
+</details>
 
 **Pitfall.** Monitors written as `await RisingEdge(clk)` followed by immediate reads are off by one on Verilator compared with event-driven simulators. If your monitor must sample at the rising edge, add `await ReadOnly()` after it and read the *outputs* there, but remember that the inputs you then see are the ones for the *next* edge.
 
@@ -472,7 +487,7 @@ The judgement, which you must make per project:
   nodes={[
     { id: "py", label: "cocotb / pyuvm bench", kind: "test", col: 0, row: 0 },
     { id: "gpi", label: "cocotb GPI", sublabel: "VPI, VHPI or FLI", kind: "interface", col: 1, row: 0 },
-    { id: "dut1", label: "DUT", kind: "dut", col: 2, row: 0 },
+    { id: "dut1", label: "your design", kind: "dut", col: 2, row: 0 },
     { id: "sb", label: "SV UVM scoreboard", kind: "scoreboard", col: 0, row: 1 },
     { id: "shim", label: "C layer", sublabel: "import \"DPI-C\"", kind: "interface", col: 1, row: 1 },
     { id: "model", label: "Python model", sublabel: "embedded interpreter", kind: "model", col: 2, row: 1 }
@@ -528,13 +543,13 @@ The DPI side is taught in [I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Fo
 
 <VisualRecap
   title="A cocotb driver and monitor on one page"
-  rule="Python runs inside the simulator while simulated time stands still; on an event-driven simulator, a read right after RisingEdge returns the flop outputs from before that edge (Verilator returns the new ones) and a default write made there reaches the DUT at the next rising edge, so drive just after a rising edge, read READY and sample monitors at FallingEdge + ReadOnly, and drop VALID right after its handshake edge."
+  rule="Drive just after a rising edge, read READY and sample monitors at FallingEdge + ReadOnly, and drop VALID right after its handshake edge."
   code={"valid.value = 1                  # just after a rising edge\nwhile True:\n    await FallingEdge(dut.clk)\n    await ReadOnly()             # READY is settled for the next rising edge\n    ready = bool(ready_sig.value)\n    await RisingEdge(dut.clk)    # the edge that samples VALID\n    if ready:\n        break                    # transferred at this edge\nvalid.value = 0                  # drop VALID after its handshake"}
-  mistake="Reading flop outputs right after RisingEdge (one cycle off between event-driven simulators and Verilator), holding VALID until a response arrives (a duplicate transfer at the next READY edge), or calling logger.error and expecting the test to fail (only an exception fails it)."
+  mistake="Reading flop outputs right after RisingEdge (one cycle off between event-driven simulators and Verilator), holding VALID until a response arrives (a duplicate transfer at the next READY edge), or calling logger.error and expecting the test to fail (only an exception fails it). Why the rule holds: Python runs inside the simulator while simulated time stands still; on an event-driven simulator, a read right after RisingEdge returns the flop outputs from before that edge (Verilator returns the new ones), and a default write made there reaches the DUT at the next rising edge."
   inTestbench="In Make It Work, FifoDriver._handshake drives push or pop with this loop; monitor() samples at FallingEdge + ReadOnly and checks the registered dout one falling edge after the pop decision (pop_pending); test_fifo_scoreboard waits ClockCycles(2) after the last read and ends with assert."
 >
   <TimingDiagram
-    title="One transfer per edge with VALID and READY both 1"
+    title="VALID held through a READY-low edge, dropped after its handshake"
     caption="Edge k is the k-th rising edge. The driver writes VALID = 1 just after edge 0. READY, read at the falling edge before each edge, is 0 before edge 1 and 1 before edge 2, so the transfer happens at edge 2 and VALID is 0 again at edge 3."
     edges={4}
     signals={[
@@ -1006,12 +1021,13 @@ class FifoTest(uvm_test):
 
 <TimingDiagram
   title="Driver cadence: cocotb bench versus pyuvm bench"
-  caption="Edge k is the rising edge at 5 + 10k ns, so edge 3 is 35 ns. VALID means push for a write and pop for a read. The cocotb driver writes the next VALID just after the edge that ends the previous handshake, so VALID stays 1 and one operation is accepted per edge. The pyuvm driver writes valid = 0 after that edge, then awaits the next rising edge before it writes VALID again, so every other edge sees VALID = 0 and each operation takes two cycles."
+  caption="Edge k is the rising edge at 5 + 10k ns, so edge 3 is 35 ns. Each row is that bench's VALID: push for a write and pop for a read, so the trace is push OR pop and no single DUT pin shows it. The cocotb driver writes the next VALID just after the edge that ends the previous handshake, so VALID stays 1 and one operation is accepted per edge. The pyuvm driver writes valid = 0 after that edge, then awaits the next rising edge before it writes VALID again, so every other edge sees VALID = 0 and each operation takes two cycles."
   edges={9}
+  cycleWidth={30}
   signals={[
     { name: "clk", kind: "clock" },
-    { name: "cocotb VALID", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 1, 1] },
-    { name: "pyuvm VALID", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0, 1, 0] }
+    { name: "cocotb", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 1, 1] },
+    { name: "pyuvm", kind: "bit", values: [0, 0, 0, 1, 0, 1, 0, 1, 0] }
   ]}
   markers={[
     { edge: 3, tone: "pass", label: "35 ns: operation 1 (write 00) accepted by both benches" },
@@ -1063,7 +1079,7 @@ cocotb's VPI layer registers one callback reason per trigger (cocotb v2.1.0, `sr
 
 <ArchitectureDiagram
   title="cocotb's callback reasons on the time-slot ladder"
-  caption="Read the left column top to bottom: the regions of one time slot in order (IEEE 1800-2023 §4.4), with the nine regions from Pre-Observed to Pre-Postponed folded into one row. Highlighted rows hold a callback reason cocotb registers (§4.10 Table 4-1): cbAfterDelay (Timer) and cbNextSimTime (NextTimeStep) in Pre-Active; cbReadWriteSynch (ReadWrite) in Pre-NBA or Post-NBA, whichever the simulator chooses; cbReadOnlySynch (ReadOnly) in Postponed, where writing is illegal (§4.4.2.9). The edge triggers on the right have no row: their cbValueChange callback fires wherever the value changes, for a flop output in NBA."
+  caption="Read the left column top to bottom: the regions of one time slot in order (IEEE 1800-2023 §4.4), with the nine regions from Pre-Observed to Pre-Postponed folded into one row. Highlighted rows hold a callback reason cocotb registers (§4.10 Table 4-1): cbAfterDelay (Timer) and cbNextSimTime (NextTimeStep) in Pre-Active; cbReadWriteSynch (ReadWrite) in Pre-NBA or Post-NBA, whichever the simulator chooses; cbReadOnlySynch (ReadOnly) in Postponed, where writing is illegal (§4.4.2.9). The edge triggers on the right have no row: their cbValueChange callback fires wherever the value changes, for a flop output in NBA, which is why that box sits beside NBA."
   cellWidth={160}
   cellHeight={48}
   gapX={32}
@@ -1077,7 +1093,7 @@ cocotb's VPI layer registers one callback reason per trigger (cocotb v2.1.0, `sr
     { id: "postnba", label: "Post-NBA", sublabel: "ReadWrite (tool's choice)", state: "active", col: 0, row: 5 },
     { id: "observed", label: "Pre-Observed to", sublabel: "Pre-Postponed (9 regions)", col: 0, row: 6 },
     { id: "postponed", label: "Postponed", sublabel: "ReadOnly: no writes", state: "active", col: 0, row: 7 },
-    { id: "edges", label: "edge triggers", sublabel: "cbValueChange: no row", col: 1, row: 2, rowSpan: 4 }
+    { id: "edges", label: "edge triggers", sublabel: "cbValueChange (flop output: NBA)", col: 1, row: 4 }
   ]}
 />
 
@@ -1144,6 +1160,8 @@ Three different things are often confused:
 - **cocotb next to an SV bench.** cocotb attaches to the simulation through VPI and touches *signals*. It can share a simulation with SystemVerilog code, but it does not call SystemVerilog tasks or UVM objects.
 - **SV calling Python.** A SystemVerilog bench calls Python through DPI-C ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)): an `import "DPI-C"` function in C that embeds an interpreter with the Python C API. PyHDL-IF (third-party; 0.2.1 on PyPI) packages such a layer; its README (GitHub, fvutils/pyhdl-if) states that it can "invoke Python methods from SystemVerilog".
 - **pyuvm** is a pure-Python UVM on top of cocotb. It is involved in neither path above; it cannot host an SV UVM agent, and an SV UVM bench cannot instantiate a pyuvm component.
+
+The three paths side by side:
 
 | Path | What crosses the language boundary | Who calls whom | Is pyuvm involved? |
 |---|---|---|---|
@@ -1440,11 +1458,10 @@ A colleague's AXI4-Lite test (the snippet under [Driving a valid/ready interface
 
 1. At edges 2 and 4: AWVALID is HIGH from edge 1 to edge 5, and both edges have AWREADY HIGH (IHI0022E §A3.2.1).
 2. The other slave keeps AWREADY LOW after the first address until it has sent the response, so only one edge has both signals HIGH. The test was relying on a slave's choice that the protocol does not require.
-3. Handle each channel separately: raise AWVALID, wait for its handshake edge with the pattern from Build Your Mental Model, and lower it; do the same for WVALID; then hold BREADY and wait for the edge with BVALID and BREADY HIGH, and check that BRESP is `0` (OKAY). Or use a maintained model such as cocotbext-axi's AXI-Lite master.
 
 <TimingDiagram
   title="The other slave: AWREADY stays LOW until the response"
-  caption="The same wrong driver as in the failing case: AWVALID stays 1 from edge 1 to edge 5 with AWADDR held at A0. This slave raises AWREADY only at edge 2 and keeps it LOW until after the B transfer at edge 5, so only edge 2 has AWVALID and AWREADY both 1: exactly one AW transfer, and the bug stays hidden."
+  caption="The same wrong driver as in the failing case: AWVALID stays 1 from edge 1 to edge 5 with AWADDR held at A0. This slave raises AWREADY only at edge 2 and keeps it LOW until after the B transfer at edge 5, so only edge 2 has AWVALID and AWREADY both 1: exactly one AW transfer, and the bug stays hidden from the scoreboard. A protocol checker would still flag AWVALID and WVALID dropping at edge 6 without a handshake (IHI0022E §A3.2.1)."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -1463,6 +1480,8 @@ A colleague's AXI4-Lite test (the snippet under [Driving a valid/ready interface
     { edge: 5, tone: "info", label: "edge 5: B transfer" }
   ]}
 />
+
+3. Handle each channel separately: raise AWVALID, wait for its handshake edge with the pattern from Build Your Mental Model, and lower it; do the same for WVALID; then hold BREADY and wait for the edge with BVALID and BREADY HIGH, and check that BRESP is `0` (OKAY). Or use a maintained model such as cocotbext-axi's AXI-Lite master.
 
 </details>
 

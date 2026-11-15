@@ -129,10 +129,10 @@ The sequence below follows two AXI reads through the interconnect: one to an add
   caption="Read 1: the interconnect decodes the address, arbitrates, widens the ID on the way to the slave and strips the extra bits on the way back, so the master sees its own ID 0x3 (IHI0022E §A5.3.5). Read 2: no slave owns the address, so the access goes to the default slave, which still completes all four beats, each with DECERR (§A3.4.4). The default slave is drawn separately for clarity; it is often built into the interconnect."
   columnWidth={130}
   participants={[
-    { id: "m0", label: "Master 0", sublabel: "4-bit ID", kind: "generic" },
+    { id: "m0", label: "Master 0", kind: "generic" },
     { id: "ic", label: "Interconnect", kind: "generic" },
-    { id: "ddr", label: "DDR controller", sublabel: "slave, wider ID", kind: "generic" },
-    { id: "dflt", label: "Default slave", sublabel: "returns DECERR", kind: "generic" }
+    { id: "ddr", label: "DDR controller", kind: "generic" },
+    { id: "dflt", label: "Default slave", kind: "generic" }
   ]}
   messages={[
     { from: "m0", to: "ic", label: "AR: 4-bit ID 0x3, an address in DDR" },
@@ -151,11 +151,11 @@ The sequence below follows two AXI reads through the interconnect: one to an add
 
 **Why this matters for verification.** Because every AXI4 slave obeys the same interface rules, one AXI4 agent can verify every one of them. A **VIP** (verification IP) is such a reusable agent, plus its protocol checkers and coverage, packaged so other teams can drop it in ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) builds one). At block level the agent is **active** and drives the block's port; at SoC level the same agent is **passive** and only watches an interconnect port. Block-level verification proves protocol compliance and function, so SoC tests can focus on connectivity, the address map and system scenarios ([E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)).
 
-**Predict before you look.** The diagram below shows a typical SoC; each line is labelled with its protocol. Find the one link that carries no address at all, then read the answer under the diagram.
+**Predict before you look.** The diagram below shows a typical SoC; each line is labelled with its protocol. Find the one link that carries no address at all, then open the check under the diagram.
 
 <ArchitectureDiagram
   title="Where each AMBA protocol typically sits in an SoC"
-  caption="A typical arrangement, not a rule. Masters (top) reach slaves (bottom) through the interconnect, which decodes, arbitrates and routes; bridges step down to AHB-Lite and APB. Each line is labelled with its protocol. Plain lines carry traffic both ways; the one arrow is a link that flows one way."
+  caption="A typical arrangement, not a rule. Masters (top) reach slaves (bottom) through the interconnect, which decodes, arbitrates and routes; bridges step down to AHB-Lite and APB. Each line is labelled with its protocol."
   cellWidth={106}
   gapX={80}
   legend={false}
@@ -183,7 +183,12 @@ The sequence below follows two AXI reads through the interconnect: one to an add
   ]}
 />
 
-**Answer:** the arrow labelled Stream, an **AXI4-Stream** link from the DMA engine to the accelerator. It carries data only: no address, no read or write, and no response, so it flows one way. Every plain line is a memory-mapped interface: it carries addresses, and its traffic goes both ways (requests and write data in, read data and responses back).
+<details>
+<summary>Check your prediction</summary>
+
+**Answer:** the arrow labelled Stream, an **AXI4-Stream** link from the DMA engine to the accelerator. It carries data only: no address, no read or write, and no response, so it flows one way. Plain lines carry traffic both ways; the one arrow is a link that flows one way. Every plain line is a memory-mapped interface: it carries addresses, and its traffic goes both ways (requests and write data in, read data and responses back).
+
+</details>
 
 ### Vocabulary for the whole AMBA track
 
@@ -205,7 +210,7 @@ IHI0022E §A1.4.2 defines three nested terms. Learn them exactly; every later mo
     { id: "vb1", label: "beat 1", sublabel: "0x104-0x107", kind: "generic", col: 1, row: 1 },
     { id: "vb2", label: "beat 2", sublabel: "0x108-0x10B", kind: "generic", col: 2, row: 1 },
     { id: "vb3", label: "beat 3", sublabel: "0x10C-0x10F", kind: "generic", col: 3, row: 1 },
-    { id: "vresp", label: "response", sublabel: "success or error, from the slave", kind: "generic", col: 0, row: 2, colSpan: 4 }
+    { id: "vresp", label: "response", sublabel: "read: with every beat; write: once, after the last", kind: "generic", col: 0, row: 2, colSpan: 4 }
   ]}
 />
 
@@ -224,7 +229,7 @@ Four more terms:
 
 <TimingDiagram
   title="One AXI4 read transaction: one address, a burst of four beats"
-  caption="Edge 1: the AR handshake (ARVALID and ARREADY both 1) issues address 0x100 with ARLEN 3, meaning 4 beats; the transaction is now outstanding. Beats D0 to D3 move at edges 3, 5, 6 and 7, where RVALID and RREADY are both 1. At edge 4 the master applies backpressure (RREADY 0), so the slave holds D1. RLAST marks the final beat at edge 7, and the transaction completes."
+  caption="The x-axis counts rising ACLK edges. Edge 1: the AR handshake (ARVALID and ARREADY both 1) issues address 0x100 with ARLEN 3, meaning 4 beats; the transaction is now outstanding. Beats D0 to D3 move at edges 3, 5, 6 and 7, where RVALID and RREADY are both 1. At edge 4 the master applies backpressure (RREADY 0), so the slave holds D1. RLAST marks the final beat at edge 7, and the transaction completes."
   edges={9}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -295,7 +300,7 @@ The waveform shows one APB read with one wait state. Count its cycles.
 
 <TimingDiagram
   title="One APB read with one wait state"
-  caption="Edge 1 samples the SETUP phase: PSEL 1, PENABLE 0, with the address and PWRITE 0 (a read). Edges 2 and 3 sample the ACCESS phase (PENABLE 1). At edge 2 PREADY is 0, a wait state, so the transfer continues. At edge 3 PREADY is 1, so edge 3 samples PRDATA and the transfer completes: three cycles. Without the wait state it would take two cycles, the APB minimum (IHI0024C §1.1, §3.3.2, §4.1)."
+  caption="The x-axis counts rising PCLK edges. Edge 1 samples the SETUP phase: PSEL 1, PENABLE 0, with the address and PWRITE 0 (a read). Edges 2 and 3 sample the ACCESS phase (PENABLE 1). At edge 2 PREADY is 0, a wait state, so the transfer continues. At edge 3 PREADY is 1, so edge 3 samples PRDATA and the transfer completes: three cycles. Without the wait state it would take two cycles, the APB minimum (IHI0024C §1.1, §3.3.2, §4.1)."
   edges={5}
   signals={[
     { name: "PCLK", kind: "clock" },
@@ -357,11 +362,11 @@ The master's address, control and write data go to every slave; only the selecte
 
 **Phases and pipelining.** Every transfer has an **address phase** (one cycle, which a slave cannot ask to extend) and a **data phase** (one or more cycles) (§1.3). The two overlap: the next transfer's address phase happens during the current transfer's data phase. A slave that needs more time inserts **wait states** by driving HREADYOUT low; the multiplexor turns that into HREADY low, which also holds the next transfer's address phase, because that address phase overlaps the waiting data phase (§3.1). So at most one transfer is in its address phase and one in its data phase. That is pipelining, not many outstanding transactions.
 
-**Bursts.** HBURST selects SINGLE, INCR (undefined length), INCR4/8/16 or WRAP4/8/16 (§3.5, Table 3-3). An incrementing (INCR) burst steps through sequential addresses. A wrapping (WRAP) burst wraps back to a lower address at a boundary equal to the number of beats times the transfer size, so a WRAP4 of words wraps at 16-byte boundaries (§3.5). HSIZE gives the transfer size: the bytes moved by each beat, for example Word for 4 bytes (§3.4, Table 3-2). Every beat still has its own address phase. The transfer type on HTRANS is NONSEQ for the first beat, then SEQ, with identical control and the previous address plus the transfer size, wrapping at the boundary for WRAP bursts (§3.2, Table 3-1). Predict how many address phases an INCR4 burst of words needs, then check the waveform.
+**Bursts.** HBURST selects SINGLE, INCR (undefined length), INCR4/8/16 or WRAP4/8/16 (§3.5, Table 3-3). An incrementing (INCR) burst steps through sequential addresses. A wrapping (WRAP) burst wraps back to a lower address at a boundary equal to the number of beats times the transfer size, so a WRAP4 of words wraps at 16-byte boundaries (§3.5). HSIZE gives the transfer size: the bytes moved by each beat, for example Word for 4 bytes (§3.4, Table 3-2). Every beat still has its own address phase. The transfer type on HTRANS is NONSEQ for the first beat, then SEQ, with identical control and the previous address plus the transfer size, wrapping at the boundary for WRAP bursts (§3.2, Table 3-1). Check this in the waveform: count the address phases of an INCR4 burst of words.
 
 <TimingDiagram
   title="An AHB-Lite INCR4 read burst of words, with no wait states"
-  caption="An INCR4 read (HWRITE 0) of words (HSIZE Word) with no wait states. Each value shown is the one sampled at that rising edge; the markers point out what happens at edges 1, 2 and 5. Count the address phases before you read on."
+  caption="The x-axis counts rising HCLK edges. An INCR4 read (HWRITE 0) of words (HSIZE Word) with no wait states. Each value shown is the one sampled at that rising edge; the markers point out what happens at edges 1, 2 and 5. Count the address phases before you read on."
   edges={7}
   signals={[
     { name: "HCLK", kind: "clock" },
@@ -380,7 +385,7 @@ The master's address, control and write data go to every slave; only the selecte
   ]}
 />
 
-Answer: four. Each beat has its own address phase: NONSEQ at edge 1, then SEQ at edges 2, 3 and 4, with the address rising by 4 bytes (one word) each time. Each beat's data arrives one edge after its address (edges 2 to 5), because each data phase overlaps the next address phase. HREADY stays 1, so there are no wait states. Compare the AXI waveform above: one address handshake for four beats.
+Count: four. Each beat has its own address phase: NONSEQ at edge 1, then SEQ at edges 2, 3 and 4, with the address rising by 4 bytes (one word) each time. Each beat's data arrives one edge after its address (edges 2 to 5), because each data phase overlaps the next address phase. HREADY stays 1, so there are no wait states. Compare the AXI waveform above: one address handshake for four beats.
 
 **Predict: one wait state.** Take the same INCR4 read, but now the slave inserts one wait state in beat 1's data phase, so HREADY is 0 at edge 3 and 1 at every other edge. Recall from "Phases and pipelining" that the next transfer's address phase overlaps the current data phase. At which edge is beat 2's address (0x28) accepted, and at which edge does the last data, D(0x2C), arrive? Commit to both edges, then open the check.
 
@@ -488,7 +493,7 @@ Two misconceptions to retire now. "AXI4-Lite is AXI4 with fewer channels": no, i
 
 <TimingDiagram
   title="An AXI4-Stream packet of three transfers"
-  caption="Transfers happen at edges 1, 3 and 4, where TVALID and TREADY are both 1. At edge 2 the slave holds TREADY low, so the master holds P1 (backpressure). TLAST with P2 at edge 4 ends the packet. There is no address and no response anywhere."
+  caption="The x-axis counts rising ACLK edges. Transfers happen at edges 1, 3 and 4, where TVALID and TREADY are both 1. At edge 2 the slave holds TREADY low, so the master holds P1 (backpressure). TLAST with P2 at edge 4 ends the packet. There is no address and no response anywhere."
   edges={6}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -511,7 +516,7 @@ Typical uses: video and DSP pipelines, packet processing, and the streaming side
 A **cache** keeps local copies of memory. When several masters have caches, the system must keep the copies consistent: this is **coherency**. A coherent interconnect can **snoop** a master's cache, meaning it asks the cache what it holds and tells it to clean or invalidate a line. Three AMBA protocols add this.
 
 - **ACE** (AXI Coherency Extensions) is for masters with hardware-coherent caches, such as CPU clusters. It changes the existing channels and adds new ones (IHI0022E §C1.3):
-  - extra signals on AR and AW (such as ARDOMAIN, ARSNOOP, ARBAR, AWDOMAIN, AWSNOOP, AWBAR, AWUNIQUE) and extra read response bits RRESP[3:2] (§C1.3.1). AxDOMAIN gives the transaction's shareability domain (the set of masters whose caches might hold a copy, so the interconnect knows which to snoop; §C1.6.1), AxSNOOP its coherent transaction type, and AxBAR marks a barrier transaction (§C2.1.1, §C2.1.2);
+  - extra signals on AR and AW (such as ARDOMAIN, ARSNOOP, ARBAR, AWDOMAIN, AWSNOOP, AWBAR, AWUNIQUE) and extra read response bits RRESP[3:2] (§C1.3.1). AxDOMAIN gives the transaction's shareability domain (the set of masters whose caches might hold a copy, so the interconnect knows which to snoop; §C1.6.1), AxSNOOP its coherent transaction type, and AxBAR marks a barrier transaction, one that guarantees the ordering and observation of the transactions before and after it (§C1.6.2; §C2.1.1, §C2.1.2);
   - three snoop channels: **AC** (snoop address, *into* the master), **CR** (snoop response, out of it) and **CD** (snoop data, optional, out of it) (§C1.3.2);
   - the RACK and WACK acknowledge signals (§C1.3.3).
 - **ACE-Lite** is for masters with *no* coherent cache that still need coherent access, such as an accelerator that reads buffers a CPU may hold **dirty** (the cache holds a newer value than memory). It is AXI4 plus the extra AR and AW signals only: no snoop channels, no RACK or WACK, no extra read response bits (§C11.1).
@@ -524,10 +529,10 @@ The sequence shows why the accelerator needs ACE-Lite, and why only the CPU clus
   caption="ReadOnce is a coherent read that ACE-Lite may issue (IHI0022E Table C11-1, §C4.5.2). The interconnect snoops the cached ACE master on AC, the snoop address channel into it; the master answers on CR, and because CRRESP[0], the DataTransfer bit, is 1, it sends the full cache line on CD, the snoop data channel (§C3.6.2, §C3.7, §C3.8, §C5.2.2). The accelerator itself has no AC, CR or CD channels (§C11.1). Memory is drawn to show where a non-snooping read would go."
   columnWidth={130}
   participants={[
-    { id: "acc", label: "Accelerator", sublabel: "ACE-Lite master", kind: "generic" },
-    { id: "cic", label: "Interconnect", sublabel: "coherent", kind: "generic" },
-    { id: "cpu", label: "CPU cluster", sublabel: "ACE, line dirty", kind: "generic" },
-    { id: "mem", label: "Memory", sublabel: "stale copy", kind: "generic" }
+    { id: "acc", label: "Accelerator", kind: "generic" },
+    { id: "cic", label: "Interconnect", kind: "generic" },
+    { id: "cpu", label: "CPU cluster", kind: "generic" },
+    { id: "mem", label: "Memory", kind: "generic" }
   ]}
   messages={[
     { from: "acc", to: "cic", label: "AR: ReadOnce of the line" },
@@ -979,7 +984,7 @@ Attempt each question before you open the feedback.
   title="Interview angle: a legacy AXI3 slave"
   question="A legacy AXI3 slave accepts all write data and returns BRESP before it accepts AWADDR. Is it AXI4-compliant, and what do you do?"
   options={[
-    { text: "Compliant: AXI channels are independent, so any order is legal.", correct: false, feedback: "Channels are independent except for the listed dependencies, and AXI4 adds one: the write response must follow acceptance of the address (IHI0022E §A3.3.2)." },
+    { text: "Compliant: AXI channels are independent, so any order is legal.", correct: false, feedback: "Channels are independent except for the listed dependencies, and AXI4 adds one: the write response must follow acceptance of the address (IHI0022E §A3.3.1, the AXI4 write response dependency; legacy note §A3.3.2)." },
     { text: "Not compliant: add a wrapper that holds BRESP until the address is accepted.", correct: true, feedback: "Right. IHI0022E §A3.3.2 says such a slave is not compliant with AXI4 and that conversion requires a wrapper. Configure the VIP's checker for AXI4 so it catches the old behaviour." },
     { text: "Compliant, as long as the master never interleaves its writes.", correct: false, feedback: "Write interleaving is a separate AXI3/AXI4 difference (§A5.4). The problem here is the write response dependency." },
     { text: "Not compliant, and the only fix is to redesign the slave.", correct: false, feedback: "A wrapper is the specified conversion (§A3.3.2); a redesign is not required." }
@@ -1203,7 +1208,7 @@ The flashcards below drill the family map, the misconceptions, the interconnect'
 ## References & Next Topics
 
 **Primary sources:**
-- Arm IHI0022E, *AMBA AXI and ACE Protocol Specification*: Preface; §A1.3, §A1.3.1, §A1.3.2, §A1.3.3, §A1.4.2; §A3.2.1, §A3.3, §A3.3.2, §A3.4.1, §A3.4.4; §A5.3, §A5.3.1, §A5.3.4, §A5.3.5, §A5.3.6, §A5.4.1, §A5.4.2; §A7.3; §A8.1.1, §A8.2.1; §B1.1–§B1.1.4, §B1.2, §B1.2.1, §B1.2.2, §B1.3.1; §C1.3.1–§C1.3.3, §C1.6.1, §C2.1.1, §C2.1.2; §C11.1, §C11.2.
+- Arm IHI0022E, *AMBA AXI and ACE Protocol Specification*: Preface; §A1.3, §A1.3.1, §A1.3.2, §A1.3.3, §A1.4.2; §A3.2.1, §A3.3, §A3.3.1, §A3.3.2, §A3.4.1, §A3.4.4; §A5.3, §A5.3.1, §A5.3.4, §A5.3.5, §A5.3.6, §A5.4.1, §A5.4.2; §A7.3; §A8.1.1, §A8.2.1; §B1.1–§B1.1.4, §B1.2, §B1.2.1, §B1.2.2, §B1.3.1; §C1.3.1–§C1.3.3, §C1.6.1, §C2.1.1, §C2.1.2; §C11.1, §C11.2.
 - Arm IHI0022E also: §A4.3.1, §A4.4 (memory attributes behind AXI4-Lite's fixed AxCACHE); §A4.7 (AxPROT access permissions).
 - Arm IHI0022G (AMBA 5 additions): change history; §C1.1 Table C1-1; Table C1-2 (AWATOP); §E1.1, §E1.1.1, §E1.1.4. Arm IHI0022H.c: change history (issue H.b terminology).
 - Arm IHI0033B.b, *AMBA 5 AHB Protocol Specification*: §1.1, Figure 1-1, §1.1.3, §1.2, §1.3, Table 2-5, §3.1, §3.2 Table 3-1, §3.4 Table 3-2, §3.5 Table 3-3, §5.1 Table 5-1, §6.1. Arm IHI0033C: change history.

@@ -41,7 +41,7 @@ It also helps to be comfortable with values sampled at a rising clock edge, as i
 
 ### AHB: one road, a two-stage bridge
 
-**AHB** (Advanced High-performance Bus) defines a bus where every transfer has two **phases**, each lasting at least one cycle of the bus clock HCLK, with everything sampled on its rising edge (IHI0033B.b §1.1, §1.3):
+**AHB** (Advanced High-performance Bus) defines a bus where every transfer has two **phases**, each lasting at least one cycle of the bus clock HCLK, with everything sampled on its rising edge (IHI0033B.b §1.1, §1.3, §2.1):
 
 - the **address phase**, one cycle in which the master drives the address (HADDR) and control signals, such as HWRITE (read or write) and HTRANS (whether this is a real transfer: NONSEQ for a single transfer or the first beat of a burst, IDLE for none; §3.2, Table 3-1);
 - the **data phase**, one or more cycles in which the write data (HWDATA) or read data (HRDATA) moves.
@@ -93,7 +93,7 @@ The key fact is that the phases **overlap**. The address phase of any transfer h
 <figcaption className="mt-2 text-sm text-muted-foreground">One cycle of the pipeline: B's address phase (the gate) overlaps A's data phase (the bay), and on the next edge that completes them both trucks move up one stage. The dashed boxes are the two interconnect blocks the hook names (IHI0033B.b §1.1, §1.3, §3.1).</figcaption>
 </figure>
 
-**Waiting.** A slave that needs more time drives its **HREADYOUT** output low; the interconnect combines every slave's HREADYOUT into one **HREADY** signal that all components see (§3.1). An edge where HREADY is low is a **wait state**. A slave can only stretch the data phase; it cannot ask for a longer address phase (§1.3). Because the next address waits at the gate while the current truck is still unloading, a wait holds both: "extending the data phase of the transfer to address B has the effect of extending the address phase of the transfer to address C" (IHI0033B.b §3.1, Figure 3-5).
+**Waiting.** A slave that needs more time drives its **HREADYOUT** output low; the interconnect combines every slave's HREADYOUT into one **HREADY** signal that all components see (§3.1). An edge where HREADY is low is a **wait state**. A slave can only stretch the data phase; it cannot ask for a longer address phase (§1.3).
 
 <ArchitectureDiagram
   title="A single-master AHB-Lite bus: decoder and multiplexor"
@@ -118,10 +118,28 @@ The key fact is that the phases **overlap**. The address phase of any transfer h
   ]}
 />
 
-**Predict first.** The waveform below shows three reads, A, B and C. The slave for B needs one extra cycle. Before you look at the markers, decide: at which edge is C's address accepted? (In this kit, the value drawn in column k is the value sampled at rising edge k.)
+**Predict first.** The waveform below shows three reads, A, B and C. The slave for B needs one extra cycle. Before you open the answer, decide: at which edge is C's address accepted? (In this kit, the value drawn in column k is the value sampled at rising edge k.)
 
 <TimingDiagram
   title="AHB pipeline: three reads, B waited for one cycle"
+  caption="Three reads, A, B and C; B's slave holds HREADY low for one cycle. Columns are rising HCLK edges 0 to 5; the value in column k is the value sampled at edge k."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "NONSEQ", "NONSEQ", "NONSEQ", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "B", "C", "C", undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 0, 1, 1] },
+    { name: "HRDATA", kind: "bus", values: [undefined, undefined, "Data A", undefined, "Data B", "Data C"] }
+  ]}
+/>
+
+<details>
+<summary>Answer: when C's address is accepted</summary>
+
+Because the next address waits at the gate while the current truck is still unloading, a wait holds both: "extending the data phase of the transfer to address B has the effect of extending the address phase of the transfer to address C" (IHI0033B.b §3.1, Figure 3-5).
+
+<TimingDiagram
+  title="AHB pipeline: the three reads with every completion marked"
   caption="Each address phase overlaps the previous data phase. At edge 3 HREADY is low, so B's data phase and C's address phase are both held; C's address is accepted at edge 4, together with B's data."
   edges={6}
   signals={[
@@ -149,6 +167,8 @@ The key fact is that the phases **overlap**. The address phase of any transfer h
 | 3 | C | B (waiting) | 0 | nothing: both stages hold |
 | 4 | C (held) | B | 1 | B's data, C's address |
 | 5 | none (IDLE) | C | 1 | C's data |
+
+</details>
 
 **Where the bridge breaks.**
 - **Two trucks are on the bridge at once,** one per stage. A bridge you picture as "one truck at a time" misses the pipeline entirely (§3.1).
@@ -201,7 +221,7 @@ AHB is not "slow": the specification presents it as a bus for high-performance d
 
 ### The five channels: who sends what, who drives VALID and READY
 
-Every channel carries a **payload** (the information signals) plus two handshake signals. The **source** of the payload drives **VALID** ("the information on the wires is real"); the **destination** drives **READY** ("I can take it") (IHI0022E §A3.2.1, Table A3-1). One hook covers all five: **VALID travels with the payload; READY travels against it.**
+Every channel carries a **payload** (the information signals) plus two handshake signals. The **source** of the payload drives **VALID** ("the information on the wires is real"); the **destination** drives **READY** ("I can take it") (IHI0022E §A3.2.1; §A3.2.2, Table A3-1). One hook covers all five: **VALID travels with the payload; READY travels against it.**
 
 **Predict first.** On the write response channel B, who drives BREADY? Decide, then check the picture.
 
@@ -313,7 +333,7 @@ Now give each channel an everyday object. You (the master) are a customer; the s
 - **Many orders can be open at once.** Orders with different IDs may come back in any order, and their beats may even be interleaved; orders with the same ID come back in order (§A5.3.1). No parcel service interleaves the items of two shipments.
 - **No label number on the box.** In AXI4 nothing on W says which label it belongs to: boxes arrive in label order (WID was removed, §A5.4.1).
 
-**Use the explorer.** Open **Writing Data** and answer its prediction before you press **Next Step**: may the box be handed over before the label is accepted? Then step through all three write orders (label first, box first, same edge), and finally the **Reading Data** tab. For each step, read the "where the analogy breaks" line before moving on.
+**Use the explorer.** Open **Writing Data** and answer its question from the rules above (may the box be handed over before the label is accepted?) before you press **Next Step**. Then step through all three write orders (label first, box first, same edge), and finally the **Reading Data** tab. For each step, read the "where the analogy breaks" line before moving on.
 
 <InteractiveWrapper>
   <ProtocolAnalogyExplorer />
@@ -345,10 +365,30 @@ From the bottom-left box, the next edge is either the bottom-left box again (sti
 
 **Where the courier breaks.** A real courier may wait for the door to open before holding out the parcel. An AXI source may not: rule 2. The door, however, is free to wait for the courier.
 
-**Predict first.** Each of the three transfers below arrives in a different way. Before you read the caption, decide for each one whether VALID or READY rose first.
+**Predict first.** Each of the three transfers below arrives in a different way. Before you open the answer, decide for each one whether VALID or READY rose first.
 
 <TimingDiagram
   title="Three legal VALID/READY handshakes"
+  caption="Three transfers on one channel. Columns are rising ACLK edges 0 to 7; the value in column k is the value sampled at edge k. For each transfer, which rose first?"
+  edges={8}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "VALID", kind: "bit", values: [0, 1, 1, 1, 0, 1, 0, 1] },
+    { name: "READY", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0, 1] },
+    { name: "DATA", kind: "bus", values: [undefined, "D0", "D0", "D0", undefined, "D1", undefined, "D2"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "pass", label: "transfer D0" },
+    { edge: 5, tone: "pass", label: "transfer D1" },
+    { edge: 7, tone: "pass", label: "transfer D2" }
+  ]}
+/>
+
+<details>
+<summary>Answer: which signal rose first</summary>
+
+<TimingDiagram
+  title="The three handshakes, with which signal rose first"
   caption="Edge 3: VALID waited two edges with D0 held, then READY rose. Edge 5: READY was already high when VALID arrived. Edge 7: both rose together. At edge 4 READY is high with no VALID, which is legal and transfers nothing."
   edges={8}
   signals={[
@@ -363,6 +403,8 @@ From the bottom-left box, the next edge is either the bottom-left box again (sti
     { edge: 7, tone: "pass", label: "transfer D2: both rose together" }
   ]}
 />
+
+</details>
 
 **Spot the violation.** Here is a source that breaks a rule. Find the edge and the rule before you open the answer.
 
@@ -495,8 +537,6 @@ Here is a single-beat AXI4 write in which the slave accepts the box before the l
 
 Edge 5. An AXI4 slave may assert BVALID only after both the AW handshake (edge 4) and the W handshake carrying WLAST (edge 2), so it can drive BVALID high just after edge 4, and the first edge that samples it is edge 5 (IHI0022E §A3.3.1). BREADY is already high, so the B handshake also happens at edge 5. Had the slave raised BVALID right after edge 2, it would have broken the AXI4 write response dependency, although an AXI3 slave might have done exactly that (§A3.3.2).
 
-</details>
-
 <TimingDiagram
   title="One AXI4 write: W handshake first, then AW, then B"
   caption="The master offers AW and W together at edge 1. The slave takes W at edge 2 and AW at edge 4; BVALID can first be sampled high at edge 5, after both."
@@ -517,6 +557,8 @@ Edge 5. An AXI4 slave may assert BVALID only after both the AW handshake (edge 4
     { edge: 5, tone: "pass", label: "B handshake: receipt after both" }
   ]}
 />
+
+</details>
 
 ### A handshake you can run
 
@@ -702,12 +744,12 @@ The rule exists so that any legal source can be connected to any legal destinati
 
 **Explore the loop.** The simulator below builds the wait-for graph for a write from the waits you tick on each side. First check what you already know: load the **Classic W/AW deadlock** preset, which is the loop from the debugging section, and check that unticking the master's wait clears it while the slave keeps its legal wait.
 
-**Predict first.** The **Latent violation** preset keeps the master's illegal wait (WVALID waits for AWREADY; the master raises AWVALID without waiting) but gives the slave only one wait: AWREADY waits for AWVALID, which is legal. Does this write complete, or does it hang? Decide, then load the preset and open the check.
+**Predict first.** The third preset keeps the master's illegal wait (WVALID waits for AWREADY; the master raises AWVALID without waiting) but gives the slave only one wait: AWREADY waits for AWVALID, which is legal. Does this write complete, or does it hang? Decide, then load the third preset and open the check.
 
 <details>
-<summary>Check: the Latent violation preset</summary>
+<summary>Check: the third preset</summary>
 
-The **Latent violation** preset shows why the bug hides: the same master completes against a slave that waits only for AWVALID.
+The third preset, **Latent violation**, shows why the bug hides: the same master completes against a slave that waits only for AWVALID. The master raises AWVALID without waiting; the slave, which waits only for AWVALID, raises AWREADY; the AW handshake happens, and only then does the master raise WVALID. No loop closes, so this pair works. The master's wait is still illegal (IHI0022E §A3.3.1): against the legal slave in the Classic preset, whose AWREADY waits for WVALID, the same master hangs.
 
 </details>
 
@@ -831,9 +873,9 @@ Answer each one before you open the feedback.
   question="Can WVALID be asserted, and the W handshake complete, before AWVALID is asserted?"
   options={[
     { text: "No. A slave cannot know where to put the data, so W must follow AW.", isCorrect: false, feedback: "The protocol defines no order between AW and W: write data can appear at an interface before its address (IHI0022E §A3.3). The slave buffers it or holds WREADY low; that is its choice." },
-    { text: "Yes. AW and W have no ordering between them; the master must not wait for AWREADY before WVALID, and only B must wait for both.", isCorrect: true, feedback: "Correct (§A3.3, §A3.3.1). A slave may still choose to hold WREADY low until it sees AWVALID." },
+    { text: "Yes. AW and W have no ordering between them; only B must wait for both.", isCorrect: true, feedback: "Correct (§A3.3, §A3.3.1): the master must not wait for AWREADY before WVALID. A slave may still choose to hold WREADY low until it sees AWVALID." },
     { text: "Only in AXI3, because WID identifies the address.", isCorrect: false, feedback: "WID supported write interleaving, which AXI4 removed (§A5.4.1). W before AW is legal in AXI4 too." },
-    { text: "Yes, but only when WREADY is already high.", isCorrect: false, feedback: "VALID never waits for READY (§A3.2.1). WREADY timing is the slave's choice and does not license WVALID." }
+    { text: "Yes, but only when WREADY is already high, so the slave is known to have room for the data.", isCorrect: false, feedback: "VALID never waits for READY (§A3.2.1). WREADY timing is the slave's choice and does not license WVALID." }
   ]}
 />
 
@@ -843,8 +885,8 @@ Answer each one before you open the feedback.
   options={[
     { text: "No. Once READY is asserted it must stay high until a transfer.", isCorrect: false, feedback: "That rule applies to VALID, not READY. A destination may deassert READY before VALID is asserted (IHI0022E §A3.2.1)." },
     { text: "Only on the R and B channels.", isCorrect: false, feedback: "All five channels use the same handshake process (§A3.2.1)." },
-    { text: "Yes, but only if ARREADY defaults to LOW.", isCorrect: false, feedback: "The default state is a separate recommendation (§A3.2.2) and has nothing to do with whether READY may drop." },
-    { text: "Yes. READY may rise before VALID and may fall again before VALID arrives; only VALID has a hold rule.", isCorrect: true, feedback: "Correct (§A3.2.1). Checkers must not flag it, and responders should randomize it." }
+    { text: "Yes, but only if ARREADY defaults to LOW, so dropping it returns the slave to its default state.", isCorrect: false, feedback: "The default state is a separate recommendation (§A3.2.2) and has nothing to do with whether READY may drop." },
+    { text: "Yes. READY may rise and fall before VALID arrives; only VALID has a hold rule.", isCorrect: true, feedback: "Correct (§A3.2.1): READY may rise before VALID and may fall again before VALID arrives. Checkers must not flag it, and responders should randomize it." }
   ]}
 />
 
@@ -852,10 +894,10 @@ Answer each one before you open the feedback.
   title="Interview: the asymmetry"
   question="Why may READY depend on VALID, while VALID must never depend on READY?"
   options={[
-    { text: "So that exactly one side may wait: if both could wait for the other, two legal components could deadlock. Fixing the source side guarantees that any source composes with any destination.", isCorrect: true, feedback: "Correct (IHI0022E §A3.2.1, §A3.3.1 Caution). It is a composition guarantee, not a performance rule." },
+    { text: "So exactly one side may wait, and any legal source composes with any legal destination.", isCorrect: true, feedback: "Correct (IHI0022E §A3.2.1, §A3.3.1 Caution): if both could wait for the other, two legal components could deadlock, and fixing the source side guarantees that any source composes with any destination. It is a composition guarantee, not a performance rule." },
     { text: "Because READY is driven by the slave, and slaves are always faster.", isCorrect: false, feedback: "Masters drive READY on B and R. The rule is about source and destination, not master and slave." },
     { text: "To avoid glitches on VALID.", isCorrect: false, feedback: "Glitches are handled by synchronous sampling; the rule is about deadlock freedom." },
-    { text: "It is only a recommendation for performance.", isCorrect: false, feedback: "It is a requirement: a source is not permitted to wait for READY (§A3.2.1)." }
+    { text: "It is only a recommendation for performance: a VALID that waits for READY costs an extra cycle.", isCorrect: false, feedback: "It is a requirement: a source is not permitted to wait for READY (§A3.2.1)." }
   ]}
 />
 
@@ -863,7 +905,7 @@ Answer each one before you open the feedback.
   title="Interview: an AHB wait state"
   question="On an AHB-Lite bus, transfer B's slave inserts one wait state while transfer C's address is on HADDR. What happens to C?"
   options={[
-    { text: "C's address is accepted on time; only C's data phase starts later.", isCorrect: false, feedback: "HREADY is low, so no slave samples C's address on that edge (IHI0033B.b §4.2). Extending B's data phase extends C's address phase (§3.1)." },
+    { text: "C's address is accepted on time, because the address phase is always one cycle; only C's data phase starts later.", isCorrect: false, feedback: "HREADY is low, so no slave samples C's address on that edge (IHI0033B.b §4.2). Extending B's data phase extends C's address phase (§3.1)." },
     { text: "C is cancelled and the master must reissue it.", isCorrect: false, feedback: "Nothing is cancelled by a wait state; the master holds C's address until HREADY is high." },
     { text: "C's address phase is extended; C's address is accepted at the same edge as B's data.", isCorrect: true, feedback: "Correct (IHI0033B.b §3.1, Figure 3-5). That is the two-stage bridge: both stages hold." },
     { text: "Nothing, because C targets a different slave.", isCorrect: false, feedback: "HREADY is one shared signal, so every slave sees the wait (§3.1)." }
@@ -874,8 +916,8 @@ Answer each one before you open the feedback.
   title="Interview: an analogy and its limit"
   question="Explain AXI writes with one analogy, and say where it breaks. Which answer would you give?"
   options={[
-    { text: "A write is mailing a parcel: the label, then the box, then the receipt, always in that order.", isCorrect: false, feedback: "The fixed order is the misconception. AW and W may complete in either order or together (IHI0022E §A3.3)." },
-    { text: "A write is mailing a parcel: label (AW) and box (W) at separate counters in any order, then a receipt (B). It breaks because a real label is stuck to its box, the receipt in AXI4 needs both label and last box, and there is one receipt per parcel but one slip per read beat.", isCorrect: true, feedback: "Correct: the picture plus three verified limits (§A3.3, §A3.3.1, §A3.4.4)." },
+    { text: "A write is mailing a parcel: the label, then the box, then the receipt, always in that order, because the store must read the label before it can accept the box.", isCorrect: false, feedback: "The fixed order is the misconception. AW and W may complete in either order or together (IHI0022E §A3.3)." },
+    { text: "A write is mailing a parcel: label (AW) and box (W) in any order, then a receipt (B); it breaks on the stuck-on label, the receipt rule and per-beat read slips.", isCorrect: true, feedback: "Correct: the picture plus three verified limits. A real label is stuck to its box, the receipt in AXI4 needs both label and last box, and there is one receipt per parcel but one slip per read beat (§A3.3, §A3.3.1, §A3.4.4)." },
     { text: "A write is a phone call: both sides talk at once on one line.", isCorrect: false, feedback: "This hides the five separate one-way channels (§A1.3)." },
     { text: "A write is a relay race: the baton is passed when the receiver shouts READY.", isCorrect: false, feedback: "It misses the AW/W/B structure, and a relay runner may wait for the receiver, which an AXI source must not (§A3.2.1)." }
   ]}
@@ -893,7 +935,7 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       question: "The slave has not raised AWREADY yet. May the W handshake, with WLAST, complete first?",
       answers: [
         { text: "No: write data must follow the write address.", correct: false, feedback: "This is the most common AXI misconception. The protocol defines no order between AW and W (IHI0022E §A3.3)." },
-        { text: "Yes: W may complete before, with or after AW, and the master must not wait for AWREADY before WVALID.", correct: true, feedback: "Right (§A3.3, §A3.3.1). Only B must wait for both." },
+        { text: "Yes: W may complete before, with or after AW.", correct: true, feedback: "Right (§A3.3, §A3.3.1): the master must not wait for AWREADY before WVALID. Only B must wait for both." },
         { text: "Only in AXI3, where WID tells the slave which address the data belongs to.", correct: false, feedback: "WID existed for write interleaving, removed in AXI4 (§A5.4.1); it never was what allowed W before AW." },
         { text: "Only if the slave raised WREADY before the master raised WVALID.", correct: false, feedback: "The order of WREADY and WVALID is free, and VALID never waits for READY (§A3.2.1)." }
       ],
@@ -903,7 +945,7 @@ Answer from the rules, not the pictures. Each question names the objective it ch
     {
       question: "An AXI4 slave has accepted all W beats, including WLAST. AWVALID is high but AWREADY is still low. May the slave raise BVALID now?",
       answers: [
-        { text: "Yes: the write response depends only on the last data beat.", correct: false, feedback: "That was enough for some AXI3 slaves, which is exactly why they are not AXI4-compliant (§A3.3.2)." },
+        { text: "Yes: the write response depends only on the last data beat, and the WLAST beat has already been accepted.", correct: false, feedback: "That was enough for some AXI3 slaves, which is exactly why they are not AXI4-compliant (§A3.3.2)." },
         { text: "Yes: the channels are independent, so B can go whenever the slave likes.", correct: false, feedback: "The channels are not fully independent. In AXI4, B depends on AW and on WLAST (§A3.3.1)." },
         { text: "No: in AXI4, BVALID must wait for the AW handshake as well as the WLAST handshake.", correct: true, feedback: "Right (IHI0022E §A3.3.1, AXI4 write response dependency)." },
         { text: "Only if the master is already holding BREADY high.", correct: false, feedback: "READY never licenses VALID; the slave must not wait for BREADY either (§A3.3.1)." }
@@ -915,9 +957,9 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       question: "Which source behaviour is legal on any AXI channel?",
       answers: [
         { text: "The source waits until READY is high, then raises VALID with the data.", correct: false, feedback: "A source is not permitted to wait for READY before asserting VALID (§A3.2.1). It deadlocks against a destination that waits for VALID." },
-        { text: "VALID pulses high for one cycle; the destination must catch it.", correct: false, feedback: "Once VALID is high it must stay high until the handshake (§A3.2.1)." },
+        { text: "VALID pulses high for one cycle with D0; a correct destination samples it at that edge, so no hold is needed.", correct: false, feedback: "Once VALID is high it must stay high until the handshake (§A3.2.1)." },
         { text: "While READY is low, the source replaces D0 with a newer D1 and keeps VALID high.", correct: false, feedback: "The information must stay stable until the transfer (§A3.2.1). D0 would be lost." },
-        { text: "VALID rises with D0; READY stays low for three edges; VALID and D0 are held until the edge where READY is high.", correct: true, feedback: "Right: the hold rule (IHI0022E §A3.2.1)." }
+        { text: "VALID rises with D0; READY stays low for three edges; VALID and D0 hold until READY is high.", correct: true, feedback: "Right: the hold rule (IHI0022E §A3.2.1). VALID and D0 are held until the edge where READY is high." }
       ],
       explanation: "Rules 2 and 3: VALID is raised without looking at READY, and once raised it holds, with a stable payload, until the edge where READY is also high.",
       objective: 3
@@ -927,8 +969,8 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       answers: [
         { text: "No: once READY is raised it must stay high until a transfer.", correct: false, feedback: "That hold rule applies to VALID only. A destination may deassert READY before VALID is asserted (§A3.2.1)." },
         { text: "No: READY must wait for VALID.", correct: false, feedback: "READY may wait for VALID, but it does not have to; it may also be raised first (§A3.2.1, §A3.3.1 Note)." },
-        { text: "Yes: READY may rise before VALID and may fall again before VALID arrives; the transfer happens at edge 4.", correct: true, feedback: "Right (IHI0022E §A3.2.1)." },
-        { text: "Only on the R channel, where the master drives READY.", correct: false, feedback: "All five channels use the same handshake process (§A3.2.1)." }
+        { text: "Yes: READY is free to come and go; the transfer happens at edge 4.", correct: true, feedback: "Right (IHI0022E §A3.2.1): READY may rise before VALID and may fall again before VALID arrives." },
+        { text: "Only on the R channel, where the master drives READY and may change its mind.", correct: false, feedback: "All five channels use the same handshake process (§A3.2.1)." }
       ],
       explanation: "READY is free: it may wait for VALID, come first, or come and go. Only VALID is constrained. A checker that flags early or withdrawn READY is wrong.",
       objective: 3
@@ -949,7 +991,7 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       answers: [
         { text: "The read response travels on R with the data: every R beat carries its own RRESP.", correct: true, feedback: "Right (IHI0022E §A1.3.1, §A3.4.4). A write sends its data from the master, so the slave needs a separate channel to answer." },
         { text: "Reads always succeed, so they need no response.", correct: false, feedback: "Reads can fail: RRESP can be SLVERR or DECERR (§A3.4.4)." },
-        { text: "Read responses are sent on the B channel to save wires.", correct: false, feedback: "B carries only write responses (§A3.4.4)." },
+        { text: "Read responses are sent on the B channel, shared with write responses, to save wires.", correct: false, feedback: "B carries only write responses (§A3.4.4)." },
         { text: "AXI cannot report read errors.", correct: false, feedback: "It reports them per beat, with OKAY, EXOKAY, SLVERR or DECERR (§A3.4.4)." }
       ],
       explanation: "The read data channel carries data and response together, one RRESP per beat, and the beats of one burst may report different responses. A write burst gets one BRESP on B for the whole transaction.",
@@ -958,7 +1000,7 @@ Answer from the rules, not the pictures. Each question names the objective it ch
     {
       question: "On an AHB-Lite bus, transfer B gets one wait state while C's address is already on HADDR. What happens to C?",
       answers: [
-        { text: "C's address is accepted on time; only its data phase waits.", correct: false, feedback: "With HREADY low no slave samples the address (IHI0033B.b §4.2). Extending B's data phase extends C's address phase (§3.1)." },
+        { text: "C's address is accepted on time, because the address phase is one cycle; only its data phase waits.", correct: false, feedback: "With HREADY low no slave samples the address (IHI0033B.b §4.2). Extending B's data phase extends C's address phase (§3.1)." },
         { text: "C's address phase is extended too; C's address is accepted at the edge where B's data completes.", correct: true, feedback: "Right (IHI0033B.b §3.1, Figure 3-5)." },
         { text: "C is cancelled and must be reissued.", correct: false, feedback: "A wait cancels nothing; the master holds C's address until HREADY is high." },
         { text: "Nothing happens to C, because it targets a different slave.", correct: false, feedback: "HREADY is a single signal that every component sees (§3.1)." }
@@ -971,19 +1013,19 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       answers: [
         { text: "Record an address phase only at edges where HREADY is high.", correct: true, feedback: "Right: address and control are sampled only when HREADY is high (IHI0033B.b §4.2). At edge 3 HREADY is low, so C is not yet accepted." },
         { text: "Ignore any address that equals the previous one.", correct: false, feedback: "Two real transfers can target the same address; this hides legal traffic." },
-        { text: "Sample the address on the falling edge instead.", correct: false, feedback: "AHB is single-edge: everything is sampled on the rising edge of HCLK (§1.1)." },
+        { text: "Sample the address on the falling edge instead.", correct: false, feedback: "AHB is single-edge: everything is sampled on the rising edge of HCLK (§1.1, §2.1 Table 2-1)." },
         { text: "Record the address in the data phase, when HRDATA is valid.", correct: false, feedback: "By then HADDR shows the next transfer's address (§3.1)." }
       ],
       explanation: "A wait state holds the next address phase, so HADDR shows C at edges 3 and 4. Only edge 4, with HREADY high, completes C's address phase.",
       objective: 4
     },
     {
-      question: "Which statement shows where the single-lane bridge picture of AHB breaks?",
+      question: "Which statement shows where the two-stage bridge picture of AHB breaks?",
       answers: [
         { text: "AHB transfers have no address phase; the address travels with the data.", correct: false, feedback: "Every AHB transfer has an address phase and a data phase (IHI0033B.b §1.3)." },
-        { text: "AHB has a separate response channel, like AXI's B channel.", correct: false, feedback: "AHB returns HRESP and HREADY in the data phase, through the multiplexor (§1.1.3, §1.3)." },
+        { text: "AHB has a separate response channel, like AXI's B channel, so a write is answered after its data phase ends.", correct: false, feedback: "AHB returns HRESP and HREADY in the data phase, through the multiplexor (§1.1.3, §1.3)." },
         { text: "A slow slave can make the address phase longer by itself.", correct: false, feedback: "A slave cannot extend the address phase; it stretches only the data phase (§1.3)." },
-        { text: "The bridge holds two transfers at once, one per phase, and the protocol has no arbiter; arbitration between several masters belongs to an interconnect outside the protocol.", correct: true, feedback: "Right (§1.1, §1.1.3, §3.1). An AHB master interface has no request or grant signals (§2.2)." }
+        { text: "It carries two transfers at once, one per phase, and the protocol has no arbiter.", correct: true, feedback: "Right (§1.1, §1.1.3, §3.1): arbitration between several masters belongs to an interconnect outside the protocol. An AHB master interface has no request or grant signals (§2.2)." }
       ],
       explanation: "A bridge that carries one truck at a time misses the pipeline, and a traffic cop in the protocol misses that arbitration lives in the interconnect. Both limits are stated in IHI0033B.b.",
       objective: 1
@@ -991,10 +1033,10 @@ Answer from the rules, not the pictures. Each question names the objective it ch
     {
       question: "Which statement shows where the lanes-into-an-interchange picture of AXI breaks?",
       answers: [
-        { text: "Every master has a private wire to every slave, so nothing is ever shared.", correct: false, feedback: "AXI interconnects may use shared address and data buses (IHI0022E §A1.3.2)." },
+        { text: "Every master has a private wire to every slave, so nothing inside the interconnect is ever shared.", correct: false, feedback: "AXI interconnects may use shared address and data buses (IHI0022E §A1.3.2)." },
         { text: "AXI has one lane shared by reads and writes.", correct: false, feedback: "AXI has five channels, with separate read and write paths (§A1.3)." },
         { text: "The interchange decides when a master may raise VALID.", correct: false, feedback: "VALID is the source's decision; it must not depend on READY (§A3.2.1)." },
-        { text: "The lanes are not fully independent: B waits for AW and WLAST, R waits for AR, and same-ID transactions keep their order.", correct: true, feedback: "Right (§A3.3.1, §A5.3)." }
+        { text: "The lanes are not fully independent: a few dependencies and ordering rules tie them.", correct: true, feedback: "Right (§A3.3.1, §A5.3): B waits for AW and WLAST, R waits for AR, and same-ID transactions keep their order." }
       ],
       explanation: "Independent lanes explain why addresses can run ahead and W can lead AW, but a few dependencies and ordering rules remain, and the interconnect behind the interface may share buses.",
       objective: 1
@@ -1003,7 +1045,7 @@ Answer from the rules, not the pictures. Each question names the objective it ch
       question: "A colleague's AXI master holds WVALID low until it sees AWREADY. Against which legal slave does it deadlock?",
       answers: [
         { text: "A slave with AWREADY tied high.", correct: false, feedback: "AWREADY is high at once, so the master proceeds. The bug stays hidden with this slave." },
-        { text: "A slave that raises WREADY early.", correct: false, feedback: "WREADY does not unblock this master; it waits for AWREADY. If AWREADY also comes, it works." },
+        { text: "A slave that raises WREADY early, before the master has offered any write data.", correct: false, feedback: "WREADY does not unblock this master; it waits for AWREADY. If AWREADY also comes, it works." },
         { text: "A slave that waits for WVALID before raising AWREADY.", correct: true, feedback: "Right: each side waits for the other, which is the deadlock in the IHI0022E §A3.3.1 Caution. The slave is legal; the master is not." },
         { text: "Any slave that uses transaction IDs.", correct: false, feedback: "IDs play no part in this handshake deadlock." }
       ],
@@ -1067,7 +1109,7 @@ Decide each case, and name the rule, before you open the answers. "Edge" means a
 
 **Debug challenge.** Run the two "Break it on purpose" steps in Make It Work and confirm the log you predicted: no transfers and the deadlock error for (a), and an `a_hold` failure at edge 2 for (b).
 
-**Explorer prediction.** If you skipped them, answer both built-in predictions in the explorer (the Writing Data and Reading Data tabs) before you step through.
+**Explorer prediction.** If you skipped them, answer both built-in questions in the explorer (the Writing Data and Reading Data tabs) before you step through.
 
 **One-glance summary.** The four hooks, each with the rule it stands for and the place where the picture stops being true. Check it against your own answers above, then take it into the flashcards.
 
@@ -1107,7 +1149,7 @@ The flashcards for this lesson follow below, under "Reinforce the essentials".
 
 **Primary sources**
 - Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A1.3 AXI architecture; §A1.3.1 channel definition; §A1.3.2 interface and interconnect; §A1.3.3 register slices; §A3.1.2 reset; §A3.2.1 handshake process; §A3.2.2 channel signaling requirements (Table A3-1); §A3.3 relationships between the channels; §A3.3.1 dependencies between channel handshake signals (with the Caution and the AXI4 write response dependency); §A3.3.2 legacy considerations; §A3.4.4 read and write response structure; §A5.3 transaction ordering; §A5.3.1 read ordering; §A5.4.1 removal of WID.
-- Arm IHI0033B.b, AMBA 5 AHB Protocol Specification: §1.1 about the protocol (Figure 1-1); §1.1.3 interconnect; §1.3 operation; §3.1 basic transfers (Figure 3-5); §3.2 transfer types (Table 3-1); §4.1 interconnect; §4.2 address decoding.
+- Arm IHI0033B.b, AMBA 5 AHB Protocol Specification: §1.1 about the protocol (Figure 1-1); §1.1.3 interconnect; §1.3 operation; §2.1 global signals (Table 2-1); §3.1 basic transfers (Figure 3-5); §3.2 transfer types (Table 3-1); §4.1 interconnect; §4.2 address decoding.
 - Arm IHI0051A, AMBA 4 AXI4-Stream Protocol Specification: §2.2.1 handshake process.
 
 **Related**

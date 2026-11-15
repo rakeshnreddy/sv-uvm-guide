@@ -30,7 +30,7 @@ Recommended as well: [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculu
 
 ## Build Your Mental Model
 
-**How to read this lesson.** The core path is four sections: customize without forking, the project base layer, custom phases (with the visualizer), and when not to add a custom phase. Practitioner depth follows: where a new phase lands in the schedule, governance and CI gates, and diagnosing methodology drift. Make It Work builds a complete custom-phase test you can run and break, and Push Further holds the expert corner cases.
+**How to read this lesson.** The core path is four sections: customize without forking, the project base layer, custom phases (with the visualizer), and when not to add a custom phase. Three practitioner sections sit among and after them: where a new phase lands in the schedule (just before "When not to add a custom phase"), governance and CI gates, and diagnosing methodology drift. Make It Work builds a complete custom-phase test you can run and break, and Push Further holds the expert corner cases.
 
 Words this page uses, in one line each (each links to where it is taught in full):
 
@@ -286,23 +286,25 @@ class proj_report_server extends uvm_default_report_server;
   endfunction
 endclass
 
-// In proj_base_test::build_phase, once per run:
-//   proj_report_server srv = new();
+// In proj_base_test::build_phase, once per run (declare srv with the other locals at the top):
+//   proj_report_server srv;
+//   ...
+//   srv = new();
 //   srv.test_name = get_type_name();
 //   uvm_report_server::set_server(srv);   // copies the existing counts (§6.5.1.2.19)
 ```
 
-`uvm_report_server` itself is a virtual class whose methods are pure virtual (§6.5.1.1, §6.5.1.2.15), so you extend `uvm_default_report_server`, which "provides a full implementation" (§6.5.2), and override only what you change.
+`uvm_report_server` itself is a virtual class whose methods are pure virtual (§6.5.1.1, §6.5.1.2.15), so you extend `uvm_default_report_server`, which "provides a full implementation" (§6.5.2), and override only what you change. Because `set_server` replaces the server for every report in the simulation, including VIP messages, this is one of the three global customizations named in the Quick Take: change only the format, append rather than prepend, and own it in `proj_pkg`.
 
-**Why append, in three lines.** The first line is a stock message, the second is the same message from `proj_report_server` (if Make It Work's `base_test` installed it), and the third is what a server that *prepended* the field would print. The lines are illustrative: the message is the `[ORDER]` error from Break-it row 1 in Make It Work (a normal run prints no such error), and the file and line fields are left out, as in Make It Work's expected output.
+**Why append, in three lines.** The first line is a stock message, the second is the same message from `proj_report_server` installed by `proj_base_test` as above, and the third is what a server that *prepended* the field would print. The lines are illustrative: the message is the `PROJ/NO_CFG` fatal from `proj_cfg_util` above, for a driver of `apb_smoke_test` whose configuration is missing (it is reported through the global reporter, because `proj_cfg_util` is not a component, and a normal run prints no such fatal), and the file and line fields are left out.
 
 ```text
-UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded
-UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded [test=base_test]
-[test=base_test] UVM_ERROR @ 50: uvm_test_top.env [ORDER] configure ran before firmware was loaded
+UVM_FATAL @ 0: reporter [PROJ/NO_CFG] proj_config missing for uvm_test_top.env.agt.drv: set it in proj_base_test
+UVM_FATAL @ 0: reporter [PROJ/NO_CFG] proj_config missing for uvm_test_top.env.agt.drv: set it in proj_base_test [test=apb_smoke_test]
+[test=apb_smoke_test] UVM_FATAL @ 0: reporter [PROJ/NO_CFG] proj_config missing for uvm_test_top.env.agt.drv: set it in proj_base_test
 ```
 
-A parser anchored at the start of the line, such as `^UVM_ERROR`, finds the first two lines and misses the third, so a prepended field would hide every error from it.
+A parser anchored at the start of the line, such as `^UVM_FATAL`, finds the first two lines and misses the third, so a prepended field would hide every error and fatal from it.
 
 **Pitfalls in base classes**, each with why it bites:
 
@@ -360,7 +362,7 @@ The class hierarchy below matches the code above. Each block class extends one p
 The standard explicitly allows new phases: "Users and implementations may add run-time phases before or after any of these specified phases" (IEEE 1800.2-2020 §9.8.2). §9.3.1.1.1 gives the recipe. A custom **task phase** (one that may consume simulation time) needs exactly three parts:
 
 1. **A phase class, instantiated once.** Extend `uvm_task_phase` (§9.6) and provide a static `get()` that always returns the same object. The standard calls this object the phase **IMP** (implementation): "instantiated once as a singleton IMP … and one or more times as nodes in a graph" (§9.2.1). Give it a `protected` constructor, as uvm-core does for every built-in phase, so nobody can create a second one.
-2. **An `exec_task` override.** For every component in the phase's domain, UVM forks one call to `exec_task(comp, phase)` (§9.6, §9.3.1.5.2). That proxy is the only path by which your component's *task* code runs in the new phase, and the inherited `exec_task` is empty. Your override casts `comp` to the class that has the method and calls it.
+2. **An `exec_task` override.** For every component in the hierarchy (in uvm-core, every component in the phase's domain: `uvm_task_phase.svh`, `traverse`), UVM forks one call to `exec_task(comp, phase)` (§9.6, §9.3.1.5.2). `exec_task` is the phase's **proxy**: a method on the phase object that calls the matching method on a component for it. It is the only path by which your component's *task* code runs in the new phase, and the inherited `exec_task` is empty (uvm-core `uvm_phase.svh`; §9.3.1.5.2 declares it as an ordinary virtual task). Your override casts `comp` to the class that has the method and calls it.
 3. **One `add()` call on the container that holds the anchor.** `uvm_phase::add(phase, with_phase, after_phase, before_phase, …)` (§9.3.1.6.1) creates a new **schedule node** that refers to the IMP and links it into the graph. The anchors "shall already exist in the schedule or domain" you call `add()` on.
 
 ```systemverilog
@@ -476,6 +478,9 @@ The model below implements `uvm_phase::add()` from uvm-core 2020.3.1. Choose the
 
 <MethodologyPhaseVisualizer />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what the model showed for the six settings, and why</summary>
+
 **What the model showed, and why:**
 
 1. **`PH_BAD_ADD` during `build_phase`.** `add()` looks up its anchor with `find(..., stay_in_scope = 1)`, which searches only "this phase's schedule and domain" (§9.3.1.4.4). The common domain holds `build` … `final`; `reset` lives in the `uvm` domain's schedule, so it is not found: `UVM_FATAL [PH_BAD_ADD] cannot find after_phase 'reset' within node 'common'`.
@@ -484,6 +489,8 @@ The model below implements `uvm_phase::add()` from uvm-core 2020.3.1. Choose the
 4. **A parallel branch beside `main`,** sharing `main`'s predecessor and successor. `post_main` cannot start until `load_fw` ends too.
 5. **It runs, but calls nothing.** The phase starts, nobody raises an objection, it ends at once, and `soc_env.load_fw_phase` never runs. In a real log the only evidence is a phase-trace line saying the phase was skipped (Diagnosing drift, below).
 6. **Legal on the common domain, fatal on the uvm schedule.** `extract` lives in the common domain, so the second form fails with `PH_BAD_ADD`. The first form runs, but in a dangerous place: after `run_phase` ended, its threads were killed (drivers and monitors stopped), `extract_phase` has already collected results, and uvm-core's timeout watchdog guards only `run_phase` (F.7.3.3 applies the timeout "in uvm_run_phase"), so a hang there is never timed out.
+
+</details>
 
 The visual assumes every component is in the default `uvm` domain and does not model jumps or user-defined domains; Push Further covers both.
 
@@ -598,7 +605,7 @@ Reset strategy in depth (reset-aware drivers, mid-test reset) is taught in [A-UV
 
 <ArchitectureDiagram
   title="The methodology release pipeline"
-  caption="A change to proj_pkg goes through lint, a build against the pinned uvm-core, and a regression of the example environments. The gate passes only when every criterion from point 3 holds: summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, a positive check count, no unreviewed caught or demoted errors, and no UVM_NO_ACTION on errors or INVLCMDARGS warning. Only then is a new proj_pkg version released to block teams."
+  caption="A change to proj_pkg goes through lint, a build against the pinned uvm-core, and a regression of the example environments. The gate passes only when every criterion from point 3 holds: summary present, UVM_ERROR and UVM_FATAL 0, no assertion or simulator errors, exit status 0, a positive check count, no unreviewed caught or demoted errors, and no UVM_NO_ACTION on errors or INVLCMDARGS warning. Only then is a new proj_pkg version released to block teams. If any criterion fails, the change is rejected and goes back to its author, and no version is released."
   cellWidth={160}
   cellHeight={64}
   gapX={82}
@@ -609,14 +616,16 @@ Reset strategy in depth (reset-aware drivers, mid-test reset) is taught in [A-UV
     { id: "build", label: "build", sublabel: "against pinned uvm-core 2020.3.1", kind: "generic", col: 2, row: 0 },
     { id: "regr", label: "example-env regression", sublabel: "block and SoC examples", kind: "env", col: 2, row: 1 },
     { id: "gate", label: "CI gate", sublabel: "every criterion in point 3", kind: "generic", col: 1, row: 1 },
-    { id: "rel", label: "release proj_pkg vN", sublabel: "changelog, migration note", kind: "generic", col: 0, row: 1, state: "ok" }
+    { id: "rel", label: "release proj_pkg vN", sublabel: "changelog, migration note", kind: "generic", col: 0, row: 1, state: "ok" },
+    { id: "rej", label: "rejected", sublabel: "back to the author, no release", kind: "generic", col: 1, row: 2, state: "error" }
   ]}
   edges={[
     { from: "pr", to: "lint", style: "data" },
     { from: "lint", to: "build", style: "data" },
     { from: "build", to: "regr", style: "data" },
     { from: "regr", to: "gate", style: "data", label: "logs" },
-    { from: "gate", to: "rel", style: "data", label: "all pass" }
+    { from: "gate", to: "rel", style: "data", label: "all pass" },
+    { from: "gate", to: "rej", style: "data", label: "any fails" }
   ]}
 />
 
@@ -624,7 +633,7 @@ Two of point 3's conditions exist because a UVM error can be dropped before it i
 
 <ArchitectureDiagram
   title="Where an error can leave the count"
-  caption="Dashed arrows are the order of processing. A UVM error report first meets every active report catcher: a catcher that returns CAUGHT ends processing, so the report is not added to the UVM_ERROR count (uvm-core still lists it in the catcher summary, which the gate reads). If every catcher returns THROW, the report goes on, possibly changed: a catcher may change its severity (for example demote it), and it is then counted at the new severity. Next, a report whose action is UVM_NO_ACTION also ends processing uncounted. Only a report that passes both is executed and counted (uvm-core increments the counts in execute_report_message). An SVA failure or a $error never enters this path at all, unless the assertion's action block calls uvm_error, which makes it an ordinary UVM report. These are the gate's conditions on assertion and simulator errors, on caught or demoted errors, and on UVM_NO_ACTION."
+  caption="Dashed arrows are the order of processing. A UVM error report first meets every active report catcher: a catcher that returns CAUGHT ends processing, so the report is not added to the UVM_ERROR count (uvm-core still lists it in the catcher summary, which the gate reads). If every catcher returns THROW, the report goes on, possibly changed: a catcher may change its severity (for example demote it), and it is then counted at the new severity. Next, a report whose action is UVM_NO_ACTION also ends processing uncounted. Only a report that passes both is executed and counted (uvm-core increments the counts in execute_report_message). An SVA failure or a $error never enters this path at all, unless the assertion's action block calls uvm_error, which makes it an ordinary UVM report. These are the gate's conditions on assertion and simulator errors, on caught or demoted errors, and on UVM_NO_ACTION. (With the `uvm_error macro, an action already set to UVM_NO_ACTION is checked even earlier, before the report is built, so no catcher sees it: uvm-core uvm_message_defines.svh, as E-DBG-1 shows. The server's own check after the catchers matters when a catcher sets the action.)"
   cellWidth={150}
   cellHeight={52}
   gapX={64}
@@ -665,8 +674,7 @@ A traced log excerpt for the first row (uvm-core 2020.3.1 message IDs and texts;
 
 ```text
 @ 50 [PH/TRC/STRT] Phase 'uvm.uvm_sched.load_fw' (id=…) Starting phase
-@ 50 [PH/TRC/SKIP] Phase 'uvm.uvm_sched.load_fw' (id=…)
-     No objections raised, skipping phase
+@ 50 [PH/TRC/SKIP] Phase 'uvm.uvm_sched.load_fw' (id=…) No objections raised, skipping phase
 @ 50 [PH/TRC/STRT] Phase 'uvm.uvm_sched.post_reset' (id=…) Starting phase
 ```
 
@@ -686,7 +694,7 @@ A traced log excerpt for the first row (uvm-core 2020.3.1 message IDs and texts;
   rule="Put project behaviour in standard extension points on a pinned, unmodified uvm-core; a custom task phase needs a singleton IMP, an exec_task that casts each component and calls its method, and exactly one add() on the container that holds its anchor."
   code={"if (!load_fw_added) begin\n  uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(),\n                                     .after_phase(uvm_reset_phase::get()));\n  load_fw_added = 1;\nend"}
   mistake="Leaving out exec_task (the phase starts and is skipped, and no component code runs), calling add() on the common domain with a run-time anchor (UVM_FATAL PH_BAD_ADD at build time), or calling add() twice (two nodes, so the phase runs twice)."
-  inTestbench="proj_pkg holds the role bases and proj_config, and in a real project the phase class too (Make It Work keeps load_fw_phase_c in soc_pkg); proj_base_test::build_phase checks UVM_VERSION_STRING, sets the timeout and installs the configuration, and the project's base test (base_test in Make It Work) makes the one guarded add(); lint and the CI gate keep block teams on the layer."
+  inTestbench="proj_pkg holds the role bases and proj_config, and in a real project the phase class too (Make It Work keeps load_fw_phase_c in soc_pkg); proj_base_test::build_phase checks UVM_VERSION_STRING, sets the timeout and installs the configuration; the test class that owns the phase (base_test in Make It Work, or proj_base_test in a real project) makes the one guarded add(); lint and the CI gate keep block teams on the layer."
 >
   <ArchitectureDiagram
     title="The three parts of a custom task phase"
@@ -825,8 +833,8 @@ package soc_pkg;
 endpackage
 
 module tb_top;
-  timeunit 1ns;        // every design element in the unit declares the same time
-  timeprecision 1ps;   // unit; mixing declared and undeclared is an error (§3.14.2.3)
+  timeunit 1ns;        // every design element declares a time unit; if some declare
+  timeprecision 1ps;   // one and others do not, that is an error (§3.14.2.3)
   import uvm_pkg::*;
   import soc_pkg::*;
   initial run_test("base_test");
@@ -850,11 +858,11 @@ UVM_FATAL :    0
 
 `reset` objects for 50 ns, `load_fw` for 20 ns and `configure` for 10 ns. `post_reset` and `pre_configure` have no objections and end in the time slot they start, so `configure` starts at 70 ns. `main_phase` through `post_shutdown_phase` follow at 80 ns with no objections, `run_phase` ends with them, and `check_phase` finds `fw_loads == 1`.
 
-**Run it.** Compile uvm-core 2020.3.1 (its `src/uvm_pkg.sv`, with `src` on the include path) and then this file, elaborate `tb_top`, and run. The test name is fixed by `run_test("base_test")`, so no `+UVM_TESTNAME` is needed. Add `+UVM_PHASE_TRACE` (uvm-core impl.) to see the schedule. Simulator switches are tool-specific; UVM support in open-source simulators is still limited, so use a commercial simulator or check your tool's UVM status first.
+**Run it.** Compile uvm-core 2020.3.1 (its `src/uvm_pkg.sv`, with `src` on the include path) with the same time unit, for example under `` `timescale 1ns/1ps `` or your tool's timescale option, then this file, elaborate `tb_top`, and run. The test name is fixed by `run_test("base_test")`, so no `+UVM_TESTNAME` is needed. Add `+UVM_PHASE_TRACE` (uvm-core impl.) to see the schedule. Simulator switches are tool-specific; UVM support in open-source simulators is still limited, so use a commercial simulator or check your tool's UVM status first.
 
 ### Break it on purpose
 
-Predict each log before you run it. Every row was traced through uvm-core's `add()` and the §9.6 rules; confirm it with `+UVM_PHASE_TRACE`.
+Run each change and compare the log with the row. Every row was traced through uvm-core's `add()` and the §9.6 rules; confirm it with `+UVM_PHASE_TRACE`.
 
 | Change | What you will see | Why |
 |---|---|---|
@@ -982,7 +990,7 @@ vip_dom.find(uvm_reset_phase::get()).get_parent()
 
 - **Typed proxies.** For a phase that calls methods of an extended component class, the standard recommends a parameterized proxy: "extend the base … phase class with parameterized component class context … to create a specialized proxy" (§9.3.1.1.1 c). In practice, `class load_fw_phase_t #(type T = soc_env) extends load_fw_phase_c` whose `exec_task` casts to `T` lets one phase serve several env types without editing it.
 - **Phase callbacks.** `phase_started(phase)` and `phase_ended(phase)` (§13.1.4.3.1, §13.1.4.3.3) fire for custom phases too, for every component in the domain. A project base can use them for timing or logging without each block knowing the phase exists: compare `phase.get_name()` with `"load_fw"`.
-- **Default sequences.** A default sequence can target any phase of a sequencer (§15.3.5). Its scope is the sequencer path plus the phase, as in the standard's own example `"path.to.sequencer.main_phase"` (G.2.9); uvm-core looks it up at `<sequencer full name>.<phase name>_phase` (`uvm_sequencer_base.svh`), so a firmware sequence for the custom phase is set at `"env.agt.sqr.load_fw_phase"` relative to the test.
+- **Default sequences.** A default sequence can target any phase of a sequencer (§15.3.5). Its scope is the sequencer path plus the phase, as in the standard's own example `"path.to.sequencer.main_phase"` (G.2.9) (§15.3.5's text says only "the name of the targeted phase", which for this phase would be `"load_fw"`; the example and uvm-core add `"_phase"`); uvm-core looks it up at `<sequencer full name>.<phase name>_phase` (`uvm_sequencer_base.svh`), so a firmware sequence for the custom phase is set at `"env.agt.sqr.load_fw_phase"` relative to the test.
 
 ### Expert: enforcing the base layer at run time
 
@@ -1043,7 +1051,7 @@ Tool-dependent in magnitude, standard in mechanism. Each task phase forks one `e
   question="Your custom phase appears in the +UVM_PHASE_TRACE output, but soc_env::load_fw_phase never runs and no error is printed. What is missing, and how do you prove it?"
   options={[
     { text: "The method name must be exactly load_fw_phase; rename it.", isCorrect: false, feedback: "UVM never matches methods by name. Only the phase class's exec_task calls component code." },
-    { text: "The phase class has no exec_task override (or its $cast targets the wrong class). The trace shows the phase skipped because no objection was raised; add exec_task that casts comp to soc_env and calls load_fw_phase.", isCorrect: true, feedback: "Right. The inherited exec_task is empty (§9.3.1.5.2), so the node starts and ends in one time slot, which PH/TRC/SKIP shows." },
+    { text: "The phase class has no exec_task override (or its $cast targets the wrong class). The trace shows the phase skipped because no objection was raised; add exec_task that casts comp to soc_env and calls load_fw_phase.", isCorrect: true, feedback: "Right. The inherited exec_task is empty (declared in §9.3.1.5.2; empty in uvm-core), so the node starts and ends in one time slot, which PH/TRC/SKIP shows." },
     { text: "The phase was added to the wrong container; the fix is get_common_domain().", isCorrect: false, feedback: "A wrong container gives UVM_FATAL PH_BAD_ADD at build time; here the phase does appear in the trace." },
     { text: "Custom phases only run in the common domain.", isCorrect: false, feedback: "Run-time custom phases belong in the uvm schedule; the common domain cannot even see reset." }
   ]}
@@ -1072,7 +1080,7 @@ Start with the quiz, which covers all five objectives. Then do the kata and the 
     objective: 3,
     answers: [
       { text: "UVM calls soc_env.load_fw_phase because its name matches the phase, so configure starts at 70 ns", correct: false, feedback: "UVM never matches methods by name. Only exec_task calls component code, and the inherited one is empty." },
-      { text: "load_fw starts and ends at 50 ns: nothing calls soc_env, nobody objects, and configure starts at 50 ns", correct: true, feedback: "Right. The node exists and runs, but with the empty inherited exec_task (§9.3.1.5.2) no component code runs, so there is nothing to wait for (§9.6)." },
+      { text: "load_fw starts and ends at 50 ns: nothing calls soc_env, nobody objects, and configure starts at 50 ns", correct: true, feedback: "Right. The node exists and runs, but with the empty inherited exec_task (declared in §9.3.1.5.2; empty in uvm-core) no component code runs, so there is nothing to wait for (§9.6)." },
       { text: "A compile error, because exec_task is pure virtual in uvm_task_phase", correct: false, feedback: "exec_task is an ordinary virtual task with an empty body; the class compiles without an override." },
       { text: "UVM_FATAL PH_BAD_ADD during build_phase", correct: false, feedback: "PH_BAD_ADD is about the anchor's container. reset is in the uvm schedule, so the add succeeds." }
     ],

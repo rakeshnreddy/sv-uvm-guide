@@ -57,7 +57,7 @@ Besides the prerequisite below, this lesson uses AxLEN and AxSIZE from [B-AXI-2 
 
 <ArchitectureDiagram
   title="Where the words live on the path of one request"
-  caption="An illustration of one possible system, not a required topology. A request leaves the master and crosses the interconnect, where a write buffer and a system cache (both intermediate points) and an arbiter may act on it, then a firewall, before it reaches a final destination: a Device peripheral or Normal memory. A sublabel that names a signal says which attribute that element acts on (the memory's exclusive monitor acts on AxLOCK); the sections below explain each one."
+  caption="An illustration of one possible system, not a required topology. A request leaves the master and crosses the interconnect, where a write buffer and a system cache (both intermediate points) and an arbiter may act on it, then a firewall, before it reaches a final destination: a Device peripheral or Normal memory. The arrows show only the route; the write buffer and the system cache sit on that route inside the interconnect (not drawn as separate hops) and may act on the same request. A sublabel that names a signal says which attribute that element acts on (the memory's exclusive monitor acts on AxLOCK); the sections below explain each one."
   cellWidth={110}
   cellHeight={56}
   gapX={30}
@@ -301,7 +301,12 @@ Between a read and a write, "ordered" has a catch for every type: the read and w
   ]}
 />
 
-**Debrief.** `4'b0011` is Normal Non-cacheable Bufferable. Modifiable = 1, so merging the two writes is allowed; Bufferable = 1 with no allocate bit, so the write buffer may answer both, provided it passes the writes on to the memory in a timely manner (§A4.4.1, §A4.6). With `4'b0001` (Device Bufferable) the early answer is still allowed, but the merge is not.
+<details>
+<summary>Check your prediction</summary>
+
+`4'b0011` is Normal Non-cacheable Bufferable. Modifiable = 1, so merging the two writes is allowed; Bufferable = 1 with no allocate bit, so the write buffer may answer both, provided it passes the writes on to the memory in a timely manner (§A4.4.1, §A4.6). With `4'b0001` (Device Bufferable) the early answer is still allowed, but the merge is not.
+
+</details>
 
 ### Pitfall: a register mapped with the wrong AxCACHE
 
@@ -326,6 +331,7 @@ With `4'b0000` (Device Non-bufferable) read data must come from the final destin
   messages={[
     { kind: "divider", label: "ARCACHE = 4'b0000 (Device Non-bufferable)" },
     { from: "cpu", to: "reg", label: "poll 1: AR" },
+    { kind: "note", from: "sc", label: "passes through: no lookup, no allocation" },
     { kind: "return", from: "reg", to: "cpu", label: "R: flag = 0" },
     { kind: "note", from: "reg", label: "flag becomes 1" },
     { from: "cpu", to: "reg", label: "poll 2: AR" },
@@ -357,6 +363,28 @@ AxPROT has three independent bits (IHI0022E §A4.7, Table A4-6):
 | AxPROT[0] | Unprivileged | Privileged |
 | AxPROT[1] | **Secure** | **Non-secure** |
 | AxPROT[2] | Data | Instruction |
+
+<ArchitectureDiagram
+  title="How AxPROT[1] decides a Secure memory access"
+  caption="An illustration of one common system, not a required topology. The master states its security with AxPROT[1]: 0 is Secure, 1 is Non-secure. The interconnect passes AxPROT unchanged (§A4.3.1), and a TrustZone firewall in front of Secure memory passes Secure accesses and refuses Non-secure ones. What a refusal looks like (SLVERR, DECERR, or zeros with writes ignored) is system policy, not AXI (§A4.7)."
+  cellWidth={150}
+  cellHeight={56}
+  gapX={40}
+  gapY={50}
+  nodes={[
+    { id: "ns", label: "Non-secure app", sublabel: "drives AxPROT[1] = 1", kind: "generic", col: 0, row: 0 },
+    { id: "sec", label: "Secure firmware", sublabel: "drives AxPROT[1] = 0", kind: "generic", col: 1, row: 0 },
+    { id: "fw", label: "TrustZone firewall", sublabel: "checks AxPROT[1]", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "ref", label: "refused", sublabel: "response set by policy", kind: "generic", state: "error", col: 0, row: 2 },
+    { id: "smem", label: "Secure memory", sublabel: "keys, firmware", kind: "dut", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "ns", to: "fw", style: "data", label: "AxPROT[1] = 1" },
+    { from: "sec", to: "fw", style: "data", label: "AxPROT[1] = 0" },
+    { from: "fw", to: "ref", style: "causal", label: "Non-secure" },
+    { from: "fw", to: "smem", style: "data", label: "Secure" }
+  ]}
+/>
 
 - **Bit 1 is inverted from what people guess.** Asserting it marks the access as **Non-secure**, matching other Arm security signals. A VIP that drives `AxPROT[1] = 1` for "secure" gets every Secure access refused.
 - **Privilege is only two levels on the bus.** A processor may have several privilege levels; how they map to AxPROT[0] is processor-specific (§A4.7 Note).
@@ -443,11 +471,16 @@ A semaphore needs a read-modify-write that nobody can interrupt. AXI provides th
 
 <ExclusiveAccessVisualizer />
 
-**Debrief.**
+<details>
+<summary>Debrief: all four situations</summary>
+
 - **Race, monitor per ID:** both reads get EXOKAY; M0's write succeeds (EXOKAY) and, being a write to the location, ends M1's watch; M1's write then fails with OKAY. Exactly one of two racing masters wins, which is the whole point.
 - **Race, one shared monitor:** M1's exclusive read takes the only monitor away from ID 0 although nobody wrote the location, so M0 fails and M1 wins. A single shared monitor is an implementation choice (§A7.2.3 only *recommends* a monitor per ID), and this is why it makes that recommendation: with a shared monitor, two masters that keep re-reading can keep failing each other.
 - **No exclusive support:** the exclusive read returns OKAY, and if the master writes anyway, the write **is performed** and answered OKAY (§A7.2.5). An OKAY on an exclusive write therefore means "failed, not written" on a supporting slave but "written" on a non-supporting one: a scoreboard must know which slave it is talking to.
 - **Debug: bad exclusive:** 3 beats of 4 bytes is 12 bytes, not a power of two, so the access breaks §A7.2.4 and its outcome is UNPREDICTABLE. A protocol checker must flag it; no response is "correct".
+
+</details>
+
 ### Exclusive access: rules and corner cases
 
 **The restrictions** (IHI0022E §A7.2.4). Breaking any of them makes the behaviour UNPREDICTABLE:
@@ -571,13 +604,15 @@ When AXI3 traffic enters an AXI4 system, a locked access (`2'b10`) is converted 
   messages={[
     { from: "m0", to: "br", label: "AR, ARLOCK=2'b10 (locked)" },
     { from: "br", to: "slv", label: "AR, ARLOCK=0 (normal)" },
-    { kind: "return", from: "slv", to: "m0", label: "R: value 5" },
+    { kind: "return", from: "slv", to: "br", label: "R: value 5" },
+    { kind: "return", from: "br", to: "m0", label: "R: value 5" },
     { from: "m1", to: "slv", label: "AW+W: data 9" },
     { kind: "return", from: "slv", to: "m1", label: "B OKAY: memory = 9" },
     { kind: "self", from: "m0", label: "compute 5 + 1" },
     { from: "m0", to: "br", label: "AW+W, AWLOCK=2'b00 (unlocking), data 6" },
     { from: "br", to: "slv", label: "AW+W, AWLOCK=0, data 6" },
-    { kind: "return", from: "slv", to: "m0", label: "B OKAY: memory = 6, M1's 9 is lost", tone: "error" }
+    { kind: "return", from: "slv", to: "br", label: "B OKAY: memory = 6" },
+    { kind: "return", from: "br", to: "m0", label: "B OKAY: memory = 6, M1's 9 is lost", tone: "error" }
   ]}
 />
 
@@ -596,7 +631,7 @@ Exclusives to cacheable, coherent memory are resolved by the coherency protocol 
 3. **"QoS guarantees latency."** Wrong: AXI only carries a priority hint whose use is up to the system, and the ordering rules override it (§A8.1.1, §A8.1.3).
 4. **"Exclusives work on any memory type."** Wrong: the monitoring slave must see the access, so cacheable attributes break §A7.2.4.
 5. **"Retry until EXOKAY."** Against a slave without exclusive support, the read never returns EXOKAY and the loop never ends; stop on an OKAY read (§A7.2.2).
-6. **"The interconnect may adjust AxPROT like it adjusts AxLEN."** Wrong: AxPROT and AxLOCK are never changed (§A4.3.1).
+6. **"The interconnect may adjust AxPROT like it adjusts AxLEN."** Wrong: within AXI4, no interconnect changes AxPROT or AxLOCK, Modifiable or not (§A4.3.1). The only AxLOCK changes are the conversions the specification defines: AXI3 locked to normal (§A7.4.1) and AXI to AXI4-Lite, which discards AxLOCK (§B1.3.1).
 7. **"OKAY on an exclusive write means nothing was written."** Only on a supporting slave; a non-supporting slave writes and answers OKAY (§A7.2.5).
 
 ### In a real testbench
@@ -692,12 +727,12 @@ For the most common report, "my exclusive write always gets OKAY", ask the table
   caption="Start at the top with the trace captured at the slave port. A no leads to the cause on its right, with the clause it involves; five yes answers leave the monitor policy or the slave itself. Each question is a row of the debugging table above."
   cellWidth={160}
   cellHeight={52}
-  gapX={64}
+  gapX={30}
   gapY={34}
   nodes={[
     { id: "q1", label: "Read got EXOKAY?", sublabel: "RRESP of the exclusive read", kind: "generic", col: 0, row: 0 },
     { id: "q2", label: "AWID = ARID?", sublabel: "compared at the slave port", kind: "generic", col: 0, row: 1 },
-    { id: "q3", label: "No same-ID AR between?", sublabel: "no newer exclusive read", kind: "generic", col: 0, row: 2 },
+    { id: "q3", label: "No newer same-ID excl. read?", sublabel: "a normal read does not move it", kind: "generic", col: 0, row: 2 },
     { id: "q4", label: "No write since the read?", sublabel: "in the bytes the monitor watches", kind: "generic", col: 0, row: 3 },
     { id: "q5", label: "AxCACHE[3:2] = 00?", sublabel: "non-cacheable", kind: "generic", col: 0, row: 4 },
     { id: "end", label: "Monitor policy", sublabel: "shared monitor, else DUT bug", kind: "generic", col: 0, row: 5 },
@@ -1057,12 +1092,14 @@ The same rules side by side (IHI0022E §A4.3.1, Table A4-2):
 | Split into several transactions | No, except a burst longer than 16 beats, split into shorter bursts with adapted addresses | Yes |
 | Merge with other transactions | No | Yes |
 | Read more data than asked, or write a larger range using WSTRB | No | Yes |
-| Change AxADDR, AxSIZE, AxLEN or AxBURST | No (Table A4-2), except the split above, an exclusive's AxSIZE and AxLEN with the same total bytes, and forced downsizing | Yes, in each generated transaction |
+| Change AxADDR (and therefore AxREGION), AxSIZE, AxLEN or AxBURST | No (Table A4-2), except the split above, an exclusive's AxSIZE and AxLEN with the same total bytes, and forced downsizing | Yes, in each generated transaction |
 | Change AxCACHE | Only from Bufferable to Non-bufferable | Only without reducing visibility, and consistently for the address range |
 | Change AxLOCK or AxPROT | Never | Never |
 | Change the ID or the QoS value | Yes | Yes |
 | Reach a different 4KB space | Never | Never |
 | Split one single-copy-atomic access into several | Never | Never |
+
+The "Never" for AxLOCK is the rule inside an AXI4 system. The specification defines two conversions that do change it: an AXI3 locked access becomes a normal one (§A7.4.1), and the AXI-to-AXI4-Lite conversion discards AxLOCK (§B1.3.1).
 
 So a checker that compares a transaction before and after an interconnect must allow the listed changes. Comparing every field one to one false-fires on a legal interconnect that splits a 256-beat Device INCR burst.
 
@@ -1293,7 +1330,7 @@ r = m.ex_write(M0, LOCK, 1);  // EXOKAY if still watched, else OKAY`}
 >
   <ArchitectureDiagram
     title="Exclusive monitor state for one ID on a supporting slave"
-    caption="An exclusive read of address A starts the watch; any write to A, including a successful exclusive write, ends it. A newer exclusive read from the same ID moves the watch to its address (A7.2.1)."
+    caption="An exclusive read of address A starts the watch; any write to A, including a successful exclusive write, ends it. A monitor that watches a larger granule (up to 128 bytes, A7.2.4) also ends the watch on a write elsewhere in that granule. A newer exclusive read from the same ID moves the watch to its address (A7.2.1)."
     cellWidth={150}
     cellHeight={60}
     gapX={40}
@@ -1304,7 +1341,7 @@ r = m.ex_write(M0, LOCK, 1);  // EXOKAY if still watched, else OKAY`}
     ]}
     edges={[
       { from: "idle", to: "watch", style: "causal", label: "excl read A", via: [[1, 0]] },
-      { from: "watch", to: "idle", style: "causal", label: "write to A", via: [[0, 1]] }
+      { from: "watch", to: "idle", style: "causal", label: "write to A or its granule", via: [[0, 1]] }
     ]}
   />
 </VisualRecap>
@@ -1507,6 +1544,13 @@ Fixes: move the lock word into its own monitor granule (for example its own 128-
 ### Visualizer prediction drill
 
 If you skipped it, run every situation in the exclusive-access visualizer under each monitor policy it offers, predicting before each reveal. Then explain in one sentence why "Uncontended" gives the same answer under **Monitor per ID** and **One shared monitor** but "Two masters race" does not.
+
+<details>
+<summary>One-sentence answer</summary>
+
+In "Uncontended" only ID 0 ever reads exclusively, so a single monitor and a per-ID monitor hold the same watch; in the race, M1's exclusive read takes the one shared monitor away from ID 0 although nobody wrote the word (§A7.2.3).
+
+</details>
 
 ## References & Next Topics
 

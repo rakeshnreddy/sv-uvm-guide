@@ -121,7 +121,7 @@ An AXI verification environment has one job split among many components, and the
 Three design decisions hide in that picture:
 - **The monitor is passive and judges no data values.** It turns handshakes into transactions, checks only the framing it must understand to build them (RLAST position, an RID that matches nothing), and publishes. Everything else is someone else's job.
 - **Prediction happens at the request.** The predictor builds the expected read when the AR handshake is seen, not when data returns, so a read that never returns is still expected and is counted at the end of the test.
-- **Both ends of the bus are verification components here.** The master driver and the responder talk to each other back to back, which is how a VIP proves its own monitor and scoreboard (a **VIP self-test**, [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). To verify a real slave, replace `rsp` with the DUT; to verify a real master, replace `drv`. The monitor, scoreboard, checker and coverage stay as they are. To verify a real slave, the reference model must then describe the DUT instead of the responder (its memory contents and its error map), and the `+MUTANT` switches no longer apply, because they live in the responder. To verify a real master, the responder stays, so its model and its `+MUTANT` switches stay too.
+- **Both ends of the bus are verification components here.** The master driver and the responder talk to each other back to back, which is how a VIP proves its own monitor and scoreboard (a **VIP self-test**, [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). To verify a real slave, replace `rsp` with the DUT; to verify a real master, replace `drv`. The monitor, scoreboard, checker and coverage stay as they are. To verify a real slave, the reference model must then describe the DUT instead of the responder (its memory contents and its error map), and the `+MUTANT` switches (plusargs that make the responder break one rule on purpose, introduced under "How each bug shows up" below) no longer apply, because they live in the responder. To verify a real master, the responder stays, so its model and its `+MUTANT` switches stay too.
 
 | What the bench verifies | `drv` position | `rsp` position | The reference model describes | Unchanged |
 |---|---|---|---|---|
@@ -166,7 +166,7 @@ Use the table as a map: each row is explained in a section below, and the Recap 
 
 <TimingDiagram
   title="Three reads, two IDs: overtaking and interleaving on R"
-  caption="ARREADY and RREADY are HIGH at every edge. AR handshakes at edges 1 to 3: A (ARID 1, ARLEN 1), B (ARID 2, ARLEN 1), C (ARID 1, ARLEN 0). R beats at edges 4 to 8, each with its RID, RDATA and RLAST."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 8. ARREADY and RREADY are HIGH at every edge. AR handshakes at edges 1 to 3: A (ARID 1, ARLEN 1), B (ARID 2, ARLEN 1), C (ARID 1, ARLEN 0). R beats at edges 4 to 8, each with its RID, RDATA and RLAST."
   edges={9}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -181,14 +181,17 @@ Use the table as a map: each row is explained in a section below, and the Recap 
     { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 1, 1] }
   ]}
   markers={[
-    { edge: 4, tone: "info", short: "RID 2", label: "B0: RID 2, overtakes A (A5.3)" },
-    { edge: 6, tone: "pass", short: "last", label: "RLAST with RID 2: B complete" },
-    { edge: 7, tone: "pass", short: "last", label: "RLAST with RID 1: A complete (the oldest RID 1 read)" },
-    { edge: 8, tone: "pass", short: "last", label: "RLAST with RID 1: C complete" }
+    { edge: 4, tone: "info", short: "RID 2", label: "first R beat: RID 2" },
+    { edge: 6, tone: "info", short: "last", label: "RLAST, RID 2" },
+    { edge: 7, tone: "info", short: "last", label: "RLAST, RID 1" },
+    { edge: 8, tone: "info", short: "last", label: "RLAST, RID 1" }
   ]}
 />
 
-**Debrief.** B completes at edge 6 and A at edge 7. B overtook A, and A and B interleaved beat by beat, which is legal because their IDs differ; A still finished before C, because they share ARID 1 (§A5.3.1). The trace shows the monitor's state after each edge. `open_q[id]` is the per-ID queue of open reads; "1/2" means one of two beats collected.
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** B completes at edge 6 and A at edge 7. At edge 4, B0 (RID 2) overtakes A (§A5.3). The RLAST with RID 2 at edge 6 completes B; the RLAST with RID 1 at edge 7 completes A, the oldest RID 1 read; the RLAST with RID 1 at edge 8 completes C. B overtook A, and A and B interleaved beat by beat, which is legal because their IDs differ; A still finished before C, because they share ARID 1 (§A5.3.1). The trace shows the monitor's state after each edge. `open_q[id]` is the per-ID queue of open reads; "1/2" means one of two beats collected.
 
 | Edge | Handshake | `open_q[1]` | `open_q[2]` | Published on `ap` |
 |---|---|---|---|---|
@@ -200,6 +203,8 @@ Use the table as a map: each row is explained in a section below, and the Recap 
 | 6 | R, RID 2, B1, RLAST | A 1/2, C 0/1 | — | B |
 | 7 | R, RID 1, A1, RLAST | C 0/1 | — | A |
 | 8 | R, RID 1, C0, RLAST | — | — | C |
+
+</details>
 
 The heart of the read monitor is short. `open_q` is an associative array of queues (IEEE 1800-2023 §7.8, §7.10): `open_q[id]` is the queue for one ID, and `open_q[id][0]` its oldest read. The full class is in Make It Work.
 
@@ -265,7 +270,7 @@ Details that matter:
 
 - **AR first:** `on_ar()` opens the read, then `on_r_beat()` appends the beat, sees RLAST on beat 1 of 1 and publishes a complete, correct-looking read. The violation passes the monitor silently (only the checker catches it).
 - **R first (this monitor):** `on_r_beat()` finds `open_q[1]` empty and reports `UNEXPECTED_R`; only then does `on_ar()` open the read. That read never gets a beat of its own, so the scoreboard's end-of-test accounting reports it as well.
-- In both cases the checker's `a_r_after_ar` also fires at edge 1, since the checker does not depend on the monitor's order, and because its counters are sampled before the edge, so `ar_done` does not yet count this AR.
+- In both cases the checker's `a_r_after_ar` also fires at edge 1. The checker does not depend on the monitor's order, and its counters are sampled before the edge, so `ar_done` does not yet count this AR.
 
 </details>
 
@@ -331,7 +336,7 @@ Two writes with the same AWID n, both paired and waiting for B:
 
 <TimingDiagram
   title="AXI4 write data before its address, and two same-ID writes"
-  caption="AWREADY, WREADY and BREADY are HIGH at every edge. A two-beat W burst (D0, D1, WLAST at edge 3) arrives before any AW. AW X (AWID 3, AWLEN 1) is accepted at edge 5 and AW Y (AWID 3, AWLEN 0) at edge 6. A one-beat W burst (E0, WLAST) arrives at edge 7. B responses with BID 3 arrive at edges 9 and 11."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 11. AWREADY, WREADY and BREADY are HIGH at every edge. A two-beat W burst (D0, D1, WLAST at edge 3) arrives before any AW. AW X (AWID 3, AWLEN 1) is accepted at edge 5 and AW Y (AWID 3, AWLEN 0) at edge 6. A one-beat W burst (E0, WLAST) arrives at edge 7. B responses with BID 3 arrive at edges 9 and 11."
   edges={12}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -345,15 +350,18 @@ Two writes with the same AWID n, both paired and waiting for B:
     { name: "BID", kind: "bus", values: [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "3", undefined, "3"] }
   ]}
   markers={[
-    { edge: 3, tone: "info", short: "held", label: "complete W burst, no AW yet: legal (A3.3); hold it" },
-    { edge: 5, tone: "pass", short: "pair", label: "AW X pairs with the held burst: 2 beats, AWLEN 1" },
-    { edge: 7, tone: "pass", short: "pair", label: "E0 pairs with AW Y, the next AW in order (A5.4.1)" },
-    { edge: 9, tone: "pass", short: "B", label: "first B with BID 3 completes X, the oldest" },
-    { edge: 11, tone: "pass", short: "B", label: "second B with BID 3 completes Y" }
+    { edge: 3, tone: "info", short: "WLAST", label: "complete W burst, no AW yet (A3.3)" },
+    { edge: 5, tone: "info", short: "AW", label: "AW X: AWID 3, AWLEN 1" },
+    { edge: 7, tone: "info", short: "WLAST", label: "W E0 with WLAST" },
+    { edge: 9, tone: "info", short: "B", label: "B, BID 3" },
+    { edge: 11, tone: "info", short: "B", label: "B, BID 3" }
   ]}
 />
 
-**Debrief.** The first AW, X, owns it. W order is AW order, whatever the timing. The trace of the monitor's three structures:
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** The first AW, X, owns it. W order is AW order, whatever the timing. At edge 3 the complete W burst has no AW yet, which is legal (§A3.3), so the monitor holds it. At edge 5 AW X pairs with the held burst: 2 beats, AWLEN 1. At edge 7 E0 pairs with AW Y, the next AW in order (§A5.4.1). The first B with BID 3, at edge 9, completes X, the oldest; the second, at edge 11, completes Y. The trace of the monitor's three structures:
 
 | Edge | Handshake | `aw_q` | `w_bursts` | `open_b[3]` | Published |
 |---|---|---|---|---|---|
@@ -366,6 +374,8 @@ Two writes with the same AWID n, both paired and waiting for B:
 | 11 | B, BID 3 | — | — | — | Y |
 
 Both B responses are legal for AXI4: each comes after its write's AW and WLAST handshakes (§A3.3.1).
+
+</details>
 
 ```systemverilog
 // snippet: write reassembly in an AXI4 monitor (W carries no ID)
@@ -491,7 +501,9 @@ Why `WRONG_RID` is timed that way: the monitor never receives a beat with the an
 ```systemverilog
 // snippet: lane-aware read compare, for an item that also records size and
 // burst. beat_addr() and active_lanes() are the IHI0022E A3.4.1 equations
-// from B-AXI-2's axi_burst_pkg (beat numbers there start at 1). The response
+// from B-AXI-2's axi_burst_pkg (beat numbers there start at 1). That package
+// fixes DATA_BYTES at 8 (a 64-bit bus); for this lesson's 32-bit bus, set it
+// to 4 (or make it a parameter) before reusing the functions. The response
 // is compared first; RDATA is not compared on an SLVERR or DECERR beat.
 for (int unsigned k = 0; k < e.data.size(); k++) begin
   logic [DATA_BYTES-1:0] lanes =
@@ -522,13 +534,13 @@ AXI has four responses, on RRESP for every read beat and on BRESP once per write
 | `2'b10` | SLVERR | the access reached the slave, and the slave reports an error |
 | `2'b11` | DECERR | no slave at that address, usually from the interconnect's default slave |
 
-Two rules shape every checker. A read may have a different response on each beat, and a write has one response for the whole burst. And "the required number of data transfers must be performed, even if an error is reported" (§A3.4.4): an error never shortens a burst.
+Two rules shape every checker. The first: a read may have a different response on each beat, and a write has one response for the whole burst. The second answers the prediction below, and the reveal states it.
 
 **Predict first.** Beat 2 of the four-beat read below carries SLVERR. May the slave end the burst there, and should the monitor report an error?
 
 <TimingDiagram
   title="A four-beat read with an error on beat 2"
-  caption="ARVALID and ARREADY are HIGH at edge 1, with ARLEN 3. RREADY is HIGH at every edge. The slave drives beats at edges 2 to 5; beat 2 (edge 3) carries SLVERR."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 5. ARVALID and ARREADY are HIGH at edge 1, with ARLEN 3. RREADY is HIGH at every edge. The slave drives beats at edges 2 to 5; beat 2 (edge 3) carries SLVERR."
   edges={6}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -542,12 +554,17 @@ Two rules shape every checker. A read may have a different response on each beat
     { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 0, 1] }
   ]}
   markers={[
-    { edge: 3, tone: "info", short: "ERR", label: "SLVERR on beat 2: legal; the burst continues (A3.4.4)" },
-    { edge: 5, tone: "pass", short: "last", label: "RLAST on beat 4: every beat transferred" }
+    { edge: 3, tone: "info", short: "ERR", label: "RRESP SLVERR on beat 2" },
+    { edge: 5, tone: "info", short: "last", label: "RLAST on beat 4" }
   ]}
 />
 
-**Debrief.** No to both. All four beats still transfer and RLAST comes on beat 4, because an error never shortens a burst (§A3.4.4). And SLVERR is a legal response: the monitor records it on beat 2 and reports nothing.
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** No to both. The second rule: "the required number of data transfers must be performed, even if an error is reported" (§A3.4.4), so an error never shortens a burst. All four beats still transfer and RLAST comes on beat 4: the SLVERR on beat 2 is legal and the burst continues. And SLVERR is a legal response: the monitor records it on beat 2 and reports nothing.
+
+</details>
 
 Who decides what about that SLVERR:
 
@@ -611,13 +628,13 @@ Every assertion in the Make It Work `axi_rd_checker`, with its label:
 
 None of them needs expected data or a per-ID history: that is what keeps them in the checker. The hold and stability checks are not in the list; they come from B-AXI-1, and the kata "Close the hold gap" adds the read-path ones.
 
-**X checks only where data is valid.** IHI0022E has no rule about X; an X check is always `[Policy]`. And on W, only the byte lanes whose WSTRB bit is 1 carry valid data: "a master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (§A3.4.3). The other lanes may legally hold anything, including X in simulation.
+**X checks only where data is valid.** IHI0022E has no rule about X; an X check is always `[Policy]`. And on W, only the byte lanes whose WSTRB bit is 1 carry valid data: "a master must ensure that the write strobes are HIGH only for byte lanes that contain valid data" (§A3.4.3).
 
 **Predict first.** A master writes one byte on lane 0 of a 32-bit bus: WSTRB `4'b0001`, WDATA[7:0] = `8'h5A`, WDATA[31:8] undefined. Should `WVALID |-> !$isunknown(WDATA)` fire?
 
 <TimingDiagram
   title="A narrow write with undefined unused lanes"
-  caption="WVALID and WREADY are HIGH at edge 2. WSTRB is 4'b0001 and WDATA[7:0] is 8'h5A. WDATA[31:8] is undefined, drawn as X."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 3. WVALID and WREADY are HIGH at edge 2. WSTRB is 4'b0001 and WDATA[7:0] is 8'h5A. WDATA[31:8] is undefined, drawn as X."
   edges={4}
   cycleWidth={64}
   signals={[
@@ -629,11 +646,14 @@ None of them needs expected data or a per-ID history: that is what keeps them in
     { name: "WDATA[31:8]", kind: "bus", values: [undefined, undefined, undefined, undefined] }
   ]}
   markers={[
-    { edge: 2, tone: "pass", short: "lane 0", label: "legal: unstrobed lanes may be X (A3.4.3); a whole-bus X check would fail here" }
+    { edge: 2, tone: "info", short: "W", label: "W handshake: WSTRB 4'b0001, WDATA[31:8] undefined" }
   ]}
 />
 
-**Debrief.** It should not. A whole-bus X check fails this legal transfer, so the check must be per lane, gated by WSTRB:
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** It should not. The lanes whose WSTRB bit is 0 may legally hold anything, including X in simulation (§A3.4.3), so this transfer is legal. A whole-bus X check fails this legal transfer, so the check must be per lane, gated by WSTRB:
 
 ```systemverilog
 // snippet: [Policy] X on WDATA only in strobed lanes; WSTRB itself known
@@ -647,6 +667,8 @@ a_wstrb_known: assert property (WVALID |-> !$isunknown(WSTRB))
 ```
 
 `$isunknown` returns 1 if any bit is X or Z (IEEE 1800-2023 §20.9). For R, the same idea needs the lanes of each beat, which depend on the AR, so a lane-aware RDATA X check belongs in the monitor, which knows the AR and samples the 4-state pins. It cannot move to the scoreboard: the item's `data` fields are 2-state `bit`, and converting a 4-state value to 2-state turns every X or Z bit into 0 (IEEE 1800-2023 §6.11.2).
+
+</details>
 
 **Pitfall: checks that need history.** RLAST on the right beat needs the length of the oldest open read of that RID; a pin-level checker can do it only by keeping per-ID queues of lengths, which duplicates the monitor. Most environments leave it to the monitor, as the matrix says, and keep the checker to rules a few counters can decide.
 
@@ -746,15 +768,15 @@ What each knob changes, and where a run shows that it was exercised:
 | `rready_pct` | `axi_rd_cfg`, used by the master | 60 | how often RREADY is HIGH | `cp_stall` and `stalls=` on the `PERF` line |
 | `ar_ready_pct` | `axi_rd_cfg`, used by the responder | 70 | how often ARREADY is HIGH | nothing directly: no coverpoint or `PERF` value counts AR stalls |
 | `r_gap_pct` | `axi_rd_cfg`, used by the responder | 25 | idle cycles on R | `latency min/avg/max` on the `PERF` line |
-| `interleave` | `axi_rd_cfg`, used by the responder | 1 | whether the RID may change mid-burst | nothing directly: no coverpoint or `PERF` value records interleaving (the kata "Turn the knobs" asks what it would take) |
+| `interleave` | `axi_rd_cfg`, used by the responder | 1 | whether the RID may change mid-burst | nothing directly: see the kata "Turn the knobs" |
 | `err_lo`, `err_hi` | `axi_rd_cfg`, used by `axi_mem_model::resp_at` (responder and predictor) | `0x3000` to `0x30FF` | which beats answer SLVERR | `cp_err` and `x_err_len`; the item's `addr dist` starts about 15% of reads in the window |
 | ID range | `axi_rd_item` constraint `c_shape` | `id inside {[0:3]}` | how often IDs repeat | `cp_ahead` and `x_len_ahead` |
 
-**Predict first.** In the waveform below, at which edges does a handshake happen, and is ARREADY falling at edge 2 legal?
+**Predict first.** In the waveform below, at which edges does a handshake happen, which edges are stalls and whose, and does any edge, including ARREADY falling at edge 2, break a rule of §A3.2.1 or §A3.3.1?
 
 <TimingDiagram
-  title="Legal READY behaviour the responder must exercise"
-  caption="ARREADY is HIGH at edge 1 and LOW at edge 2, with no request. ARVALID is HIGH at edges 3 to 5 with ARADDR 0x100; ARREADY is HIGH again at edge 5. RVALID is HIGH at edges 6 and 7; RREADY is HIGH at edge 7."
+  title="READY behaviour the responder must exercise"
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 7. ARREADY is HIGH at edge 1 and LOW at edge 2, with no request. ARVALID is HIGH at edges 3 to 5 with ARADDR 0x100; ARREADY is HIGH again at edge 5. RVALID is HIGH at edges 6 and 7; RREADY is HIGH at edge 7."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -765,15 +787,16 @@ What each knob changes, and where a run shows that it was exercised:
     { name: "RREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 1] }
   ]}
   markers={[
-    { edge: 2, tone: "info", short: "fall", label: "ARREADY falls before any ARVALID: legal (A3.2.1)" },
-    { edge: 4, tone: "pending", short: "stall", label: "stall: ARVALID waits, payload held (A3.2.1)" },
-    { edge: 5, tone: "pass", short: "AR", label: "AR handshake" },
-    { edge: 6, tone: "pending", short: "stall", label: "RVALID after the handshake (A3.3.1); RREADY LOW: a master stall" },
-    { edge: 7, tone: "pass", short: "R", label: "R handshake" }
+    { edge: 2, tone: "info", short: "fall", label: "ARREADY falls at edge 2" }
   ]}
 />
 
-**Debrief.** The handshakes are at edge 5 (AR) and edge 7 (R), the only edges where VALID and READY are both HIGH. ARREADY falling at edge 2 is legal, because a destination may deassert READY before VALID is asserted (§A3.2.1). Edges 3 and 4 are AR stalls with the payload held, edge 6 is a master stall on R, and RVALID rises only after the AR handshake, as §A3.3.1 requires.
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** The handshakes are at edge 5 (AR) and edge 7 (R), the only edges where VALID and READY are both HIGH. ARREADY falling at edge 2, before any ARVALID, is legal, because a destination may deassert READY before VALID is asserted (§A3.2.1). Edges 3 and 4 are AR stalls: ARVALID waits with the payload held (§A3.2.1). Edge 6 is a master stall on R (RVALID HIGH, RREADY LOW), and RVALID rises only after the AR handshake, as §A3.3.1 requires. No edge breaks a rule.
+
+</details>
 
 **Driver-based or sequence-based?** The responder in Make It Work is one component that takes data from the shared memory model and policy from the configuration object. That keeps the timing engine (which ID next, when READY rises) in one place and makes the example short. A production VIP usually adds A-UVM-7's reactive sequence in front of it, so a test can override the *content* of a response (data, error, delay) through the factory while the driver keeps the *protocol* (holding, ordering, interleaving). Either way the rule is the same: a test never edits the responder to get new behaviour.
 
@@ -794,7 +817,7 @@ The definitions must separate the slave's delay from the master's:
 
 <TimingDiagram
   title="Latency and stall attribution for one four-beat read"
-  caption="32-bit bus. The AR handshake is at edge 2. RVALID first rises at edge 5. At edge 6 RVALID is HIGH and RREADY LOW, so D1 waits. Beats transfer at edges 5, 7, 8 and 9, with RLAST at 9."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 9. 32-bit bus. The AR handshake is at edge 2. RVALID first rises at edge 5. At edge 6 RVALID is HIGH and RREADY LOW, so D1 waits. Beats transfer at edges 5, 7, 8 and 9, with RLAST at 9."
   edges={10}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -806,13 +829,18 @@ The definitions must separate the slave's delay from the master's:
     { name: "RLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1] }
   ]}
   markers={[
-    { edge: 5, tone: "info", short: "first", label: "first RVALID: slave latency 5 - 2 = 3 cycles" },
-    { edge: 6, tone: "pending", short: "stall", label: "stall: RVALID HIGH, RREADY LOW (master backpressure, 1 cycle)" },
-    { edge: 9, tone: "pass", short: "last", label: "RLAST: 4 beats in edges 5 to 9" }
+    { edge: 5, tone: "info", short: "first", label: "first RVALID" },
+    { edge: 6, tone: "info", short: "D1", label: "RVALID HIGH, RREADY LOW" },
+    { edge: 9, tone: "info", short: "last", label: "RLAST" }
   ]}
 />
 
-**Debrief.** Slave latency is 3 cycles, and there is 1 stall cycle, charged to the master. Four 4-byte beats in the five edges 5 to 9 give 16 / 5 = 3.2 bytes per cycle, out of a peak of 4. Measured from the AR handshake at edge 2 to RLAST at edge 9 it is 16 / 7 ≈ 2.3 bytes per cycle; always state the window. Measuring "AR to RLAST" as latency would give 7 cycles and blame the slave for the master's stall.
+<details>
+<summary>Check your prediction</summary>
+
+**Debrief.** Slave latency is 5 - 2 = 3 cycles, from the AR handshake at edge 2 to the first RVALID at edge 5, and there is 1 stall cycle, at edge 6 (RVALID HIGH, RREADY LOW), charged to the master as backpressure. RLAST at edge 9 ends 4 beats in edges 5 to 9. Four 4-byte beats in the five edges 5 to 9 give 16 / 5 = 3.2 bytes per cycle, out of a peak of 4. Measured from the AR handshake at edge 2 to RLAST at edge 9 it is 16 / 7 ≈ 2.3 bytes per cycle; always state the window. Measuring "AR to RLAST" as latency would give 7 cycles and blame the slave for the master's stall.
+
+</details>
 
 **Latency targets are contracts.** AXI4 carries a 4-bit QoS value per transaction, but "the protocol does not specify the exact use of the QoS identifier" (§A8.1.1). So a bound such as "95% of reads within 40 cycles" comes from the product specification, not from AXI, and the performance monitor checks it as a labelled contract, in `report_phase` or against a threshold, never as a protocol error.
 
@@ -1662,7 +1690,7 @@ Expected output, clean run (illustrative: written by hand from the code, not fro
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test axi_rd_test...
 UVM_INFO … @ 0: uvm_test_top [CFG] mutant=NONE reads=40
-UVM_INFO … @ …: uvm_test_top.env.cov [COV] read coverage 86.7%
+UVM_INFO … @ …: uvm_test_top.env.cov [COV] read coverage 92.1%
 UVM_INFO … @ …: uvm_test_top.env.perf [PERF] reads=40 latency min/avg/max=1/5.8/23 stalls=74
 UVM_INFO … @ …: uvm_test_top.env.perf [PERF] window=402 cycles bandwidth=1.79 bytes/cycle mean_outstanding=6.1
 UVM_INFO … @ …: uvm_test_top.env.scb [SCB_SUMMARY] matches=40 mismatches=0 pending=0
@@ -1825,7 +1853,10 @@ So the reference model keeps, per atomic block, the **set of legal values** (the
     { edge: 5, tone: "pass", short: "B", label: "B: the write is complete, so later reads must see it (A6.4)" },
     { edge: 6, tone: "info", short: "R2", label: "R2 issued after B: only NEW is legal (A6.4)" }
   ]}
-  highlights={[{ from: 1, to: 4, tone: "attempt", label: "write outstanding, no B: OLD or NEW legal" }]}
+  highlights={[
+    { from: 1, to: 1, tone: "info", label: "AW seen, NEW not yet known" },
+    { from: 2, to: 4, tone: "attempt", label: "NEW seen, no B yet: OLD or NEW legal" }
+  ]}
 />
 
 The reference model's legal-value set for A, around the two reads:
@@ -2111,7 +2142,7 @@ Using the `on_aw`, `on_w_beat`, `pair` and `on_b` functions from the write-monit
 | Q (AWID 0, 4 beats) | `e0 e1 e2` (paired at edge 7) | 3 beats, expected 4: **error** | B at edge 12 |
 | R (AWID 1, 1 beat) | `f0` (paired at edge 10) | 1 beat = AWLEN 0 + 1: pass | B at edge 11 |
 
-The error line: `WLAST AWID 0: WLAST on beat 3 of 4`. The monitor still pairs the burst and moves Q to `open_b[0]`, so the B at edge 12 completes it and the error is reported once. Every B is legal for AXI4: each follows its write's AW and WLAST handshakes (§A3.3.1). The structures after each edge: after edge 2 `w_bursts` holds `d0 d1`; edge 3 pairs it with P; edge 4 queues Q in `aw_q`; edge 7 pairs Q; edge 8 queues R; edge 9 pops P from `open_b[0]`; edge 10 pairs R; edge 11 pops R; edge 12 pops Q.
+The error line: `UVM_ERROR … [WLAST] AWID 0: WLAST on beat 3 of 4`. The monitor still pairs the burst and moves Q to `open_b[0]`, so the B at edge 12 completes it and the error is reported once. Every B is legal for AXI4: each follows its write's AW and WLAST handshakes (§A3.3.1). The structures after each edge: after edge 2 `w_bursts` holds `d0 d1`; edge 3 pairs it with P; edge 4 queues Q in `aw_q`; edge 7 pairs Q; edge 8 queues R; edge 9 pops P from `open_b[0]`; edge 10 pairs R; edge 11 pops R; edge 12 pops Q.
 
 </details>
 

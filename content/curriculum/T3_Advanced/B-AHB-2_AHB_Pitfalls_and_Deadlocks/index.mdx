@@ -24,7 +24,7 @@ sources:
 - **The Analogy:** Tuning a smoke detector. Too sensitive, and people pull the battery after the third false alarm while making toast. Too dull, and it sleeps through a real fire. A good AHB checker is tuned the same way: it knows exactly which "smoke" is legal. *Where it breaks:* a smoke detector has one threshold you can turn up or down. Protocol rules are not tunable at all; only integration budgets, such as the number of wait states or the length of a lock, are yours to set.
 
 **You will be able to:**
-1. Diagnose from a waveform a slave stuck with `HREADYOUT` low, write data acted on at the wrong edge, and an illegal control change during a wait state, and tell each apart from the changes the specification allows (IHI0033B.b §3.6).
+1. Diagnose from a waveform a slave stuck with `HREADYOUT` low, write data acted on at the wrong edge, a slave that waits on an IDLE or BUSY, and an illegal control change during a wait state, and tell each apart from the changes the specification allows (IHI0033B.b §3.6).
 2. Write an assertion pair for the two-cycle ERROR response that also catches a one-cycle ERROR, and explain why the one-directional check passes vacuously.
 3. Classify each check as a protocol rule or an integration policy (wait-state budget, lock length), and report the two at different severities.
 4. Write a per-beat 1KB check that applies only to incrementing bursts, and an alignment check for every transfer, both of which accept legal WRAP bursts.
@@ -92,7 +92,7 @@ sources:
   ]}
 />
 
-- A **concurrent assertion** checks a property at every clock edge on values sampled just before the edge. In `a |-> b` the left side is the **antecedent** and the right side the **consequent**; `|=>` checks the consequent one edge later. When the antecedent is false the attempt succeeds **vacuously**: it passes without testing anything. `$past(x)` is the value of `x` at the previous edge, `$stable(x)` is true when `x` did not change, and `$fell(x)` is true at an edge where `x` was 1 at the previous edge and is 0 now. `##[1:N] b` means `b` must be true at one of the next 1 to N edges. `disable iff (c)` switches the check off while `c` is true.
+- A **concurrent assertion** checks a property at every clock edge on values sampled just before the edge. In `a |-> b` the left side is the **antecedent** and the right side the **consequent**; `|=>` checks the consequent one edge later. When the antecedent is false the attempt succeeds **vacuously**: it passes without testing anything. `$past(x)` is the value of `x` at the previous edge, `$stable(x)` is true when `x` did not change, and `$fell(x)` is true at an edge where the least significant bit of `x` is 0 now and was not 0 (1, X or Z) at the previous edge (IEEE 1800-2023 §16.9.3). `##[1:N] b` means `b` must be true at one of the next 1 to N edges. `disable iff (c)` switches the check off while `c` is true.
 
 Step through one property from Pitfall 4 to see each of those words in place.
 
@@ -179,6 +179,9 @@ a_wait_budget: assert property (p_wait_budget)
   else $warning("HREADY held low for > %0d cycles", MAX_WAIT);
 ```
 
+<details>
+<summary>Debrief</summary>
+
 <TimingDiagram
   title="Wait-state budget: MAX_WAIT = 4, HREADY low for five edges"
   cycleWidth={52}
@@ -200,6 +203,8 @@ a_wait_budget: assert property (p_wait_budget)
 />
 
 **Debrief.** `HREADY` is first sampled low at edge 2, so `$fell(HREADY)` starts an attempt there. The consequent needs `HREADY` high at one of edges 3 to 6; it is low at all four, so the warning fires at edge 6 = 2 + `MAX_WAIT`. A then completes at edge 7 with OKAY, which is legal under the protocol. A slave that is truly stuck looks the same at edge 6; the difference is that its run then hangs until the test's own timeout. Both are reported as a warning, because only your budget, not the protocol, says four is too many.
+
+</details>
 
 ### Pitfall 2: acting on write data at the wrong edge
 
@@ -246,8 +251,11 @@ The two `always_ff` blocks are alternatives. Never compile both: each writes `fi
 
 **Predict first.** A write to A gets two wait states. How many times does each version push?
 
+<details>
+<summary>Debrief</summary>
+
 <TimingDiagram
-  title="Write A with two wait states: where each RTL version pushes"
+  title="Write A with two wait states"
   cycleWidth={52}
   caption="Column k is the value sampled at rising edge k. A's address phase is accepted at edge 1, and HWDATA holds Data A through the whole data phase (§6.1.1). At every edge where write_sel is 1, check HREADY: that decides whether each version pushes."
   edges={6}
@@ -267,7 +275,11 @@ The two `always_ff` blocks are alternatives. Never compile both: each writes `fi
   ]}
 />
 
-**Debrief.** `write_sel` is 1 at edges 2, 3 and 4, and `HREADY` is high only at edge 4, where A's data phase completes. The buggy block pushes at all three edges; the fixed block pushes only at edge 4. Three pushes against one. There is no single protocol assertion for this bug, because it is inside the slave, not on the bus. A scoreboard (the testbench component that compares what the design did against what it should have done) catches it: it expects one FIFO entry per completed write transfer.
+**Debrief.** `write_sel` is 1 at edges 2, 3 and 4, and `HREADY` is high only at edge 4, where A's data phase completes. The buggy block pushes at all three edges; the fixed block pushes only at edge 4. Three pushes against one.
+
+</details>
+
+There is no single protocol assertion for this bug, because it is inside the slave, not on the bus. A scoreboard (the testbench component that compares what the design did against what it should have done) catches it: it expects one FIFO entry per completed write transfer.
 
 ### Pitfall 3: changing control during a wait state
 
@@ -301,6 +313,28 @@ The standard checker reading, used by `p_hold_in_wait` below, by the lab model a
   ]}
   markers={[
     { edge: 1, tone: "sample", label: "A accepted", short: "A" },
+    { edge: 3, tone: "info", label: "IDLE Y changes to NONSEQ B while HREADY is low", short: "Y→B" },
+    { edge: 4, tone: "info", label: "B accepted (HREADY high)", short: "B" },
+    { edge: 6, tone: "info", label: "waited NONSEQ C is replaced by D", short: "C→D" }
+  ]}
+/>
+
+<details>
+<summary>Debrief</summary>
+
+<TimingDiagram
+  title="Legal and illegal changes while HREADY is low, against p_hold_in_wait"
+  caption="Column k is the value sampled at rising edge k. At edges 3 and 6, HTRANS or HADDR differs from the edge before, where HREADY was low. For each change, look at what HTRANS showed at that earlier, waited edge."
+  edges={8}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "IDLE", "NONSEQ", "NONSEQ", "NONSEQ", "NONSEQ", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", "Y", "B", "B", "C", "D", undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 0, 0, 1, 0, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "A accepted", short: "A" },
     { edge: 3, tone: "info", label: "IDLE Y became NONSEQ B during a wait: legal (§3.6.1)", short: "Y→B" },
     { edge: 4, tone: "pass", label: "B held since edge 3 and accepted: p_hold_in_wait passes", short: "held" },
     { edge: 6, tone: "fail", label: "waited NONSEQ C replaced by D: p_hold_in_wait fails", short: "C→D" }
@@ -308,6 +342,8 @@ The standard checker reading, used by `p_hold_in_wait` below, by the lab model a
 />
 
 **Debrief.** The change at edge 3 is legal because the waited transfer was an IDLE (Y). B is then held until `HREADY` rises at edge 4, so `p_hold_in_wait` passes there. The change at edge 6 is illegal because C was a waited NONSEQ, and `p_hold_in_wait` fails at edge 6. Notice that D is then accepted at edge 6, so the slave for C never sees its transfer.
+
+</details>
 
 **The check, with its exceptions.** One property covers NONSEQ and SEQ; a second covers what a waited BUSY may become.
 
@@ -359,7 +395,7 @@ Read `p_hold_in_wait` line by line. The antecedent picks every edge where a NONS
 
 <TimingDiagram
   title="A legal BUSY to SEQ change during a wait (Make It Work trace c)"
-  cycleWidth={52}
+  cycleWidth={68}
   caption="Column k is the value sampled at rising edge k. An INCR4 of words from 0x20; the beat at 0x24 waits at edges 2 and 3. The waited BUSY at 0x28 becomes SEQ at the same address, which a fixed-length burst allows (§3.6.1, Figure 3-14). The correct properties pass; the old one-line check raises a false alarm."
   edges={7}
   signals={[
@@ -386,7 +422,7 @@ An ERROR response always takes **two cycles** (§5.1.3, Table 5-2). In the first
 
 **Why two cycles.** Because of the pipeline, when the slave decides to answer A with ERROR, the master has already put the address of B on the bus. In the first ERROR cycle `HREADY` is low, so B is not accepted. The master samples the ERROR at the edge that ends that cycle, and can drive IDLE in the second cycle to cancel B (§5.1.3, §3.5.2). It may also continue with B, or with the remaining beats of a burst: both are allowed (§3.5.2).
 
-**Predict first.** In the waveform below, what does `HTRANS` show in the second ERROR cycle, and is B ever accepted? It is generated from the same AHB model as the lab further down this page ("Check your checks in the AHB pipeline lab"), which [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index) introduced.
+**Predict first.** Cover the `HTRANS` and `HADDR` rows of the waveform below and read only `HREADY` and `HRESP`. The master samples the first ERROR cycle at the edge that ends it: what can it drive in the second ERROR cycle, and is B ever accepted? Then check the rows. The waveform is generated from the same AHB model as the lab further down this page ("Check your checks in the AHB pipeline lab"), which [B-AHB-1](/curriculum/T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index) introduced.
 
 <ProtocolWaveform
   title="Two-Cycle ERROR Response"
@@ -403,7 +439,12 @@ An ERROR response always takes **two cycles** (§5.1.3, Table 5-2). In the first
   caption="As in spec Figure 5-1. Each column is one HCLK cycle, and its values are sampled at the rising edge that ends the column. Follow HREADY and HRESP through A's data phase, then read HTRANS and HADDR for B in the same cycles."
 />
 
+<details>
+<summary>Debrief</summary>
+
 **Debrief.** A waits one cycle with OKAY, then gets ERROR with `HREADY` low, then ERROR with `HREADY` high. The master saw the first ERROR cycle at the edge that ends it, so it drives IDLE in the second. `HTRANS` is therefore IDLE in the second ERROR cycle, and B is cancelled: it was on the bus for two cycles, both with `HREADY` low, so it was never accepted. A master cannot cancel a transfer that has already started (§5.1), which is exactly why the first ERROR cycle has `HREADY` low.
+
+</details>
 
 <SequenceDiagram
   title="Why the ERROR response needs a first cycle with HREADY low"
@@ -486,7 +527,7 @@ a_error_first_then_second:  assert property (p_error_first_then_second);
 a_error_second_needs_first: assert property (p_error_second_needs_first);
 ```
 
-The first property alone **cannot** catch the one-cycle ERROR. A one-cycle ERROR never has `HREADY` low, so the antecedent never matches and every attempt succeeds vacuously; the assertion stays silent (IEEE 1800-2023 §16.14.8). The second property starts at every ERROR completion and looks one edge back. At the first edge after reset, `$past` returns the value sampled at the last reset edge (OKAY), because `disable iff` stops evaluation but not sampling, so a one-cycle ERROR straight after reset still fails (§16.9.3).
+The first property alone **cannot** catch the one-cycle ERROR. A one-cycle ERROR never has `HREADY` low, so the antecedent never matches and every attempt succeeds vacuously; the assertion stays silent (IEEE 1800-2023 §16.14.8). The second property starts at every ERROR completion and looks one edge back. At the first edge after reset, `$past` returns the value sampled at the last reset edge (OKAY), because `disable iff` stops evaluation attempts (§16.12) but not sampling, and `$past` counts only past clock ticks (§16.9.3), so a one-cycle ERROR straight after reset still fails.
 
 <TimingDiagram
   title="The one-cycle ERROR against both ERROR properties"
@@ -597,7 +638,10 @@ a_lock_budget: assert property (@(posedge HCLK) disable iff (!HRESETn)
   else $warning("Locked sequence has lasted %0d cycles", lock_cycles);
 ```
 
-**Predict first.** M0 runs the locked read and write of A from the sequence diagram. The read waits once; the write waits twice, after `HMASTLOCK` has already dropped. With `MAX_LOCK_CYCLES` = 4, does `a_lock_budget` warn, and at which edge? What would a counter driven by `HMASTLOCK` alone reach?
+**Predict first.** M0 runs the locked read and write of A from the sequence diagram. The locked read is accepted at edge 1, and the write is accepted at the edge where the read completes. The read waits once; the write waits twice, after `HMASTLOCK` has already dropped. With `MAX_LOCK_CYCLES` = 4, does `a_lock_budget` warn, and at which edge? What would a counter driven by `HMASTLOCK` alone reach?
+
+<details>
+<summary>Debrief</summary>
 
 <TimingDiagram
   title="Lock counter: a locked read and write of A, MAX_LOCK_CYCLES = 4"
@@ -621,6 +665,8 @@ a_lock_budget: assert property (@(posedge HCLK) disable iff (!HRESETn)
 />
 
 **Debrief.** The lock starts after edge 1 and ends at edge 6, the first edge with `HMASTLOCK` low and `HREADY` high, so it lasts five cycles. `lock_cycles` counts all five: edges 4 and 5 count because `locked` is still 1 while `HREADY` is low. It reaches 5 at edge 6, where `a_lock_budget` warns. A counter driven by `HMASTLOCK` alone (`cnt <= HMASTLOCK ? cnt + 1 : 0` at every edge) peaks at 3 and is back to 0 at edge 5, so it never warns: it misses the write's two wait states, which is exactly when the other masters are still held out.
+
+</details>
 
 **In a multi-master testbench**, run a long locked sequence to a slow slave while higher-priority masters keep requesting, measure each master's worst wait, and compare it with your latency budget. That is a performance check [Integration policy], not a protocol assertion.
 
@@ -648,6 +694,28 @@ The antecedent includes `HREADY`, so it fires only for an IDLE or BUSY that was 
 **Predict first.** Transfer A completes with no wait state, and the master then has nothing to do. In the waveform below, at which edge does a slave misbehave, and which checks fire: `p_idle_busy_zero_wait_okay`, `p_wait_budget`, `p_hold_in_wait`?
 
 <TimingDiagram
+  title="An IDLE after transfer A"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. A is accepted at edge 1. For each edge, ask whether an IDLE was accepted at the edge before, and then look at HREADY and HRESP."
+  edges={6}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "IDLE", "IDLE", "IDLE", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "A", undefined, undefined, undefined, undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 0, 1, 1] },
+    { name: "HRESP", kind: "bus", values: ["OKAY", "OKAY", "OKAY", "OKAY", "OKAY", "OKAY"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "A accepted", short: "A" },
+    { edge: 3, tone: "info", label: "HREADY low with HRESP OKAY", short: "low" },
+    { edge: 5, tone: "info", label: "HREADY high, OKAY", short: "high" }
+  ]}
+/>
+
+<details>
+<summary>Debrief</summary>
+
+<TimingDiagram
   title="A slave inserts a wait state on an IDLE"
   cycleWidth={52}
   caption="Column k is the value sampled at rising edge k. A is accepted at edge 1. For each edge, ask whether an IDLE was accepted at the edge before, and then look at HREADY and HRESP."
@@ -668,6 +736,8 @@ The antecedent includes `HREADY`, so it fires only for an IDLE or BUSY that was 
 />
 
 **Debrief.** The IDLE accepted at edge 2 must get a zero wait state OKAY, so `HREADY` must be high at edge 3. It is low, and `p_idle_busy_zero_wait_okay` fails at edge 3: the slave selected for that data phase broke Table 3-1. The bus stalls for a cycle although nobody is transferring. The other two checks stay silent. `p_wait_budget` starts an attempt at edge 3, but `HREADY` is high again at edge 4. `p_hold_in_wait` never starts, because the waited transfer is an IDLE. Only the dedicated check names this bug; Make It Work trace g shows it in a log.
+
+</details>
 
 The default slave shows both halves of the rule on one trace: a NONSEQ to an unmapped address gets the two-cycle ERROR, and the IDLE after it gets a zero wait state OKAY (§4.2.1).
 
@@ -719,6 +789,28 @@ a_incr_no_1kb_cross: assert property (p_incr_no_1kb_cross);
 **Predict first.** Two bursts of words follow each other: a WRAP4 from 0x3F4, then an undefined-length INCR of three beats from 0x3F8. At which edge, if any, does the check fail?
 
 <TimingDiagram
+  title="WRAP4 from 0x3F4, then INCR from 0x3F8"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k; HREADY is high throughout, so every beat is accepted at its own edge. For each SEQ beat, check HBURST first, then compare HADDR[31:10] with the previous beat's."
+  edges={9}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "NONSEQ", "SEQ", "SEQ", "SEQ", "NONSEQ", "SEQ", "SEQ", "IDLE"] },
+    { name: "HADDR", kind: "bus", values: [undefined, "0x3F4", "0x3F8", "0x3FC", "0x3F0", "0x3F8", "0x3FC", "0x400", undefined] },
+    { name: "HBURST", kind: "bus", values: [undefined, "WRAP4", "WRAP4", "WRAP4", "WRAP4", "INCR", "INCR", "INCR", undefined] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 4, tone: "info", label: "WRAP4 beat 0x3F0", short: "0x3F0" },
+    { edge: 6, tone: "info", label: "INCR beat 0x3FC", short: "0x3FC" },
+    { edge: 7, tone: "info", label: "INCR beat 0x400", short: "0x400" }
+  ]}
+/>
+
+<details>
+<summary>Debrief</summary>
+
+<TimingDiagram
   title="WRAP4 from 0x3F4 is legal; INCR from 0x3F8 crosses 1KB"
   cycleWidth={52}
   caption="Column k is the value sampled at rising edge k; HREADY is high throughout, so every beat is accepted at its own edge. For each SEQ beat, check HBURST first, then compare HADDR[31:10] with the previous beat's."
@@ -738,6 +830,8 @@ a_incr_no_1kb_cross: assert property (p_incr_no_1kb_cross);
 />
 
 **Debrief.** The WRAP4 wraps from 0x3FC to 0x3F0 inside its 16-byte block, and every WRAP beat is exempt. Only the INCR fails, at edge 7: its third beat, 0x400, is in 1KB region 1, while the previous beat, 0x3FC, is in region 0. A check of the form `HADDR[9:0] + burst_bytes <= 0x400` at the NONSEQ is wrong twice: it fires on legal WRAP bursts near the boundary, and it cannot size an undefined-length INCR.
+
+</details>
 
 **Alignment.** Every transfer in a burst must be aligned to its size, not just the first (§3.5): a word (`HSIZE` = 0b010) needs `HADDR[1:0]` = 0b00, a halfword needs `HADDR[0]` = 0. Alignment is to the size of one transfer, not to the burst or its wrap block.
 
@@ -787,6 +881,27 @@ a_reset_values: assert property (p_reset_values);
 **Predict first.** `MIN_RST_CYCLES` is 2. A buggy master drives NONSEQ at edge 2, while reset is still low. At which edges does `p_reset_values` check, and where does it fail?
 
 <TimingDiagram
+  title="A reset trace with MIN_RST_CYCLES = 2"
+  cycleWidth={52}
+  caption="Column k is the value sampled at rising edge k. HRESETn was asserted asynchronously before edge 0 and is deasserted just after edge 2, so it is sampled high from edge 3. Count the consecutive low HRESETn edges to find where the check first applies."
+  edges={5}
+  signals={[
+    { name: "HCLK", kind: "clock" },
+    { name: "HRESETn", kind: "bit", values: [0, 0, 0, 1, 1] },
+    { name: "HTRANS", kind: "bus", values: ["IDLE", "IDLE", "NONSEQ", "IDLE", "NONSEQ"] },
+    { name: "HREADY", kind: "bit", values: [1, 1, 1, 1, 1] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "IDLE, HREADY high", short: "IDLE" },
+    { edge: 2, tone: "info", label: "NONSEQ while HRESETn is low", short: "NONSEQ" },
+    { edge: 4, tone: "info", label: "NONSEQ after reset", short: "NONSEQ" }
+  ]}
+/>
+
+<details>
+<summary>Debrief</summary>
+
+<TimingDiagram
   title="Reset check with MIN_RST_CYCLES = 2"
   cycleWidth={52}
   caption="Column k is the value sampled at rising edge k. HRESETn was asserted asynchronously before edge 0 and is deasserted just after edge 2, so it is sampled high from edge 3. Count the consecutive low HRESETn edges to find where the check first applies."
@@ -806,6 +921,8 @@ a_reset_values: assert property (p_reset_values);
 />
 
 **Debrief.** `(!HRESETn)[*2]` first matches at edge 1, the second consecutive low edge, so the check applies at edges 1 and 2. It passes at edge 1, where the master shows IDLE and `HREADY` is high, and fails at edge 2, where the master shows NONSEQ during reset. From edge 3 `HRESETn` is high, nothing matches, and the NONSEQ at edge 4 is an ordinary first transfer.
+
+</details>
 
 **Why `disable iff (1'b0)`.** Here is the same trace once more, for a version of `p_reset_values` written without its own disable clause and placed in a module with `default disable iff (!HRESETn)`. The default applies to it (IEEE 1800-2023 §16.15), so it is switched off at exactly the edges it exists to check.
 
@@ -868,10 +985,12 @@ These come from how the decoder, multiplexor and slaves are wired together, not 
   ]}
 />
 
+In the waveform below, RDYOUT S0 and RDYOUT S1 are the `HREADYOUT` of S0 and S1; rows marked ok (HREADY ok, HRDATA ok) show what the master sees with the select retimed through `mux_sel`, and rows marked bug use the decoder's select directly, unretimed.
+
 <TimingDiagram
   title="A waited read from S0, with a retimed and an unretimed select"
   cycleWidth={52}
-  caption="Column k is the value sampled at rising edge k. The master reads A from S0, which waits at edges 2 and 3, while B, an address in S1, is already in its address phase. S1 is idle and ready. RDYOUT S0 and RDYOUT S1 are the HREADYOUT of S0 and S1. The rows marked ok (HREADY ok, HRDATA ok) show what the master sees with the select retimed through mux_sel; the rows marked bug use the decoder's select directly, unretimed, and stop at edge 2, where the master has already been told that A completed: from edge 3 they are not drawn (the text table lists X there, meaning not shown, not an unknown value)."
+  caption="Column k is the value sampled at rising edge k. The master reads A from S0, which waits at edges 2 and 3, while B, an address in S1, is already in its address phase. S1 is idle and ready. The bug rows stop at edge 2, where the master has already been told that A completed: from edge 3 they are not drawn (the text table lists X there, meaning not shown, not an unknown value)."
   edges={6}
   signals={[
     { name: "HCLK", kind: "clock" },
@@ -1365,7 +1484,7 @@ Cover each antecedent separately (§16.14.3): `HRESP && !HREADY` for `p_error_fi
 
 ### Expert: `$past`, `disable iff` and the edges around reset
 
-- `disable iff` stops evaluation, not sampling. `$past` keeps its history through reset, and if there is no earlier tick it returns the default sampled value of its argument (IEEE 1800-2023 §16.9.3). That is why `p_error_second_needs_first` still fails on a one-cycle ERROR at the first edge after reset.
+- `disable iff` stops evaluation, not sampling: it acts on evaluation attempts (IEEE 1800-2023 §16.12), while `$past` is defined only by past ticks of its clock (§16.9.3), so it keeps its history through reset; if there is no earlier tick it returns the default sampled value of its argument (§16.9.3). That is why `p_error_second_needs_first` still fails on a one-cycle ERROR at the first edge after reset.
 - A `default disable iff` declared in a module applies to every concurrent assertion in that scope that has no disable clause of its own (§16.15). A reset check placed in such a scope is disabled exactly while it should be checking. Write `disable iff (1'b0)`, which the LRM's own example describes as the way to cancel the default.
 - Action blocks run in the Reactive region (§16.14.1, example in §16.9.3), after nonblocking updates. Print `$sampled(x)` or `$past(x)` in a failure message, never plain `x`, or the message shows the next edge's value.
 

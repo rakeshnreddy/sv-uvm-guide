@@ -22,7 +22,7 @@ sources:
 2. **Write** a normalized failure signature, use it to bucket a regression's failures, and **choose** which bucket to debug first.
 3. **Plan** an exact reproduction (same test, seed, build, simulator version and plusargs), and **predict** whether a debug edit keeps the seed's stimulus.
 4. **Debug** a reproduced failure by isolating it in time, place and stimulus, and write a hypothesis that predicts something you have not yet observed.
-5. **Design** a directed test that confirms or refutes the hypothesis, then shrink the failure and lock the fix in as a regression check.
+5. **Shrink** a reproduced failure from the end, **design** a directed test that confirms or refutes the hypothesis, and lock the fix in as a regression check.
 
 <BeforeYouStart />
 
@@ -60,12 +60,12 @@ Every step below answers one question, and you do not move on until it is answer
 
 <ArchitectureDiagram
   title="The systematic debug loop"
-  caption="Read left to right on the top row, then right to left on the bottom row. Each arrow names what a step hands on: one run per bucket, a failure that repeats on demand, a narrow window, a prediction to run, a confirmed cause. The dashed edge is the loop: a refuted hypothesis sends you back to isolate further, never straight to a fix."
+  caption="Read left to right on the top row, then right to left on the bottom row. Each arrow names what a step hands on: one run per bucket, a failure that repeats on demand, a narrow window, a prediction to run, a confirmed cause. The dashed edge is the loop: a refuted hypothesis sends you back to isolate further, never straight to a fix. Triage turns each run's first failure into a signature and a bucket; Reproduce reruns the same test, seed, build, tool and plusargs as the failing run."
   gapX={100}
   spreadAnchors
   nodes={[
-    { id: "triage", label: "1 Triage", sublabel: "first failure, signature, bucket", kind: "generic", col: 0, row: 0 },
-    { id: "repro", label: "2 Reproduce", sublabel: "same test, seed, build, tool, plusargs", kind: "generic", col: 1, row: 0 },
+    { id: "triage", label: "1 Triage", sublabel: "first failure, bucket", kind: "generic", col: 0, row: 0 },
+    { id: "repro", label: "2 Reproduce", sublabel: "test, seed, build, tool, args", kind: "generic", col: 1, row: 0 },
     { id: "isolate", label: "3 Isolate", sublabel: "when, where, which stimulus", kind: "generic", col: 2, row: 0 },
     { id: "hyp", label: "4 Hypothesize", sublabel: "a cause that predicts", kind: "generic", col: 2, row: 1 },
     { id: "confirm", label: "5 Confirm", sublabel: "run the prediction", kind: "generic", col: 1, row: 1 },
@@ -215,14 +215,14 @@ A failure you cannot replay cannot be isolated, so before any debug edit you rer
 
 <ArchitectureDiagram
   title="What decides the stimulus and the result of one run"
-  caption="Five inputs feed one deterministic simulation. Change any of them and the random streams, and so the stimulus, may change. The seed alone names nothing: it is a starting point for one build on one simulator."
+  caption="Five inputs feed one deterministic simulation. Change any of them and the random streams, and so the stimulus, may change. The seed alone names nothing: it is a starting point for one build on one simulator. The seed is passed with a simulator option (tool-dependent); the build is the source revision plus its compile options."
   gapX={112}
   gapY={28}
   spreadAnchors
   nodes={[
     { id: "test", label: "test name", sublabel: "+UVM_TESTNAME", kind: "generic", col: 0, row: 0 },
-    { id: "seed", label: "seed", sublabel: "simulator option (tool-dependent)", kind: "generic", col: 0, row: 1 },
-    { id: "build", label: "build", sublabel: "source revision + compile options", kind: "generic", col: 0, row: 2 },
+    { id: "seed", label: "seed", sublabel: "simulator seed option", kind: "generic", col: 0, row: 1 },
+    { id: "build", label: "build", sublabel: "revision + compile options", kind: "generic", col: 0, row: 2 },
     { id: "tool", label: "simulator + version", sublabel: "and its UVM library", kind: "generic", col: 0, row: 3 },
     { id: "args", label: "run-time plusargs", sublabel: "every +arg of the failing run", kind: "generic", col: 0, row: 4 },
     { id: "sim", label: "simulation", sublabel: "random streams + DUT", kind: "generic", col: 1, row: 2 },
@@ -271,7 +271,32 @@ The **reproduction contract**: rerun the same test, the same seed, the **same bu
 
 Once a failure reproduces, you add visibility. Some ways of adding it leave the random streams alone, and some move them. The rules underneath are in IEEE 1800-2023 §18.14 and, for UVM, IEEE 1800.2-2020 §1.4.6, §6.2.2.2 and Annex F.4.1.4.26. [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/randomization-methods) teaches the mechanism; here is what it means for debug edits.
 
-Two kinds of random stream matter. Each **process** (a thread such as a component's `run_phase`) has its own generator, and draws such as `$urandom` or `new` take its next value in order (IEEE 1800-2023 §18.14.1, §18.14.2). Each **object** has its own generator too, which `randomize()` uses (§18.14.3), and UVM seeds objects by type and full name (Annex F.4.1.4.26). In uvm-core 2020.3.1, `start_item` reseeds every sequence item from its type, its full name and a per-name count (`uvm_sequence_base.svh`, `set_item_context` in `uvm_sequence_item.svh`, `uvm_create_random_seed` in `uvm_misc.svh`). So an edit in the driver can move the driver's own later draws, such as random idle gaps, but not the field values of the items it receives.
+Two kinds of random stream matter. Each **process** (a thread such as a component's `run_phase`) has its own generator, and draws such as `$urandom` or `new` take its next value in order (IEEE 1800-2023 §18.14.1, §18.14.2). Each **object** has its own generator too, which `randomize()` uses (§18.14.3), and UVM seeds objects by type and full name (Annex F.4.1.4.26). In uvm-core 2020.3.1, `start_item` reseeds every sequence item from its type, its full name and a per-name count (`uvm_sequence_base.svh`, `set_item_context` in `uvm_sequence_item.svh`, `uvm_create_random_seed` in `uvm_misc.svh`).
+
+**Apply the two-stream rule.** Two more facts you need: UVM report messages preserve the calling thread's random state (IEEE 1800.2-2020 §6.2.2.2), while APIs that run user code, such as `sprint()` calling `do_print`, carry no such guarantee (§1.4.6). For each debug edit below, on seed 42, decide whether the stimulus stays the same, then open the answers.
+
+1. Add `+uvm_set_verbosity`, `+uvm_set_action` or `+UVM_MAX_QUIT_COUNT` to the command line (no rebuild).
+2. Turn on the simulator's waveform dump (no rebuild).
+3. Add `` `uvm_info("DRV", $sformatf("a=%0h", req.a), UVM_HIGH) `` to the driver and rebuild.
+4. Add `` `uvm_info("DRV", req.sprint(), UVM_HIGH) `` to the driver, rebuild, and run at `UVM_HIGH`.
+5. Add a coverage subscriber component.
+6. Add a `$urandom` or `std::randomize()` call, a `new` or a `fork` in the driver's `run_phase`.
+7. Rename a sequence, or start an extra item of the same type and name earlier (for example another `create("req")` in the same sequence).
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answers</summary>
+
+| Debug edit (same seed) | Same stimulus? | Why |
+|---|---|---|
+| 1. Verbosity, action or quit-count plusargs | yes | No TB code changes. uvm-core 2020.3.1 also saves and restores the random state while it applies the verbosity and action settings (`m_set_cl_msg_args` in `uvm_component.svh`); the quit count is applied by `uvm_root` and only sets a report-server limit |
+| 2. Waveform dump | yes | Dumping draws no random values |
+| 3. Field-only message | yes | Report messages preserve the random state of the calling thread (IEEE 1800.2-2020 §1.4.6, §6.2.2.2), and `$sformatf` draws nothing |
+| 4. `sprint()` message | **not guaranteed** | `sprint()` runs user code (`do_print`), which §1.4.6 does not guarantee to be random stable. uvm-core's printer can also create element objects with `new` in the driver's thread (`uvm_printer.svh`), which moves that thread's later draws. Items' field values do not move in uvm-core (reseeded by name), so on a driver with no random draws of its own, such as the one in Make It Work, nothing changes; on a driver with random delays, the timing does |
+| 5. Coverage subscriber | yes, for other components | UVM seeds components by type and full name, not by creation order (Annex F.4.1.4.26), and uvm-core reseeds every component's phase processes by name. Only later draws in the *same* `build_phase` call that created it can shift |
+| 6. A draw, `new` or `fork` in the driver | **no**, for that driver's draws | Each takes the next value from the thread's generator, so every later draw in that thread moves (§18.14.1, §18.14.2): random delays, `$urandom` choices, objects created after it |
+| 7. Renamed sequence, extra item with the same name | **no**, for those items | In uvm-core their seeds come from type, full name and a per-name count (`uvm_misc.svh`), so the rename, or every later item with that name, gets new values |
+
+So an edit in the driver can move the driver's own later draws, such as random idle gaps, but not the field values of the items it receives.
 
 <ArchitectureDiagram
   title="Two random streams that a driver edit cannot cross"
@@ -293,29 +318,6 @@ Two kinds of random stream matter. Each **process** (a thread such as a componen
     { from: "orng", to: "rand", style: "causal", label: "draws a, b" }
   ]}
 />
-
-**Predict first.** For each debug edit below, on seed 42, decide whether the stimulus stays the same, then open the answers.
-
-1. Add `+uvm_set_verbosity`, `+uvm_set_action` or `+UVM_MAX_QUIT_COUNT` to the command line (no rebuild).
-2. Turn on the simulator's waveform dump (no rebuild).
-3. Add `` `uvm_info("DRV", $sformatf("a=%0h", req.a), UVM_HIGH) `` to the driver and rebuild.
-4. Add `` `uvm_info("DRV", req.sprint(), UVM_HIGH) `` to the driver, rebuild, and run at `UVM_HIGH`.
-5. Add a coverage subscriber component.
-6. Add a `$urandom` or `std::randomize()` call, a `new` or a `fork` in the driver's `run_phase`.
-7. Rename a sequence, or start an extra item of the same type and name earlier (for example another `create("req")` in the same sequence).
-
-<details className="my-4 rounded-xl border border-border/70 p-3">
-<summary className="cursor-pointer font-semibold">Show the answers</summary>
-
-| Debug edit (same seed) | Same stimulus? | Why |
-|---|---|---|
-| 1. Verbosity, action or quit-count plusargs | yes | No TB code changes. uvm-core 2020.3.1 also saves and restores the random state while it applies the verbosity and action settings (`m_set_cl_msg_args` in `uvm_component.svh`); the quit count is applied by `uvm_root` and only sets a report-server limit |
-| 2. Waveform dump | yes | Dumping draws no random values |
-| 3. Field-only message | yes | Report messages preserve the random state of the calling thread (IEEE 1800.2-2020 §6.2.2.2), and `$sformatf` draws nothing |
-| 4. `sprint()` message | **not guaranteed** | `sprint()` runs user code (`do_print`), which §1.4.6 does not guarantee to be random stable. uvm-core's printer can also create element objects with `new` in the driver's thread (`uvm_printer.svh`), which moves that thread's later draws. Items' field values do not move in uvm-core (reseeded by name), so on a driver with no random draws of its own, such as the one in Make It Work, nothing changes; on a driver with random delays, the timing does |
-| 5. Coverage subscriber | yes, for other components | UVM seeds components by type and full name, not by creation order (Annex F.4.1.4.26), and uvm-core reseeds every component's phase processes by name. Only later draws in the *same* `build_phase` call that created it can shift |
-| 6. A draw, `new` or `fork` in the driver | **no**, for that driver's draws | Each takes the next value from the thread's generator, so every later draw in that thread moves (§18.14.1, §18.14.2): random delays, `$urandom` choices, objects created after it |
-| 7. Renamed sequence, extra item with the same name | **no**, for those items | In uvm-core their seeds come from type, full name and a per-name count (`uvm_misc.svh`), so the rename, or every later item with that name, gets new values |
 
 </details>
 
@@ -381,6 +383,8 @@ A **hypothesis** is a specific claim about the cause that **predicts an observat
 
 ### Shrink and lock in
 
+Shrink as soon as the failure reproduces, as Run 2 does, so that every later step reruns faster; it is taught here because it uses the same reasoning as lock-in.
+
 **Shrinking** makes a reproduced failure smaller and faster while it still fails: fewer transactions, fewer active agents, a shorter run. Shrink **from the end**. Cutting transactions *after* the first failure leaves every earlier random draw untouched, so the failing transaction stays the same. Removing transactions *before* it, or disabling an agent that draws random values, changes what later draws produce, so recheck that the same failure still happens after every cut.
 
 **Traced example.** On the Make It Work bench, the failing seed of run 1 fails at item 57 (counting from 0), at 1165 ns. Every item is created with the same name, `req`, so in uvm-core item *k* receives the seed for the *k*-th use of that name.
@@ -416,7 +420,7 @@ Nightly regressions run thousands of tests. A triage script records, for every f
 
 <SequenceDiagram
   title="Who does what between a red run and a closed bucket"
-  caption="Read top to bottom: the order in which a nightly failure travels from the regression script, through the triage database, to one engineer and back. Message 1 records, for each red run, its first failure, signature, test, seed, build and command line. The two boxes are work done inside one participant: the database buckets runs by signature and marks each bucket new or known, and the engineer reruns one run on the archived build and works the loop. The bucket is closed by a regression result, not by the engineer's word."
+  caption="Read top to bottom: the order in which a nightly failure travels from the regression script, through the triage database, to one engineer and back. Message 1 records, for each red run, its first failure, signature, test, seed, build and command line. The first two notes are work done inside one participant: the database buckets runs by signature and marks each bucket new or known, and the engineer reruns one run on the archived build and works the loop; the last note is the closing rule. The bucket is closed by a regression result, not by the engineer's word."
   columnWidth={130}
   participants={[
     { id: "script", label: "regression script", kind: "generic" },
@@ -464,7 +468,7 @@ The DUT is an 8-bit **saturating adder**: `y` is `a + b`, or `0xff` when the sum
 | `add_env` | builds and connects `sqr`, `drv`, `mon` and `scb` | the layout of the probe picture in Step 3 |
 | `add_rand_test` | reads `+NUM_ITEMS`, sets the timeout, prints the `REPRO` line | steps 1 and 2: the recipe in the log; shrinking (Run 2) |
 | `add_boundary_test` | a factory override from `add_seq` to `add_boundary_seq` | lock-in, chosen with `+UVM_TESTNAME` |
-| `tb_top` | the 10 ns clock, the interface and DUT instances, `run_test` | the clock that every log time counts (printed in `uvm_pkg`'s time unit; see "Run it") |
+| `tb_top` | the 10 ns clock, the interface and DUT instances, `run_test` | the clock that every log time counts (printed in ns by the `$timeformat` call; see "Run it") |
 
 ```systemverilog
 // compile
@@ -711,12 +715,13 @@ module tb_top;
 
   initial begin
     uvm_config_db#(virtual add_if)::set(null, "uvm_test_top.env.*", "vif", aif);
+    $timeformat(-9, 0, "", 0);   // %t prints ns with no suffix, so the logs show "@ 1165:"
     run_test("add_rand_test");
   end
 endmodule
 ```
 
-**Run it.** Compile the file with your simulator's UVM library (uvm-core 2020.3.1 or the simulator's built-in UVM, with `+incdir` pointing at `uvm_macros.svh`), with `tb_top` as the top module. Run with `+UVM_TESTNAME=add_rand_test` or `+UVM_TESTNAME=add_boundary_test`, and pass a seed with your simulator's seed option (tool-dependent). The regression script should print that seed and the build revision in the log header. Compile `uvm_pkg` with the same 1 ns time unit as this file (with your simulator's default-timescale option, for example): the standard leaves the time unit of `uvm_pkg` unspecified (IEEE 1800.2-2020 §1.4.5), and UVM applies time values passed to it, such as the `set_timeout(1ms)` argument, and prints `@ time`, in that unit. With a 1 ps unit the timeout would fire at 1 µs, before item 57, and the logs below would print times in ps.
+**Run it.** Compile the file with your simulator's UVM library (uvm-core 2020.3.1 or the simulator's built-in UVM, with `+incdir` pointing at `uvm_macros.svh`), with `tb_top` as the top module. Run with `+UVM_TESTNAME=add_rand_test` or `+UVM_TESTNAME=add_boundary_test`, and pass a seed with your simulator's seed option (tool-dependent). The regression script should print that seed and the build revision in the log header. Compile `uvm_pkg` with the same 1 ns time unit as this file (with your simulator's default-timescale option, for example): the standard leaves the time unit of `uvm_pkg` unspecified (IEEE 1800.2-2020 §1.4.5), and UVM applies time values passed to it, such as the `set_timeout(1ms)` argument, in that unit; with a 1 ps unit the timeout would fire at 1 µs, before item 57. The `@ time` of each log line is printed with `%0t`, whose units are set by `$timeformat` and default to the smallest time precision in the design (IEEE 1800-2023 §20.4.3), here 1 ps; the `$timeformat` call in `tb_top` makes the logs below print ns.
 
 **Why only some seeds fail.** 255 of the 65,536 possible (a, b) pairs sum to exactly 256. With uniform random values, each item has about a 0.39% chance to hit one, so a 200-item run fails on roughly 54% of seeds (1 − (65281/65536)²⁰⁰ ≈ 0.54). A regression of this test is red about half the time, with different item numbers each time.
 
@@ -731,7 +736,7 @@ The same arithmetic, same assumption of uniform random values: a short run hides
 
 ### Walking the loop on this bench
 
-**Run 1: the regression failure.** One failing seed's log, end to end. **Expected output** (illustrative, worked out by hand from the code above, not copied from a simulator run: the item values come from one hypothetical failing seed, and your simulator's times may be printed in another unit):
+**Run 1: the regression failure.** One failing seed's log, end to end. **Expected output** (illustrative, worked out by hand from the code above, not copied from a simulator run: the item values come from one hypothetical failing seed; times are in ns because of the `$timeformat` call in `tb_top`, and without it your simulator would print them in another unit):
 
 ```text
 UVM_INFO @ 0: reporter [UVM/RELNOTES] (release-notes banner)
@@ -760,7 +765,7 @@ The timing follows from the code: the clock rises at 5, 15, 25 … ns; item *i* 
 
 <TimingDiagram
   title="Item 57, from drive to MISMATCH"
-  caption="The x-axis is simulation time: rising clock edges at 1145, 1155 and 1165 ns of the failing run (edges 0 to 2). values[k] is the value sampled at edge k. Just after the 1145 ns edge the driver drives item 57 through cb; the drive lands one nanosecond later. Its DRV line is logged at UVM_HIGH, so it is not in Run 1's log; it appears at 1145 ns once Run 2 raises DRV to UVM_HIGH. The DUT and mon_cb sample a = 0x9c, b = 0x64 with valid high at 1155 ns. The registered y carries the DUT's answer, 0x00, and mon_cb samples it at 1165 ns, when the scoreboard reports the first failure. At edge 0, y = 0xab is item 56's result (0x31 + 0x7a), which the scoreboard checks at 1145 ns. Item 56's values are taken from the Run 2 excerpt below, which uses the same seed."
+  caption="The x-axis is simulation time: rising clock edges at 1145, 1155 and 1165 ns of the failing run (edges 0 to 2). Each column shows the values sampled at that edge. Just after the 1145 ns edge the driver drives item 57 through cb; the drive lands one nanosecond later. Its DRV line is logged at UVM_HIGH, so it is not in Run 1's log; it appears at 1145 ns once Run 2 raises DRV to UVM_HIGH. The DUT and mon_cb sample a = 0x9c, b = 0x64 with valid high at 1155 ns. The registered y carries the DUT's answer, 0x00, and mon_cb samples it at 1165 ns, when the scoreboard reports the first failure. At edge 0, y = 0xab is item 56's result (0x31 + 0x7a), which the scoreboard checks at 1145 ns. Item 56's values are taken from the Run 2 excerpt below, which uses the same seed."
   cycleWidth={90}
   edges={3}
   signals={[
@@ -807,7 +812,7 @@ UVM_INFO @ 1215: uvm_test_top.env.scb [SCB_SUMMARY] matches=59 mismatches=1
 
 <TimingDiagram
   title="add_boundary_test on the buggy DUT: sums 255, 256 and 257"
-  caption="values[k] is the value sampled at rising edge k. The driver puts an item on a and b after one edge with valid high; the DUT samples it at the next edge, and the registered y shows the result one edge later. Only the sum of 256 (edge 3 in, edge 4 out) is wrong."
+  caption="The x-axis is simulation time of add_boundary_test: rising clock edges 0 to 6 at 5, 15, ... 65 ns. Each column shows the values sampled at that edge. The driver puts an item on a and b after one edge with valid high; the DUT samples it at the next edge, and the registered y shows the result one edge later. Only the sum of 256 (edge 3 in, edge 4 out) is wrong."
   edges={7}
   signals={[
     { name: "clk", kind: "clock" },
@@ -823,7 +828,7 @@ UVM_INFO @ 1215: uvm_test_top.env.scb [SCB_SUMMARY] matches=59 mismatches=1
   ]}
 />
 
-**Run 3: the directed test on the buggy build.** **Expected output** (worked out from the code; no random values are involved, so only the time unit can differ):
+**Run 3: the directed test on the buggy build.** **Expected output** (worked out from the code; no random values are involved, so only the time unit can differ, and the `$timeformat` call in `tb_top` fixes it at ns):
 
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test add_boundary_test...
@@ -880,7 +885,7 @@ The ten steps on the six-box loop from the start of the lesson, with what this b
 
 IEEE 1800.2-2020 §1.4.6 is short: "Any APIs that result in user code being executed are not guaranteed to be random stable. All other APIs are guaranteed to be random stable, unless otherwise specified." The consequences for debugging:
 
-- **Stable by the standard.** Report messages: `new_report_message` "will preserve the random stability of the calling thread" (§6.2.2.2), and the macros build messages with it. Name-based seeding: with UVM seeding enabled (the default), "UVM-based objects are seeded based on their type and full hierarchical name rather than allocation order" (Annex F.4.1.4.26; `reseed`, §5.3.3.3).
+- **Stable by the standard.** Report messages: `new_report_message` "will preserve the random stability of the calling thread" (§6.2.2.2); the report macros run no user code, so §1.4.6 covers them, and in uvm-core they build their message with `new_report_message` (`uvm_message_defines.svh`, `uvm_report_object.svh`). Name-based seeding: with UVM seeding enabled (the default), "UVM-based objects are seeded based on their type and full hierarchical name rather than allocation order" (Annex F.4.1.4.26; `reseed`, §5.3.3.3).
 - **Not guaranteed, because user code runs.** `print()` and `sprint()` (they call your `do_print`), `convert2string`, `copy` and `compare` hooks, report catchers' `catch()` and callbacks. If yours create objects or draw random values, enabling them shifts streams.
 - **What uvm-core 2020.3.1 adds (implementation, not standard):** `uvm_component::new` calls `reseed()`; before every phase callback, each component's phase process is reseeded from the phase type and the component's full name (`uvm_topdown_phase.svh`, `uvm_bottomup_phase.svh`, `uvm_task_phase.svh`); sequences and items are reseeded in `set_item_context` (`uvm_sequence_item.svh`); resource lookups, transaction recording and command-line message settings save and restore the caller's random state (`uvm_resource_pool.svh`, `uvm_recorder.svh`, `uvm_component.svh`). The damage of one extra `new` is therefore limited to later draws in the same component's same phase call.
 - **The seeds still follow the simulator seed.** uvm-core hashes the names with `uvm_global_random_seed`, which the package initializes with `$urandom`, so a different simulator seed gives different UVM streams (`uvm_misc.svh`).
@@ -939,7 +944,7 @@ Methodology; the tooling is tool-dependent.
   question={"A random test failed overnight with seed 42 at item 3,117. This morning you added a few debug prints, including `uvm_info(\"DRV\", req.sprint(), UVM_HIGH), rebuilt, and reran seed 42 at UVM_HIGH. It passes. What do you conclude, and what do you do?"}
   options={[
     { text: "The bug is intermittent; mark the test flaky, keep the prints, and rerun it nightly.", isCorrect: false, feedback: "Nothing shows nondeterminism yet: you changed the build. Rerun the archived build first; a real flaky failure would also fail to repeat there." },
-    { text: "The prints fixed a timing race, so the bug is in the scheduling of the driver's threads.", isCorrect: false, feedback: "A UVM message does not change simulation time or process order in a way that fixes races; the more likely change is the stimulus. Confirm on the old build before forming any hypothesis." },
+    { text: "The prints fixed a timing race, so the bug is in the scheduling of the driver's threads.", isCorrect: false, feedback: "Possible, but nothing shows it yet. A rebuild can move the stimulus and, in a racy bench, can change the order of racing processes (IEEE 1800-2023 §4.7). Rerun the archived build first. If it fails reliably there, compare the stimulus before you blame scheduling." },
     { text: "Nothing yet: the rebuild and sprint() may have moved the stimulus. Rerun seed 42 on the archived build, then add visibility with plusargs or field-only messages.", isCorrect: true, feedback: "Right. sprint() runs user code (IEEE 1800.2-2020 §1.4.6) and can create objects in the driver's thread, which shifts that thread's later random draws, such as random delays, and the rebuild itself may have changed other draws. A passing seed on a changed build is not evidence; after any rebuild, check that item 3,117 is unchanged." },
     { text: "Try seeds 41 and 43; with neighbouring seeds, one of them will hit the same scenario.", isCorrect: false, feedback: "Neighbouring seeds share nothing: each seed gives unrelated stimulus. You would be starting a new search, not reproducing the failure." }
   ]}
@@ -1033,7 +1038,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 3,
     answers: [
       { text: "Very little: the rebuild changed what seed 42 produces. Confirm on the archived build, then test the scenario directly.", correct: true, feedback: "Right. A seed is a starting point for one build, not a name for a scenario. Reproduce on the old build, then confirm any fix with a directed test or with stimulus you have checked is unchanged." },
-      { text: "The bug is fixed: same seed, no failure, so the constraint typo was the cause.", correct: false, feedback: "The constraint change alters what that class's randomize() returns, so seed 42 now drives different stimulus. The pass says nothing about the bug." },
+      { text: "The bug is fixed: same seed, no failure, so the constraint typo was the cause and the bucket can close.", correct: false, feedback: "The constraint change alters what that class's randomize() returns, so seed 42 now drives different stimulus. The pass says nothing about the bug." },
       { text: "Try seeds 41 and 43, since neighbouring seeds give similar stimulus.", correct: false, feedback: "Neighbouring seeds produce unrelated stimulus. This is a new search, not a reproduction." },
       { text: "Raise the verbosity on the new build until the failure comes back.", correct: false, feedback: "Verbosity does not bring back stimulus that the rebuild moved, and some debug code can move it further." }
     ],
@@ -1067,7 +1072,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     answers: [
       { text: "The adder is flaky under random stimulus.", correct: false, feedback: "This predicts nothing a single run could refute, so it cannot guide the next experiment." },
       { text: "Overflow is broken: every sum above 255 fails, so any large a and b fail.", correct: false, feedback: "Already refuted by the log: 0xe0 + 0x41 = 289 saturated correctly." },
-      { text: "The scoreboard's model is wrong for large values of a and b.", correct: false, feedback: "The model's expectation 0xff matches the specification for both failures; and 'large values' predicts no specific run." },
+      { text: "The scoreboard's model is wrong for large values of a and b, so its expected 0xff is the bug.", correct: false, feedback: "The model's expectation 0xff matches the specification for both failures; and 'large values' predicts no specific run." },
       { text: "It fails exactly when a + b == 256: (128, 128) fails; (127, 128) and (128, 129) pass.", correct: true, feedback: "Right. Both failures sum to exactly 256, the passing overflow does not, and the hypothesis names a directed run that would refute it." }
     ],
     explanation: "A good hypothesis fits all the evidence already in the log, including passing transactions, and predicts the result of a run you have not done yet."
@@ -1079,7 +1084,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
       { text: "Both keep the failing item, because the seed is the same and decides every value.", correct: false, feedback: "The seed starts the streams; what each item receives depends on how many draws came before it." },
       { text: "+NUM_ITEMS=60 keeps items 0 to 57, so item 57 still fails; removing earlier items changes later draws.", correct: true, feedback: "Right. Shrink from the end. Removing stimulus before the failure changes the per-name counts and thread draws that later items depend on, so the failure may move or vanish." },
       { text: "Both lose the failure, because any change to the run invalidates the seed.", correct: false, feedback: "Cutting after the failure leaves every earlier draw untouched: items 0 to 57 are the same." },
-      { text: "Removing the first 50 items is better, because the run is shorter and fails sooner.", correct: false, feedback: "Shorter, but probably no longer the same failure. Recheck after every cut." }
+      { text: "Removing the first 50 items is better, because the run is shorter and fails sooner, and the seed still decides every value.", correct: false, feedback: "Shorter, but probably no longer the same failure. Recheck after every cut." }
     ],
     explanation: "Random values are handed out in order (IEEE 1800-2023 §18.14.1; uvm-core also seeds items by name and a per-name count). Stopping earlier changes nothing before the stop; removing earlier stimulus shifts what follows."
   },
@@ -1215,7 +1220,7 @@ The deck for this lesson covers the debug loop, the first failure and how runs e
   - Annex F.2.2.2 (actions, including `UVM_STOP`), F.4.1.4.26 (UVM seeding by type and full name), F.7.3.3 (`set_timeout`), F.7.3.6 (end-of-elaboration error check);
   - Annex G.1.2 and G.1.3.1 (`uvm_cmdline_processor::get_inst`, `get_args`), G.2.1 (`+UVM_TESTNAME`), G.2.3 (`+uvm_set_verbosity`, including the `time` form), G.2.6 (`+UVM_MAX_QUIT_COUNT`).
 - uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/seq/uvm_sequencer.svh` (path-like ID of the "Get_next_item called twice" error), `src/base/uvm_root.svh` (`BUILDERR`), `uvm_phase_hopper.svh` (`PH_TIMEOUT`), `uvm_report_server.svh` (line and summary format), `uvm_object.svh` and `uvm_misc.svh` (`reseed`, `uvm_create_random_seed`, `uvm_global_random_seed`), `uvm_component.svh`, `uvm_topdown_phase.svh`, `uvm_bottomup_phase.svh`, `uvm_task_phase.svh`, `src/seq/uvm_sequence_item.svh` (reseeding), `uvm_printer.svh` (element creation), `uvm_resource_pool.svh` and `uvm_recorder.svh` (random-state preservation).
-- IEEE 1800-2023: §4.7 and §4.8 (nondeterminism, races), §11.6.1 (expression bit lengths), §18.13.1 (`$urandom` determinism), §18.14, §18.14.1 and §18.14.3 (random stability; thread and object stability), §20.14 and Annex N (standard algorithm for `$random` and `$dist_*`), §21.6 (`$value$plusargs`), §21.7.1.3 (when `$dumpvars` starts recording).
+- IEEE 1800-2023: §4.7 and §4.8 (nondeterminism, races), §11.6.1 (expression bit lengths), §18.13.1 (`$urandom` determinism), §18.14 and §18.14.1–§18.14.3 (random stability; thread stability, §18.14.2; object stability, §18.14.3), §20.14 and Annex N (standard algorithm for `$random` and `$dist_*`), §21.6 (`$value$plusargs`), §21.7.1.3 (when `$dumpvars` starts recording).
 
 **Prerequisites:** the [module overview](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) ([verdict honesty](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index#honest-verdicts-what-uvm_error--0-does-and-does-not-prove), catchers, tracing switches), [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, timeouts), [I-UVM-6: UVM Recording Classes](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) and [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
 

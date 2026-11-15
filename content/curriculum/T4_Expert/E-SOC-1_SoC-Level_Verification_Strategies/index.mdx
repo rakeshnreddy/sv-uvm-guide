@@ -12,7 +12,7 @@ sources:
   - title: "Accellera uvm-core reference implementation (src/comps/uvm_agent.svh, src/seq/uvm_sequence_base.svh, src/reg/uvm_reg_predictor.svh, src/reg/uvm_reg.svh, src/reg/uvm_reg_field.svh, src/base/uvm_report_server.svh)"
     type: "implementation"
     identifier: "uvm-core 2020.3.1"
-  - title: "AMBA AXI and ACE Protocol Specification (§A3.2.1, §A3.3.1, §A3.4.4, §A4.7, §A5.3.5)"
+  - title: "AMBA AXI and ACE Protocol Specification (§A3.2.1, §A3.3.1, §A3.4.4, §A4.7, §A5.1, §A5.3.5)"
     type: "standard"
     identifier: "Arm IHI0022E"
 ---
@@ -92,10 +92,10 @@ A block team verifies one block through its own ports. Its bench drives every in
 
 **Bugs that only exist after integration:**
 - **Connectivity:** an interrupt line, clock enable, reset or pin-multiplexer output wired to the wrong place. Each block is correct; the wiring between them is not.
-- **Address map and decode:** a master reaches the wrong slave, or an unmapped address hangs instead of returning an error.
-- **System flows:** boot, firmware configuration, DMA descriptor chains, interrupt handling end to end.
-- **Shared resources:** arbitration between masters, ordering through the interconnect, quality of service (QoS: which traffic class gets bandwidth first).
-- **Resets, power and clocks:** one block reset while another is mid-transfer, a power domain switched off while traffic is in flight, a signal crossing clock domains without a synchronizer.
+- **Address map and decode (decode):** a master reaches the wrong slave, or an unmapped address hangs instead of returning an error.
+- **System flows (flows):** boot, firmware configuration, DMA descriptor chains, interrupt handling end to end.
+- **Shared resources (shared):** arbitration between masters, ordering through the interconnect, quality of service (QoS: which traffic class gets bandwidth first).
+- **Resets, power and clocks (reset/power):** one block reset while another is mid-transfer, a power domain switched off while traffic is in flight, a signal crossing clock domains without a synchronizer.
 - **Security:** a non-secure master reaching protected registers.
 
 **Test layers.** No single bench catches all of this, so the strategy assigns each class of bug to the cheapest layer that can see it. Before you open the answer under the diagram, predict: which layer is the *first* that can see a wrong interrupt wire between two blocks?
@@ -224,7 +224,7 @@ What that looks like depends on how the interface signals are declared (IEEE 180
 - **Variables** (`logic` written procedurally) take the **last write**: no `X`, no error, just silently corrupted transfers. This is the dangerous case.
 - Mixing a continuous assignment and procedural writes on one variable is illegal, so that case fails at compile or elaboration time.
 
-The fix is to reuse the agent **passive**. The visual below shows the SPI agent at block level and at SoC level. Predict which parts of the agent exist after `build_phase` in passive mode, then switch levels and try breaking the agent.
+The fix is to reuse the agent **passive**. The visual below shows the SPI agent at block level and at SoC level. Recall from the soc_env diagram which parts a passive agent has, confirm it in the visual, then switch levels and try the two breaks: what goes wrong in each?
 
 <VIPReuseVisualizer />
 
@@ -302,7 +302,7 @@ What changes, check by check:
 - **Other masters change ordering and contents.** Memory a block wrote can be overwritten by another master before the block reads it back. A memory scoreboard at SoC must know which master owns which region, or check per master.
 - **Security attributes start to matter.** `AxPROT` carries the access permissions (§A4.7); a security controller may refuse a transfer the block bench always allowed.
 
-**The decision per scoreboard.** For every reused check, the strategy records one of three decisions and an owner: **keep** (still valid as is, often as an internal checker that localizes failures), **adapt** (new expectation source, address filter or ID mapping) or **disable** (the check now duplicates a better SoC check, or its assumptions no longer hold). A check that is kept must prove it ran: the bench counts what each enabled monitor saw and compares the count with what the test expected. That count is project-specific code, distinct from `uvm_heartbeat` (IEEE 1800.2-2020 §10.6), which checks that components keep raising an objection within a time window.
+**The decision per scoreboard.** For every reused check, the strategy records one of three decisions and an owner: **keep** (still valid as is, often as an internal checker that localizes failures), **adapt** (new expectation source, address filter or ID mapping) or **disable** (the check now duplicates a better SoC check, or its assumptions no longer hold). A check that is kept must prove it ran: the bench counts what each enabled monitor saw and compares the count with what the test expected. That count is project-specific code, distinct from `uvm_heartbeat` (IEEE 1800.2-2020 §10.6), which checks that the components it tracks raise or drop its objection within each heartbeat window.
 
 **Try the decision.** Decide keep, adapt or disable for each reused check before you open the answer:
 1. `spi_reg_scb` builds its expectations from observed writes, and its monitor now also sees the firmware's mailbox writes on the same APB bus.
@@ -347,13 +347,13 @@ None of these is a disable: disable is for a check that now duplicates a better 
   ]}
 />
 
-Here is the interconnect picture these checks live in. Predict before you open the answer under the diagram: which component catches an AXI response routed back to the wrong master?
+Here is the interconnect picture these checks live in. Predict before you open the answer under the diagram: why can the egress monitors alone not catch an AXI response routed back to the wrong master?
 
 <ArchitectureDiagram
   title="Watching the interconnect: ingress and egress monitors feed a routing scoreboard"
   cellWidth={128}
   gapX={56}
-  caption="Monitors tap every master port (ingress) and every slave port (egress); to keep the drawing readable, only one tap per side is drawn (on dma and on the default slave). None of the monitors drives anything. The routing scoreboard joins the two views: it expects each request at the slave the address map selects, with the ID widened by the master-port bits (IHI0022E §A5.3.5). An unmapped address must come back as DECERR from the default slave (§A3.4.4)."
+  caption="Monitors tap every master port (ingress) and every slave port (egress); to keep the drawing readable, only one tap per side is drawn (on dma and on the default slave). None of the monitors drives anything. Ingress monitors report both the request a master sent and the response it got back. The routing scoreboard joins the two views: it expects each request at the slave the address map selects, with the ID widened by the master-port bits (IHI0022E §A5.3.5). An unmapped address must come back as DECERR from the default slave (§A3.4.4)."
   nodes={[
     { id: "cpu", label: "cpu", sublabel: "AXI master", kind: "dut", col: 0, row: 0 },
     { id: "dma", label: "dma", sublabel: "AXI master", kind: "dut", col: 1, row: 0 },
@@ -371,15 +371,15 @@ Here is the interconnect picture these checks live in. Predict before you open t
     { from: "noc", to: "dflt", style: "data", label: "hole" },
     { from: "imon", to: "dma", style: "structural", label: "taps" },
     { from: "emon", to: "dflt", style: "structural", label: "taps" },
-    { from: "imon", to: "rscb", style: "data", label: "requests" },
+    { from: "imon", to: "rscb", style: "data", label: "requests, responses" },
     { from: "emon", to: "rscb", style: "data", label: "slave side" }
   ]}
 />
 
 <details>
-<summary>Check your prediction: who catches a response routed to the wrong master</summary>
+<summary>Check your prediction: why the egress view alone is not enough</summary>
 
-The routing scoreboard, `route_scb`. Besides each request at the right slave, it expects each response back at the master that sent the request. A response delivered to the wrong master is caught here, at the scoreboard, because only it sees both ends.
+The egress monitors see a response leave the slave, but not which master the interconnect delivers it to; only the ingress side sees which master received the response. So the routing scoreboard, `route_scb`, needs both views. Besides each request at the right slave, it expects each response back at the master that sent the request. A response delivered to the wrong master is caught here, at the scoreboard, because only it sees both ends.
 
 </details>
 
@@ -590,11 +590,11 @@ a_bresp_live: assert property (@(posedge aclk) disable iff (!aresetn)
   b_owed |-> s_eventually bvalid);
 ```
 
-The trigger is the **later of two handshakes**: the address (AW) and the last write-data beat (`WLAST`). In AXI4 the slave "must wait for AWVALID, AWREADY, WVALID, and WREADY to be asserted before asserting BVALID", and also for `WLAST` (IHI0022E §A3.3.1, AXI4 write response dependency). Write data may arrive before, with or after its address, so neither handshake alone is the start of the obligation ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) traces both orders). Measuring from the address alone would blame the slave for a missing data beat; measuring from `WLAST` alone would blame it for an address the master has not sent yet. Both are master or bench bugs, not a lost response. The waveform marks both handshakes; as you read it, find the edge where the obligation starts and the edges the `##[1:8]` window covers, then check your reading against the caption.
+The trigger is the **later of two handshakes**: the address (AW) and the last write-data beat (`WLAST`). In AXI4 the slave "must wait for AWVALID, AWREADY, WVALID, and WREADY to be asserted before asserting BVALID", and also for `WLAST` (IHI0022E §A3.3.1, AXI4 write response dependency). Write data may arrive before, with or after its address, so neither handshake alone is the start of the obligation ([B-AXI-1](/curriculum/T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index) traces both orders). Measuring from the address alone would blame the slave for a missing data beat; measuring from `WLAST` alone would blame it for an address the master has not sent yet. Both are master or bench bugs, not a lost response. The waveform marks both handshakes; as you read it, find the edge where the obligation starts and the edges the `##[1:8]` window covers, then check your reading against the highlighted window, the markers and the check under the waveform.
 
 <TimingDiagram
   title="A lost write response: the bounded check fails, the weak check never does"
-  caption="Values are sampled at each rising edge; the markers above the clock are labelled AW, W and fail. The address handshake is at edge 2 and the last (only) data beat at edge 3; the later of the two is edge 3, so b_owed is true there, the obligation starts at edge 3 and ##[1:8] covers edges 4 to 11. BVALID never rises, so a_bresp_bounded fails at edge 11. a_bresp_weak is still waiting at the end of any finite run, and reports nothing."
+  caption="x-axis: rising edges of ACLK, numbered from 0; values are the ones sampled at each edge. The markers above the clock are labelled AW, W and fail. The address handshake is at edge 2 and the last (only) data beat at edge 3. BVALID never rises, so a_bresp_bounded fails at edge 11. a_bresp_weak is still waiting at the end of any finite run, and reports nothing."
   edges={13}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -608,11 +608,18 @@ The trigger is the **later of two handshakes**: the address (AW) and the last wr
   ]}
   markers={[
     { edge: 2, tone: "info", short: "AW", label: "edge 2: AW handshake, the address is accepted" },
-    { edge: 3, tone: "info", short: "W", label: "edge 3: W handshake with WLAST, the later of the two handshakes, so the obligation starts" },
+    { edge: 3, tone: "info", short: "W", label: "edge 3: W handshake with WLAST" },
     { edge: 11, tone: "fail", short: "fail", label: "edge 11: no BVALID in edges 4 to 11, a_bresp_bounded fails" }
   ]}
   highlights={[{ from: 4, to: 11, tone: "attempt", label: "##[1:8] window" }]}
 />
+
+<details>
+<summary>Check your reading</summary>
+
+The later of the two handshakes is edge 3, so b_owed is true there, the obligation starts at edge 3 and `##[1:8]` covers edges 4 to 11.
+
+</details>
 
 With several writes outstanding, a later response could satisfy an earlier obligation; real properties track IDs or count outstanding transfers. Simulation runs the bounded form; formal proves the strong form. [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) shows how the two flows share properties, and Push Further explains how a pending strong obligation is reported.
 
@@ -740,7 +747,7 @@ Look at the picture. Every block reached 100% in its own regression, yet the sys
   <figcaption className="mt-2 text-sm text-muted-foreground">Merged block coverage is 100%, but the system cross has three holes (dashed, bold HOLE): the CPU never touched an unmapped address (so DECERR handling is unproven), the DMA never wrote SRAM, and the debug port never reached SPI. None of these appears in any block's report. The two dotted cells are waived, each with a written reason and a reviewer: the address map gives the DMA no route to SPI, and the debug decoder cannot produce an unmapped address.</figcaption>
 </figure>
 
-The same data as a table: CPU reached DDR, SRAM and SPI but never a hole; DMA reached DDR and a hole but never SRAM (SPI waived); DBG reached DDR and SRAM but never SPI (hole waived).
+The same data in words: CPU reached DDR, SRAM and SPI but never a hole; DMA reached DDR and a hole but never SRAM (SPI waived); DBG reached DDR and SRAM but never SPI (hole waived).
 
 **From goal to code.** A system goal becomes a covergroup in the SoC-only checker that sees the outcome, here the routing scoreboard `route_scb`, sampled once per completed response. Each waiver becomes an `ignore_bins` with its reason beside it, so the review of the waiver and the code stay together. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches the covergroup syntax.
 
@@ -781,7 +788,7 @@ A response coverpoint (OKAY, SLVERR, DECERR) crossed with these two gives the fu
 
 ### Regression, triage and sign-off gates
 
-A SoC simulation can take hours, so not every test can run on every change. The strategy defines **tiers**; the run times below are illustrative project policy, not industry figures.
+A SoC simulation can take hours, so not every test can run on every change. The strategy defines **tiers**; the cadences and gates below are illustrative project policy, not industry figures.
 
 | Tier | When | Content | Gate (example policy) |
 |---|---|---|---|
@@ -1336,11 +1343,11 @@ module tb_top;
 endmodule
 ```
 
-**Trace of the firmware.** Reset is released at 22 ns. Each write takes a setup edge and an access edge, and the access completes at the third rising edge after the call, so the five transfers complete at 45 ns (MAILBOX = BOOT_DONE), 75 ns (CTRL = 0x9), 105 ns (read CTRL, 0x9), 135 ns (TXDATA = 0xA5) and 165 ns (MAILBOX = FW_PASS). The monitor samples each on the same edge, so `n_seen` ends at 5, matching `FW_APB_TRANSFERS`. The scoreboard ignores the two mailbox writes, records CTRL and TXDATA, and checks the one read: 1 match.
+**Trace of the firmware.** Reset is released at 22 ns. Each write takes a setup edge and an access edge, and the access completes at the third rising edge after the call, so the five transfers complete at 45 ns (MAILBOX = BOOT_DONE), 75 ns (CTRL = 0x9), 105 ns (read CTRL, 0x9), 135 ns (TXDATA = 0xA5) and 165 ns (MAILBOX = FW_PASS). The monitor samples each on the same edge, so `n_seen` ends at 5, matching `FW_APB_TRANSFERS`. The scoreboard ignores the two mailbox writes, records CTRL and TXDATA, and checks the one read: 1 match. During the CTRL read (setup at edge 9, completing at edge 10) pwdata keeps its stale 9 from the CTRL write; the monitor takes a read's data from prdata (not drawn), which is 9 because CTRL was written at edge 7.
 
 <TimingDiagram
   title="The boot firmware on the mini_soc APB bus"
-  caption="x-axis: rising edges of clk, numbered from 0; edge k is at 5 + 10k ns, so edge 4 is 45 ns and edge 16 is 165 ns. Values are the ones sampled at each edge, as the monitor's mon_cb samples them; paddr and pwdata are hex. rst_n is released at 22 ns, between edges 1 and 2. Each transfer shows psel = 1 with penable = 0 at its setup edge, then penable = 1 at the edge where it completes. pready is tied to 1, so it is not drawn, and the monitor counts a transfer at each edge where psel and penable are both 1: edges 4, 7, 10, 13 and 16, so n_seen = 5 = FW_APB_TRANSFERS. During the CTRL read (setup at edge 9, completing at edge 10) pwdata keeps its stale 9 from the CTRL write; the monitor takes a read's data from prdata (not drawn), which is 9 because CTRL was written at edge 7."
+  caption="x-axis: rising edges of clk, numbered from 0; edge k is at 5 + 10k ns, so edge 4 is 45 ns and edge 16 is 165 ns. Values are the ones sampled at each edge, as the monitor's mon_cb samples them; paddr and pwdata are hex. rst_n is released at 22 ns, between edges 1 and 2. Each transfer shows psel = 1 with penable = 0 at its setup edge, then penable = 1 at the edge where it completes. pready is tied to 1, so it is not drawn, and the monitor counts a transfer at each edge where psel and penable are both 1: edges 4, 7, 10, 13 and 16, so n_seen = 5 = FW_APB_TRANSFERS."
   edges={17}
   signals={[
     { name: "clk", kind: "clock" },
@@ -1616,7 +1623,7 @@ Try each one before you open the options.
   question="Every block regression passed, and the SoC regression passed too. On silicon, the DMA completion interrupt sometimes never reaches CPU1. What did the strategy most likely miss?"
   options={[
     { text: "The DMA block's coverage was below 100%, so its interrupt logic was not fully exercised.", isCorrect: false, feedback: "Possible, but the question says the block regressions passed. The interrupt path between blocks is not in any block's coverage." },
-    { text: "A system check and system coverage for interrupt routing: an interrupt checker that predicts source to target, and a cross of interrupt source × target core × concurrent traffic.", isCorrect: true, feedback: "Right. Firmware handling an interrupt in some tests is not a check that every source reaches every configured target under load. The strategy needed an owner, a checker and a cross for interrupt delivery, plus a liveness property (enabled interrupt eventually visible at its target)." },
+    { text: "A system check and system coverage for interrupt routing", isCorrect: true, feedback: "Right: an interrupt checker that predicts source to target, and a cross of interrupt source × target core × concurrent traffic. Firmware handling an interrupt in some tests is not a check that every source reaches every configured target under load. The strategy needed an owner, a checker and a cross for interrupt delivery, plus a liveness property (enabled interrupt eventually visible at its target)." },
     { text: "The SoC tests used a BFM instead of the RTL CPU, so interrupts could not be tested.", isCorrect: false, feedback: "A BFM can still observe an interrupt line. The gap is the missing check and coverage, not the CPU model." },
     { text: "The interrupt controller's block scoreboard should have been re-run at SoC unchanged.", isCorrect: false, feedback: "That is the 'block scoreboards transfer unchanged' misconception: the block scoreboard checks the controller, not the routing between blocks and cores." }
   ]}
@@ -1628,7 +1635,7 @@ Try each one before you open the options.
   options={[
     { text: "Turn on set_auto_predict(1) on the default map so every access is predicted.", isCorrect: false, feedback: "Auto-predict only sees accesses the register model starts. None of the three writers goes through the model." },
     { text: "Read every register with mirror() before each check, so the mirror is always fresh.", isCorrect: false, feedback: "That hides the problem and costs bus time; it also cannot work for clear-on-read registers, and it changes the traffic you are verifying." },
-    { text: "Add one monitor, adapter and uvm_reg_predictor per bus that can write, each bound to that bus's map; turn auto-predict off; mark hardware-updated fields volatile.", isCorrect: true, feedback: "Right. A predictor holds one map, so each bus needs its own. With explicit prediction on every writer, the mirror follows all traffic once, and volatile fields stop producing false mismatches." },
+    { text: "A predictor per writing bus, auto-predict off, volatile hardware fields", isCorrect: true, feedback: "Right. Add one monitor, adapter and uvm_reg_predictor per bus that can write, each bound to that bus's map; turn auto-predict off; mark hardware-updated fields volatile. A predictor holds one map, so each bus needs its own. With explicit prediction on every writer, the mirror follows all traffic once, and volatile fields stop producing false mismatches." },
     { text: "Use only backdoor reads for checking, and stop using the mirror.", isCorrect: false, feedback: "Backdoor reads are useful for spot checks, but they bypass the bus you are verifying and lose the model's field policies." }
   ]}
 />
@@ -1637,10 +1644,10 @@ Try each one before you open the options.
   title="Interview: prove a passive VIP is not silently disconnected"
   question="A reused passive AXI monitor reports no errors in any SoC test. A reviewer asks you to prove it is actually watching the right bus. What evidence do you show?"
   options={[
-    { text: "Per-test transfer counts from the monitor, compared in check_phase with the counts the test or firmware contract promises, plus a coverage point on the monitor's transactions.", isCorrect: true, feedback: "Right. A count that matches an independent expectation proves the monitor sees the traffic; a coverage point shows which kinds of traffic it saw across the regression." },
+    { text: "Per-test transfer counts checked against the contract, plus coverage", isCorrect: true, feedback: "Right. Show per-test transfer counts from the monitor, compared in check_phase with the counts the test or firmware contract promises, plus a coverage point on the monitor's transactions. A count that matches an independent expectation proves the monitor sees the traffic; a coverage point shows which kinds of traffic it saw across the regression." },
     { text: "The log shows no UVM_ERROR from that monitor in any test.", isCorrect: false, feedback: "A monitor connected to an idle or wrong interface also reports no errors. Silence is not evidence." },
     { text: "The topology print shows the monitor exists under the agent.", isCorrect: false, feedback: "It proves the monitor was built, not that its virtual interface points at the busy bus." },
-    { text: "A uvm_heartbeat on the monitor.", isCorrect: false, feedback: "uvm_heartbeat checks that components raise an objection within a window (IEEE 1800.2-2020 §10.6). A monitor does not raise objections per transfer, so it proves nothing about bus activity." }
+    { text: "A uvm_heartbeat on the monitor, so a silent monitor raises an error after a window", isCorrect: false, feedback: "uvm_heartbeat checks that components raise or drop an objection within each window (IEEE 1800.2-2020 §10.6). A monitor does not raise objections per transfer, so it proves nothing about bus activity." }
   ]}
 />
 
@@ -1654,7 +1661,7 @@ Try each one before you open the options.
     objective: 1,
     answers: [
       { text: "The feature is verified: the bin is hit in every nightly regression", correct: false, feedback: "A hit bin shows the scenario happened. Without a linked check, nothing decided whether the interrupt arrived correctly." },
-      { text: "Only that the scenario occurred; the row stays open until a check (for example an interrupt checker) is linked to it", correct: true, feedback: "Right. Traceability needs both links: coverage proves the scenario ran, the check proves the behaviour was right." },
+      { text: "Only that the scenario occurred; the row stays open", correct: true, feedback: "Right. The row stays open until a check (for example an interrupt checker) is linked to it. Traceability needs both links: coverage proves the scenario ran, the check proves the behaviour was right." },
       { text: "Nothing at all, because coverage bins are irrelevant at SoC level", correct: false, feedback: "System coverage is essential at SoC; it is block-internal coverage that is not chased there." },
       { text: "The feature is verified if the firmware test also passed", correct: false, feedback: "A firmware test passing is a check only if it actually tests the interrupt's target and timing; then it should be linked in the row." }
     ],
@@ -1667,7 +1674,7 @@ Try each one before you open the options.
       { text: "The sequence runs, but the passive agent's driver ignores its items", correct: false, feedback: "Passive means never built: there is no driver and no sequencer, so the handle is null." },
       { text: "The agent switches itself to active so the sequence can run", correct: false, feedback: "The mode is read once, in build_phase. Nothing changes it later." },
       { text: "The items go to the monitor, which forwards them to the scoreboard", correct: false, feedback: "A monitor only reports what it observes on the bus; it never accepts items from sequences." },
-      { text: "UVM_FATAL [SEQ] at the sequence's first start_item(): no sequencer was supplied", correct: true, feedback: "Right. start(null) is legal; the failure comes at the first start_item(), when there is no sequencer to arbitrate." }
+      { text: "UVM_FATAL [SEQ] at its first start_item()", correct: true, feedback: "Right: no sequencer was supplied. start(null) is legal; the failure comes at the first start_item(), when there is no sequencer to arbitrate." }
     ],
     explanation: "A passive agent has no sequencer, so the virtual sequencer's handle to it is null. Without a parent sequence, uvm-core reports UVM_FATAL [SEQ] at the first start_item(). The first distractor is the built-but-idle misconception the visual also targets."
   },
@@ -1677,7 +1684,7 @@ Try each one before you open the options.
     answers: [
       { text: "The monitor at the slave side is disabled", correct: false, feedback: "A disabled monitor produces no transactions at all, not unmatched ones." },
       { text: "AXI forbids reordering, so the interconnect broke the protocol", correct: false, feedback: "AXI allows responses with different IDs to return out of order; this is not the cause of every response failing to match." },
-      { text: "The interconnect appended master-port bits to the IDs, so slave-side IDs are wider than master-side IDs", correct: true, feedback: "Right (IHI0022E §A5.3.5). Strip the port bits or correlate at the master side." },
+      { text: "Slave-side IDs carry extra master-port bits", correct: true, feedback: "Right (IHI0022E §A5.3.5). The interconnect appended master-port bits to the IDs, so slave-side IDs are wider than master-side IDs. Strip the port bits or correlate at the master side." },
       { text: "The scoreboard must be made active to see responses", correct: false, feedback: "Scoreboards have no active or passive mode; agents do." }
     ],
     explanation: "This is the misconception that block scoreboards transfer unchanged. The interconnect widens IDs with master-port bits, so a raw ID comparison across the interconnect never matches. A disabled monitor, a reordering claim or an 'active scoreboard' do not explain a total mismatch."
@@ -1697,7 +1704,7 @@ Try each one before you open the options.
     question: "The SoC register map has set_auto_predict(1) and no predictor. Boot firmware writes 'h9 to CTRL (reset value 0). The test then calls rm.spi_rm.ctrl.get_mirrored_value(). What does it return?",
     objective: 3,
     answers: [
-      { text: "'h9: auto-predict updates the mirror for every bus write", correct: false, feedback: "Auto-predict only covers write() and read() calls the register model itself starts (IEEE 1800.2-2020 §18.2.5.2). Firmware never calls the model." },
+      { text: "'h9: with auto-predict on, the register map updates the mirror after every write it sees on the bus", correct: false, feedback: "Auto-predict only covers write() and read() calls the register model itself starts (IEEE 1800.2-2020 §18.2.5.2). Firmware never calls the model." },
       { text: "0: the mirror still holds the reset value, because nothing predicted the firmware write", correct: true, feedback: "Right. Only an explicit uvm_reg_predictor on a monitor of that bus would have updated it." },
       { text: "'h9, but only if you call get() instead", correct: false, feedback: "get() returns the desired value (§18.4.4.1), which the firmware write does not change either." },
       { text: "X: the mirror is invalidated when the DUT changes", correct: false, feedback: "The model does not know the DUT changed. The mirror is stale, not invalidated." }
@@ -1711,7 +1718,7 @@ Try each one before you open the options.
       { text: "It returns at once, because the event is already on", correct: false, feedback: "That is wait_on() (§10.1.1.2.2). wait_trigger() waits for the next trigger." },
       { text: "UVM_FATAL immediately, because waiting on an old event is illegal", correct: false, feedback: "Waiting is legal; it simply never ends here." },
       { text: "It returns when firmware writes FW_PASS to the mailbox", correct: false, feedback: "FW_PASS triggers a different event (fw_pass), not fw_boot_done." },
-      { text: "It waits until its watchdog (or the UVM timeout) fires, because wait_trigger() waits for a trigger that never comes", correct: true, feedback: "Right (IEEE 1800.2-2020 §10.1.1.2.4). Use wait_on() for one-time milestones." }
+      { text: "It waits until a watchdog or the UVM timeout ends the test", correct: true, feedback: "Right (IEEE 1800.2-2020 §10.1.1.2.4): it waits until its watchdog (or the UVM timeout) fires, because wait_trigger() waits for a trigger that never comes. Use wait_on() for one-time milestones." }
     ],
     explanation: "wait_trigger() misses a trigger that already happened and waits for the next one, which never comes, so only a watchdog or the global timeout ends the test. wait_on() returns at once when the event is already on."
   },
@@ -1721,7 +1728,7 @@ Try each one before you open the options.
     answers: [
       { text: "Yes, at the end of the simulation, when the response is still missing", correct: false, feedback: "That describes a strong obligation, and even then end-of-simulation reporting is tool-dependent. This sequence is weak." },
       { text: "Yes, one cycle after the last write beat", correct: false, feedback: "##[1:$] allows any later cycle, so one cycle without BVALID is not a failure." },
-      { text: "No: in assert property the sequence is weak (IEEE 1800-2023 §16.12.2), so it can never fail on a finite run", correct: true, feedback: "Right. Use a bounded ##[1:MAX] check in simulation and s_eventually (strong) in formal." },
+      { text: "No: the sequence is weak, so no finite run can fail it", correct: true, feedback: "Right. In assert property the sequence is weak (IEEE 1800-2023 §16.12.2), so it can never fail on a finite run. Use a bounded ##[1:MAX] check in simulation and s_eventually (strong) in formal." },
       { text: "No, because the property passes vacuously", correct: false, feedback: "The antecedent matched, so the attempt is not vacuous; it is pending for ever." }
     ],
     explanation: "An unqualified sequence in assert property is weak, and an unbounded range can always still match later, so no finite trace fails it. Simulation needs a bounded safety check; formal proves the strong form."
@@ -1730,7 +1737,7 @@ Try each one before you open the options.
     question: "A design has a single-bit signal crossing from clk_a to clk_b with no synchronizer. Nightly regressions use random clock ratios and pass on every seed. What do the passing tests tell you about this crossing?",
     objective: 4,
     answers: [
-      { text: "Nothing: RTL simulation does not model metastability, so the missing synchronizer must be found by structural CDC analysis", correct: true, feedback: "Right. CDC is signed off structurally; the report and its waivers are strategy items." },
+      { text: "Nothing: only structural CDC analysis finds the missing synchronizer", correct: true, feedback: "Right. RTL simulation does not model metastability, so the missing synchronizer must be found by structural CDC analysis. CDC is signed off structurally; the report and its waivers are strategy items." },
       { text: "The crossing is safe: random clock ratios exercised every phase relationship", correct: false, feedback: "RTL simulation never produces a metastable value unless a tool injects it, so every phase looks safe." },
       { text: "The crossing is safe if functional coverage of the crossing signal is 100%", correct: false, feedback: "Coverage shows the signal toggled, not that it was captured safely." },
       { text: "The crossing is unsafe only if a scoreboard mismatch appears", correct: false, feedback: "A missing synchronizer may never cause a mismatch in RTL simulation; it fails on silicon." }
@@ -1743,7 +1750,7 @@ Try each one before you open the options.
     answers: [
       { text: "SoC coverage is closed: the merged database is complete", correct: false, feedback: "Merged block coverage proves each block was exercised by its own bench, not that any system flow happened." },
       { text: "SoC closure is reached once every block coverpoint is also hit again in SoC tests", correct: false, feedback: "Re-closing block coverpoints at SoC wastes regression time on states firmware may not reach; it is not the goal." },
-      { text: "Nothing about integration: SoC closure needs system goals (such as master × slave × response) collected at SoC level", correct: true, feedback: "Right. Block coverage is supporting evidence; system closure has its own goals and gates." },
+      { text: "Nothing about integration: SoC closure needs its own system goals", correct: true, feedback: "Right. SoC closure needs system goals (such as master × slave × response) collected at SoC level. Block coverage is supporting evidence; system closure has its own goals and gates." },
       { text: "Only code coverage matters for SoC closure", correct: false, feedback: "Code coverage at SoC mostly checks top-level toggles; it says little about system flows." }
     ],
     explanation: "This is the misconception that SoC closure is the union of block coverage. System goals such as routing, error responses, interrupts and resets under traffic exist only at SoC level and must be collected there."
@@ -1755,7 +1762,7 @@ Try each one before you open the options.
       { text: "File an RTL bug against the DMA block, because a mismatch means the DUT is wrong", correct: false, feedback: "A mismatch is a symptom. The cause can be the reference model, the test's intent, firmware, the testbench or the tool." },
       { text: "Rerun with a new seed to see whether it happens again", correct: false, feedback: "A new seed loses the failing case. Reproduce with the same seed and hashes first." },
       { text: "Waive the related coverage bin until the DMA team has time", correct: false, feedback: "A waiver is for unreachable goals, never for an unexplained failure." },
-      { text: "Capture the evidence package (seed, hashes, plusargs, transaction window) and find the first divergence, then assign the owner bucket", correct: true, feedback: "Right. Triage by first divergence decides who owns the fix." }
+      { text: "Capture the evidence package and find the first divergence", correct: true, feedback: "Right. Capture the evidence package (seed, hashes, plusargs, transaction window) and find the first divergence, then assign the owner bucket. Triage by first divergence decides who owns the fix." }
     ],
     explanation: "Triage starts from evidence and the first point where reality diverged from expectation. Filing an RTL bug immediately, rerunning with a new seed or waiving coverage all skip that step."
   },
@@ -1763,8 +1770,8 @@ Try each one before you open the options.
     question: "An error-injection test makes a slave return SLVERR on 3 chosen transfers. The checks flag exactly those 3 responses, as designed, yet the test is reported as failed with 3 UVM_ERRORs. What does the bench lack?",
     objective: 4,
     answers: [
-      { text: "A higher quit count (+UVM_MAX_QUIT_COUNT), so the run does not stop early", correct: false, feedback: "The quit count (IEEE 1800.2-2020 Annex G.2.6) only decides when the run stops. The 3 errors are still counted, so the test still fails." },
-      { text: "A report catcher (IEEE 1800.2-2020 §6.6) that demotes only the expected error IDs from the injected transfers, counts them, and fails the test if the count is not 3", correct: true, feedback: "Right. Expected errors are demoted and accounted for; an unexpected error, or a missing expected one, still fails the test." },
+      { text: "A higher quit count (+UVM_MAX_QUIT_COUNT), so the run does not stop after the first injected SLVERR", correct: false, feedback: "The quit count (IEEE 1800.2-2020 Annex G.2.6) only decides when the run stops. The 3 errors are still counted, so the test still fails." },
+      { text: "A report catcher (IEEE 1800.2-2020 §6.6) that demotes and counts only the expected errors", correct: true, feedback: "Right: it demotes only the expected error IDs from the injected transfers, counts them, and fails the test if the count is not 3. Expected errors are demoted and accounted for; an unexpected error, or a missing expected one, still fails the test." },
       { text: "Disable the scoreboard for the whole test", correct: false, feedback: "Then a real bug on any other transfer goes unseen, and nothing proves the 3 injected errors were detected." },
       { text: "Change the scoreboard's error messages to UVM_WARNING in every test", correct: false, feedback: "That hides real errors in every other test. Only the expected errors of this test may be demoted." }
     ],
@@ -1774,7 +1781,7 @@ Try each one before you open the options.
     question: "The DMA's completion interrupt is wired to the wrong input of the interrupt controller. Which test layer is the first that can see this bug?",
     objective: 1,
     answers: [
-      { text: "The subsystem or SoC layer: the first bench that contains both the DMA and the interrupt controller, and so the wire between them", correct: true, feedback: "Right. The strategy assigns it there, to an interrupt checker or to the connectivity check that proves each listed connection." },
+      { text: "The subsystem or SoC layer, the first bench holding both ends of the wire", correct: true, feedback: "Right: it is the first bench that contains both the DMA and the interrupt controller, and so the wire between them. The strategy assigns it there, to an interrupt checker or to the connectivity check that proves each listed connection." },
       { text: "The DMA block bench, because its interrupt checker watches the interrupt output", correct: false, feedback: "The block bench sees the DMA's output pin. Where that pin is wired does not exist in a block bench." },
       { text: "The interrupt controller's block bench, because it checks every input", correct: false, feedback: "That bench drives the controller's inputs itself, so the DMA and the wrong wire are not in it." },
       { text: "Only silicon validation, because the wiring is final only on the chip", correct: false, feedback: "The wiring exists in the integrated RTL, so subsystem and SoC tests, or a connectivity check, see it long before silicon." }
@@ -1837,7 +1844,7 @@ In the **Staff-Level SoC Verification Strategy Review** you write and review a f
 - IEEE 1800.2-2020: §6.6 `uvm_report_catcher`; §10.1.1.2.2 `wait_on`; §10.1.1.2.3 `wait_off`; §10.1.1.2.4 `wait_trigger`; §10.1.1.2.5 `wait_ptrigger`; §10.1.1.2.8 `reset`; §10.4.1.2.3 `uvm_event_pool::get_global`; §10.6 `uvm_heartbeat`; §13.3 `uvm_env` (reuse as a sub-environment); §13.4.2.2 `get_is_active` and the `is_active` parameter; §13.9 `uvm_subscriber`; §18.1.2.3 `create_map`; §18.2.3.5 `add_submap`; §18.2.5.2 `set_auto_predict`; §18.4.4.1 `get`; §18.4.4.3 `get_mirrored_value`; §18.4.4.11 `poke`; §19.3 `uvm_reg_predictor` (§19.3.2.3 `map`); Annex F.7.3.1 `run_test`; Annex F.7.4.2 `print_topology`; Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.3 `+uvm_set_verbosity`; Annex G.2.6 `+UVM_MAX_QUIT_COUNT`; Annex G.2.8 `+uvm_set_config_string`.
 - IEEE 1800-2023: §6.5 nets and variables (multiple drivers); §8.4 objects (access through a null handle is illegal); §14.16 synchronous drives (a clocking output to a net starts at `'z`); §16.12.2 sequence property (weak in `assert property`); §16.12.13 eventually properties (`s_eventually`); §19.4 covergroups in classes; §19.6.2 excluding cross products (`ignore_bins`); §19.8.1 overriding the built-in `sample` method; §21.4 `$readmemh`; §21.6 command-line input (`$value$plusargs`); §26.4 package import in module headers.
 - uvm-core 2020.3.1 (Accellera reference implementation): `src/comps/uvm_agent.svh` (`build_phase` reads `is_active`); `src/seq/uvm_sequence_base.svh` (the `SEQ` fatal at `start_item()`); `src/reg/uvm_reg_predictor.svh` (one map, one adapter); `src/reg/uvm_reg.svh` (`poke()` predicts unconditionally; auto-predict calls `do_predict` after `write()`); `src/reg/uvm_reg_field.svh` (field prediction rules, such as W1T toggling); `src/base/uvm_report_server.svh` (the report summary); `+UVM_CONFIG_DB_TRACE` (implementation plusarg).
-- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.2.1 handshake process; §A3.3.1 dependencies between channel handshake signals (in AXI4, BVALID only after both the AW handshake and the last W beat); §A3.4.4 read and write response structure (DECERR); §A4.7 access permissions (`AxPROT`); §A5.3.5 interconnect use of transaction identifiers.
+- Arm IHI0022E, AMBA AXI and ACE Protocol Specification: §A3.2.1 handshake process; §A3.3.1 dependencies between channel handshake signals (in AXI4, BVALID only after both the AW handshake and the last W beat); §A3.4.4 read and write response structure (DECERR); §A4.7 access permissions (`AxPROT`); §A5.1 AXI transaction identifiers (slaves reflect the received ID on BID/RID); §A5.3.5 interconnect use of transaction identifiers.
 - Accellera, Standard for IP Abstraction for Clock and Reset Domain Crossing Integration 1.0 (approved 2026).
 
 **Prerequisites:** [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index), [A-UVM-4B Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index) and [E-DBG-1 Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).

@@ -252,7 +252,7 @@ You never construct `uvm_callbacks#(T,CB)`; you call its static functions. Its a
 | `add(null, cb)` | **Type-wide**: `cb` runs for every object of type `T`, including objects created later (§10.7.2.3.1). |
 | `add_by_name("*.agt0.drv", cb, this)` | Searches the component tree, from `this`, for components whose full name matches the pattern, and adds `cb` to each match that is a `T` (§10.7.2.3.2). |
 | `delete(obj, cb)` | Removes `cb` from `obj`'s queue. |
-| `delete(null, cb)` | Removes `cb` from the type-wide queue and from every instance queue. |
+| `delete(null, cb)` | Removes `cb` without an object context (§10.7.2.3.3); in uvm-core 2020.3.1 that means the type-wide queue and every instance queue. |
 | `delete_by_name("*.agt0.drv", cb, this)` | The by-name form of `delete` (§10.7.2.3.4). |
 
 The second type parameter is optional for these calls, so `uvm_callbacks#(my_driver)::add(env.agt0.drv, err_cb)` means the same thing (§10.7.2.2.2). And `T` need not be a component: it can be any `uvm_object` derivative (§10.7.2.2.1), which is how UVM attaches callbacks to registers and fields.
@@ -271,7 +271,7 @@ Now the rule that causes most callback bugs. **The handle is read when `add()` r
   ]}
   messages={[
     { kind: "divider", label: "build_phase, top-down" },
-    { kind: "self", from: "test", label: "build_phase()" },
+    { kind: "self", from: "test", label: "build_phase() (inherited from base_test)" },
     { from: "test", to: "env", label: "type_id::create env" },
     { kind: "note", from: "test", to: "env", label: "env exists; env.agt0 is still null" },
     { kind: "self", from: "env", label: "build_phase()" },
@@ -290,12 +290,17 @@ Now the rule that causes most callback bugs. **The handle is read when `add()` r
 
 <CallbackTimingVisualizer />
 
+<details>
+<summary>What the placements showed (open after you have predicted all four)</summary>
+
 What the three placements showed:
 
 - **`err_test.build_phase`: the simulation stops.** `env` exists, but `env.agt0` is still null, so reading `env.agt0.drv` reads a member through a null handle. That is illegal; the standard says the result is indeterminate and an implementation may issue an error (IEEE 1800-2023 §8.4), and simulators typically stop with a null-object error.
 - **`my_env.build_phase`: both drivers corrupt.** `agt0` exists, but its own `build_phase` has not run, so `agt0.drv` is null. Passing a null handle is legal, and it means type-wide.
 - **`err_test.connect_phase`: only `agt0` corrupts.** The handle is the real driver, so `err_cb` goes into that driver's instance queue only.
 - **`add_by_name` during build** finds no driver, warns `CBNOMTC` and registers nothing: the error test silently tests nothing.
+
+</details>
 
 The model follows uvm-core 2020.3.1 for one `(my_driver, drv_cb)` pair. It leaves out three things this lesson covers in Push Further: report catchers copied into new instance queues, `` `uvm_set_super_type ``, and `delete` on an object that has no queue.
 
@@ -332,9 +337,14 @@ This is `agt1.drv`'s first instance add, so rule 2 applies: its queue starts as 
 
 </details>
 
-**Try it.** In the explorer above, place the `add()` in `err_test.connect_phase`, open "Show advanced", and predict which CRC `log_cb` prints on `agt0`'s first packet for each choice of "Type-wide log_cb registered in": `base_test build_phase` (step 1 of the table) or `start_of_simulation_phase` (after `err_cb`'s add). Then switch `err_cb` to `UVM_PREPEND` and predict again. The queue panel shows the final queues; the build-order list shows where each `add()` ran.
+**Try it.** The paragraph after the table has already traced the first two cases; check that trace in the explorer above. Place the `add()` in `err_test.connect_phase`, open "Show advanced", and predict which CRC `log_cb` prints on `agt0`'s first packet for each choice of "Type-wide log_cb registered in": `base_test build_phase` (step 1 of the table) or `start_of_simulation_phase` (after `err_cb`'s add). Then switch `err_cb` to `UVM_PREPEND`, a case the table did not cover, and predict again. The queue panel shows the final queues; the build-order list shows where each `add()` ran.
+
+<details>
+<summary>Debrief (open after you have predicted all three)</summary>
 
 **Debrief.** With `log_cb` added in `base_test` `build_phase`, `log_cb` is ahead of `err_cb` in `agt0`'s queue and prints the original CRC, 0x5A. With `log_cb` added in `start_of_simulation_phase`, or with `err_cb` added with `UVM_PREPEND`, `err_cb` runs first and `log_cb` prints the corrupted CRC, 0xA5.
+
+</details>
 
 The rule to keep: **order is queue order, and queue order comes from when and how each `add()` ran**, not from which callback is "more important". If an order matters, make it explicit with the order of your `add()` calls or with `UVM_PREPEND`, and check it with `display()` (next subsections).
 
@@ -366,7 +376,7 @@ There are two ways to stop a callback:
     <text x="8" y="98" fontSize="12" fontWeight="600" fill="currentColor">log_cb deletes itself inside its hook</text>
     <rect x="8" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
     <text x="16" y="124" fontSize="11" fill="currentColor">0: dly_cb</text>
-    <rect x="124" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" />
+    <rect x="124" y="106" width="104" height="28" rx="4" fill="none" className="stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="2" strokeDasharray="4 3" />
     <text x="132" y="124" fontSize="11" fill="currentColor">1: err_cb</text>
     <rect x="240" y="106" width="104" height="28" rx="4" fill="none" stroke="currentColor" strokeDasharray="4 3" />
     <text x="248" y="124" fontSize="11" fill="currentColor">2: (empty)</text>
@@ -374,7 +384,7 @@ There are two ways to stop a callback:
     <text x="8" y="180" fontSize="12" fontWeight="600" fill="currentColor">log_cb prepends new_cb inside its hook</text>
     <rect x="8" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
     <text x="14" y="206" fontSize="11" fill="currentColor">0: new_cb</text>
-    <rect x="96" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
+    <rect x="96" y="188" width="80" height="28" rx="4" fill="none" className="stroke-cyan-600 dark:stroke-cyan-400" strokeWidth="2" strokeDasharray="4 3" />
     <text x="102" y="206" fontSize="11" fill="currentColor">1: dly_cb</text>
     <rect x="184" y="188" width="80" height="28" rx="4" fill="none" stroke="currentColor" />
     <text x="190" y="206" fontSize="11" fill="currentColor">2: log_cb</text>
@@ -382,7 +392,7 @@ There are two ways to stop a callback:
     <text x="278" y="206" fontSize="11" fill="currentColor">3: err_cb</text>
     <text x="8" y="234" fontSize="10.5" fill="currentColor">✗ next() reads index 2: log_cb runs a second time</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">agt0.drv's queue while log_cb's pre_send runs; the highlighted box is the current position. next() goes to the stored index plus one in the queue as it is now, so a change made inside a hook moves entries under the iterator. This is uvm-core 2020.3.1 behaviour (get_next in uvm_callback.svh), not a rule of IEEE 1800.2.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">agt0.drv's queue while log_cb's pre_send runs; the highlighted box is the iterator's stored position (index 1) in each row, solid where log_cb still sits there and dashed after the change. next() goes to the stored index plus one in the queue as it is now, so a change made inside a hook moves entries under the iterator. This is uvm-core 2020.3.1 behaviour (get_next in uvm_callback.svh), not a rule of IEEE 1800.2.</figcaption>
 </figure>
 
 With a driver that calls `get_next_item` and then `item_done` **after** driving, the boundary between items is exact. In the Make It Work test, the sequence for `agt0`'s first two items returns only after the driver's `item_done` for item 2, and item 3 does not exist until the next sequence starts it, so a `callback_mode(0)` in between affects exactly items 3 and later. In the diagram below, **t (10 ns)** is the time axis, one column per 10 ns; **agt0 item** is the item `agt0`'s driver is putting on the pins; **err_cb on** is the value `err_cb.is_enabled()` would return; **CRC (gni)** is the CRC sent by a driver that uses `get_next_item` and `item_done`; and **CRC (get)** is the CRC sent by a driver that uses `get()`:
@@ -428,19 +438,19 @@ A transaction is a class object, so a hook always receives a **handle**, a refer
     <text x="8" y="98" fontSize="10.5" fill="currentColor">✓ pkt.crc = ... changes the driver's packet</text>
     <text x="8" y="112" fontSize="10.5" fill="currentColor">• pkt = new() re-points only pkt; req is unchanged</text>
     <text x="8" y="142" fontSize="12" fontWeight="600" fill="currentColor">By ref: ref packet pkt</text>
-    <rect x="8" y="150" width="140" height="28" rx="4" fill="none" stroke="currentColor" />
+    <rect x="8" y="150" width="170" height="28" rx="4" fill="none" stroke="currentColor" />
     <text x="16" y="168" fontSize="11" fill="currentColor">req, pkt: one variable</text>
     <rect x="200" y="148" width="150" height="32" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
     <text x="210" y="168" fontSize="11" fill="currentColor">packet object (crc)</text>
-    <line x1="148" y1="164" x2="198" y2="164" stroke="currentColor" markerEnd="url(#cbArgArrow)" />
+    <line x1="178" y1="164" x2="198" y2="164" stroke="currentColor" markerEnd="url(#cbArgArrow)" />
     <text x="8" y="198" fontSize="10.5" fill="currentColor">✓ pkt.crc = ... changes the driver's packet</text>
     <text x="8" y="212" fontSize="10.5" fill="currentColor">! pkt = new() makes the driver's req a new object</text>
     <text x="8" y="242" fontSize="12" fontWeight="600" fill="currentColor">By const ref: const ref packet pkt</text>
-    <rect x="8" y="250" width="140" height="28" rx="4" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+    <rect x="8" y="250" width="170" height="28" rx="4" fill="none" stroke="currentColor" strokeDasharray="4 3" />
     <text x="16" y="268" fontSize="11" fill="currentColor">req, pkt: locked variable</text>
     <rect x="200" y="248" width="150" height="32" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
     <text x="210" y="268" fontSize="11" fill="currentColor">packet object (crc)</text>
-    <line x1="148" y1="264" x2="198" y2="264" stroke="currentColor" markerEnd="url(#cbArgArrow)" />
+    <line x1="178" y1="264" x2="198" y2="264" stroke="currentColor" markerEnd="url(#cbArgArrow)" />
     <text x="8" y="298" fontSize="10.5" fill="currentColor">✓ pkt.crc = ... still changes the driver's packet</text>
     <text x="8" y="312" fontSize="10.5" fill="currentColor">✗ pkt = new() is a compile error</text>
     <text x="8" y="340" fontSize="10" fill="currentColor" opacity="0.8">The lock (dashed) protects the variable, not the object.</text>
@@ -506,8 +516,8 @@ A common misconception says callbacks always replace overrides, or the other way
 ### Where callbacks live in a real testbench
 
 <ArchitectureDiagram
-  title="Hook points in one agent"
-  caption="The driver's hooks sit on the way to the pins, so a driver callback can modify what the DUT receives. The monitor's hook sits after capture and before ap.write(tr), so a monitor callback observes what really happened on the bus. Checking belongs in the scoreboard, not in a hook."
+  title="Hook points: driver, monitor and scoreboard"
+  caption="The driver's hooks sit on the way to the pins, so a driver callback can modify what the DUT receives. The monitor's hook sits after capture and before ap.write(tr), so a monitor callback observes what really happened on the bus. Checking the DUT belongs in the scoreboard, not in a driver hook."
   gapY={88}
   spreadAnchors={true}
   nodes={[
@@ -960,7 +970,7 @@ Callback messages come from the top of the hierarchy, so they appear as `reporte
 
 ### Expert: what `` `uvm_register_cb `` really checks
 
-In uvm-core 2020.3.1 the macro declares a static bit, `static local bit m_register_cb_<CB>`, whose initializer records the `(T, CB)` pair. Because the bit's name is built from `CB`, a **parameterized** callback type causes errors; use a `typedef` name instead (Annex B.4.1). The pair is checked only when someone adds or deletes: an unregistered pair makes `add()` warn `CBUNREG` (B.4.1 requires only a warning), and uvm-core then queues the callback anyway. Iteration never checks registration, so the callback runs. A team that wants this to fail loudly can promote the warning. The callback functions report through `uvm_root`, so set the override there, before any `add()` runs (§6.3.7):
+In uvm-core 2020.3.1 the macro declares a static bit, `static local bit m_register_cb_<CB>`, whose initializer records the `(T, CB)` pair. Because the bit's name is built from `CB`, a **parameterized** callback type causes errors; use a `typedef` name instead (Annex B.4.1). In uvm-core 2020.3.1 the pair is checked only in `add()` (and `add_by_name`, which calls `add()`); `delete()` does not check registration, although B.4.1 names delete too. An unregistered pair makes `add()` warn `CBUNREG` (B.4.1 requires only a warning), and uvm-core then queues the callback anyway. Iteration never checks registration, so the callback runs. A team that wants this to fail loudly can promote the warning. The callback functions report through `uvm_root`, so set the override there, before any `add()` runs (§6.3.7):
 
 ```systemverilog
 // snippet: in the test's build_phase, before any add()
@@ -1054,7 +1064,7 @@ A `ref` hook argument must have a type **equivalent** to the actual (IEEE 1800-2
 
 ### Expert: cost at scale (tool-dependent)
 
-In uvm-core 2020.3.1 every hook call constructs a `uvm_callback_iter`, does pool lookups for the object, and calls `$cast` and `callback_mode()` on each entry, even when no callback is registered. That is cheap per transaction and expensive per bit or per clock. Put hooks at transaction granularity, compile `UVM_CB_TRACE_ON` only for debug (it adds a message per add, delete and execution), and measure with your simulator's profiler before optimizing ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)). The actual cost depends on the tool.
+In uvm-core 2020.3.1 every hook call constructs a `uvm_callback_iter` and does pool lookups for the object, even when no callback is registered, and calls `$cast` and `callback_mode()` on each queue entry. That is cheap per transaction and expensive per bit or per clock. Put hooks at transaction granularity, compile `UVM_CB_TRACE_ON` only for debug (it adds a message per add, delete and execution), and measure with your simulator's profiler before optimizing ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)). The actual cost depends on the tool.
 
 ### Expert: designing a VIP extension API
 
@@ -1077,9 +1087,9 @@ Answer each one before you open the feedback.
   question="Your error test corrupts traffic on all four agents instead of one. You have five minutes and the log. What do you look for first, and what is the likely cause?"
   options={[
     { text: "Look for UVM_PREPEND in the test: it makes the callback run on all instances.", isCorrect: false, feedback: "Ordering changes the position in a queue, not which queues hold the callback." },
-    { text: "Look at display() output for a (*) row: the add() almost certainly ran during build_phase, when the driver handle was still null, so it was registered type-wide.", isCorrect: true, feedback: "Right. add(null, cb) is legal and silent. Move the add() to connect_phase and guard the handle; get_all() on an untouched driver makes a good self-check." },
-    { text: "Look for a CBUNREG warning: a missing uvm_register_cb makes callbacks global.", isCorrect: false, feedback: "CBUNREG only warns about an unregistered pair; it has nothing to do with type-wide registration." },
-    { text: "The factory: the error callback must have been installed with a type override.", isCorrect: false, feedback: "Callbacks are not installed by the factory. A type override would change the driver class, not attach a callback." }
+    { text: "Look for a CBUNREG warning: a missing uvm_register_cb makes callbacks global, so every driver of that type runs them.", isCorrect: false, feedback: "CBUNREG only warns about an unregistered pair; it has nothing to do with type-wide registration." },
+    { text: "Look for a (*) row in display(): the add() likely ran in build_phase while the driver handle was null, so it went type-wide.", isCorrect: true, feedback: "Right. The add() almost certainly ran during build_phase, when the driver handle was still null, so it was registered type-wide. add(null, cb) is legal and silent. Move the add() to connect_phase and guard the handle; get_all() on an untouched driver makes a good self-check." },
+    { text: "The factory: the error callback must have been installed with a type override, which replaces the driver on every agent.", isCorrect: false, feedback: "Callbacks are not installed by the factory. A type override would change the driver class, not attach a callback." }
   ]}
 />
 
@@ -1087,9 +1097,9 @@ Answer each one before you open the feedback.
   title="Interview: virtual method or callback?"
   question="A vendor driver offers both a virtual method hook and a callback for the same point. You need a CRC error on one agent for one test. Which do you use, and what happens if someone later factory-overrides the driver?"
   options={[
+    { text: "The callback, added to that agent's driver in connect_phase; under a factory-installed subclass it runs only if the subclass still reaches the hook.", isCorrect: true, feedback: "Right. If someone installs a subclass that keeps calling the hook (or super), the callback still runs, because instance queues follow the object; if the subclass drops the hook, the callback goes silent. Per-instance, switchable and stackable is the callback's job; the risk is a subclass that never reaches the hook." },
     { text: "The virtual method: overriding it in a subclass is always cleaner than a callback.", isCorrect: false, feedback: "A subclass needs a factory override to install it, and it cannot be switched or stacked at run time without extra code." },
-    { text: "The callback, added to that agent's driver in connect_phase. If someone installs a subclass that keeps calling the hook (or super), the callback still runs, because instance queues follow the object; if the subclass drops the hook, the callback goes silent.", isCorrect: true, feedback: "Right. Per-instance, switchable and stackable is the callback's job; the risk is a subclass that never reaches the hook." },
-    { text: "Either works, and a factory override automatically removes all callbacks.", isCorrect: false, feedback: "A factory override chooses a class at create(); it does not touch callback queues." },
+    { text: "Either works equally well here, and if someone later factory-overrides the driver, the override automatically removes all callbacks from its queues.", isCorrect: false, feedback: "A factory override chooses a class at create(); it does not touch callback queues." },
     { text: "The callback, added type-wide so the test does not depend on the hierarchy.", isCorrect: false, feedback: "Type-wide would corrupt every agent, which is exactly what the test must avoid." }
   ]}
 />
@@ -1098,10 +1108,10 @@ Answer each one before you open the feedback.
   title="Interview: exactly N errors on a pipelined driver"
   question="You must corrupt exactly the first 3 items an agent's pipelined (get-based) driver sends, and prove it from the log. How?"
   options={[
-    { text: "Add the callback, let the sequence send 3 items, then call callback_mode(0) from the test.", isCorrect: false, feedback: "With get(), item_done happens inside get(), so the toggle races the hook of the boundary item (§4.7). You might get 2 or 3 errors." },
-    { text: "Count inside the callback: it corrupts while its per-driver counter is below 3, and logs each corruption with the item's id; check that the log has exactly 3 such lines and that the checker expected them.", isCorrect: true, feedback: "Right. The decision moves into the hook itself, where there is no race, and the log proves it." },
+    { text: "Add the callback, let the sequence send 3 items, then call callback_mode(0) from the test as soon as the sequence returns.", isCorrect: false, feedback: "With get(), item_done happens inside get(), so the toggle races the hook of the boundary item (§4.7). You might get 2 or 3 errors." },
     { text: "Use UVM_PREPEND so the error callback runs before the driver fetches the next item.", isCorrect: false, feedback: "Ordering is among callbacks at one hook; it does not change when the driver fetches items." },
-    { text: "Add a #0 before callback_mode(0) so the driver goes first.", isCorrect: false, feedback: "A #0 only moves the race; the standard still leaves the process order open." }
+    { text: "Add a #0 before callback_mode(0) so the driver goes first.", isCorrect: false, feedback: "A #0 only moves the race; the standard still leaves the process order open." },
+    { text: "Count inside the callback: corrupt while a per-driver counter is below 3, log each corruption with the item's id, and check for exactly 3 such lines.", isCorrect: true, feedback: "Right. Also check that the checker expected exactly those 3 errors. The decision moves into the hook itself, where there is no race, and the log proves it." }
   ]}
 />
 
@@ -1111,7 +1121,7 @@ Answer each one before you open the feedback.
   options={[
     { text: "Report catchers disable all other callbacks on their component.", isCorrect: false, feedback: "There is no such rule. The effect comes from how instance queues are created." },
     { text: "The catcher's instance add created that driver's queue in the shared pool, seeded without the logging callback, so the driver no longer walks the type-wide queue.", isCorrect: true, feedback: "Right, by source inspection of uvm-core 2020.3.1: instance queues live in one pool keyed by object. Add the type-wide callback after the catcher, or add it to that driver explicitly, and check with display()." },
-    { text: "The logging callback's callback_mode was switched off by the catcher.", isCorrect: false, feedback: "Then it would stop on every driver, because the mode belongs to the object." },
+    { text: "The logging callback's callback_mode was switched off by the catcher, which turns off the other callbacks on the component it is added to.", isCorrect: false, feedback: "Then it would stop on every driver, because the mode belongs to the object." },
     { text: "uvm_report_cb::add always deletes type-wide callbacks.", isCorrect: false, feedback: "It deletes nothing; the queue it creates simply does not contain them." }
   ]}
 />
@@ -1120,9 +1130,9 @@ Answer each one before you open the feedback.
   title="Interview: when do you want add(null, cb)?"
   question="What does add(null, cb) do to components created after the call, and when is that what you want?"
   options={[
-    { text: "Nothing: only components that exist at the time of the call get the callback.", isCorrect: false, feedback: "That is add_by_name. Type-wide callbacks are found by every object of type T that has no instance queue, whenever it is created." },
-    { text: "They run it too, because type-wide callbacks apply to every object of type T. You want it for testbench-wide concerns such as logging or coverage hooks, registered deliberately in a base test.", isCorrect: true, feedback: "Right (§10.7.2.3.1). The danger is getting the same effect by accident through a null handle." },
+    { text: "Nothing: only components that already exist at the time of the call get the callback; anything created later starts without it.", isCorrect: false, feedback: "That is add_by_name. Type-wide callbacks are found by every object of type T that has no instance queue, whenever it is created." },
     { text: "It is an error; null handles are rejected by add().", isCorrect: false, feedback: "A null obj is how you ask for type-wide registration. Only a null cb is rejected (CBUNREG error)." },
+    { text: "They run it too: it applies to every object of type T. You want that for testbench-wide logging or coverage hooks, registered deliberately in a base test.", isCorrect: true, feedback: "Right (§10.7.2.3.1). Type-wide callbacks apply to every object of type T. The danger is getting the same effect by accident through a null handle." },
     { text: "It attaches the callback to uvm_test_top only.", isCorrect: false, feedback: "There is no object context; that is the point of type-wide." }
   ]}
 />
@@ -1159,9 +1169,9 @@ Answer each one before you open the feedback.
       question: "A test adds a crc_err_cb to a driver in connect_phase, without warnings, but it never runs. Which line must the driver's own code contain for any callback to run?",
       answers: [
         { text: "`uvm_register_cb(my_driver, drv_cb)", correct: false, feedback: "Registration declares that the pair is legal; it calls nothing. Without it, add() warns CBUNREG, and the test saw no warning." },
-        { text: "`uvm_do_callbacks(my_driver, drv_cb, pre_send(this, req)) at the hook point", correct: true, feedback: "Right. The macro is the hook: it walks the driver's queue and calls pre_send on each enabled callback." },
         { text: "uvm_callbacks#(my_driver, drv_cb)::add(this, cb) in the driver's build_phase", correct: false, feedback: "Attaching is the test's job. A driver adding to itself does not make any hook run." },
-        { text: "`uvm_object_utils(drv_cb) in the callback base class", correct: false, feedback: "Factory registration of the callback class does not create a hook; drv_cb is virtual and is never created anyway." }
+        { text: "`uvm_object_utils(drv_cb) in the callback base class", correct: false, feedback: "Factory registration of the callback class does not create a hook; drv_cb is virtual and is never created anyway." },
+        { text: "`uvm_do_callbacks(my_driver, drv_cb, pre_send(this, req)) at the hook point", correct: true, feedback: "Right. The macro is the hook: it walks the driver's queue and calls pre_send on each enabled callback." }
       ],
       explanation: "The three parts are the callback base with hooks, the component's registration plus its uvm_do_callbacks call at the hook point, and the test's add(). A callback that is attached but never reached at a uvm_do_callbacks line never runs.",
       objective: 1
@@ -1170,7 +1180,7 @@ Answer each one before you open the feedback.
       question: "drv_cb is declared as virtual class drv_cb extends uvm_callback; with one empty hook and no constructor. crc_err_cb extends it with function new(string name = \"crc_err_cb\"); super.new(name); endfunction. What happens?",
       answers: [
         { text: "It compiles: super.new(name) reaches uvm_callback's constructor", correct: false, feedback: "super.new calls the constructor of the direct base, drv_cb, and its implicit constructor has no arguments." },
-        { text: "Compile error: drv_cb's implicit new() takes no arguments, so super.new(name) has too many; give drv_cb a new(string name = \"drv_cb\") that calls super.new(name)", correct: true, feedback: "Right (IEEE 1800-2023 §8.7, §8.17). Only a constructor declared with extends ...(default) would inherit the base's arguments." },
+        { text: "Compile error: drv_cb's implicit new() takes no arguments, so super.new(name) has too many", correct: true, feedback: "Right (IEEE 1800-2023 §8.7, §8.17). Give drv_cb a new(string name = \"drv_cb\") that calls super.new(name). Only a constructor declared with extends ...(default) would inherit the base's arguments." },
         { text: "Compile error: a virtual class cannot have a constructor", correct: false, feedback: "A virtual class can have a constructor; subclasses call it with super.new. It just cannot be instantiated directly." },
         { text: "It compiles, but the callback's name is always uvm_callback", correct: false, feedback: "The problem is earlier: the call does not compile." }
       ],
@@ -1204,8 +1214,8 @@ Answer each one before you open the feedback.
       answers: [
         { text: "my_driver is missing `uvm_register_cb, so the callback is ignored", correct: false, feedback: "A missing registration only makes add() warn CBUNREG; the callback still runs. And it would not show as OFF." },
         { text: "err_cb was added with a null handle", correct: false, feedback: "Then display() would list it under (*), not under agt0's path." },
-        { text: "err_cb was switched off with callback_mode(0) and never switched back on; the iterator skips it", correct: true, feedback: "Right. OFF comes from is_enabled(). Call callback_mode(1) at the item boundary where errors should start." },
-        { text: "It was added before agt0's driver existed", correct: false, feedback: "Then the handle would have been null and the row would be a (*) row." }
+        { text: "It was added before agt0's driver existed", correct: false, feedback: "Then the handle would have been null and the row would be a (*) row." },
+        { text: "err_cb was switched off with callback_mode(0) and never switched back on; the iterator skips it", correct: true, feedback: "Right. OFF comes from is_enabled(). Call callback_mode(1) at the item boundary where errors should start." }
       ],
       explanation: "display() shows each queue entry with ON or OFF. The callback is in the right queue, so attachment is correct; OFF means callback_mode(0), and uvm_callback_iter skips disabled callbacks.",
       objective: 4
@@ -1224,9 +1234,9 @@ Answer each one before you open the feedback.
     {
       question: "err_test calls add_by_name(\"*.agt0\", err_cb, this) in connect_phase. There is no warning, and agt0's driver never runs err_cb. Why?",
       answers: [
+        { text: "The pattern matches the agent, which is not a my_driver, and add_by_name skips matches of the wrong type without a warning; use \"*.agt0.drv\"", correct: true, feedback: "Right. CBNOMTC fires only when nothing matches at all. Check with display(): there is no row for agt0's driver." },
         { text: "add_by_name always registers type-wide", correct: false, feedback: "It adds to the instance queue of each matching component of type T." },
         { text: "connect_phase is too early for add_by_name", correct: false, feedback: "Every component exists by connect_phase, so the search can find them." },
-        { text: "The pattern matches the agent, which is not a my_driver, and add_by_name skips matches of the wrong type without a warning; use \"*.agt0.drv\"", correct: true, feedback: "Right. CBNOMTC fires only when nothing matches at all. Check with display(): there is no row for agt0's driver." },
         { text: "It warned CBNOMTC, but the warning was filtered", correct: false, feedback: "Something did match (the agent), so CBNOMTC is not issued." }
       ],
       explanation: "add_by_name searches the components that exist (§10.7.2.3.2) and adds the callback to each match that is type T or a derivative. uvm-core 2020.3.1 silently skips matches of other types.",
@@ -1236,9 +1246,9 @@ Answer each one before you open the feedback.
       question: "The same err_cb object was added to agt0's and agt1's drivers. At 100 ns the test calls void'(err_cb.callback_mode(0)). What happens?",
       answers: [
         { text: "Only the driver added last stops running it", correct: false, feedback: "The mode is not per queue." },
-        { text: "Both drivers stop running it, because the mode is a property of the callback object, which both queues share", correct: true, feedback: "Right. And get_all() and display() still list it, as OFF." },
         { text: "It is removed from both queues", correct: false, feedback: "callback_mode only switches it off; delete() removes it from a queue." },
-        { text: "It is an error to switch off a callback that is in two queues", correct: false, feedback: "There is no such rule." }
+        { text: "It is an error to switch off a callback that is in two queues", correct: false, feedback: "There is no such rule." },
+        { text: "Both drivers stop running it, because the mode is a property of the callback object, which both queues share", correct: true, feedback: "Right. And get_all() and display() still list it, as OFF." }
       ],
       explanation: "callback_mode(0) sets a bit on the object (§10.7.1.2.2), and the iterator checks that bit for every entry of every queue. To stop it on one driver only, delete it from that driver's queue or use separate objects.",
       objective: 2

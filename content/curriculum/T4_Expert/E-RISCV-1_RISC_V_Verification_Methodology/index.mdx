@@ -153,7 +153,7 @@ The last row is the one that breaks naive testbenches. An ISS reproduces only wh
 3. **Implementation-defined behaviour.** The ISA leaves some choices to the implementation, for example whether a misaligned load is handled in hardware or traps.
 4. **External responses.** A bus error on a load is decided by the memory system, not by the program.
 
-**Predict.** A testbench has four ways to keep the ISS in agreement with the core. It can **forward** an event (tell the ISS it happened, before the ISS executes the next instruction), **override** a value (set a register value in the ISS during the run), **notify** a memory access (report an access result to the ISS during the run), or **configure** the ISS (set an option once, before the run starts). Interrupt and debug-request arrival is forwarded. Match each of the other three kinds of value above to override, notify or configure. Hint: ask when each value becomes known, and who knows it.
+**Predict.** A testbench has four ways to keep the ISS in agreement with the core. It can **forward** an event (tell the ISS it happened, before the ISS executes the next instruction), **override** a value (set a register value in the ISS during the run), **notify** (report something the RTL saw from outside the core, while the run is going on), or **configure** the ISS (set an option once, before the run starts). Interrupt and debug-request arrival is forwarded. Match each of the other three kinds of value above to override, notify or configure. Hint: ask when each value becomes known, and who knows it.
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Check your prediction</summary>
@@ -165,7 +165,7 @@ The last row is the one that breaks naive testbenches. An ISS reproduces only wh
 | Implementation-defined behaviour (misaligned loads) | Configure | It is a fixed choice of the design, known before the run |
 | External responses (a bus error on a load) | Notify | The memory system decided it, during the run |
 
-In the words of the full definitions: override copies the RTL's value into the ISS; notify tells the ISS what the memory system answered; configure makes the ISS take the same implementation choice as the core. For implementation-defined behaviour, the ISS must be configured to make the same choice.
+In the words of the full definitions: override copies the RTL's value into the ISS; notify tells the ISS what the memory system answered; and for implementation-defined behaviour, configure makes the ISS take the same implementation choice as the core.
 
 The lock-step sections below use these words. Push Further turns forward, override and notify into a per-bench policy and adds one more treatment, **exclude** (leave a value out of the compare).
 
@@ -395,7 +395,14 @@ Run on the lesson's program, only instruction 2 is an `add` (`add x3, x1, x2` wi
 | `val_comb: rs1_val == rs2_val` | 0 | 5 and 7 |
 | `cross_comb` RAW | 1 | Instruction 3, `sw x3, 0(x0)`, reads `x3` as `rs2` |
 
-Three of eight coverpoints are hit, and the five holes tell you what to generate next. *Predict:* which coverpoints would a single extra instruction `add x0, x5, x5` hit, if `x5` holds 0? (Answer: the holes `rd: x0`, `rs1_val == 0` and `rs1_val == rs2_val`, plus `mnemonics: add` again; not `rs1 == rs2 == rd`, because `rd` is `x0`, not `x5`.)
+Three of eight coverpoints are hit, and the five holes tell you what to generate next. *Predict:* append one instruction after the `nop`: `add x0, x5, x5`, with `x5` holding 0. Which coverpoints does it hit?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+The holes `rd: x0`, `rs1_val == 0` and `rs1_val == rs2_val`, plus `mnemonics: add` again. Not `rs1 == rs2 == rd`, because `rd` is `x0`, not `x5`. Not `cross_comb`, because no instruction follows it.
+
+</details>
 
 The ACT4 covergroup for the same instruction is plain SystemVerilog. An excerpt from `coverpoints/unpriv/I_coverage.svh` in the `riscv-arch-test` repository (`act4` branch):
 
@@ -454,7 +461,10 @@ return None  # None means PASS
 
 *Predict before you read on:* the RTL hangs after instruction 2. Its trace has three entries; the ISS trace has six. What does this compare report?
 
-It reports **PASS**. `zip()` stops at the shorter list, so the three missing retirements are never examined. That is misconception 1: a `zip()`-style compare is not sufficient. The table traces seven injected bugs through the naive compare and the robust compare you build in Make It Work, from a real run (CPython 3.13.4):
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+It reports **PASS**. `zip()` stops at the shorter list, so the three missing retirements are never examined. That is the first misconception in the pitfalls table: a `zip()`-style compare is not sufficient. The table traces seven injected bugs through the naive compare and the robust compare you build in Make It Work, from a real run (CPython 3.13.4):
 
 | RTL trace | Naive compare | Robust compare |
 |---|---|---|
@@ -466,6 +476,8 @@ It reports **PASS**. `zip()` stops at the shorter list, so the three missing ret
 | Store to address 0 writes 11 | **PASS** | FAIL at #3: `mem_wdata` |
 | Store goes to address 4 | **PASS** | FAIL at #3: `mem_addr` |
 | `nop` reports `x0` written with 5 | **PASS** | FAIL at #5: `rd_wdata` |
+
+</details>
 
 The rules a robust post-run compare follows:
 1. Compare **every** architectural effect of each retirement: `pc`, the instruction word, the trap flag, `rd` and its value (expecting 0 when `rd` is `x0`), and for stores the address, the byte mask and the masked data.
@@ -510,14 +522,14 @@ The same counting rule protects any scoreboard. In this transaction-level versio
 
 <ScoreboardMatchingVisualizer />
 
-**What riscv-dv's own compare checks.** riscv-dv's `scripts/instr_trace_compare.py` compares the sequence of **integer-register updates** in two trace CSVs: it skips instructions that write no register, never compares stores directly (a bad store shows up only if a later load reads it back), and counts leftover register-writing entries as mismatches. Its `iss_cmp` step in `run.py` compares two ISSes. Know this before you trust a green result from it; the robust compare above is your own, stricter design.
+**What riscv-dv's own compare checks.** riscv-dv's `scripts/instr_trace_compare.py` compares the sequence of **integer-register updates** in two trace CSVs: it skips any instruction that does not change a register's value (no register write, or a write of the value the register already holds), never compares stores directly (a bad store shows up only if a later load reads it back), and counts leftover value-changing entries as mismatches only in the second trace: once the second trace runs out, the rest of the first trace is never checked. Its `iss_cmp` step in `run.py` compares two ISSes. Know this before you trust a green result from it; the robust compare above is your own, stricter design.
 
 | Question | riscv-dv `instr_trace_compare.py` (master, fetched 2026-10-11) | This lesson's robust compare |
 |---|---|---|
-| Which retirements are compared? | Only those that write an integer register | Every retirement |
+| Which retirements are compared? | Only those that change an integer register's value | Every retirement |
 | Which fields? | The register updates | `pc`, `insn`, trap flag, `rd`, `rd_wdata` (0 for `x0`), store mask, address and masked data |
 | A bad store | Seen only if a later load reads it back | Fails at the store itself |
-| Extra or missing entries | Leftover register-writing entries count as mismatches | Length mismatch fails, and an empty trace fails |
+| Extra or missing entries | Leftovers in the second trace count as mismatches; leftovers in the first trace are not checked | Length mismatch fails, and an empty trace fails |
 | With `+compare_final_value_only=1` | In-order compare off; prints `[PASSED]: 0 matched` (Push Further) | Not applicable; a zero count would fail |
 
 **The limit of any post-run compare: interrupts.** The ISS runs the ELF alone. If the testbench raised a timer interrupt after instruction 2, the RTL trace continues in the interrupt handler while the ISS trace continues with instruction 3. The compare fails at the first handler instruction, and nothing in the logs says it was not a bug. riscv-dv's interrupt and debug tests therefore set `compare_opts: +compare_final_value_only=1`, which gives up comparing instruction by instruction (see Push Further for what that does in riscv-dv's script today). The fix is the next section.
@@ -659,7 +671,14 @@ Two metadata rules matter most for a compare. `rvfi_trap` is set for an instruct
   ]}
 />
 
-*Predict:* at edge 5, which value does `mepc` hold once the handler runs? (Answer: `0x10C`, the address of the instruction the interrupt displaced, which is the previous retirement's `pc_wdata`.)
+*Predict:* at edge 5, which value does `mepc` hold once the handler runs?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+`0x10C`: the address of the instruction the interrupt displaced, which is the previous retirement's `pc_wdata`.
+
+</details>
 
 **riscv-formal** is a framework that checks a core's RVFI output against a formal model of the ISA, using SymbiYosys, an open-source formal verification flow. You write a wrapper that instantiates your core with RVFI outputs and a `checks.cfg` file; its `genchecks.py` script generates the checks. The main kinds:
 
@@ -675,8 +694,8 @@ Two metadata rules matter most for a compare. `rvfi_trap` is set for an instruct
 
 **What a pass means.** The checks `genchecks.py` generates are **bounded model checks** by default (configuration `mode`, which also accepts `prove`): each check explores every input sequence up to a configured `[depth]` from reset. A pass in `bmc` mode means no violation within that depth, not "correct for all programs". And riscv-formal states its own limit for multiply and divide: they are beyond practical model checkers, so with `RISCV_FORMAL_ALTOPS` the core implements stand-in operations (an add or subtract, then an XOR with a fixed mask). That checks the forwarding and control around the M unit, not the multiplier itself.
 
-<figure className="my-4">
-  <p className="mb-2 text-sm font-semibold">What a bmc pass at depth N covers</p>
+<figure className="my-4" aria-labelledby="riscv-bmc-title">
+  <p id="riscv-bmc-title" className="mb-2 text-sm font-semibold">What a bmc pass at depth N covers</p>
   <svg viewBox="0 0 340 104" role="img" aria-label="A timeline from reset. The first part, up to depth N, is shaded and labelled every input explored; a violation of a checked property there is found, marked with a check in a solid circle. The part after depth N is dashed and labelled not explored; a violation there is missed, marked with a question mark in a dashed circle." style={{ width: "100%", maxWidth: 480 }}>
     <text x="12" y="20" fontSize="10.5" fill="currentColor">reset</text>
     <text x="200" y="20" fontSize="10.5" fill="currentColor" textAnchor="middle">depth N</text>
@@ -1015,10 +1034,10 @@ What the code is for, line by line:
 - `riscv_cosim_set_mcycle` copies the RTL's cycle count into the ISS, so a `csrr` of `mcycle` compares equal.
 - `check_phase` turns "nothing compared" into an error. It complements, and does not replace, the test's fatal cycle timeout.
 
-Illustrative log lines (from this snippet's own messages, not from a run):
+Illustrative log lines (from this snippet's own messages, not from a run; one line from a passing run and one from a failing run; the file(line) field that `uvm_info` prints is omitted; the report_phase line carries the end-of-test time):
 
 ```text
-UVM_INFO @ 0: uvm_test_top.env.scb [COSIM] matched 10000 instructions
+UVM_INFO @ 812340: uvm_test_top.env.scb [COSIM] matched 10000 instructions
 UVM_FATAL @ 51230: uvm_test_top.env.scb [COSIM] mismatch at pc 0x00000800: ...
 ```
 
@@ -1055,7 +1074,7 @@ UVM_FATAL @ 51230: uvm_test_top.env.scb [COSIM] mismatch at pc 0x00000800: ...
 
 ### Expert: Lock-step co-simulation in a production UVM bench
 
-Ibex's `ibex_cosim_scoreboard` (lowRISC/ibex master, `dv/uvm/core_ibex/common/ibex_cosim_agent/ibex_cosim_scoreboard.sv`, fetched 2026-10-11) extends `uvm_scoreboard` and reads RVFI items from a `uvm_tlm_analysis_fifo`. Before each step it calls, in this order: `riscv_cosim_set_debug_req`, `riscv_cosim_set_nmi`, `riscv_cosim_set_nmi_int`, `riscv_cosim_set_mip(pre_mip, post_mip)`, `riscv_cosim_set_mcycle`, `riscv_cosim_set_csr` for each of ten `mhpmcounter` registers and their high halves, and `riscv_cosim_set_ic_scr_key_valid`; then `riscv_cosim_step(rd_addr, rd_wdata, pc, trap, rf_wr_suppress)`. The source comment explains the order: debug, NMI and normal interrupts must be handled "with the correct priority when they occur together". On a mismatch it calls `uvm_fatal`, unless the configuration's `relax_cosim_check` downgrades it to `uvm_info`. Separate threads notify every data-side access and instruction-fetch bus errors. The co-simulation documentation states that only VCS is supported as the simulator, though no VCS-specific feature is needed (tool-dependent).
+Ibex's `ibex_cosim_scoreboard` (lowRISC/ibex master, `dv/uvm/core_ibex/common/ibex_cosim_agent/ibex_cosim_scoreboard.sv`, fetched 2026-10-11) extends `uvm_scoreboard` and reads RVFI items from a `uvm_tlm_analysis_fifo`. Before each step it calls, in this order: if an instruction-fetch error was queued for this retirement, `riscv_cosim_set_iside_error`; `riscv_cosim_set_debug_req`, `riscv_cosim_set_nmi`, `riscv_cosim_set_nmi_int`, `riscv_cosim_set_mip(pre_mip, post_mip)`, `riscv_cosim_set_mcycle`, `riscv_cosim_set_csr` for each of ten `mhpmcounter` registers and their high halves, and `riscv_cosim_set_ic_scr_key_valid`; then `riscv_cosim_step(rd_addr, rd_wdata, pc, trap, rf_wr_suppress)`. The source comment explains the order: debug, NMI and normal interrupts must be handled "with the correct priority when they occur together". On a mismatch it calls `uvm_fatal`, unless the configuration's `relax_cosim_check` downgrades it to `uvm_info`. A separate thread notifies every data-side access; another thread queues instruction-fetch bus errors, which the per-retirement path forwards with `set_iside_error`. The co-simulation documentation states that only VCS is supported as the simulator, though no VCS-specific feature is needed (tool-dependent).
 
 <SequenceDiagram
   title="Ibex's calls for one retirement, in order"
@@ -1068,6 +1087,7 @@ Ibex's `ibex_cosim_scoreboard` (lowRISC/ibex master, `dv/uvm/core_ibex/common/ib
     { kind: "divider", label: "separate thread, before the step" },
     { from: "scb", to: "iss", label: "riscv_cosim_notify_dside_access, for every data-side access" },
     { kind: "divider", label: "per retirement" },
+    { from: "scb", to: "iss", label: "riscv_cosim_set_iside_error (only if a fetch error is queued for this order)" },
     { from: "scb", to: "iss", label: "riscv_cosim_set_debug_req" },
     { from: "scb", to: "iss", label: "riscv_cosim_set_nmi" },
     { from: "scb", to: "iss", label: "riscv_cosim_set_nmi_int" },
@@ -1211,7 +1231,7 @@ Further questions to practise aloud:
         { text: "Python raises a ValueError because the lists have different lengths", correct: false, feedback: "Only zip(..., strict=True), available from Python 3.10, raises on unequal lengths." },
         { text: "PASS, and that is correct, because every instruction the RTL retired was right", correct: false, feedback: "The test asked the core to run 5,000 instructions; it ran 1,203. That is a failure the compare must report." }
       ],
-      explanation: "zip stops at the shorter list, so a truncated RTL trace passes. A robust compare checks lengths and emptiness and prints the matched count (misconception 1)."
+      explanation: "zip stops at the shorter list, so a truncated RTL trace passes. A robust compare checks lengths and emptiness and prints the matched count (the zip() misconception)."
     },
     {
       question: "A lock-step bench fails at the first instruction of the timer-interrupt handler in every interrupt test. Which fix is right?",
@@ -1222,7 +1242,7 @@ Further questions to practise aloud:
         { text: "File an RTL bug in the handler code path", correct: false, feedback: "A failure at exactly the first handler instruction in every test points at forwarding, not at the handler." },
         { text: "Forward the interrupt state to the ISS (set_mip) before the step for that retirement", correct: true, feedback: "Right. The ISS takes a pending interrupt at the start of the step, so it must know before the step." }
       ],
-      explanation: "An ISS compare does not handle asynchronous interrupts automatically (misconception 3). The testbench observes the interrupt lines and forwards their state before each step, in priority order."
+      explanation: "An ISS compare does not handle asynchronous interrupts automatically (the automatic-interrupt misconception). The testbench observes the interrupt lines and forwards their state before each step, in priority order."
     },
     {
       question: "Why is a test made of random 32-bit words loaded into instruction memory a poor processor test?",
@@ -1233,7 +1253,7 @@ Further questions to practise aloud:
         { text: "It is the fastest way to reach full ISA coverage, because every encoding is equally likely", correct: false, feedback: "Uniform words are not uniform instructions: much of the time goes to traps, and rare legal corners stay unhit." },
         { text: "Only compressed instructions are affected, because their encodings are short", correct: false, feedback: "The problems apply to every encoding, not only the 16-bit ones." }
       ],
-      explanation: "Random instruction streams need constraints (misconception 2): legal encodings, branches that stay in the program, real data addresses, reserved registers and a defined end of test."
+      explanation: "Random instruction streams need constraints (the unconstrained-random misconception): legal encodings, branches that stay in the program, real data addresses, reserved registers and a defined end of test."
     },
     {
       question: "Which testlist change inserts riscv-dv's numeric-corner stream about 4 times per 1000 instructions?",
@@ -1338,21 +1358,23 @@ Start from the worked example's script.
 Part A. Build the three traces with the script's helpers and add them to `CASES`:
 
 ```python
-# snippet: add to the worked example's script, before CASES
+# snippet: add to the worked example's script, after CASES
 A = mutate(4, rd_wdata=11)                          # load returns 11
 B = ISS[:3] + ISS[4:]                               # store never retires
 C = ISS[:3] + [Retire(0x800, 0x342022F3, rd=5,      # csrr x5, mcause
                       rd_wdata=0x80000007)]         # timer interrupt taken
+CASES += [("A wrong load data", A), ("B store missing", B),
+          ("C interrupt in RTL only", C)]
 ```
 
 Output for these three, from a real run (CPython 3.13.4):
 
 ```text
-A wrong load data        naive: FAIL   robust: FAIL
+A wrong load data     naive: FAIL   robust: FAIL
     first divergence at #4 (pc 0x110): rd_wdata RTL=0xb ISS=0xc
-B store missing          naive: FAIL   robust: FAIL
+B store missing       naive: FAIL   robust: FAIL
     first divergence at #3 (pc 0x10c): pc RTL=0x110 ISS=0x10c
-C interrupt in RTL only  naive: FAIL   robust: FAIL
+C interrupt in RTL only naive: FAIL   robust: FAIL
     first divergence at #3 (pc 0x10c): pc RTL=0x800 ISS=0x10c
 ```
 

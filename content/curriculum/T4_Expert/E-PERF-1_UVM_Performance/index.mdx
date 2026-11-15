@@ -42,6 +42,7 @@ Words you will meet, in one line each (the links go to where each is taught):
 - A **hot path** is code that runs once per transaction or once per clock. Code that runs once per test (such as `build_phase`) is almost never worth optimizing.
 - A **regression** is a script that runs many tests, each with one or more random **seeds** (the number that fixes the random choices), and marks each run pass or fail. A **licence** is the right to run one simulation at a time; a site has a fixed number.
 - A **profiler** is a simulator feature that reports where CPU time went, per function, task, class method or module. Its output is a **profile**. How you turn it on and how its report looks are tool-dependent.
+- **uvm-core** is the Accellera reference implementation of the UVM standard (IEEE 1800.2-2020). This lesson cites uvm-core 2020.3.1 for behaviour the standard leaves to the implementation, and labels that behaviour "uvm-core".
 
 ### Three clocks: measure before you change anything
 
@@ -204,6 +205,7 @@ The profile below is a **flat profile**: one row per routine, with no call tree.
 Adding up the owner column gives the attribution picture. These are the same illustrative percentages as above:
 
 <figure className="my-6">
+  <p className="mb-2 text-sm font-semibold">Who owns the CPU time: baseline attribution</p>
   <svg viewBox="0 0 330 112" role="img" aria-label="Illustrative attribution of CPU time for the baseline run: testbench 46.5 percent, UVM library 34.5 percent, simulator kernel 16 percent, DUT 3 percent." style={{ width: "100%", maxWidth: 440 }}>
     <text x="0" y="17" fontSize="11" fill="currentColor">Testbench (TB)</text>
     <rect x="118" y="6" width="167" height="15" rx="2" fill="currentColor" fillOpacity="0.6" />
@@ -225,7 +227,7 @@ A flat profile tells you *which* routine is hot; a **call tree** (most profilers
 
 <ArchitectureDiagram
   title="From a hot library row back to the TB line that causes it"
-  caption="A simplified call tree: intermediate uvm-core frames are omitted. Read upward from the hot row. In this profile almost all uvm_is_match calls come from lookup_name (uvm-core also calls it from other places, such as the factory, uvm_component and uvm_root), so lookup_name's total (24%) is its own 13% plus uvm_is_match's 11%. lookup_name is called by uvm_config_db#(int)::get, and that by the TB function get_max_id inside pkt_mon::run_phase, once per item: that TB call is the line to change. run_test sits at the root with a total near 100% only because everything runs under it. Same illustrative numbers as the flat profile above."
+  caption="A simplified call tree: intermediate uvm-core frames are omitted. Read upward from the hot row. In this profile almost all uvm_is_match calls come from lookup_name (uvm-core also calls it from other places, such as the factory, uvm_component and uvm_root), so lookup_name's total (24%) is about its own 13% plus uvm_is_match's 11%. lookup_name is called by uvm_config_db#(int)::get, and that by the TB function get_max_id inside pkt_mon::run_phase, once per item: that TB call is the line to change. run_test sits at the root with a total near 100% only because everything runs under it. Same illustrative numbers as the flat profile above."
   cellWidth={250}
   cellHeight={56}
   gapY={36}
@@ -301,7 +303,7 @@ end
 
 #### Hotspot 2: a configuration lookup on every item
 
-`uvm_config_db#(T)::get` (IEEE 1800.2-2020 C.4.2.2.2) is a search, not a variable read. Follow one call through uvm-core 2020.3.1. **Predict first:** with 21 entries named `max_id` in the database, how many scope matches does one `get` perform?
+`uvm_config_db#(T)::get` (IEEE 1800.2-2020 C.4.2.2.2) is a search, not a variable read. Follow one call through uvm-core 2020.3.1, with the 21 entries named `max_id` that the Make It Work bench sets.
 
 <SequenceDiagram
   title="One uvm_config_db get, as uvm-core 2020.3.1 implements it"
@@ -327,13 +329,20 @@ end
   ]}
 />
 
-The answer is 21: one `uvm_is_match` per entry with that field name and type (the function is IEEE 1800.2-2020 F.3.3.1; that `get` uses `lookup_name`, C.2.4.4.1, is how uvm-core implements it). In a real system-on-chip (SoC) TB, common field names such as `vif`, `cfg` or `is_active` are set for dozens of scopes, so the scan is long.
+**Predict first:** the TB later grows, and 20 more blocks each set an `int` entry named `max_id` for their own scope (41 entries with that name and type in all). How many scope matches does one `get` of `max_id` by the monitor perform, and does it matter which entry finally matches?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+41: one `uvm_is_match` per entry with that field name and type, whichever entry finally matches; with today's 21 entries it is 21, as the diagram shows (the function is IEEE 1800.2-2020 F.3.3.1; that `get` uses `lookup_name`, C.2.4.4.1, is how uvm-core implements it). The cost grows with the number of entries that share the name, not with the number that match. In a real system-on-chip (SoC) TB, common field names such as `vif`, `cfg` or `is_active` are set for dozens of scopes, so the scan is long.
+
+</details>
 
 **Fix.** Read the value once, in `build_phase`, into a member variable. If the value must be able to change during the run, do not poll the database: either `get` a **configuration object** (a class handle) once, so every later change to its fields is visible through the handle, or wait for a change in a separate thread with `uvm_config_db#(T)::wait_modified` (C.4.2.2.4). **Pitfall:** "it's only one line" is exactly why it survives code review. **Debugging:** `+UVM_CONFIG_DB_TRACE` (uvm-core only, not in IEEE 1800.2-2020) prints one line per `get`, so a per-item lookup floods the log; that is a debugging switch, never a regression setting.
 
 #### Hotspot 3: an objection per item
 
-The objection count is kept per object *and* for every ancestor. Follow one item's raise and drop in a monitor that sits at `uvm_test_top.env.mon`, while the test holds its own objection. **Predict first:** for one raise and drop by the monitor, how many objects' counts change, and how many background processes does the drop start?
+The objection count is kept per object *and* for every ancestor. Follow one item's raise and drop in a monitor that sits at `uvm_test_top.env.mon`, while the test holds its own objection.
 
 <SequenceDiagram
   title="One per-item raise and drop, inside uvm-core 2020.3.1"
@@ -381,9 +390,18 @@ The objection count is kept per object *and* for every ancestor. Follow one item
   ]}
 />
 
+**Predict first:** move the monitor into an agent, at `uvm_test_top.env.agt.mon`, while the test still holds its own objection and nothing else below the test does. For one per-item raise and drop by the monitor, how many objects' counts change, and how many drain processes does the drop start?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+Five counts change on the raise and five on the drop (mon, agt, env, uvm_test_top and uvm_root), and the drop starts three drain processes, because mon, agt and env each fall to 0; uvm_test_top only goes from 2 to 1. In the two diagrams above, with no agent, it is four counts and two drains. Each level of hierarchy between the source and the test adds one count update per raise, one per drop and one drain process, for every item.
+
+</details>
+
 IEEE 1800.2-2020 §10.5.1.3.3 and §10.5.1.3.4 require the propagation up the hierarchy; the background drain process is how uvm-core implements a drop that reaches zero (`uvm_objection.svh`, `m_drop`, `m_execute_scheduled_forks`, `m_forked_drain`).
 
-**Fix.** Raise one objection for the whole stimulus, in the test or in the top-level sequence, and never in drivers or monitors. A top-level sequence can do it with `set_automatic_phase_objection(1)` (§14.2.4.4), which raises the objection before `pre_start` and drops it after `post_start`, so it spans the whole sequence, `body()` included; the standard's own NOTE warns never to use it for a sequence whose `body()` loops `forever`, because the objection would never drop. **Pitfall:** "the monitor must keep the test alive while it is busy". A monitor's `write()` takes no simulation time, so there is nothing to keep alive; if the test ends too early, the fix is in the test (wait for the expected count, or set a drain time, an extra delay after the last drop before the phase ends, taught in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), not a per-item objection. **Debugging:** `+UVM_OBJECTION_TRACE` (uvm-core only) prints every raise and drop; thousands of lines from one monitor are the symptom.
+**Fix.** Raise one objection for the whole stimulus, in the test or in the top-level sequence, and never in drivers or monitors. A top-level sequence can do it with `set_automatic_phase_objection(1)` (§14.2.4.4), which raises the objection immediately before `pre_start` and drops it after `post_start` (or after `kill`) (§14.2.4.3), so it spans the whole sequence, `body()` included; the standard's own NOTE warns never to use it for a sequence whose `body()` loops `forever`, because the objection would never drop. **Pitfall:** "the monitor must keep the test alive while it is busy". A monitor's `write()` takes no simulation time, so there is nothing to keep alive; if the test ends too early, the fix is in the test (wait for the expected count, or set a drain time, an extra delay after the last drop before the phase ends, taught in [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)), not a per-item objection. **Debugging:** `+UVM_OBJECTION_TRACE` (uvm-core only) prints every raise and drop; thousands of lines from one monitor are the symptom.
 
 #### Practitioner hotspots 4 to 8
 
@@ -399,7 +417,7 @@ IEEE 1800.2-2020 §10.5.1.3.3 and §10.5.1.3.4 require the propagation up the hi
 | `sprint()` of an item on every transaction | **guard** it (`uvm_report_enabled`) or remove it | the string is built even when nothing prints it |
 | `new` instead of `type_id::create` | only where a profile shows the factory dominating | it breaks factory overrides |
 
-**6. Field automation.** The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13): every `copy`, `compare`, `print`, `pack` and `record` walks the registered fields through a policy object at run time. That is convenient and usually affordable. When a profile shows `copy` or `compare` of one item type near the top, hand-written `do_copy` and `do_compare` for that type are the fix, but only if the macro path stops doing the same work: `copy()` first runs `do_execute_op` (the field-macro walk) and then calls `do_copy`, and `compare()` does the same with `do_compare` (§5.3.8.1; uvm-core `uvm_copier.svh`, `copy_object`). Adding hand-written methods while keeping `UVM_ALL_ON` fields does every field twice, which is slower. So either drop the field macros for that type (`` `uvm_object_utils `` plus hand-written `do_copy`, `do_compare` and `convert2string`), or keep them for printing and flag the fields `UVM_ALL_ON | UVM_NOCOPY | UVM_NOCOMPARE`. The gain is tool-dependent, so measure it, and check that copies and compares give the same results ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers the policy classes).
+**6. Field automation.** The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13): every `copy`, `compare`, `print`, `pack` and `record` walks the registered fields through a policy object at run time. That is convenient and usually affordable. When a profile shows `copy` or `compare` of one item type near the top, hand-written `do_copy` and `do_compare` for that type are the fix, but only if the macro path stops doing the same work: `copy()` first runs `do_execute_op` (the field-macro walk) and then calls `do_copy`, and `compare()` does the same with `do_compare` (§5.3.8.1, §5.7.2.7; uvm-core `uvm_copier.svh`, `copy_object`). Adding hand-written methods while keeping `UVM_ALL_ON` fields does every field twice, which is slower. So either drop the field macros for that type (`` `uvm_object_utils `` plus hand-written `do_copy`, `do_compare` and `convert2string`), or keep them for printing and flag the fields `UVM_ALL_ON | UVM_NOCOPY | UVM_NOCOMPARE`. The gain is tool-dependent, so measure it, and check that copies and compares give the same results ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) covers the policy classes).
 
 What one `copy()` of an item costs under each way of writing the class (`compare()` follows the same pattern with `do_compare`):
 
@@ -410,7 +428,7 @@ What one `copy()` of an item costs under each way of writing the class (`compare
 | `` `uvm_object_utils `` only (no field macros), hand-written `do_copy` | no fields registered | copies every field | once, hand-written |
 | macros with `UVM_ALL_ON \| UVM_NOCOPY \| UVM_NOCOMPARE`, hand-written `do_copy` and `do_compare` | checks each field's flags, copies none | copies every field | once, hand-written; printing still uses the macros |
 
-**7. Coverage sampling.** A covergroup sampled on every clock edge costs one sample per clock, and it also samples idle cycles, which inflates hit counts. Sample per transaction, in the subscriber's `write()`; gate clocked sampling with `iff (valid)` in the covergroup's sampling event, `@(posedge clk iff valid)` (a `coverpoint … iff (valid)` guard still samples the covergroup at every edge and only drops the bin hits); and `stop()` covergroups the current test does not need (IEEE 1800-2023 §19.8, Table 19-5). Never switch off coverage that the verification plan needs, to save time: that coverage is the point of the run. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches covergroups.
+**7. Coverage sampling.** A covergroup sampled on every clock edge costs one sample per clock, and it also samples idle cycles, which inflates hit counts. Sample per transaction, in the subscriber's `write()`; gate clocked sampling with `iff (valid)` in the covergroup's sampling event, `@(posedge clk iff valid)` (a `coverpoint … iff (valid)` guard still samples the covergroup at every edge and only drops the bin hits, §19.5); and `stop()` covergroups the current test does not need (IEEE 1800-2023 §19.8, Table 19-5). Never switch off coverage that the verification plan needs, to save time: that coverage is the point of the run. [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) teaches covergroups.
 
 <TimingDiagram
   title="Sampling every clock edge versus sampling per transaction"
@@ -455,6 +473,9 @@ The visualizer below runs one analysis-port broadcast. **Before you press play, 
 
 **Predict:** the coverage subscriber and the logger each spend some CPU in their `write()`. You put a `uvm_tlm_analysis_fifo` in front of each and move their work into `run_phase` loops that `get()` from the FIFO. What happens to the total CPU time of the run?
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
 **Answer: about the same, or slightly more.** The FIFO's `write()` is a zero-time `try_put` of the handle into an unbounded mailbox (uvm-core `uvm_tlm_fifos.svh`; IEEE 1800.2-2020 §12.2.8.3 defines the analysis FIFO as an unbounded `uvm_tlm_fifo` with a `write` interface). The subscriber's `get()` loop then does exactly the same work, later, in another process of the *same* simulation. The scheduler still executes one event at a time (IEEE 1800-2023 §4.5), so the work is moved, not shared out, and the mailbox and the extra process add a little bookkeeping. And because the FIFO stores the handle, a monitor that reuses its transaction object now corrupts every queued item.
 
 <SequenceDiagram
@@ -477,6 +498,8 @@ The visualizer below runs one analysis-port broadcast. **Before you press play, 
   ]}
 />
 
+</details>
+
 **When a FIFO is right.** Use an analysis FIFO when a subscriber must *wait for simulation time*, for example a checker that compares each request with a response that arrives cycles later: a function cannot wait, a `get()` loop can. Switch the visualizer above to its **Slow subscriber** view to see that case. A FIFO is a decoupling tool for time, never a speed tool. If one subscriber's `write()` is CPU-heavy, make that `write()` cheaper: that is hotspots 5 to 8.
 
 **Pitfall in reviews:** "the monitor is blocked while the scoreboard checks". It is blocked for CPU time only, never for simulation time: the next bus cycle is not missed, because simulated time does not advance during a function call.
@@ -489,18 +512,22 @@ The visualizer below runs one analysis-port broadcast. **Before you press play, 
 
 ```systemverilog
 // snippet: three ways to wait for ready inside a driver task
-// (a) Time-step poll: resumes every 1 ns, so ten times per 10 ns clock period.
+// (a) Time-step poll.
 while (!vif.ready) #1ns;
 
-// (b) Clocked poll: resumes at every rising edge until it sees ready = 1.
+// (b) Clocked poll.
 while (!vif.ready) @(posedge vif.clk);
 
-// (c) Event control with iff (IEEE 1800-2023 §9.4.2.3): the process resumes only
-//     at the rising edge where ready is 1.
+// (c) Event control with iff (IEEE 1800-2023 §9.4.2.3).
 @(posedge vif.clk iff vif.ready);
 ```
 
-**Predict:** `ready` rises just after edge 4. How many times does each form resume its process?
+**Predict:** the clock period is 10 ns, each form starts waiting just before rising edge 0 with `ready` at 0, and `ready` rises just after edge 4. How many times does each form resume its process?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
+(a) The time-step poll resumes every 1 ns, so about ten times per 10 ns clock period. (b) The clocked poll resumes at every rising edge until it sees `ready` = 1: six times, at edges 0 to 5. (c) The event control with `iff` resumes the process only at the rising edge where `ready` is 1: once, at edge 5.
 
 <TimingDiagram
   title="A clocked poll resumes at every edge; an iff event control resumes once"
@@ -519,6 +546,8 @@ while (!vif.ready) @(posedge vif.clk);
     { edge: 5, tone: "pass", label: "forms (b) and (c) resume and continue: ready = 1" }
   ]}
 />
+
+</details>
 
 Two cautions keep this honest. First, (b) and (c) are not identical: (b) does not wait at all if `ready` is already 1, while (c) always waits for at least one edge. Choose the behaviour you need first, then the cheaper way to write it. Second, `wait (vif.ready)` (§9.4.3) also resumes once, but when `ready` *changes*, which is not necessarily on a clock edge, so it is not a drop-in replacement for a clocked poll in a driver. In a real driver, read through a clocking block: `@(vif.cb iff vif.cb.ready);` ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)). How much CPU the saved resumptions are worth is tool-dependent; on a bench with many agents they add up. **In a profile,** polling shows as a driver or monitor task whose resumption or call count follows the clock or the time step rather than the transaction count (how a profiler reports process resumptions is tool-dependent).
 
@@ -546,7 +575,7 @@ One fast simulation is not the goal; a regression that finishes in time is. Five
 2. **Parallel jobs are bounded by the scarcest resource:** jobs = min(licences, cores, queue slots, memory ÷ memory per job). The licence count is usually the limit.
 3. **Estimate the wall-clock time.** For tests of similar length, wall time ≈ ⌈tests ÷ jobs⌉ × time per test. Worked example, with invented numbers: 400 tests of about 20 minutes each, 50 licences and 200 cores give 50 jobs, so ⌈400 ÷ 50⌉ = 8 rounds × 20 min ≈ 160 minutes. The cores do not help, because licences run out first. When test lengths vary, start the longest tests first.
 4. **Select tests by purpose.** A short smoke set on every commit, the full set nightly, and long or rare seeds weekly. Many tools can rank tests by the coverage each adds, to build a smaller set that reaches the same coverage (tool-dependent).
-5. **Fail fast, and debug in a rerun.** Stop runs that cannot pass: `+UVM_MAX_QUIT_COUNT` (G.2.6) ends a run after a number of errors, and `set_timeout` (F.7.3.3) bounds a hung one. Turn on waves, recording and higher verbosity only when you rerun the failing seed.
+5. **Fail fast, and debug in a rerun.** Stop runs that cannot pass: `+UVM_MAX_QUIT_COUNT` (G.2.6) ends a run after a number of errors, and `set_timeout` (F.7.3.3) bounds a hang in which simulated time still advances (a zero-time hang, which stops `$time`, needs the farm's CPU-time or wall-clock limit instead). Turn on waves, recording and higher verbosity only when you rerun the failing seed.
 
 <ArchitectureDiagram
   title="A regression flow that compiles once and runs many"
@@ -626,7 +655,7 @@ phase.drop_objection(this);`}
       { from: "fix", to: "remeas", style: "causal" },
       { from: "remeas", to: "gate", style: "causal" },
       { from: "gate", to: "meas", style: "causal", label: "yes" },
-      { from: "gate", to: "fix", style: "causal", label: "no: revert" }
+      { from: "gate", to: "fix", style: "causal", label: "no: revert, fix again" }
     ]}
   />
 </VisualRecap>
@@ -1039,7 +1068,7 @@ Two more uvm-core details (not in the standard): `read` records an audit entry w
 
 ### Expert: field automation versus hand-written methods
 
-The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13). Every `copy`, `compare`, `print`, `pack`, `unpack` and `record` then visits each registered field through a policy object (`uvm_copier`, `uvm_comparer` and so on, Clause 16), with a check of the field's flags for that operation. Hand-written `do_copy` and `do_compare` (§5.3.8.2, §5.3.9.2) are not an alternative path that bypasses this: `copy()` and `compare()` always call `do_execute_op` first and then the `do_` hook (§5.3.8.1, §16.6.4.1; uvm-core `uvm_copier.svh` `copy_object`, `uvm_comparer.svh` `compare_object`). They save time only when the macro path no longer does that operation. The standard itself notes that field macros may be less run-time efficient than direct `do_*` implementations (B.2.2, NOTE). The usual staff-level answer is: keep the macros for convenience; for item types a profile shows near the top, typically in high-rate scoreboards, either drop the field macros and hand-write `do_copy`, `do_compare` and `convert2string`, or keep the macros for printing with `UVM_NOCOPY | UVM_NOCOMPARE` on every field and hand-write `do_copy` and `do_compare`. The size of the gain is tool-dependent; claims of a fixed speed-up factor have no source.
+The `` `uvm_field_* `` macros implement `do_execute_op` (IEEE 1800.2-2020 B.2.1.1, §5.3.13). Every `copy`, `compare`, `print`, `pack`, `unpack` and `record` then visits each registered field through a policy object (`uvm_copier`, `uvm_comparer` and so on, Clause 16), with a check of the field's flags for that operation. Hand-written `do_copy` and `do_compare` (§5.3.8.2, §5.3.9.2) are not an alternative path that bypasses this: `copy()` and `compare()` always call `do_execute_op` first and then the `do_` hook (§5.3.8.1, §5.7.2.7, §16.6.4.1; uvm-core `uvm_copier.svh` `copy_object`, `uvm_comparer.svh` `compare_object`). They save time only when the macro path no longer does that operation. The standard itself notes that field macros may be less run-time efficient than direct `do_*` implementations (B.2.2, NOTE). The usual staff-level answer is: keep the macros for convenience; for item types a profile shows near the top, typically in high-rate scoreboards, either drop the field macros and hand-write `do_copy`, `do_compare` and `convert2string`, or keep the macros for printing with `UVM_NOCOPY | UVM_NOCOMPARE` on every field and hand-write `do_copy` and `do_compare`. The size of the gain is tool-dependent; claims of a fixed speed-up factor have no source.
 
 <SequenceDiagram
   title="What one copy() runs, in uvm-core 2020.3.1"
@@ -1143,7 +1172,7 @@ Start with the quiz, which covers all five objectives. Then do the kata and the 
     explanation: "Misconception: a FIFO adds parallelism. Analysis FIFOs decouple in simulated time, for subscribers that must wait for time; they add no parallelism. To cut CPU, make the work in write() cheaper."
   },
   {
-    question: "A profile shows uvm_resource_pool::lookup_name with 2,000,000 calls and uvm_is_match with 30,000,000 calls, both called (through a few levels) from my_driver::drive_item, in a test that drives 2,000,000 items. What is the cause, and what is the fix?",
+    question: "Illustrative numbers: a profile shows uvm_resource_pool::lookup_name with 2,000,000 calls and uvm_is_match with 30,000,000 calls, both called (through a few levels) from my_driver::drive_item, in a test that drives 2,000,000 items. What is the cause, and what is the fix?",
     objective: 2,
     answers: [
       { text: "A uvm_config_db::get in the driver on every item, scanning about 15 entries; read it once in build_phase.", correct: true, feedback: "Right. One lookup per item (2M) with 15 scope matches each (30M). The library time is caused by one line in the driver." },
@@ -1361,10 +1390,10 @@ The deck for this lesson covers the three clocks and the measurement protocol, r
 - IEEE 1800.2-2020:
   - §5.3.8.1–§5.3.8.2 (`copy`, `do_copy`), §5.3.9.1–§5.3.9.2 (`compare`, `do_compare`), §5.3.13 (`do_execute_op`), §6.3.3.2 (`uvm_report_enabled`), §6.3.3.3 (`uvm_report_info` and the other report methods);
   - §10.5.1.3.2 (`set_propagate_mode`), §10.5.1.3.3–§10.5.1.3.4 (`raise_objection`, `drop_objection`), §12.2.8.3 (`uvm_tlm_analysis_fifo`: unbounded, with a `write` interface), §12.2.10.1.4 (analysis port `write`);
-  - §13.1.7.13–§13.1.7.14 (`set_recording_enabled`, `get_recording_enabled`), §14.2.4.1 (`get_starting_phase`), §14.2.4.4 (`set_automatic_phase_objection` and its `forever` NOTE), §15.2.1.2.10 (`disable_auto_item_recording`), §16.6.4.1 (`copy_object`: `do_execute_op`, then `do_copy`), §18.4.7.1 (`include_coverage`);
+  - §13.1.7.13–§13.1.7.14 (`set_recording_enabled`, `get_recording_enabled`), §14.2.4.1 (`get_starting_phase`), §14.2.4.3 (`get_automatic_phase_objection`: raised immediately before `pre_start`, dropped after `post_start` or `kill`), §14.2.4.4 (`set_automatic_phase_objection` and its `forever` NOTE), §15.2.1.2.10 (`disable_auto_item_recording`), §16.6.4.1 (`copy_object`), §5.7.2.7 (`user_hook_enabled`: the `do_*` hook runs after `do_execute_op`), §18.4.7.1 (`include_coverage`);
   - Annex B.1.1.1 (`` `uvm_info ``), B.2.1.1 (field macros implement `do_execute_op`), B.2.2 (field macros and their efficiency NOTE), C.2.4.4.1 (`lookup_name`), C.4.2.2.2 (`uvm_config_db::get`), C.4.2.2.4 (`wait_modified`), F.3.3.1 (`uvm_is_match`), F.7.3.3 (`set_timeout`), G.2.1 (`+UVM_TESTNAME`), G.2.6 (`+UVM_MAX_QUIT_COUNT`), G.2.8 (`+uvm_set_config_int`).
 - uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/macros/uvm_message_defines.svh` (`` `uvm_report_begin ``), `src/base/uvm_report_object.svh` (`uvm_report`), `src/base/uvm_config_db_implementation.svh` (`get`), `src/base/uvm_resource_pool.svh` (`lookup_name`), `src/base/uvm_resource_base.svh` and `uvm_resource.svh` (auditing), `src/base/uvm_objection.svh` (`m_raise`, `m_drop`, `m_execute_scheduled_forks`, `m_forked_drain`), `src/tlm1/uvm_tlm_fifos.svh` (analysis FIFO `write` is `try_put`), `src/base/uvm_copier.svh` (`copy_object`) and `src/base/uvm_comparer.svh` (`compare_object`): the macro walk, then the `do_` hook, `src/base/uvm_factory.svh` (`create_object_by_type`), `src/base/uvm_component.svh` (`recording_detail`, `m_begin_tr`), `src/seq/uvm_sequencer_base.svh` (automatic item recording). `+UVM_OBJECTION_TRACE` and `+UVM_CONFIG_DB_TRACE` are uvm-core only.
-- IEEE 1800-2023: §3.14.2.2 (`timeunit`), §3.14.2.3 (time-unit precedence; mixing declared and undeclared units is an error), §4.4.2.3 (Inactive region and `#0`), §4.5 (the scheduling algorithm), §8.12 (assignment copies handles), §9.4.2.3 (`iff` event control), §9.4.3 (`wait`), §18.5.9 (`solve…before`), §19.8 (coverage methods, Table 19-5), §20.3 (simulation time functions), §21.6 (`$test$plusargs`, `$value$plusargs`), §21.7 and §21.7.1.2 (VCD, `$dumpvars`).
+- IEEE 1800-2023: §3.14.2.2 (`timeunit`), §3.14.2.3 (time-unit precedence; mixing declared and undeclared units is an error), §4.4.2.3 (Inactive region and `#0`), §4.5 (the scheduling algorithm), §8.12 (assignment copies handles), §9.4.2.3 (`iff` event control), §9.4.3 (`wait`), §18.5.9 (`solve…before`), §19.5 (coverpoint `iff` guard), §19.8 (coverage methods, Table 19-5), §20.3 (simulation time functions), §21.6 (`$test$plusargs`, `$value$plusargs`), §21.7 and §21.7.1.2 (VCD, `$dumpvars`).
 - Simulator profilers, seed options, recording and visibility switches: your simulator's user guide (tool-dependent; flag names vary by tool and version).
 
 **Prerequisites:** [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, phases) and [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) (what a scoreboard stores). Also useful: [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index), [I-UVM-2B: TLM Connections and Analysis Fabric](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) and [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).

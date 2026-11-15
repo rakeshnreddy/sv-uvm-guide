@@ -17,18 +17,18 @@ sources:
 
 - **What it is:** AHB (the Advanced High-performance Bus, in its AHB-Lite and AHB5 versions) is a **pipelined** bus. Every transfer has an **address phase**, in which the master says what it wants, and a **data phase**, in which the data moves. The next transfer's address phase happens during the current transfer's data phase (Arm IHI0033B.b §1.3, §3.1).
 - **Why it matters:** Every AHB driver, monitor and checker you write in [B-AHB-2](/curriculum/T3_Advanced/B-AHB-2_AHB_Pitfalls_and_Deadlocks/index) and [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) depends on one skill: knowing at which clock edge each phase starts and ends. Get it wrong by one edge and your monitor pairs data with the wrong address, or your checker flags legal traffic.
-- **The Analogy:** A waiter takes the next table's order (the address phase) while the kitchen plates the current dish (the data phase). If the kitchen is slow (HREADY low), the waiter stands at the next table holding that order until the kitchen is ready. *Where it breaks:* a waiter with no order (IDLE) or on a pause (BUSY) may switch to a real order while waiting, and a held real order may be dropped only after the kitchen's first ERROR cycle. And on AHB the "kitchen" is one shared HREADY signal, so a slow slave makes everything on that bus wait, not just one table.
+- **The Analogy:** A waiter takes the next table's order (the address phase) while the kitchen plates the current dish (the data phase). If the kitchen is slow (HREADY low), the waiter has to work out what to do with the next order; the Wait states section shows what happens. *Where it breaks:* a waiter with no order (IDLE) or on a pause (BUSY) may switch to a real order while waiting, and a held real order may be dropped only after the kitchen's first ERROR cycle. And on AHB the "kitchen" is one shared HREADY signal, so a slow slave makes everything on that bus wait, not just one table.
 
-**The analogy, mapped.** Each row pairs a restaurant picture with the AHB term this page teaches, and says where the picture stops being true.
+**The analogy, mapped.** Each row pairs a restaurant picture with the AHB term this page teaches, and says where the picture stops being true; every term is defined in Build Your Mental Model.
 
 | In the restaurant | On AHB | Where the analogy breaks |
 |---|---|---|
 | The waiter takes the next table's order | Address phase: the master drives HADDR and control | — |
 | The kitchen plates the current dish | Data phase: HWDATA or HRDATA moves | — |
-| The kitchen is slow; the waiter stands holding the next order | HREADY low: a wait state (the Wait states section shows what it holds) | One HREADY is shared, so a slow slave stalls everything on that bus, not one table |
+| The kitchen is slow | HREADY low: a wait state (the Wait states section shows what it holds) | One HREADY is shared, so a slow slave stalls everything on that bus, not one table |
 | A waiter with no order | IDLE | While waiting, an IDLE may change to a real order (NONSEQ) |
-| A waiter on a pause | BUSY, inside a burst | While waiting, a BUSY may change to SEQ (in an undefined-length INCR, to any type) |
-| The kitchen reports a problem | ERROR, which always takes two cycles | A held real order may be dropped (replaced by IDLE) only after the first ERROR cycle |
+| A waiter on a pause | BUSY, inside a burst | While waiting, a pause may end and the next beat start (in a burst of undefined length, anything may follow) |
+| The kitchen reports a problem | ERROR, which always takes two cycles | A held real order may be dropped only after the first ERROR cycle (the Responses section shows how) |
 
 **You will be able to:**
 1. Predict, cycle by cycle, the address and data phases of back-to-back transfers, and what HREADY low does to both.
@@ -50,6 +50,7 @@ sources:
 - Every AHB signal name starts with H. A name ending in `x`, such as HSELx, means "one per slave": HSEL_S1, HSEL_S2 and so on (Table 2-4).
 - **Address and control** means the address bus HADDR plus the signals that describe the transfer, such as its type (HTRANS), direction (HWRITE) and size (HSIZE). The full list is in the signal table below (Table 2-2).
 - **HTRANS** says what each address phase is: **IDLE** (no transfer), **NONSEQ** (a new transfer, or the first beat of a burst), **SEQ** (a later beat of the same burst) or **BUSY** (the master pausing inside a burst). The full rules are under [Transfer types](#transfer-types-idle-busy-nonseq-seq).
+- **HBURST** names the burst type: **SINGLE** (one transfer); **INCR**, an *undefined-length* incrementing burst that the master ends whenever it chooses; **INCR4/8/16**, fixed-length bursts of 4, 8 or 16 beats whose address climbs; and **WRAP4/8/16**, fixed-length bursts whose address wraps inside a block. The full rules are under [Bursts](#bursts-hburst-hsize-and-beat-addresses).
 
 ### Where AHB sits: master, decoder, multiplexor
 
@@ -128,7 +129,7 @@ The data buses are shown 32 bits wide; the protocol allows 8 to 1024 bits and re
 
 The **address phase** lasts one cycle, unless the previous transfer extends it; the **data phase** "might require several HCLK cycles" (§3.1). A slave cannot stretch the address phase, so every slave must be able to sample the address in one cycle (§1.3).
 
-**Predict first.** Number the columns of the waveform inside the reveal 0 to 4; column k ends at edge k, where every value in it is sampled. Transfer A (a single write) is followed by transfer B, and HREADY stays high throughout. Transfer A's address phase is column 1, so A is accepted at edge 1. At which edge is A's write data sampled: edge 1 or edge 2?
+**Predict first.** Number the clock cycles 0 to 4; cycle k ends at rising edge k, where every value in it is sampled. Transfer A (a single write) is followed by transfer B, and HREADY stays high throughout. Transfer A's address phase is column 1, so A is accepted at edge 1. At which edge is A's write data sampled: edge 1 or edge 2?
 
 <details>
 <summary>Check your prediction</summary>
@@ -151,9 +152,9 @@ The **address phase** lasts one cycle, unless the previous transfer extends it; 
 
 </details>
 
-**Misconception: "a transfer's address and data happen in the same cycle."** They never do. A transfer's data is always at least one edge after its address was accepted. If you read the waveform by looking down a single column, you pair B's address with A's data. Read it diagonally instead: the address **accepted** at edge k (HREADY high at edge k) belongs with the data at the next edge after k that has HREADY high.
+**Misconception: "a transfer's address and data happen in the same cycle."** They never do. A transfer's data is always at least one edge after its address was accepted. If you read the waveform in the reveal above by looking down a single column, you pair B's address with A's data. Read it diagonally instead: the address **accepted** at edge k (HREADY high at edge k) belongs with the data at the next edge after k that has HREADY high.
 
-### Wait states: HREADY low holds both phases
+### Wait states: what HREADY low holds
 
 A slave that needs more time drives its HREADYOUT low; the interconnect turns that into HREADY low. Each cycle that ends with HREADY low while HRESP is OKAY is a **wait state**, and the data phase is extended by one cycle (§3.1, §5.1.2). The only other cycle that ends with HREADY low is the first cycle of an ERROR response, covered under [Responses](#responses-okay-wait-states-and-the-two-cycle-error).
 
@@ -186,12 +187,10 @@ The rules that follow from this:
 
 - **When data moves.** Write data is sampled, or read data captured, only at an edge where HREADY is high. The master holds HWDATA stable for the whole data phase (§6.1.1). A slave only has to drive valid HRDATA in the final cycle (§6.1.2).
 - **HREADYOUT is not HREADY.** HREADYOUT is one slave's output. HREADY is the multiplexed result that everyone obeys. A slave that watches only its own HREADYOUT does not know when *another* slave's transfer has finished.
-- **Wait states are bounded by design.** "In general, every slave must have a predetermined maximum number of wait states" so that worst-case latency can be calculated (§5.1.2 Note). IHI0033B.b also recommends no more than 16, except for devices such as a serial boot ROM; IHI0033C keeps the predetermined maximum but drops the number. Checking a bound is integration policy, not a protocol rule, as B-AHB-2 explains.
-- **The master holds what is waiting.** Once a NONSEQ or SEQ is on the bus during a wait, the master keeps HTRANS and the address until HREADY is high. The exceptions involve IDLE, BUSY and the ERROR response, and are listed in [Push Further](#expert-the-complete-waited-transfer-rules).
 
 <ArchitectureDiagram
   title="HREADYOUT is one slave's output; HREADY is what everyone obeys"
-  caption="A snapshot during a wait state. Slave 2 owns the data phase and drives HREADYOUT = 0; Slave 1 drives HREADYOUT = 1. The multiplexor routes only the data-phase slave's HREADYOUT, so HREADY = 0 reaches the master and both slaves (Tables 2-3 and 2-5). Slave 1 must obey HREADY = 0, not its own HREADYOUT = 1. Solid arrows are bus signals."
+  caption="A snapshot during a wait state. Slave 2 owns the data phase and drives HREADYOUT = 0; Slave 1 drives HREADYOUT = 1. The multiplexor routes only the data-phase slave's HREADYOUT, so HREADY = 0 reaches the master and both slaves (Tables 2-3 and 2-5). Slave 1 must obey HREADY = 0, not its own HREADYOUT = 1. The bottom-right box is the HREADY input of the same two slaves, not another block. Solid arrows are bus signals."
   cellWidth={150}
   spreadAnchors={true}
   nodes={[
@@ -199,7 +198,7 @@ The rules that follow from this:
     { id: "s2", label: "Slave 2", sublabel: "HREADYOUT = 0", kind: "generic", col: 1, row: 0, state: "active", badge: "data phase" },
     { id: "mux", label: "Multiplexor", sublabel: "routes Slave 2", kind: "generic", col: 0, row: 1, colSpan: 2 },
     { id: "m", label: "Master", sublabel: "sees HREADY = 0", kind: "generic", col: 0, row: 2 },
-    { id: "all", label: "Slave 1, Slave 2", sublabel: "see HREADY = 0", kind: "generic", col: 1, row: 2 }
+    { id: "all", label: "HREADY inputs", sublabel: "Slave 1, Slave 2 see 0", kind: "generic", col: 1, row: 2 }
   ]}
   edges={[
     { from: "s1", to: "mux", style: "data", label: "HREADYOUT" },
@@ -209,9 +208,12 @@ The rules that follow from this:
   ]}
 />
 
+- **Wait states are bounded by design.** "In general, every slave must have a predetermined maximum number of wait states" so that worst-case latency can be calculated (§5.1.2 Note). IHI0033B.b also recommends no more than 16, except for devices such as a serial boot ROM; IHI0033C keeps the predetermined maximum but drops the number. Checking a bound is integration policy, not a protocol rule, as B-AHB-2 explains.
+- **The master holds what is waiting.** Once a NONSEQ or SEQ is on the bus during a wait, the master keeps HTRANS and the address until HREADY is high. The exceptions involve IDLE, BUSY and the ERROR response, and are listed in [Push Further](#expert-the-complete-waited-transfer-rules).
+
 ### When a slave samples: HSELx and HREADY
 
-Back to the question from the first section. HSELx says *which* slave the address phase is for. HREADY says *whether the bus is moving*. A slave "must only sample the HSELx, address, and control signals when HREADY is HIGH, indicating that the current transfer is completing" (§4.2). The decoder is combinational, so HSELx follows HADDR immediately, including while HREADY is low; "it is possible that HSELx is asserted when HREADY is LOW, but the selected slave has changed by the time the current transfer completes" (§4.2).
+Back to the question from the first section. HSELx says *which* slave the address phase is for. HREADY says *whether the bus is moving*.
 
 **Predict first.** In the waveform below, slave S2 is slow and holds HREADY low for two cycles. At edge 3, HSEL_S1 is 1 and HTRANS is NONSEQ. Should slave S1 register transfer B at edge 3?
 
@@ -251,6 +253,8 @@ Back to the question from the first section. HSELx says *which* slave the addres
     { edge: 5, tone: "pass", label: "B completes" }
   ]}
 />
+
+A slave "must only sample the HSELx, address, and control signals when HREADY is HIGH, indicating that the current transfer is completing" (§4.2). The decoder is combinational, so HSELx follows HADDR immediately, including while HREADY is low; "it is possible that HSELx is asserted when HREADY is LOW, but the selected slave has changed by the time the current transfer completes" (§4.2).
 
 **Debrief.** No. At edge 3 the bus is still busy with A, so S1 waits for edge 4. A slave that sampled at edge 3 would start B a cycle early, while S2 still owns the data phase, and would count B twice (once at edge 3, once at edge 4). Notice also that HSEL_S2 was high at edge 2 for an IDLE that S2 never acts on: the master may change an IDLE's address and type while it waits (§3.6.1, §3.6.2).
 
@@ -498,7 +502,7 @@ What the rule covers:
 <figure className="not-prose my-6">
 <svg viewBox="0 0 352 220" role="img" aria-labelledby="ahb1-1kb-title ahb1-1kb-desc" style={{ width: "100%", maxWidth: 560, height: "auto" }}>
   <title id="ahb1-1kb-title">Three ways to send words from 0x3F8 near the 1KB boundary at 0x400</title>
-  <desc id="ahb1-1kb-desc">Word addresses 0x3F0 to 0x40C, with the 1KB boundary between 0x3FC (Slave 1) and 0x400 (Slave 2). Row 1: INCR4 from 0x3F8 has beats at 0x3F8, 0x3FC, 0x400 and 0x404; beats 2 and 3 cross the boundary, so it is illegal. Row 2: the legal split, burst A at 0x3F8 and 0x3FC, then a new burst B starting with NONSEQ at 0x400 and continuing at 0x404. Row 3: WRAP4 from 0x3F8 has beats 0x3F8, 0x3FC, 0x3F0, 0x3F4, all inside the block 0x3F0 to 0x3FF, so it is legal.</desc>
+  <desc id="ahb1-1kb-desc">Word addresses 0x3F0 to 0x40C, with the 1KB boundary between 0x3FC (Slave 1) and 0x400 (Slave 2). Row 1: INCR4 from 0x3F8 has beats at 0x3F8, 0x3FC, 0x400 and 0x404; beats 2 and 3 cross the boundary, so it is illegal. Row 2: one legal split, burst A at 0x3F8 and 0x3FC, then a new burst B starting with NONSEQ at 0x400 and continuing at 0x404. Row 3: WRAP4 from 0x3F8 has beats 0x3F8, 0x3FC, 0x3F0, 0x3F4, all inside the block 0x3F0 to 0x3FF, so it is legal.</desc>
   <g fill="currentColor" fontSize="11" fontWeight="600" textAnchor="middle">
     <text x="96" y="14">Slave 1 region</text>
     <text x="256" y="14">Slave 2 region</text>
@@ -565,7 +569,7 @@ What the rule covers:
   </g>
   <line x1="176" y1="20" x2="176" y2="200" stroke="currentColor" strokeWidth="2" strokeDasharray="6 3" />
 </svg>
-<figcaption className="mt-2 text-sm text-muted-foreground">Each box is one word address, using this page's example map (Slave 1 below 0x400, Slave 2 from 0x400); the number or name in a box is the beat. Row 1: the INCR4's beats 2 and 3 (✗) cross into Slave 2's region, so the master must not start it (§3.5). Row 2: the legal way to send the same four words, an undefined-length INCR (A0, A1) that stops at 0x3FC, then a new burst whose first beat B0 is a NONSEQ at 0x400. Row 3: a WRAP4 from 0x3F8 stays inside its 16-byte block 0x3F0 to 0x3FF and never meets the boundary.</figcaption>
+<figcaption className="mt-2 text-sm text-muted-foreground">Each box is one word address, using this page's example map (Slave 1 below 0x400, Slave 2 from 0x400); the number or name in a box is the beat. Dashed boxes are addresses that row's burst does not send; the heavy outline marks the beats that cross the boundary. Row 1: the INCR4's beats 2 and 3 (✗) cross into Slave 2's region, so the master must not start it (§3.5). Row 2: one legal way to send the same four words, an undefined-length INCR (A0, A1) that stops at 0x3FC (two SINGLE transfers for A0 and A1 also work), then a new burst whose first beat B0 is a NONSEQ at 0x400. Row 3: a WRAP4 from 0x3F8 stays inside its 16-byte block 0x3F0 to 0x3FF and never meets the boundary; it sends 0x3F0 and 0x3F4 instead of 0x400 and 0x404, so it moves different words, not the same four.</figcaption>
 </figure>
 
 **Misconception: "AHB INCR bursts have no boundary rule."** They do: 1KB. The 4KB rule you may know belongs to AXI (IHI0022E §A3.4.1, taught in [B-AXI-2](/curriculum/T3_Advanced/B-AXI-2_AXI_Burst_Math/index)). Since a legal AHB incrementing burst never crosses 1KB, it never crosses 4KB either, which is why an AHB-to-AXI bridge never splits a burst for 4KB reasons ([B-AMBA-F1](/curriculum/T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index)).
@@ -586,13 +590,9 @@ The slave reports the outcome on HRESP, and the *combination* of HRESP and HREAD
 | **HREADYOUT = 0** | transfer pending (wait state) | ERROR response, first cycle |
 | **HREADYOUT = 1** | transfer completed successfully | ERROR response, second cycle |
 
-**OKAY** can finish in one cycle (§5.1.1). **ERROR** always takes two: first HRESP high with HREADYOUT low, then HRESP high with HREADYOUT high (§5.1.3). Why two? "By the time a slave starts to issue an ERROR response then the address for the following transfer has already been broadcast onto the bus." The extra cycle gives the master time to see the error and cancel that next transfer by driving IDLE (§5.1.3). If the slave needs longer to decide, it inserts ordinary OKAY wait states *before* the two ERROR cycles (§5.1.3).
+**OKAY** can finish in one cycle (§5.1.1). **ERROR** always takes two: first HRESP high with HREADYOUT low, then HRESP high with HREADYOUT high (§5.1.3). If the slave needs longer to decide, it inserts ordinary OKAY wait states *before* the two ERROR cycles (§5.1.3).
 
-After an ERROR, the master chooses (§3.5.2):
-- **cancel**: drive HTRANS to IDLE in the second ERROR cycle, so the access already on the address bus is never accepted; it does not have to rebuild the burst later;
-- **continue**: keep the next beat on the bus unchanged; it is accepted at the second ERROR cycle's edge, where HREADY is high.
-
-**Predict first.** Below, an INCR4 write starts at 0x40 and the slave errors on the second beat. SEQ 0x48 has been on the address bus since cycle 3, right after 0x44 was accepted at edge 2. The slave inserts one OKAY wait state (edge 3); the first ERROR cycle ends at edge 4 and the second at edge 5. If the master cancels, what is on HTRANS in the cycle that ends at edge 5?
+**Predict first.** Below, an INCR4 write starts at 0x40 and the slave errors on the second beat. SEQ 0x48 has been on the address bus since cycle 3, right after 0x44 was accepted at edge 2. The slave inserts one OKAY wait state (edge 3); the first ERROR cycle ends at edge 4 and the second at edge 5. If the master does not want SEQ 0x48 to be accepted, what must it drive on HTRANS in the cycle that ends at edge 5, and why does it still have time to do so?
 
 <details>
 <summary>Check your prediction</summary>
@@ -616,6 +616,12 @@ After an ERROR, the master chooses (§3.5.2):
     { edge: 6, tone: "sample", label: "new NONSEQ 0x80 accepted" }
   ]}
 />
+
+Why two? "By the time a slave starts to issue an ERROR response then the address for the following transfer has already been broadcast onto the bus." The extra cycle gives the master time to see the error and cancel that next transfer by driving IDLE (§5.1.3).
+
+After an ERROR, the master chooses (§3.5.2):
+- **cancel**: drive HTRANS to IDLE in the second ERROR cycle, so the access already on the address bus is never accepted; it does not have to rebuild the burst later;
+- **continue**: keep the next beat on the bus unchanged; it is accepted at the second ERROR cycle's edge, where HREADY is high.
 
 **Debrief.** IDLE. The master learned about the error at edge 4 and had one cycle to replace SEQ 0x48 with IDLE; that is the cycle the two-cycle response buys. A master that continues would leave SEQ 0x48 there instead, and it would be accepted at edge 5. Either choice is legal; a master that cancels must use IDLE, not a new NONSEQ, during the ERROR response (§3.5.2).
 
@@ -653,7 +659,7 @@ A master asserts **HMASTLOCK** to say "this sequence of transfers is indivisible
 
 <TimingDiagram
   title="A locked read-then-write sequence"
-  caption="After IHI0033B.b Figure 3-7. HMASTLOCK is high in the address phases of the locked read of A (edge 1) and the locked write of A (edge 2), and low in the IDLE that follows (edge 3). The read data D(A) returns at edge 2 and the write data D(A) at edge 3. The shaded window runs from edge 1, after which the bus is locked, to edge 3, after which it is unlocked (IHI0033C §3.3, explained below the figure)."
+  caption="After IHI0033B.b Figure 3-7. HMASTLOCK is high in the address phases of the locked read of A (edge 1) and the locked write of A (edge 2), and low in the IDLE that follows (edge 3). The read data D(A) returns at edge 2 and the write data D(A) at edge 3. The shaded window runs from edge 1, after which the bus is locked (HMASTLOCK, HSEL if present, and HREADY all high), to edge 3, after which it is unlocked (IHI0033C §3.3, explained below the figure)."
   edges={5}
   signals={[
     { name: "HCLK", kind: "clock" },
@@ -796,7 +802,7 @@ end`}
   inTestbench="The monitor closes, then opens, at every HREADY-high edge (the run_phase loop above); the driver holds each NONSEQ or SEQ on the bus until an HREADY-high edge."
 >
   <svg viewBox="0 0 348 158" role="img" aria-label="Transfer A's address phase ends at edge 1 and its data phase lasts two cycles because HREADY is 0 at edge 2, ending at edge 3. Transfer B's address phase is held over the same two cycles and is accepted at edge 3; B's data phase ends at edge 4. Each address pairs with the data at the next edge where HREADY is 1." style={{ width: "100%", maxWidth: 420, height: "auto" }}>
-    <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <g fill="currentColor" fontSize="11" textAnchor="middle">
       <text x="126" y="12">edge 1</text>
       <text x="192" y="12">edge 2</text>
       <text x="258" y="12">edge 3</text>
@@ -819,7 +825,7 @@ end`}
       <rect x="128" y="72" width="128" height="28" rx="4" />
       <rect x="260" y="72" width="62" height="28" rx="4" />
     </g>
-    <g fill="currentColor" fontSize="10" textAnchor="middle">
+    <g fill="currentColor" fontSize="11" textAnchor="middle">
       <text x="93" y="52">A addr</text>
       <text x="192" y="52">A data (1 wait)</text>
       <text x="192" y="90">B addr (held)</text>
@@ -1013,7 +1019,7 @@ HSIZE must not exceed the bus width (§3.4 Note): on a 32-bit bus, only byte, ha
 
 AHB5 capabilities are declared as properties, and a property that is not declared is False (IHI0033B.b §1.2). When you connect two components, check each property pair: some mismatches are harmless and some are not. IHI0033C gives interoperability tables for its new properties. For example, a manager with write strobes can drive a subordinate without them only if it never makes sparse writes, that is, writes that leave some byte lanes of a beat unwritten (IHI0033C §3.5.3, Table 3-3). Stable_Between_Clock is worth knowing for checkers: "stable" in AHB means the same value *at* successive rising edges in an extended transfer, and a signal may glitch between edges unless this property is True (§7.1.1). An SVA `$stable` check therefore matches the protocol meaning; glitch freedom between edges is not something a cycle-based checker can see.
 
-IHI0033C (2021) keeps every rule taught on this page and adds, among other things (IHI0033C §1.2, Appendix B Table B-3):
+IHI0033C (2021) keeps every timing rule taught on this page; its changes include, among other things (IHI0033C §1.2, Appendix B Table B-3):
 - signal width properties, such as ADDR_WIDTH (HADDR was fixed at 32 bits in issues A and B);
 - write strobes (§3.5) and interface parity protection (Chapter 12);
 - a signal validity chapter: HTRANS, HADDR, HSEL, HMASTLOCK, HREADY, HREADYOUT and HRESP must always be valid, while HBURST, HPROT, HSIZE and HWRITE must be valid only when HTRANS is not IDLE (§8.2);
@@ -1036,9 +1042,9 @@ Answer each one before you open the feedback.
   title="Interview: why a wait delays the next address"
   question="The slave serving transfer A inserts one wait state. Transfer B goes to a different, idle slave. Why is B still delayed?"
   options={[
-    { text: "Because B's slave is also selected during A's data phase.", isCorrect: false, feedback: "HSELx only says which slave the address phase is for. The delay comes from HREADY, not from selection." },
+    { text: "Because B's slave is also selected during A's data phase, and a slave cannot take a new address while its HSELx is still high from the cycle before.", isCorrect: false, feedback: "HSELx only says which slave the address phase is for. The delay comes from HREADY, not from selection." },
     { text: "Because there is one HREADY. Every slave samples address and control only when HREADY is high, so B's address phase is extended until A's data phase completes.", isCorrect: true, feedback: "Correct (IHI0033B.b §3.1, §4.2, Figure 3-5). The delay is built into this master's single pipeline. A multi-layer interconnect (outside this specification, §4.1) lets other masters reach other slaves in parallel, but this master still waits." },
-    { text: "It is not delayed: B's address is accepted on time and only B's data waits.", isCorrect: false, feedback: "That is the classic misconception. The wait holds both A's data phase and B's address phase (§3.1)." },
+    { text: "It is not delayed: B's address is accepted on time and only B's data waits, because the wait state belongs to A's slave and B's slave is idle.", isCorrect: false, feedback: "That is the classic misconception. The wait holds both A's data phase and B's address phase (§3.1)." },
     { text: "Because the master must insert a BUSY after every wait state.", isCorrect: false, feedback: "BUSY is the master pausing inside a burst; it has nothing to do with slave wait states (§3.2)." }
   ]}
 />
@@ -1047,9 +1053,9 @@ Answer each one before you open the feedback.
   title="Interview: why 1KB"
   question="Why does AHB forbid incrementing bursts from crossing a 1KB boundary, and why are wrapping bursts not covered by the rule?"
   options={[
-    { text: "Because slave address regions are at least 1KB and start on 1KB boundaries, so an incrementing burst that stays inside 1KB never changes slaves mid-burst. A WRAP burst never leaves its own beats × size block.", isCorrect: true, feedback: "Correct (IHI0033B.b §3.5, §4.2). Add the WRAP16 × 1024-bit corner case for extra credit: its 2KB block spans two 1KB regions." },
-    { text: "Because AHB addresses are only 10 bits wide.", isCorrect: false, feedback: "HADDR is 32 bits in IHI0033B.b (Table 2-2). The 1KB comes from the minimum slave region (§4.2)." },
+    { text: "Because AHB addresses are only 10 bits wide, so an incrementing burst that passed 0x3FF would roll over to 0x000 of the same slave, while a WRAP burst rolls over by design.", isCorrect: false, feedback: "HADDR is 32 bits in IHI0033B.b (Table 2-2). The 1KB comes from the minimum slave region (§4.2)." },
     { text: "To match the AXI 4KB page size.", isCorrect: false, feedback: "The AXI rule is 4KB (IHI0022E §A3.4.1). The AHB rule is about decode boundaries, not pages." },
+    { text: "Because slave address regions are at least 1KB and start on 1KB boundaries, so an incrementing burst that stays inside 1KB never changes slaves mid-burst. A WRAP burst never leaves its own beats × size block.", isCorrect: true, feedback: "Correct (IHI0033B.b §3.5, §4.2). Add the WRAP16 × 1024-bit corner case for extra credit: its 2KB block spans two 1KB regions." },
     { text: "Because a wrapping burst is limited to 16 beats.", isCorrect: false, feedback: "Incrementing fixed bursts are limited to 16 beats too, and undefined INCR has no limit. The exemption comes from the wrap block, not from beat counts." }
   ]}
 />
@@ -1058,9 +1064,9 @@ Answer each one before you open the feedback.
   title="Interview: why ERROR takes two cycles"
   question="OKAY can complete in one cycle. Why does ERROR need two?"
   options={[
-    { text: "So the slave has time to compute the error code.", isCorrect: false, feedback: "AHB has no error code, and a slow slave inserts OKAY wait states before the ERROR instead (IHI0033B.b §5.1.3)." },
+    { text: "So the slave has a second cycle to compute the error code and drive it on HRESP after it has decided that the transfer failed.", isCorrect: false, feedback: "AHB has no error code, and a slow slave inserts OKAY wait states before the ERROR instead (IHI0033B.b §5.1.3)." },
     { text: "So the master can retry the failed transfer automatically.", isCorrect: false, feedback: "AHB5 and AHB-Lite have no retry response; HRESP is only OKAY or ERROR (Table 5-1)." },
-    { text: "Because HRESP must be registered by the interconnect.", isCorrect: false, feedback: "Registering is an implementation choice. The reason is the pipeline: the next address is already broadcast (§5.1.3)." },
+    { text: "Because HRESP must be registered by the interconnect before the multiplexor can route it back to the master, which costs one extra cycle.", isCorrect: false, feedback: "Registering is an implementation choice. The reason is the pipeline: the next address is already broadcast (§5.1.3)." },
     { text: "Because the next transfer's address is already on the bus when the error starts. The first cycle (HREADY low) holds that address phase, giving the master one cycle to replace it with IDLE.", isCorrect: true, feedback: "Correct (§5.1.3, §3.5.2). The master may also choose to continue, which is equally legal." }
   ]}
 />
@@ -1069,10 +1075,10 @@ Answer each one before you open the feedback.
   title="Interview: a slave that ignores HREADY"
   question="A new slave registers HSELx, HADDR and HTRANS on every rising edge, without looking at HREADY. In which system does it fail?"
   options={[
-    { text: "Only in multi-master systems.", isCorrect: false, feedback: "A single master is enough: any other slave's wait state exposes it (IHI0033B.b §4.2)." },
+    { text: "Only in multi-master systems, because only an arbiter can hold HREADY low while a different master's address is waiting.", isCorrect: false, feedback: "A single master is enough: any other slave's wait state exposes it (IHI0033B.b §4.2)." },
     { text: "Never, because the decoder only selects it for its own transfers.", isCorrect: false, feedback: "HSELx is combinational and can be high while HREADY is low, for an address phase that has not been accepted yet (§4.2)." },
     { text: "Whenever another slave inserts wait states while this slave's address phase is waiting: it starts the transfer early, and samples it again at every waited edge.", isCorrect: true, feedback: "Correct (§4.2). It may act on a held transfer twice, or on an IDLE whose address later changes. The fix is to sample only when HREADY is high." },
-    { text: "Only for burst transfers.", isCorrect: false, feedback: "Single transfers are affected the same way; the issue is waited address phases (§3.1, §4.2)." }
+    { text: "Only for burst transfers, because a SEQ beat is the only kind of address phase that can be waiting while another slave's data phase is still running.", isCorrect: false, feedback: "Single transfers are affected the same way; the issue is waited address phases (§3.1, §4.2)." }
   ]}
 />
 

@@ -41,11 +41,13 @@ This page also assumes [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expe
 
 **How to read this page.** The core path is the first three sections: the problem PSS solves at SoC level, the picture of one scenario library with a realization per platform, and how the model grows from block to SoC. Practitioner depth follows: what each platform runs and where checking lives, and which SoC scenarios belong in PSS. Make It Work shows one complete SoC scenario model and its generated output, and Push Further holds the expert layer.
 
+Section numbers on this page (§) are from **Accellera PSS 3.0** (August 2024) unless they name another standard.
+
 **Words this page uses.** Each is taught in full in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index); here is one line each.
 - **Use case:** a system-level behaviour the chip must support end to end, such as "copy a buffer by DMA and interrupt the CPU when done".
 - **PSS model:** a description of *what* a scenario must do, independent of the platform it runs on. Its **actions** are test operations (an **atomic** action does one thing; a **compound** action contains an **activity**, the ordered set of actions it runs). A **resource** is hardware an action holds for its whole execution, such as a DMA channel; resources live in a **pool** sized to the number the hardware has, and `bind` makes a pool available to a component's actions. An action **claims** a resource with `lock` (exclusive) or `share`, and each resource in a pool has a built-in number, `instance_id` (§5.2.2). In an activity, `parallel` starts its branches together; `schedule` lets the tool choose any legal order or overlap.
 - **PSS tool:** the program that reads the model, picks legal values and a legal schedule (it **solves** the scenario) and **generates** test code for a **target**: SystemVerilog for a UVM bench, C for a processor.
-- **Realization layer:** the hand-written code that performs each action on each platform: the `exec` **templates** of each action (code text the tool pastes into the generated test), plus the UVM sequences or C functions they call. In a portable model, each platform family's templates sit in their own **package** (a named group of definitions, §21.1) that adds them to existing actions with `extend action` (§20.2). This is the one piece of syntax on this page that E-PSS-1 does not show.
+- **Realization layer:** the hand-written code that performs each action on each platform: the `exec` **templates** of each action (code text the tool pastes into the generated test), plus the UVM sequences or C functions they call. In a portable model, each platform family's templates sit in their own **package** (a named group of definitions, §21.1) that adds them to existing actions with `extend action` (§20.2). E-PSS-1 introduces these realization packages in [its vocabulary section](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#the-vocabulary-in-one-small-model); this page uses the same pattern for the DMA subsystem.
 - **Hardware-abstraction layer (HAL) and driver:** the C functions firmware uses to program a block, such as `dma_copy()`. At SoC level they are usually the product's own driver code.
 - **Bare metal:** C code that runs directly on the chip's processor with no operating system. **Post-silicon** (or silicon validation) means tests run on the manufactured chip in the lab.
 - **Executor:** in PSS 3.0, the agent that actually executes an action's code at run time: a processor core, or a bus-functional model or testbench agent that the tool can drive (§24.6). It is the main PSS idea this page adds to E-PSS-1, because it only matters once a scenario spans a whole chip (Push Further also introduces address spaces and registers).
@@ -77,8 +79,6 @@ Here is where most of those words sit in the model this page builds in Make It W
   ]}
 />
 
-Section numbers below (§) are from **Accellera PSS 3.0** (August 2024) unless they name another standard.
-
 ### The problem: one use case, rewritten at every layer
 
 Follow one use case up the test layers of the [SoC strategy](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): "DMA channel copies a block from SRAM to DDR while other traffic loads DDR; the completion interrupt reaches the CPU; the copy is checked." Without PSS, it is written like this:
@@ -94,7 +94,7 @@ Two things go wrong. The **scenario** (which channel, which addresses, what runs
 
 ### The picture: one scenario library, a realization per platform
 
-Before you read the caption, predict: in the picture below, which boxes does the SoC team **write by hand**, and which does the tool **generate**? And which box is reused unchanged on three platforms?
+As you read the picture, look for three things: which boxes the SoC team **writes by hand**, which ones the tool **generates**, and which box is reused unchanged on three platforms. The caption confirms each one.
 
 <ArchitectureDiagram
   title="One SoC scenario library, generated for four platforms"
@@ -123,7 +123,7 @@ Before you read the caption, predict: in the picture below, which boxes does the
   ]}
 />
 
-**What the picture shows.** The tool writes only the middle row: the scenario layer, which says which action runs when, on which channel, with which values. Everything that touches hardware stays hand-written and is written **once per platform family**, not once per test: one set of UVM sequences for the simulation bench, one C driver for everything that runs on the CPU. That is the whole economic argument. A scenario library of 200 use cases needs 200 scenario actions in the model, but only two realizations of `dma_copy_a`. (The emulation row assumes the processor runs the test; a bench made acceleration-ready, as in [E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index), could run the SystemVerilog target there instead.)
+**What the picture shows.** The tool writes only the middle row: the scenario layer, which says which action runs when, on which channel, with which values. Everything that touches hardware stays hand-written and is written **once per platform family**, not once per test: one set of UVM sequences for the simulation bench, one C driver for everything that runs on the CPU. That is the whole economic argument. A scenario library of 200 use cases needs 200 scenario actions in the model, but only two realizations of `dma_copy_a`. (The emulation row assumes the processor runs the test. A bench made acceleration-ready, meaning its transactors are split so that the timed, pin-level half runs on the emulator and the untimed testbench talks to it in transactions, could run the SystemVerilog target there instead; the elective [E-EMU-1](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index) teaches this.)
 
 **Two claims to test.** You will hear both on any SoC program. Decide whether each is true, using the picture, before you open its answer.
 
@@ -323,8 +323,7 @@ The last pitfall, step by step. It follows the Accellera reference implementatio
     { kind: "divider", label: "case A: dma_copy_seq declares p_sequencer" },
     { kind: "note", from: "cp", to: "vsqr", tone: "error", label: "in cp, m_set_p_sequencer(): $cast of vsqr to the CPU BFM's sequencer type fails: UVM_FATAL [DCLPSQ]" },
     { kind: "divider", label: "case B: no p_sequencer declared, so body() runs" },
-    { from: "cp", to: "vsqr", label: "start_item(): wait for a grant" },
-    { kind: "note", from: "vsqr", label: "no driver pulls items from vsqr, so the grant never comes" },
+    { from: "cp", to: "vsqr", label: "start_item(): wait for a grant; no driver pulls from vsqr, so it never comes" },
     { kind: "divider", label: "the phase timeout expires" },
     { kind: "note", from: "vseq", to: "vsqr", tone: "error", label: "UVM_FATAL [PH_TIMEOUT]: the run ends with no copy started" }
   ]}
@@ -454,10 +453,10 @@ package dma_real_sv {
 
 What each piece guarantees, and why it matters at SoC level:
 - **The locks force two channels.** `c0` and `c1` start together under `parallel` (§12.3.4), and each locks a channel for its whole execution (§14.2), so the tool must give them different instances. With `pool [1]`, which is what an SoC with a one-channel DMA configuration would need, the tool reports that no legal scenario exists, at generation time.
-- **The DDR windows follow the channel.** Tying `dst` to `chan.instance_id` keeps parallel copies from overwriting each other, so each copy's check is meaningful. The background traffic uses a separate scratch window for the same reason. The window bounds `dst` itself, not `dst + len`: PSS gives a sum the width of its widest operand (§8.7.1), so a 32-bit `dst + len` can wrap past 0xFFFFFFFF, and a solver could then legally place both channels at the top of the address space. The right-hand side `0x80100000 + 0x100000 * chan.instance_id - len` stays above 0x800FF000, so nothing in it wraps.
+- **The DDR windows follow the channel.** Tying `dst` to `chan.instance_id` keeps parallel copies from overwriting each other, so each copy's check is meaningful. The background traffic uses a separate scratch window for the same reason. The window bounds `dst` itself, not `dst + len`: PSS gives a sum the width of its widest operand (§8.7.1), and an unsized constant is only "at least 32" bits (Table 20), so in a tool that evaluates the comparison in 32 bits a 32-bit `dst + len` can wrap past 0xFFFFFFFF, and a solver could then legally place both channels at the top of the address space. The right-hand side `0x80100000 + 0x100000 * chan.instance_id - len` is never below 0x800FF000, so nothing in it wraps, whatever width the tool uses.
 - **One realization package per test.** PSS merges exec blocks of the same kind in one scope into a single block, and a single exec block maps to at most one foreign language (§22.1.1 b and e). The standard's way to give one action a C and a SystemVerilog implementation is target templates in different packages that are not used for the same test (§22.5.1). How you choose the packages that are active for a test is tool-dependent (§21.1). If your tool also accepts C and SV bodies side by side in one action, that is tool behaviour, not the standard; the packages also give each realization its own file and owner, which is what the strategy needs anyway.
 - **The two realizations do the same thing.** Both program the same channel with the same values. Only the C one checks in code; in simulation the scoreboards check. That split is a decision recorded in the strategy, not an accident.
-- **Almost nothing here is SoC-only syntax.** Everything except the realization packages (`package`, `extend action`) is taught in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index). What makes it an SoC model is the content: SoC address windows, SoC instance counts and a realization that is the product driver.
+- **Almost nothing here is SoC-only syntax.** Every construct here, the realization packages (`package`, `extend action`) included, is taught in [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index). What makes it an SoC model is the content: SoC address windows, SoC instance counts and a realization that is the product driver.
 
 **See the locks in the PSS intent map** (the first bullet) in [E-PSS-1's "Try it: what does the tool complete?" section](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index#try-it-what-does-the-tool-complete), whose model also has a `chan_p` pool and a `dma_copy_a` that locks a channel. Pick **Two DMA copies in parallel, pool [2]** and note which channel each copy gets; then pick **Two DMA copies in parallel, pool [1]** and read what the tool reports.
 
@@ -466,7 +465,7 @@ What each piece guarantees, and why it matters at SoC level:
 | Step | Bound on `dst + len` (unsafe) | Bound on `dst` itself (the model) |
 |---|---|---|
 | Constraint for channel 0 | `dst + len <= 0x80100000` | `dst <= 0x80100000 - len` |
-| Evaluate the arithmetic in 32 bits | 0xFFFFFF00 + 0x200 = 0x1_0000_0100; the carry out of bit 31 is lost, leaving 0x00000100 | 0x80100000 − 0x200 = 0x800FFE00 |
+| Evaluate the arithmetic in 32 bits (if the tool sizes the comparison at 32 bits) | 0xFFFFFF00 + 0x200 = 0x1_0000_0100; the carry out of bit 31 is lost, leaving 0x00000100 | 0x80100000 − 0x200 = 0x800FFE00 |
 | Compare | `0x00000100 <= 0x80100000` is true | `0xFFFFFF00 <= 0x800FFE00` is false |
 | Result | legal: the tool may pick it, and the copy runs past 0xFFFFFFFF, outside every window | rejected: every legal `dst` keeps the whole copy inside the window |
 
@@ -714,8 +713,8 @@ Before the quiz, the whole page at one glance: what is written once, what the to
 >
   <ArchitectureDiagram
     title="Three tiers: written once, once per platform family, per platform"
-    cellWidth={130}
-    gapX={48}
+    cellWidth={120}
+    gapX={40}
     spreadAnchors={true}
     caption="Top: the scenario library, written once; the tool solves it and generates each test. Middle: one realization package per platform family; both packages are inputs to the tool next to dma_soc.pss, and each generated test is expanded from one package's templates. Bottom: where the checks live. Only the C self-check, inside the C package's templates, runs on silicon. The scoreboards and assertions belong to the simulation bench, not to a package: they check any simulation run, the SystemVerilog target in subsystem simulation and the C target in SoC simulation, and add protocol, routing, ordering and timing checks. Dashed arrows: generation and the templates each package supplies; plain lines: which checks run with each package's tests."
     nodes={[
@@ -807,7 +806,7 @@ Before the quiz, the whole page at one glance: what is written once, what the to
     explanation: "Scenario coverage answers 'what did we run'; checks and DUT functional coverage answer 'did it work, and did we exercise the system's features'. A closure gate needs both, traced to the plan."
   },
   {
-    question: "Predict: a derivative SoC configures its DMA engine with one channel, so the owner of the SoC facts changes the Make It Work model to pool [1] dma_chan_r chan_p. Nothing else changes. What happens when the tool processes dma_under_load_a?",
+    question: "A derivative SoC configures its DMA engine with one channel, so the owner of the SoC facts changes the Make It Work model to pool [1] dma_chan_r chan_p. Nothing else changes. What happens when the tool processes dma_under_load_a?",
     objective: 2,
     answers: [
       { text: "The tool runs c0 and c1 one after the other on channel 0, because the lock serializes them", correct: false, feedback: "A lock does create a scheduling dependency, but parallel rules out dependencies between its branches (§12.3.4). The tool may not quietly turn parallel into sequence." },

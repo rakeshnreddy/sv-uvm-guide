@@ -46,7 +46,7 @@ Formal tools look only at the logic that can affect a property, its **cone of in
 
 <ArchitectureDiagram
   title="The cone of influence of p_full_is_correct"
-  caption="Read it from the bottom up. The assertion reads count and full; full is computed from count; count is a register fed by the free inputs push and pop. Those four signals (plus clk and rst_n) form the cone. empty is also computed from count, but nothing in this assertion depends on it, so it sits outside the cone; it still matters to the proof through the assumption a_no_pop_when_empty, which limits pop."
+  caption="Read it from the property at the bottom back up to the free inputs; arrows show data flow. The assertion reads count and full; full is computed from count; count is a register fed by the free inputs push and pop. Those four signals (plus clk and rst_n) form the cone. empty is also computed from count, but nothing in this assertion depends on it, so it sits outside the cone; it still matters to the proof through the assumption a_no_pop_when_empty, which limits pop."
   cellWidth={120}
   gapX={48}
   nodes={[
@@ -124,7 +124,7 @@ c_reach_depth:       cover  property (count == DEPTH);
 c_push_pop:          cover  property (push && pop);
 ```
 
-Every statement has a **label** (`a_no_push_when_full:`). The label gives the assertion a hierarchical name, such as `tb_top.dut.u_fifo_props.p_full_is_correct`, which reports, assertion-control tasks and formal-tool commands can refer to. Unlabelled assertions get a tool-chosen name, which is harder to track. The names used here are the names the visualizer uses.
+Every statement has a **label** (`a_no_push_when_full:`). The label gives the assertion a hierarchical name, such as `tb_top.dut.u_fifo_props.p_full_is_correct`, which reports, assertion-control tasks and formal-tool commands can refer to. Unlabelled assertions get a tool-chosen name, which is harder to track. The names used here are the names the visualizer uses (it models every property except `c_push_pop`).
 
 The same line means different things to the two engines. IEEE 1800-2023 §16.2 lists four kinds of concurrent assertion statement:
 
@@ -197,7 +197,7 @@ Bounded runs are often all a tool can finish on a large design, and they are use
 <details>
 <summary>Check your prediction</summary>
 
-The timing diagram shows why, with the late-flag bug you will meet in the visualizer: `full` is a register that copies `count == DEPTH` one edge late.
+A bound of 3 reports no failure for `p_full_is_correct`, and `c_reach_depth` is not reached within the bound; the smallest bound that finds the failure is 4. The timing diagram shows why:
 
 <TimingDiagram
   title="A bound of 3 misses a bug at edge 4"
@@ -217,9 +217,11 @@ The timing diagram shows why, with the late-flag bug you will meet in the visual
   ]}
 />
 
+Notice the warning sign: the cover `c_reach_depth` was not reached within the bound.
+
 </details>
 
-Notice the warning sign in the bounded run: the cover `c_reach_depth` was not reached within the bound. A bound that never fills the FIFO cannot test anything about a full FIFO. A practical rule follows: **choose a bound at least as deep as your deepest cover**. That rule is a heuristic, not a guarantee. Only a full proof, or a bound at least as deep as the longest shortest path to any reachable state (the design's sequential depth), covers every reachable state.
+A bound that never fills the FIFO cannot test anything about a full FIFO. A practical rule follows: **choose a bound at least as deep as your deepest cover**. That rule is a heuristic, not a guarantee. Only a full proof, or a bound at least as deep as the longest shortest path to any reachable state (the design's sequential depth), covers every reachable state.
 
 ### Building a harness: what carries over from the UVM environment
 
@@ -264,6 +266,8 @@ A **formal harness** is the formal tool's equivalent of a testbench: the DUT, th
 5. **Cover what the assumptions must still allow**: one cover per assumption for a behaviour it must not forbid, plus a cover for the **antecedent** of each implication (its left-hand side, the condition that must hold before the check applies).
 6. **Bind** the property module to the DUT, passing parameters through: `bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);`. Parameters and ports in a bind resolve in the target's scope (§23.11), so `DEPTH` means the FIFO's own `DEPTH`. A hard-coded `#(.DEPTH(8))` would silently check the wrong depth on a FIFO of any other size.
 
+The bare `.*` is safe here because `fifo_props` is a module whose ports have no default values, so a name missing from `fifo` is an elaboration error (§23.3.2.4). For a checker with defaulted formals, use explicit or `.name` connections, as I-SV-4C advises.
+
 The same six steps, applied to this lesson's FIFO, each with what it adds to the harness (every line is taken from the files in Make It Work):
 
 | Step | What it adds | For the FIFO |
@@ -272,7 +276,7 @@ The same six steps, applied to this lesson's FIFO, each with what it adds to the
 | 2. Reset | A tool command naming the reset and its level (tool-dependent) | `rst_n`, active low; `fifo_props` also has `default disable iff (!rst_n);` |
 | 3. Assume | One `assume` per environment rule, from the specification | `a_no_push_when_full: assume property (!(push && full));` and `a_no_pop_when_empty` |
 | 4. Assert | One `assert` per obligation on a DUT output | `p_count_in_range`, `p_full_is_correct` |
-| 5. Cover | A cover per antecedent and per assumption | `c_reach_depth: cover property (count == DEPTH);` and `c_push_pop: cover property (push && pop);` |
+| 5. Cover | A cover per antecedent and per assumption | `c_reach_depth: cover property (count == DEPTH);` and `c_push_pop: cover property (push && pop);` (`c_push_pop` is the behaviour both contract assumptions must still allow) |
 | 6. Bind | One bind, parameters passed through | `bind fifo fifo_props #(.DEPTH(DEPTH)) u_fifo_props (.*);` |
 
 **One rule, two directives.** An interface rule constrains whoever drives the signal. When you verify the FIFO, the environment drives `push`, so the rule is an assumption. When you verify the block that *produces* `push`, the same rule is an obligation on that block. Write the rule once and choose the directive by parameter:
@@ -298,7 +302,7 @@ Proving a block under an assumption, then proving that assumption as an assertio
 
 ### Constraints are not assumptions
 
-A sequence-item constraint and a formal assumption can describe the same rule, but they act at different times on different data. Before you read the explanation steps, predict which of the three constraints below could be copied unchanged into `fifo_props` as an assumption.
+A sequence-item constraint and a formal assumption can describe the same rule, but they act at different times on different data. Before you step through the explanation, predict which of the three rules in the two constraint blocks below (the two halves of `c_legal`, and `c_one_op`) could be copied unchanged into `fifo_props` as an assumption.
 
 <InteractiveCode
   language="systemverilog"
@@ -313,7 +317,7 @@ class fifo_item extends uvm_sequence_item;
     full_seen  -> !push;          // the flags as the sequence last saw them
     empty_seen -> !pop;
   }
-  constraint c_one_op { !(push && pop); } // this test's choice, not an interface rule
+  constraint c_one_op { !(push && pop); } // one operation per item
 
   \`uvm_object_utils(fifo_item)
   function new(string name = "fifo_item");
@@ -333,7 +337,12 @@ a_no_pop_when_empty: assume property (!(pop && empty));`}
   ]}
 />
 
-**The answer: none of the three, as written.** The two halves of `c_legal` express real interface rules, but on stale copies of the flags; they become the per-clock assumptions `a_no_push_when_full` and `a_no_pop_when_empty`, on the live `full` and `empty`. `c_one_op` is test intent and must not become an assumption at all.
+<details>
+<summary>Check your prediction</summary>
+
+**The answer: none of the three, as written.** The two halves of `c_legal` express real interface rules, but on stale copies of the flags; they become the per-clock assumptions `a_no_push_when_full` and `a_no_pop_when_empty`, on the live `full` and `empty`. `c_one_op` is test intent (this test's choice, not an interface rule) and must not become an assumption at all.
+
+</details>
 
 The timing diagram shows the gap between "solved" and "driven". A driver that pipelines items (accepts the next item while the current one is still on the pins) is one way it happens.
 
@@ -367,7 +376,7 @@ Four ways to limit values, side by side:
 
 | | Class constraint | `assume property` | `restrict property` | Checker free variable (`rand`) |
 |---|---|---|---|---|
-| **When it is solved or checked** | Only when `randomize()` is called, once per item | At every clock event of the property | Never in simulation | Re-solved at each clock event of its assume set |
+| **When it is solved or checked** | Only when `randomize()` is called, once per item | At every clock event of the property | Never in simulation | Re-solved at each clock event of its assume set (a `rand const` one keeps one value for the whole run) |
 | **On what data** | The class's variables, and whatever state was copied in | The live signals | The live signals | The checker's free variables, under its assumptions |
 | **In simulation** | Generates the item's values | Checked and reported like an assertion | Ignored: not checked, no action block | Assigned values that satisfy the assume set; the assumptions are also checked |
 | **In formal** | Not read: class code is outside the harness | Restricts the traces analysed | Restricts the traces exactly like `assume` | Ranges over every value the assumptions allow |
@@ -392,6 +401,8 @@ For cover statements, know one more distinction. `cover sequence` reports *every
 #### Interactive: predict four formal runs
 
 The visualizer runs a real exhaustive search over the FIFO model: the RTL on the left (correct, or with the late `full` register), the shared property module on the right with buttons to toggle each assumption, and a formal report and a random simulation below. Write a prediction for each run before you set it up; the visualizer asks you to commit to one before it shows the result.
+
+Runs C and D revisit traces you have already seen (the bounded-run reveal and the reachable-states picture); predict the remaining columns.
 
 | Run | RTL | Assumptions | Your prediction for the two assertions and the cover |
 |---|---|---|---|
@@ -448,7 +459,7 @@ So every counterexample needs **triage**: deciding whether it shows a design bug
 
 <ArchitectureDiagram
   title="Counterexample triage: every outcome"
-  caption="Follow the dashed arrows from the top. The only question that splits the paths is whether every environment-driven input in the trace is legal by the specification. Illegal: the CEX is spurious, so add the rule as an assumption and re-run until the CEX disappears. All legal: replay it; if it reproduces it is a design bug, and if it does not, fix the replay (reset alignment, X, driver timing) before deciding anything."
+  caption="Follow the dashed arrows from the top. The only question that splits the paths is whether every environment-driven input in the trace is legal by the specification. Illegal: the CEX is spurious, so add the rule as an assumption and re-run until the CEX disappears. All legal: replay it; if it reproduces it is a design bug, and if it does not, fix the replay (reset alignment, X, driver timing) before deciding anything, then replay again."
   cellWidth={120}
   gapX={40}
   nodes={[
@@ -853,11 +864,11 @@ No formal tool or simulator runs on this site, so the results below come from th
 3. Prove all assertions and check all covers. Read the covers first.
 4. For run B, comment out `a_no_push_when_full`; for run D, change the bind to `#(.DEPTH(DEPTH), .OVER_CONSTRAIN(1'b1))`.
 
-**Simulation** (any simulator with UVM 1800.2 support): compile `fifo.sv`, `fifo_props.sv` and `fifo_tb.sv` with the define `FIFO_PROPS_UVM` and uvm-core 2020.3.1, then run `tb_top`. Open-source simulators' UVM support varies and was not verified for this example.
+**Simulation** (any simulator with UVM 1800.2 support): compile `fifo.sv`, `fifo_props.sv` and `fifo_tb.sv` with the define `FIFO_PROPS_UVM` and uvm-core 2020.3.1, then run `tb_top`. `uvm_pkg` declares no time unit, so compile it with your simulator's default-timescale option set to 1ns/1ps (tool-dependent); otherwise §3.14.2.3 makes the mixed design an error. Open-source simulators' UVM support varies and was not verified for this example.
 
 ### Expected output
 
-Formal, four runs (illustrative; computed by an exhaustive search of the same model the visualizer uses; edges counted from 0 after reset):
+Formal, four runs (illustrative; computed by an exhaustive search of the same model the visualizer uses; the `c_push_pop` column is derived by hand, since the visualizer models only `c_reach_depth`; edges counted from 0 after reset):
 
 | Run | Setup | `p_count_in_range` | `p_full_is_correct` | `c_reach_depth` | `c_push_pop` | Verdict |
 |---|---|---|---|---|---|---|
@@ -870,7 +881,7 @@ Note `c_push_pop` in run D: still covered. A cover detects an over-constraint on
 
 A caveat about run A: with `LATE_FULL = 0`, `full` *is* `count == DEPTH`, so `p_full_is_correct` restates the RTL and proves trivially. Its value is in catching a changed implementation, such as the late register. An assertion that copies the RTL's own equation proves nothing about intent; in the lab you fix the flag a different way and the assertion then checks something real.
 
-Simulation of `tb_top` (illustrative log; message format and time units are tool-dependent, times here are in ps). The four pushes are sampled at 35, 45, 55 and 65 ns, so edge 4 of the trace is 75 ns:
+Simulation of `tb_top` (illustrative log; message format and time units are tool-dependent, times here are in ps). The bench's first edge after reset (25 ns) is idle, because the driver drives its first item after that edge, so trace edge 0 is the 35 ns edge. The four pushes are sampled at 35, 45, 55 and 65 ns, so edge 4 of the trace is 75 ns:
 
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test fifo_cex_replay_test...
@@ -959,7 +970,7 @@ The replay fails exactly as formal predicted: 4 edges after the first replayed p
     { from: "you", to: "ci", label: "commit a change" },
     { from: "ci", to: "ft", label: "short job: bounded proofs and covers" },
     { kind: "return", from: "ft", to: "ci", label: "bounded to N; covers reached or not" },
-    { from: "ci", to: "sim", label: "regression on the same bind file: every assume checked" },
+    { from: "ci", to: "sim", label: "regression (per change or nightly) on the same bind file: every assume checked" },
     { kind: "divider", label: "nightly" },
     { from: "ci", to: "ft", label: "full proofs" },
     { kind: "return", from: "ft", to: "ci", label: "proven, or a CEX" },
@@ -993,7 +1004,7 @@ The weak-and-strong bullet, as one table of a request that is never acknowledged
 | Written as | Strength of the wait | Simulation, `ack` never comes | Formal |
 |---|---|---|---|
 | `assert property (req \|-> ##[1:$] ack)` | Weak: a bare sequence in `assert` (§16.12.2) | Never fails, not even at the end of the run | Never fails either: every finite prefix could still be completed by a later `ack`, so no prefix "witnesses inability to match" (§16.12.2) |
-| `assert property (req \|-> ##[1:N] ack)` | Bounded | Fails N edges after `req` | Finite CEX: `req`, then N edges without `ack` |
+| `assert property (req \|-> ##[1:N] ack)` | Weak (§16.12.2), but bounded, so it fails at a finite edge | Fails N edges after `req` | Finite CEX: `req`, then N edges without `ack` |
 | `assert property (req \|-> s_eventually ack)` | Strong (§16.12.13) | Pending at the end of the run, not failed (§16.12.21) | Proven or refuted, usually with fairness assumptions |
 | `cover property (req ##[1:$] ack)` | Strong: a bare sequence in `cover` (§16.12.2) | Counts only completed matches | Covered when a witness reaches `ack` |
 
@@ -1008,9 +1019,10 @@ Engines, option names and result labels are tool-dependent; the ideas are genera
 | Technique | What it establishes | What can go wrong | Mitigation |
 |---|---|---|---|
 | Bounded model checking | No violation in any allowed trace through edge N | Nothing is known beyond N | A bound at least as deep as the deepest cover; report the depth |
-| k-induction | A full proof: the property holds on the first edges from reset, and any k good edges in a row lead to a good next edge | Fails from unreachable states | Helper assertions (such as `count <= DEPTH`), each one proven too |
+| k-induction | A full proof: the property holds on the first edges from reset, and any k good edges in a row lead to a good next edge | The induction step can fail from unreachable states (inconclusive, not a CEX) | Helper assertions (such as `count <= DEPTH`), each one proven too |
 | Cut points, black boxes | A proof on a simpler, over-approximated design | Spurious CEXs; black-boxed logic is not verified; a cover reached here may be unreachable in the real design | Check covers on the real design; verify the black-boxed logic separately |
-| Assumptions, `restrict` | A proof under narrower inputs | They remove behaviour and can hide bugs | Cover each assumption; discharge it (see [Assume-guarantee](#expert-assume-guarantee-and-keeping-formal-only-constraints-out-of-simulation)) |
+| Assumptions | A proof under narrower inputs | They remove behaviour and can hide bugs | Cover each assumption; discharge it (see [Assume-guarantee](#expert-assume-guarantee-and-keeping-formal-only-constraints-out-of-simulation)) |
+| `restrict` | A proof under narrower inputs | It removes behaviour and can hide bugs; it need not hold in the environment (§16.14.4), so it is not discharged as an assertion | Run complementary sessions that together cover every trace (see the case-split bullet above) |
 
 ### Expert: Symbolic data with constant free variables
 
@@ -1378,7 +1390,7 @@ The `formal-harness` lab gives you this lesson's FIFO harness in its over-constr
 
 **Primary sources**
 - **IEEE 1800-2023:** §3.14.2.3 (time-unit precedence; an error if some design elements have a time unit and others do not); §16.2 (the four kinds of assertion statement; cycle-based vs event-based evaluation); §16.5.1 (sampled values); §16.6 (assertion expressions shall not reference non-static class properties; X counts as false); §16.12.2 (weak and strong sequence properties); §16.12.7 (implication); §16.12.13 (`s_eventually`); §16.12.15 (weak and strong operators; a liveness failure cannot be identified at a finite time); §16.12.21 (finite-length behaviour: holds strongly, holds, pending, fails); §16.14.1 (`assert`); §16.14.2 (`assume`, `dist` biasing); §16.14.3 (`cover property` and `cover sequence`, vacuous-success counts); §16.14.4 (`restrict`); §16.14.5 (where concurrent assertions may appear); §16.14.6 (procedural concurrent assertions); §16.14.8 (nonvacuous evaluation); §16.15 (`default disable iff`); §17.7 (checker variables, free and constant free variables, the `data_legal` example); §17.7.2 (assume-based randomization of checker variables); §20.11 (assertion control tasks); §23.11 (`bind`; ports and parameters resolve in the target's scope).
-- **IEEE 1800.2-2020 and uvm-core 2020.3.1:** `uvm_sequence`, `start_item`/`finish_item`, `uvm_driver` and `try_next_item` (`src/seq/uvm_sequencer.svh`); the global `uvm_report_error`, which reports through `uvm_root` (`src/base/uvm_globals.svh`).
+- **IEEE 1800.2-2020 and uvm-core 2020.3.1:** `uvm_sequence` (§14.3, `src/seq/uvm_sequence.svh`); `start_item`/`finish_item` (§14.2.6.2–§14.2.6.3, `src/seq/uvm_sequence_base.svh`); `uvm_driver` (§13.7, `src/comps/uvm_driver.svh`); `try_next_item` (§15.5.2.4, `src/seq/uvm_sequencer.svh`); the global `uvm_report_error` (§F.3.2.3, `src/base/uvm_globals.svh`), which reports through `uvm_root`.
 - **Formal tools:** commands, result names, bound conventions, apps, abstraction and formal coverage are tool-dependent; use your tool's documentation for them.
 
 **Prerequisites:** [I-SV-4B: Advanced Temporal Logic](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/index), [I-SV-4C: Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index), [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).

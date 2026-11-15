@@ -73,7 +73,7 @@ The words transaction, burst and beat in one picture. Each arrow is one item mov
   ]}
 />
 
-The two edge conventions, seen on one trace. A source raises VALID for edge 1, the destination raises READY for edge 2, and the item transfers at edge 2 in both pictures:
+The two edge conventions, seen on one trace. A source raises VALID for edge 1, the destination raises READY for edge 2, and the item transfers at edge 2 in both styles, the figure and the table below:
 
 <TimingDiagram
   title="Edge 2 in the timing-diagram style"
@@ -89,7 +89,7 @@ The two edge conventions, seen on one trace. A source raises VALID for edge 1, t
 
 The same trace in the clock-period style, read column by column from the figure above. The first clock-period waveform on this page, under [The VALID/READY handshake](#the-validready-handshake), is drawn this way:
 
-| Edge 2 in each style | Timing-diagram style (above, and the explorers) | Clock-period style (the three generated waveforms) |
+| Edge 2 in each style | Timing-diagram style (above, and the explorers) | Clock-period style (the three waveforms drawn as clock periods) |
 |---|---|---|
 | Where edge k is drawn | The dashed line through the middle of column k | The numbered line at the right-hand end of column k |
 | The leftmost line | None: edge 0 runs through the middle of column 0 | The line numbered −1, the rising edge before edge 0 |
@@ -98,7 +98,7 @@ The same trace in the clock-period style, read column by column from the figure 
 
 ### The five channels and who drives what
 
-**Predict first.** On the read data channel R, who drives RREADY, and why does a read need no separate response channel? Decide, then check the diagram and table.
+**As you read the diagram,** find who drives RREADY, and work out why a read needs no separate response channel; the paragraph under the table confirms it.
 
 <ArchitectureDiagram
   title="The five AXI4 channels between a master and a slave"
@@ -241,13 +241,13 @@ endproperty
 
 `|=>` (non-overlapping implication) checks its right side one edge after the left side matched, and `$stable(x)` is true when the sampled value of `x` equals the sampled value at the previous edge (IEEE 1800-2023 §16.12.7, §16.9.3). `disable iff (!ARESETn)` switches the check off while reset is asserted. Make It Work applies these two properties to all five channels with every information signal.
 
-**A classic weak check.** `$rose(valid) |=> $stable(payload)` looks similar but checks only the edge after VALID rises. It misses a stall that begins after a back-to-back transfer, when VALID never fell, and it misses a change on the second or third stalled edge. It also fails *falsely* on legal traffic: when an item transfers at the very edge where VALID rises and the next item follows back-to-back, the information changes at the next edge, exactly as it should (Make It Work, W beats at edges 3 and 4).
+**A classic weak check.** `$rose(valid) |=> $stable(payload)` looks similar but checks only the edge after VALID rises. It misses a stall that begins after a back-to-back transfer, when VALID never fell, and it misses a change on the second or third stalled edge. It also fails *falsely* on legal traffic: when an item transfers at the very edge where VALID rises and the next item follows back-to-back, the information changes at the next edge, exactly as it should (Make It Work: D0 transfers at edge 3, the edge WVALID rises, and WDATA is legally D1 at edge 4).
 
 Both failures of the weak check on one trace:
 
 <TimingDiagram
   title="Why a $rose trigger checks the wrong edges"
-  caption="Columns are rising edges 0 to 5; each value is the one sampled at that edge. Item A transfers at edge 1, the edge where VALID rises, and item B follows back-to-back without VALID falling. B stalls at edges 2 and 3, and the source wrongly swaps it for C at edge 3. The $rose check looks only at edge 2, where the change from A to B is legal, and fails there falsely; it never looks at edge 3. The stall check (VALID high, READY low at edge 2) catches the swap at edge 3."
+  caption="Columns are rising edges 0 to 5; each value is the one sampled at that edge. Item A transfers at edge 1, the edge where VALID rises, and item B follows back-to-back without VALID falling. B stalls at edge 2; the stall continues at edge 3, but the source has wrongly swapped B for C there. The $rose check looks only at edge 2, where the change from A to B is legal, and fails there falsely; it never looks at edge 3. The stall check (VALID high, READY low at edge 2) catches the swap at edge 3. C transfers at edge 4, and the slave never receives B."
   edges={6}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -259,9 +259,11 @@ Both failures of the weak check on one trace:
     { edge: 1, tone: "pass", label: "item A transfers on the edge VALID rises; the $rose attempt starts here", short: "A" },
     { edge: 2, tone: "fail", label: "$rose check fails falsely: A to B is the legal next item after a transfer", short: "rose" },
     { edge: 3, tone: "fail", label: "stall check fails: B changed to C although B never transferred", short: "stall" },
-    { edge: 4, tone: "info", label: "C transfers; the slave never received B", short: "C" }
+    { edge: 4, tone: "info", label: "C transfers", short: "C" }
   ]}
 />
+
+Now apply the stall check to a new trace on its own.
 
 **Spot the violation.** The master below offers an address, the slave stalls, and the address is accepted at edge 3. Which edge breaks the hold rule, and what does the slave receive? Decide before you open the answer.
 
@@ -376,7 +378,8 @@ These are rules *within* one transaction. The order *between* transactions is se
 <VisualRecap
   title="The handshake and its three dependencies"
   rule="A transfer happens at the edge where VALID and READY are both 1. VALID never waits for READY and, once raised, stays up with stable information until that edge. Across channels only three things wait: R for the AR handshake, B for the WLAST handshake, and in AXI4 also B for the AW handshake."
-  code={`valid && !ready |=> valid && $stable(info);              // every channel
+  code={`// *_done: handshake counters (count of earlier AW, WLAST, B, AR, RLAST handshakes), built in Make It Work
+valid && !ready |=> valid && $stable(info);              // every channel
 BVALID |-> (aw_done > b_done) && (wlast_done > b_done); // AXI4
 RVALID |-> (ar_done > rlast_done);`}
   mistake="Assuming AW always arrives before W. W may come first: a monitor that only collects write data after an AW drops it, and a slave that answers on WLAST alone breaks AXI4."
@@ -427,6 +430,7 @@ RLAST transfers at edge 3. The W beats do not move until edges 4 and 5, and B fo
     { name: "WVALID", kind: "bit", values: [0, 1, 1, 1, 1, 1, 0, 0] },
     { name: "WREADY", kind: "bit", values: [0, 0, 0, 0, 1, 1, 0, 0] },
     { name: "WDATA", kind: "bus", values: [undefined, "D0", "D0", "D0", "D0", "D1", undefined, undefined] },
+    { name: "WLAST", kind: "bit", values: [0, 0, 0, 0, 0, 1, 0, 0] },
     { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] },
     { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0] },
     { name: "RVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0] },
@@ -562,7 +566,12 @@ Points to take from the read:
 
 Rule 3 is the one people get wrong. The master must first *see* ARESETn high at an edge, and only then may it start driving VALID; so VALID is low at that first edge and can be high, at the earliest, at the next one.
 
-**Predict first.** ARESETn is sampled low at edges 0 to 2 and high from edge 3. From rule 3 alone, decide the earliest edge at which AWVALID may be sampled high; then check the first figure below.
+**Predict first.** ARESETn is sampled low at edges 0 to 2 and high from edge 3. From rule 3 alone, decide the earliest edge at which AWVALID may be sampled high; then open the answer.
+
+<details>
+<summary>Check your prediction</summary>
+
+Edge 4. ARESETn is first sampled HIGH at edge 3, and the master may begin driving AWVALID HIGH only after that edge, so AWVALID is LOW at edge 3 and HIGH, at the earliest, at edge 4.
 
 <TimingDiagram
   title="Exit from reset (IHI0022E Figure A3-1)"
@@ -578,11 +587,6 @@ Rule 3 is the one people get wrong. The master must first *see* ARESETn high at 
     { edge: 4, tone: "pass", label: "earliest edge at which AWVALID can be sampled HIGH", short: "1st" }
   ]}
 />
-
-<details>
-<summary>Check your prediction</summary>
-
-Edge 4. ARESETn is first sampled HIGH at edge 3, and the master may begin driving AWVALID HIGH only after that edge, so AWVALID is LOW at edge 3 and HIGH, at the earliest, at edge 4.
 
 </details>
 
@@ -614,7 +618,7 @@ A check of `!ARESETn |-> !valid` alone covers rule 2 but misses rule 3. For AWVA
 
 You will meet AXI3 components inside AXI4 systems. At the level of channels and handshakes, the differences are few.
 
-**Predict first.** AXI4 added one rule at the channel level: BVALID also waits for the AW handshake. An AXI3 master is connected to an AXI4 slave. Does the master need changes for that rule, or does the rule constrain only one side? Decide, then check the row "B after AW" and the sentence under the table.
+**Predict first.** AXI4 added one handshake dependency: BVALID also waits for the AW handshake. An AXI3 master is connected to an AXI4 slave. Does the master need any change for that rule? Decide, then open the answer under the table.
 
 | Item | AXI3 | AXI4 | Source |
 |---|---|---|---|
@@ -624,7 +628,12 @@ You will meet AXI3 components inside AXI4 systems. At the level of channels and 
 | B after AW | not required (strongly recommended for new slaves) | required | §A3.3.1, §A3.3.2 |
 | Handshake, hold rule, R after AR, B after WLAST | same | same | §A3.2.1, §A3.3.1 |
 
+<details>
+<summary>Check your prediction</summary>
+
 "Any AXI3 master complies with the AXI4 write response requirements" (§A3.3.2): the extra rule constrains slaves only.
+
+</details>
 
 ### In a real testbench
 
@@ -646,7 +655,11 @@ Every rule on this page becomes code in a protocol **agent** (the testbench bloc
 
   The `do … while` loop (IEEE 1800-2023 §12.7.5) waits for clocking events until AWREADY is sampled high at one; that edge is the handshake, because AWVALID has been high since the clocking event at which the task started. That is why the task must start right after `@(vif.cb)`, as a driver loop does (or begin with `@(vif.cb);` itself). A clocking drive issued between edges acts "as if [it] had executed at the time of the next clocking event" (§14.16). Called mid-cycle, the task would raise AWVALID only at the very edge its first `@(vif.cb)` wakes on; if AWREADY is sampled high there, the loop exits at once, the `AWVALID <= 0` drive lands in the same time step and wins (§14.16.2), and the item is lost without any transfer. Never write the AW and W drives in one sequential task that waits for AWREADY before starting W: that is exactly the illegal wait of the §A3.3.1 Caution.
 
-The two calls of `drive_aw` side by side, against a slave whose AWREADY is HIGH at every edge:
+- **Slave responder** (a testbench model of a slave). Any READY pattern is legal, so randomize it: always high, delayed, early-then-withdrawn. Random backpressure is how you find VALID-hold bugs in the design. Raise BVALID and RVALID without waiting for BREADY or RREADY, and only after the dependencies are met.
+- **Monitor** (rebuilds transactions from the pins). Run one thread per channel. Record a transfer only at an edge where VALID and READY are both high. Queue W bursts and pair them with AW items in AW order, accepting W first (§A3.3, §A5.4.1). Group R beats by RID (§A5.3.1).
+- **Protocol checker.** The assertions of Make It Work, in a module bound to every AXI interface with `bind` ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index), IEEE 1800-2023 §23.11). Because the rules hold at every hop (§A1.3.2), bind one at each master port and each slave port of an interconnect. In UVM verification IP (VIP: a reusable, packaged set of these components for one protocol), route failures into UVM reporting so they count in the test result (A-UVM-7).
+
+The two calls of `drive_aw` (from the Master driver bullet), drawn one after the other, against a slave whose AWREADY is HIGH at every edge:
 
 <TimingDiagram
   title="drive_aw called right after a clocking event"
@@ -677,22 +690,18 @@ The two calls of `drive_aw` side by side, against a slave whose AWREADY is HIGH 
   ]}
 />
 
-- **Slave responder** (a testbench model of a slave). Any READY pattern is legal, so randomize it: always high, delayed, early-then-withdrawn. Random backpressure is how you find VALID-hold bugs in the design. Raise BVALID and RVALID without waiting for BREADY or RREADY, and only after the dependencies are met.
-- **Monitor** (rebuilds transactions from the pins). Run one thread per channel. Record a transfer only at an edge where VALID and READY are both high. Queue W bursts and pair them with AW items in AW order, accepting W first (§A3.3, §A5.4.1). Group R beats by RID (§A5.3.1).
-- **Protocol checker.** The assertions of Make It Work, in a module bound to every AXI interface with `bind` ([I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index), IEEE 1800-2023 §23.11). Because the rules hold at every hop (§A1.3.2), bind one at each master port and each slave port of an interconnect. In UVM verification IP (VIP: a reusable, packaged set of these components for one protocol), route failures into UVM reporting so they count in the test result (A-UVM-7).
-
 <ArchitectureDiagram
-  title="Where each handshake rule lives in a testbench"
+  title="Who drives and who watches the AXI pins"
   cellWidth={112}
   cellHeight={60}
   gapX={28}
   gapY={40}
   caption="The master driver and the slave responder drive the two sides of the AXI interface (plain lines: pin connections). The monitor and the bound protocol checker only watch the pins (solid arrows: data flow). The monitor runs one thread per channel, pairs W bursts with AW items in AW order and groups R beats by RID, then passes transactions to the scoreboard, where per-ID checks live."
   nodes={[
-    { id: "drv", label: "Master driver", sublabel: "AW, W threads", kind: "driver", col: 0, row: 0 },
+    { id: "drv", label: "Master driver", sublabel: "AW, W, AR; B/R READY", kind: "driver", col: 0, row: 0 },
     { id: "bus", label: "AXI interface", sublabel: "5 channels", kind: "interface", col: 1, row: 0 },
     { id: "rsp", label: "Slave responder", sublabel: "random READY", kind: "driver", col: 2, row: 0 },
-    { id: "chk", label: "Protocol checker", sublabel: "bound by bind", kind: "generic", col: 0, row: 1 },
+    { id: "chk", label: "Protocol checker", sublabel: "bind at each port", kind: "generic", col: 0, row: 1 },
     { id: "mon", label: "Monitor", sublabel: "thread per channel", kind: "monitor", col: 1, row: 1 },
     { id: "scb", label: "Scoreboard", sublabel: "per-ID checks", kind: "scoreboard", col: 2, row: 1 }
   ]}
@@ -977,7 +986,7 @@ The first mutation drawn out, with the counter as the assertion samples it:
 
 <TimingDiagram
   title="+BROKEN_B: BVALID on the AW handshake edge"
-  caption="Columns are rising edges 0 to 9 of tb_top; each value is the one sampled at that edge, and aw_done is the counter value the assertion samples in the Preponed region (IEEE 1800-2023 §16.5.1). The AW handshake is at edge 6, but the counter counts it only from edge 7, so BVALID at edge 6 fails a_b_dep. B then stalls at edge 7 and transfers at edge 8."
+  caption="Columns are rising edges 0 to 9 of tb_top; each value is the one sampled at that edge, and aw_done is the counter value the assertion samples in the Preponed region (IEEE 1800-2023 §16.5.1). The AW handshake is at edge 6, but the counter counts it only from edge 7, so BVALID at edge 6 fails a_b_dep. B stalls at edges 6 and 7 and transfers at edge 8."
   edges={10}
   cycleWidth={25}
   signals={[
@@ -1278,7 +1287,7 @@ Answer each one before you open the feedback.
 The whole lesson on one card. Look at it once, then close your eyes and redraw it before you start the quiz.
 
 <figure className="not-prose my-6 rounded-xl border border-border/70 p-3">
-  <svg viewBox="0 0 380 330" role="img" aria-label="AXI channels at a glance. Five one-way channels between master and slave: AW, W and AR from master to slave, B and R from slave to master. B carries one response per burst, R a response on every beat. Rules: a transfer is an edge where VALID and READY are both 1; VALID never waits for READY and holds with stable information until the transfer; READY may rise before VALID and fall again before VALID arrives, or wait for VALID; RVALID only after the AR handshake; BVALID only after the WLAST handshake and, in AXI4, the AW handshake; W may come before AW." style={{ width: "100%", maxWidth: 470 }}>
+  <svg viewBox="0 0 380 352" role="img" aria-label="AXI channels at a glance. Five one-way channels between master and slave: AW, W and AR from master to slave, B and R from slave to master. B carries one response per burst, R a response on every beat. Rules: a transfer is an edge where VALID and READY are both 1; VALID never waits for READY and holds with stable information until the transfer; READY may rise before VALID and fall again before VALID arrives, or wait for VALID; RVALID only after the AR handshake; BVALID only after the WLAST handshake and, in AXI4, the AW handshake; W may come before AW." style={{ width: "100%", maxWidth: 470 }}>
     <defs>
       <marker id="baxi1-glance-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
@@ -1286,31 +1295,31 @@ The whole lesson on one card. Look at it once, then close your eyes and redraw i
     </defs>
     <text x="8" y="18" fontSize="12" fontWeight="600" fill="currentColor">Master</text>
     <text x="372" y="18" fontSize="12" fontWeight="600" fill="currentColor" textAnchor="end">Slave</text>
-    <text x="190" y="34" fontSize="10" fill="currentColor" fillOpacity="0.85" textAnchor="middle">Arrow: VALID and information. READY runs back.</text>
+    <text x="190" y="34" fontSize="11" fill="currentColor" fillOpacity="0.85" textAnchor="middle">Arrow: VALID and information. READY runs back.</text>
     <text x="8" y="66" fontSize="11" fontWeight="600" fill="currentColor">AW</text>
-    <text x="40" y="56" fontSize="10" fill="currentColor">write address, one per write</text>
+    <text x="40" y="56" fontSize="11" fill="currentColor">write address, one per write</text>
     <path d="M34 62 L368 62" stroke="currentColor" fill="none" markerEnd="url(#baxi1-glance-arrow)" />
     <text x="8" y="96" fontSize="11" fontWeight="600" fill="currentColor">W</text>
-    <text x="40" y="86" fontSize="10" fill="currentColor">write data, one per beat; WLAST on the last</text>
+    <text x="40" y="86" fontSize="11" fill="currentColor">write data, one per beat; WLAST on the last</text>
     <path d="M34 92 L368 92" stroke="currentColor" fill="none" markerEnd="url(#baxi1-glance-arrow)" />
     <text x="8" y="126" fontSize="11" fontWeight="600" fill="currentColor">B</text>
-    <text x="40" y="116" fontSize="10" fill="currentColor">one write response for the whole burst</text>
+    <text x="40" y="116" fontSize="11" fill="currentColor">one write response for the whole burst</text>
     <path d="M368 122 L34 122" stroke="currentColor" fill="none" markerEnd="url(#baxi1-glance-arrow)" />
     <text x="8" y="156" fontSize="11" fontWeight="600" fill="currentColor">AR</text>
-    <text x="40" y="146" fontSize="10" fill="currentColor">read address, one per read</text>
+    <text x="40" y="146" fontSize="11" fill="currentColor">read address, one per read</text>
     <path d="M34 152 L368 152" stroke="currentColor" fill="none" markerEnd="url(#baxi1-glance-arrow)" />
     <text x="8" y="186" fontSize="11" fontWeight="600" fill="currentColor">R</text>
-    <text x="40" y="176" fontSize="10" fill="currentColor">read data and RRESP on every beat; RLAST last</text>
+    <text x="40" y="176" fontSize="11" fill="currentColor">read data and RRESP on every beat; RLAST last</text>
     <path d="M368 182 L34 182" stroke="currentColor" fill="none" markerEnd="url(#baxi1-glance-arrow)" />
     <path d="M8 198 L372 198" stroke="currentColor" strokeOpacity="0.3" fill="none" />
-    <text x="8" y="216" fontSize="10" fill="currentColor">Transfer: an edge where VALID and READY are both 1.</text>
-    <text x="8" y="231" fontSize="10" fill="currentColor">VALID never waits for READY. Once HIGH, VALID and</text>
-    <text x="8" y="246" fontSize="10" fill="currentColor">its information hold until the transfer edge.</text>
-    <text x="8" y="261" fontSize="10" fill="currentColor">READY may rise before VALID and fall again before</text>
-    <text x="8" y="276" fontSize="10" fill="currentColor">VALID arrives, or it may wait for VALID.</text>
-    <text x="8" y="291" fontSize="10" fill="currentColor">RVALID only after the AR handshake.</text>
-    <text x="8" y="306" fontSize="10" fill="currentColor">BVALID only after the WLAST handshake and, in AXI4,</text>
-    <text x="8" y="321" fontSize="10" fill="currentColor">after the AW handshake too. W may come before AW.</text>
+    <text x="8" y="216" fontSize="11" fill="currentColor">Transfer: an edge where VALID and READY are both 1.</text>
+    <text x="8" y="233" fontSize="11" fill="currentColor">VALID never waits for READY. Once HIGH, VALID and</text>
+    <text x="8" y="250" fontSize="11" fill="currentColor">its information hold until the transfer edge.</text>
+    <text x="8" y="267" fontSize="11" fill="currentColor">READY may rise before VALID and fall again before</text>
+    <text x="8" y="284" fontSize="11" fill="currentColor">VALID arrives, or it may wait for VALID.</text>
+    <text x="8" y="301" fontSize="11" fill="currentColor">RVALID only after the AR handshake.</text>
+    <text x="8" y="318" fontSize="11" fill="currentColor">BVALID only after the WLAST handshake and, in AXI4,</text>
+    <text x="8" y="335" fontSize="11" fill="currentColor">after the AW handshake too. W may come before AW.</text>
   </svg>
   <figcaption className="mt-2 text-sm text-muted-foreground">AXI channels at a glance: the five channels with their directions, and the handshake and dependency rules of IHI0022E §A3.2.1 and §A3.3.1. "After" means at a later edge than that handshake.</figcaption>
 </figure>
@@ -1368,7 +1377,7 @@ Each question maps to one of the objectives in Quick Take. Edges are numbered fr
     {
       question: "A slave holds AWREADY high while idle, and drops it when its buffer fills, before any AWVALID has arrived. Is that legal?",
       answers: [
-        { text: "No: a destination must see VALID first and only then raise READY.", correct: false, feedback: "A destination may wait for VALID, but it does not have to; it may assert READY first (IHI0022E §A3.2.1, §A3.3.1 Note)." },
+        { text: "No: a destination must see VALID first and only then raise READY.", correct: false, feedback: "A destination may wait for VALID, but it does not have to; it may assert READY first (IHI0022E §A3.2.1, §A3.3.1)." },
         { text: "No: once READY is asserted it must stay high until a transfer, just like VALID.", correct: false, feedback: "That hold rule applies to VALID only. 'If READY is asserted, it is permitted to deassert READY before VALID is asserted' (§A3.2.1)." },
         { text: "Only if AWVALID is high on the same edge.", correct: false, feedback: "Then there would be a transfer at that edge; the question is about READY with no VALID, which moves nothing and is legal." },
         { text: "Yes: READY may rise before VALID and fall again before VALID arrives.", correct: true, feedback: "Right (§A3.2.1). A default-high AWREADY is even recommended (§A3.2.2); while AWREADY is high the slave must be able to accept any valid address." }

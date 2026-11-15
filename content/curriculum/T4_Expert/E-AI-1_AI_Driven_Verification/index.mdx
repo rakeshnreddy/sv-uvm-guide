@@ -124,7 +124,7 @@ A few terms from the prerequisites, restated in one line each:
     <text x="193" y="285" fontSize="10" fill="currentColor">never hit, by any seed count</text>
     <text x="193" y="298" fontSize="10" fill="currentColor">spec decides: fix or exclude</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">The four reasons at a glance. Panels 1 to 3 are slow but reachable; only panel 4 never closes. Panel 1 is the average for 100 equally likely bins (calculated in Make It Work); panels 2 to 4 are schematic, not to scale.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">**Why coverage flattens: four reasons.** The four reasons at a glance. Panels 1 to 3 are slow but reachable; only panel 4 never closes. Panel 1 is the average for 100 equally likely bins (calculated in Make It Work); panels 2 to 4 are schematic, not to scale.</figcaption>
 </figure>
 
 Published work on test selection says random tests "tend to repeatedly exercise the same design logic" (Masamba, Eder and Blackmore, 2022). That observation is right. The cause is the four points above, not a defect in the solver.
@@ -133,7 +133,9 @@ Published work on test selection says random tests "tend to repeatedly exercise 
 
 <CoverageCrossExplorerVisualizer initialStimulus="biased" />
 
-**Debrief.** The coupon-collector estimate assumes equally likely bins, and this stimulus breaks that assumption. The rarest bin sets the pace: the curve climbs fast, then flattens while the run waits for one rare cell. Switch the stimulus to **constrained (hole)** and predict again: one cell now has probability 0, and the run never closes. Those two shapes, *rare* and *unreachable*, are the whole story of the long tail, and they behave very differently under ML.
+**Debrief.** The coupon-collector estimate assumes equally likely bins, and this stimulus breaks that assumption. The rarest bin sets the pace: the curve climbs fast, then flattens while the run waits for one rare cell. Switch the stimulus to **constrained (hole)**, where a constraint forbids BURST to addresses 48..63, and answer the prediction prompt again before you press play.
+
+After that run: with this stimulus one cell has probability 0, so the run never closes. Those two shapes, *rare* and *unreachable*, are the whole story of the long tail, and they behave very differently under ML.
 
 **Pitfalls.**
 - "The solver keeps generating the same values." It is uniform over legal combinations (§18.5.9); look at bin probabilities, not at the solver.
@@ -204,7 +206,7 @@ Not everything labelled "AI" is equally mature. Sort a technique by the evidence
 | Regression test selection and ranking | Runs fewer tests for the same coverage | Research: Masamba et al. 2022. Vendor features: Synopsys VSO.ai ("identify and eliminate redundancies in regressions"); Cadence Verisium |
 | Coverage analytics | Finds patterns in holes, suggests causes | Vendor features: VSO.ai ("automate coverage root cause analysis"); Siemens Questa Verification IQ ("predict patterns and holes", January 2023) |
 | RL or evolutionary stimulus | Learns knob settings that reach new bins | Research approaches (GA-based CDG reviewed in Ioannides and Eder 2012) |
-| Assertion mining | Mines likely invariants from simulation traces, filters them with formal | Research: GoldMine (Sheridan, Liu and Vasudevan, DATE 2010) |
+| Assertion mining | Mines likely invariants from simulation traces, filters them with formal | Research: GoldMine (Vasudevan et al., DATE 2010) |
 | LLM drafting of SVA | Natural-language spec to SVA | Emerging; benchmarked by FVEval (Kang et al., 2024) |
 | LLM drafting of sequences and TB code | Spec or test plan to UVM code | Emerging; no benchmark is cited here |
 | LLM debug and root-cause hints | Explains logs and waveforms | Emerging; treat output as a hypothesis to confirm |
@@ -233,7 +235,7 @@ LLMs draft some things well: boilerplate (class skeletons, `uvm_component_utils`
 7. **Width and type traps:** a counter too narrow to hold the value the property compares against.
 8. **Invented APIs:** methods, macros, plusargs or system functions that do not exist in IEEE 1800-2023 or uvm-core 2020.3.1.
 
-Items 1 to 7 compile cleanly. That is the first misconception this lesson targets: *an AI-generated assertion is not correct because it compiles*. Only item 8 is caught by the compiler, and only if the invented name is not an existing name used wrongly.
+Items 1 to 7 compile cleanly. That is the first misconception this lesson targets: *an AI-generated assertion is not correct because it compiles*. Only item 8 is usually caught by the compiler, and only if the invented name is not an existing name used wrongly: an unknown method, macro or system function fails to compile, but an invented plusarg is just a string, so `$test$plusargs("...")` compiles and silently returns 0 (§21.6).
 
 **A worked review.** A designer asked an LLM for SVA from this spec: "When the FIFO is full, a write must not cause data corruption. The FIFO count should not exceed MAX_DEPTH." It returned:
 
@@ -258,7 +260,7 @@ assert property (p_full_write_no_corrupt)
 
 It compiles. Review it against the spec.
 
-**Predict before you read the findings.** Write down everything you think is wrong with the draft, using the catalogue above. The spec leaves out two design facts, so the designer tells you: this FIFO can serve a read in the same cycle as a write while it is full, and the RTL may declare `fifo_count` with `$clog2(MAX_DEPTH)` bits. Then open the findings and compare.
+**Predict before you read the findings.** Write down everything you think is wrong with the draft, using the catalogue above. The spec leaves out two design facts, so the designer tells you: the FIFO's read port works whenever it is not empty, and you should check how `fifo_count` is declared in the RTL (its width depends on MAX_DEPTH, which is 4 here). Then open the findings and compare.
 
 <details>
 <summary>Check your list: five defects, one style note, and the waveform</summary>
@@ -267,7 +269,7 @@ It compiles. Review it against the spec.
 2. **Over-specification.** On a FIFO that serves a read while it is full, the same cycle's read legally drops the count from 4 to 3. The property fails on a correct design. The waveform below shows it.
 3. **Sampling in the action block.** The first message prints `fifo_count`, the current value when the action block runs in the **Reactive region** (the part of the time step that runs after the design's updates for that edge, §16.14.1), not the sampled value the assertion used (§16.9.3's `a1_bad` example, §16.14.1). Print `$sampled(fifo_count)`.
 4. **No cover.** Nothing shows that "full and write" ever happened in the test. If it never did, the second assertion is green and has checked nothing (§16.14.8). Add `cover property` on the antecedent.
-5. **Width trap.** If `fifo_count` is declared with `$clog2(MAX_DEPTH)` bits, it cannot represent `MAX_DEPTH`, and `fifo_count <= MAX_DEPTH` can never fail.
+5. **Width trap.** If `fifo_count` is declared with `$clog2(MAX_DEPTH)` bits and MAX_DEPTH is a power of two (such as 4), it cannot represent `MAX_DEPTH`, and `fifo_count <= MAX_DEPTH` can never fail.
 6. Here `|-> ##1 (...)` checks the same edge as `|=> (...)`: §16.12.7 defines `|=>` as a one-tick delay after the antecedent's match. That is style, not a bug; use `|=>` for readability.
 
 <TimingDiagram
@@ -321,13 +323,13 @@ Finish with a **mutation test**: deliberately break the design (or the trace) in
 | 5. Wrong implication | Yes | Property-shape review; idle cycles fail in simulation | 3 |
 | 6. Over-specification | Yes | A directed run of a legal corner case (a read while full) | 8 |
 | 7. Width and type traps | Yes | Width review, and a mutation test (the check never fires) | 7 |
-| 8. Invented APIs | No, unless an existing name is used wrongly | The compiler | (compile step) |
+| 8. Invented APIs | No for methods, macros and system functions, unless an existing name is used wrongly; yes for an invented plusarg | The compiler (for a plusarg: check that something reads it) | (compile step) |
 
-**Predict before you evaluate.** The SVA trace lab below evaluates real properties on an editable cycle trace. Switch it to **Debug: spot the bug** and work through the four cases in order: *Bare sequence*, *`|->` where `|=>` was meant*, *`$past` across reset* and *Vacuous pass hides a dead antecedent*. They are the same four bugs as review items 1 to 4 in the Practice section. For each case, predict what each attempt reports before you look, then pick the explanation.
+**Predict before you evaluate.** The SVA trace lab below evaluates real properties on an editable cycle trace. Switch it to **Debug: spot the bug** and work through the four cases in order: *Bare sequence*, *`|->` where `|=>` was meant*, *`$past` across reset* and *Vacuous pass hides a dead antecedent*. They are the same four bugs as exercise items 1 to 4 in Practice & Reinforce. For each case, predict what each attempt reports before you look, then pick the explanation.
 
 <SvaSequenceWaveformVisualizer />
 
-**Debrief.** Each case maps to one checklist item: the bare sequence to item 3, the overlap mistake to item 2, `$past` across reset to item 4, the dead antecedent to item 6. Notice that the dead-antecedent case is the only one that is *green*. That is the dangerous one, and it is why item 6 is not optional.
+**Debrief.** Each case maps to one item of the review checklist above: the bare sequence to checklist item 3, the overlap mistake to checklist item 2, `$past` across reset to checklist item 4, the dead antecedent to checklist item 6. Notice that the dead-antecedent case is the only one that is *green*. That is the dangerous one, and it is why item 6 is not optional.
 
 ### Reviewing AI-generated UVM sequences
 
@@ -417,7 +419,7 @@ A speed-up claim is a ratio, and a ratio is meaningless without its denominator.
     <line x1="60" y1="58" x2="84" y2="58" className="stroke-violet-600 dark:stroke-violet-400" strokeWidth="2.5" strokeDasharray="6 4" />
     <text x="90" y="62" fontSize="10" fill="currentColor">ideal no-repeat (dashed)</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">Same two generators, three different speed-ups. Uniform random needs 68.8, 225.8 and 518.7 samples on average to reach 50%, 90% and 100% of 100 equally likely bins; the ideal generator needs 50, 90 and 100. Always ask "to which target?". Values from the calculator in Make It Work.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">**Speed-up depends on the target.** Same two generators, three different speed-ups. Uniform random needs 68.8, 225.8 and 518.7 samples on average to reach 50%, 90% and 100% of 100 equally likely bins; the ideal generator needs 50, 90 and 100. Always ask "to which target?". Values from the calculator in Make It Work.</figcaption>
 </figure>
 
 | Target | Uniform random (average samples) | Ideal no-repeat | Ratio |
@@ -745,7 +747,7 @@ module tb_top;
 endmodule
 ```
 
-**Predict before you run.** Rising clock edges are at 5, 15, 25 ns and so on, and the clocking block drives each input 1 ns after an edge. For the run with `LLM_DRAFT` defined and the run without it, write down: which run reports an assertion error and at what time, at which times each cover prints, and the final `PASS=` and `FAIL=` counts. Then open the expected output.
+**Predict before you run.** Rising clock edges are at 5, 15, 25 ns and so on, and the clocking block drives each input 1 ns after an edge. The worked review's waveform already shows where the draft fails. For the run with `LLM_DRAFT` defined and the run without it, predict the rest: at which times each cover prints, whether any reviewed assertion fails, and the final `PASS=` and `FAIL=` counts in each run. Then open the expected output.
 
 <details>
 <summary>Check your prediction: both runs and the edge trace</summary>
@@ -756,10 +758,12 @@ Run A, with `LLM_DRAFT` defined (for example `+define+LLM_DRAFT` on most simulat
 
 ```text
 65 COVER c_full_write_read: full, write and read in one cycle
-Error: Write to full FIFO corrupted count        (reported at time 75; tool-specific prefix)
+Error: Write to full FIFO corrupted count
 85 COVER c_full_write_no_read: write to a full FIFO, no read
 PASS=5 FAIL=0
 ```
+
+The error line is reported at time 75 ns; its prefix and location format depend on the simulator.
 
 Run B, without `LLM_DRAFT`:
 
@@ -829,7 +833,7 @@ rare bin p=0.00050: about 2000 samples on average
 ### How to review AI-generated verification code
 
 1. **Write the intent first.** One sentence per check, from the specification, before you read the AI output.
-2. **Compile it.** This catches invented APIs and syntax errors only; it proves nothing about meaning.
+2. **Compile it.** This catches invented methods, macros and system functions and syntax errors only (an invented plusarg still compiles); it proves nothing about meaning.
 3. **Walk the SVA checklist** (timing, shape, sampling and history, disable, reachability, widths, spec versus RTL) or the sequence checklist (checked randomization, complete handshake, no delays, objections, real APIs, resolved ambiguities).
 4. **Add a cover** for every antecedent and every interesting scenario.
 5. **Run a directed scenario** that exercises the rule, including the legal corner cases the spec allows (here, a read while full).
@@ -922,7 +926,7 @@ Signature bucketing groups runs by a normalized first error message ([E-DBG-1](/
     <text x="282" y="153" fontSize="10" textAnchor="middle" fill="currentColor">cluster C</text>
     <text x="282" y="172" fontSize="11" fontWeight="600" textAnchor="middle" fill="currentColor">C1 C2</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">The two ways signature bucketing fails, on six failing runs. Each letter is the true root cause, known only after debugging. Top: cause A is split across two messages, and one timeout bucket hides causes B and C. Bottom: clustering by features regroups them, when the features separate the causes; that is why you still debug at least one run from every cluster.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">**Signature buckets against feature clusters.** The two ways signature bucketing fails, on six failing runs. Each letter is the true root cause, known only after debugging. Top: cause A is split across two messages, and one timeout bucket hides causes B and C. Bottom: clustering by features regroups them, when the features separate the causes; that is why you still debug at least one run from every cluster.</figcaption>
 </figure>
 
 ### Expert: Benchmarking LLM assertion generators
@@ -1008,127 +1012,6 @@ Answer each one before you open the feedback.
 />
 
 ## Practice & Reinforce
-
-### Quiz
-
-<Quiz
-  questions={[
-    {
-      question: "A coverpoint has 100 bins, all equally likely under your constraints, and each sample hits exactly one bin. On average, about how many uniform random samples does it take to hit every bin at least once?",
-      objective: 1,
-      answers: [
-        { text: "About 100: one sample per bin.", correct: false, feedback: "Random samples repeat bins. Once most are covered, nearly every new sample lands on a covered bin." },
-        { text: "About 200: twice the bin count.", correct: false, feedback: "Too low. Reaching 80% alone takes about 159 samples; the last 20 bins cost far more than the first 80." },
-        { text: "About 519: 100 times the 100th harmonic number.", correct: true, feedback: "Correct. n × H(n) for n = 100 is about 518.7 (the coupon-collector result)." },
-        { text: "About 10,000: the number of bins squared.", correct: false, feedback: "Too high. The growth is n × H(n), roughly n ln n, not n squared." }
-      ],
-      explanation: "With i bins covered, a new bin appears with probability (100 − i)/100, so that step takes 100/(100 − i) samples on average. Summing over all steps gives 100 × H(100), about 519. The first 90% takes about 226 samples and the last 10% about 293."
-    },
-    {
-      question: "Three cross cells sit at 0% after 50,000 seeds. Analysis shows a constraint makes them impossible to generate. What can an RL-based stimulus optimizer do about these three cells?",
-      objective: 1,
-      answers: [
-        { text: "Hit them eventually, given enough training episodes.", correct: false, feedback: "A cell with probability 0 is never generated, however the knobs are tuned within the same constraints." },
-        { text: "Nothing within the current constraints. An engineer must decide from the spec whether to fix the constraint or exclude the cells (illegal_bins or ignore_bins).", correct: true, feedback: "Correct. Optimizers shift probability among reachable bins; they cannot reach a probability-0 bin or decide whether it is legal." },
-        { text: "Run 10x more seeds in parallel to find them faster.", correct: false, feedback: "More samples of a probability-0 event still give zero hits." },
-        { text: "Replace the coverage model with its own reward function, so the cells no longer count.", correct: false, feedback: "That is the misconception: ML closure optimizes against the coverage model, it does not replace it. Dropping the cells hides a possible real hole." }
-      ],
-      explanation: "ML helps with rare but reachable bins. Unreachable bins need a human decision based on the specification: a constraint bug if the combination is legal, an illegal or ignore bin if it is not."
-    },
-    {
-      question: "A colleague proposes to train a classifier on (seed number, coverage hit) pairs from past regressions, then use it to predict which new seed numbers will hit the remaining holes. What is wrong with the plan?",
-      objective: 1,
-      answers: [
-        { text: "Nothing; with enough data the classifier will find which seeds are good.", correct: false, feedback: "There is nothing to find: a new seed's number has no learnable relation to the stimulus it produces." },
-        { text: "The classifier must be a neural network, not a decision tree.", correct: false, feedback: "The model type is not the problem; the input feature is." },
-        { text: "Seeds cannot be reused, because random stability does not hold across runs.", correct: false, feedback: "Random stability is exactly what makes a known seed reproduce its run, so re-ranking known seeds from history is legitimate." },
-        { text: "Seed numbers carry no learnable signal. Learned test selection predicts from features of the generated stimulus (or the knob settings), then simulates only the tests it ranks highest.", correct: true, feedback: "Correct. That is the pattern in Masamba, Eder and Blackmore (AITest 2022): generate many tests cheaply, select by stimulus features, simulate the subset." }
-      ],
-      explanation: "Features must describe the stimulus, which exists before simulation. Known seeds can be re-ranked from their recorded results, but a new seed number predicts nothing."
-    },
-    {
-      question: "A product page says: 'Up to 10x faster coverage closure.' Before you put it in a budget, which question matters most?",
-      objective: 2,
-      answers: [
-        { text: "To which coverage target, against which baseline flow and compute budget, on which designs, and is 10x the median or the best case?", correct: true, feedback: "Correct. Without those, the ratio cannot be checked or transferred to your design." },
-        { text: "None; vendors publish only verified numbers.", correct: false, feedback: "A vendor page is a marketing claim. 'Up to' is by definition the best case." },
-        { text: "Whether the tool uses reinforcement learning or a genetic algorithm.", correct: false, feedback: "The method matters far less than what was measured and against what." },
-        { text: "Whether the tool has a Python API.", correct: false, feedback: "Useful for integration, irrelevant to whether the speed-up applies to you." }
-      ],
-      explanation: "A speed-up claim is a ratio, and its denominator (baseline, compute) and its endpoint (target) decide its meaning. The design set decides whether it transfers. Score the claim, then pilot it."
-    },
-    {
-      question: "Two generators run on 100 equally likely bins: plain uniform random, and an ideal one that never repeats a bin. One report says the ideal generator is 1.38x faster; another says 5.19x faster. Both are computed correctly. What explains the difference?",
-      objective: 2,
-      answers: [
-        { text: "One report used a different simulator.", correct: false, feedback: "These are expected-sample counts; no simulator is involved." },
-        { text: "The reports measured to different coverage targets: 50% gives 68.8 versus 50 samples (1.38x), 100% gives 518.7 versus 100 (5.19x).", correct: true, feedback: "Correct. The tail grows near 100%, so the same pair of methods shows a larger ratio the closer the target is to full closure." },
-        { text: "One of the reports must be wrong, because a speed-up is a fixed property of a method.", correct: false, feedback: "A speed-up depends on where you stop measuring." },
-        { text: "The bins were not equally likely in one report.", correct: false, feedback: "Both use the same equally likely bins; only the target differs." }
-      ],
-      explanation: "Uniform random needs n(H(n) − H(n − k)) samples to reach k of n bins; the ideal needs k. At k = 50 the ratio is 1.38; at k = 100 it is 5.19. Always ask 'to which target?'."
-    },
-    {
-      question: "An LLM wrote `assert property (@(posedge clk) req && !rst_n |=> ack);` for the spec 'after reset (rst_n is active low), every req gets ack on the next cycle.' In this testbench req is never driven while reset is asserted. The regression reports zero failures. What is the most likely explanation?",
-      objective: 3,
-      answers: [
-        { text: "The DUT meets the spec: zero failures is the evidence.", correct: false, feedback: "Vacuous successes are not evidence (IEEE 1800-2023 §16.14.8). Check whether any attempt was non-vacuous." },
-        { text: "`|=>` should be `|->`; the assertion checks the wrong cycle.", correct: false, feedback: "Changing the timing does not help: the antecedent still never matches." },
-        { text: "The antecedent can only match during reset, when req is never driven, so every attempt is vacuous and ack is never checked. Fix the polarity to `req && rst_n` and add `cover property (@(posedge clk) req && rst_n)`.", correct: true, feedback: "Correct. A dead antecedent makes an assertion permanently green. The cover proves that the fixed check actually runs." },
-        { text: "It needs `disable iff (!rst_n)` to start checking.", correct: false, feedback: "A disable condition would also switch it off during reset, but the antecedent would still never match outside reset." }
-      ],
-      explanation: "The antecedent `req && !rst_n` requires reset to be active, and req is never driven then, so every attempt succeeds vacuously. This is the 'it compiles, so it is right' misconception: it compiles, runs and is green, and checks nothing."
-    },
-    {
-      question: "The LLM-drafted property `(fifo_full && write_en) |-> ##1 (fifo_count == $past(fifo_count))` runs on a correct 4-entry FIFO that drops writes when full and serves reads when not empty. At one edge, fifo_count is 4 (full), write_en is 1 and read_en is 1. What does that attempt report at the next edge?",
-      objective: 3,
-      answers: [
-        { text: "Pass: a write to a full FIFO never changes the count.", correct: false, feedback: "The write is dropped, but the read in the same cycle is served, so the count falls to 3." },
-        { text: "Vacuous success: read_en is 1, so the antecedent does not match.", correct: false, feedback: "read_en does not appear in the antecedent; fifo_full and write_en are both 1, so the attempt starts." },
-        { text: "Disabled, because the FIFO was full.", correct: false, feedback: "Only the disable iff condition (reset) disables an attempt." },
-        { text: "Fail: the count is 3 at the next edge, and $past(fifo_count) is 4, although the design behaved correctly.", correct: true, feedback: "Correct. The property over-specifies the spec: it forbids a legal read in the same cycle. Add `!read_en` to the antecedent and check the read case separately." }
-      ],
-      explanation: "The design served the read and dropped the write, so the count went 4 to 3. The draft assumed no read could happen. That is over-specification, and it also never checks the data, which the spec was about."
-    },
-    {
-      question: "An LLM-drafted UVM sequence contains these lines. Which one compiles and runs without any error message, yet can silently skip randomization in some regressions?",
-      objective: 3,
-      answers: [
-        { text: "`if (!req.compare_and_report(wdata[i])) ...`", correct: false, feedback: "`compare_and_report` does not exist in uvm-core 2020.3.1, so this fails at compile time. At least it is loud." },
-        { text: "`assert(req.randomize() with { write == 1; addr == 32'h1000 + i; });`", correct: true, feedback: "Correct. If assertions are switched off, the call inside the immediate assertion is not executed, so the item goes out with default field values. Use if (!req.randomize() with {...}) followed by a uvm_fatal report." },
-        { text: "`starting_phase.raise_objection(this);` when the test starts the sequence with seq.start(sqr)", correct: false, feedback: "This is a defect too, but a loud one: starting_phase is null here, so the call is a null-handle access and the simulation stops with an error." },
-        { text: "`#10ns;` placed before reading the read data", correct: false, feedback: "A guessed delay is a defect, but it does not affect randomization. Placed after finish_item it only wastes time, because finish_item already waited; it gives wrong data only when a delay replaces that wait and the bus is slower." }
-      ],
-      explanation: "Only the assert-wrapped randomize can silently do nothing: the side effect disappears with the assertion. The invented method fails to compile, the null starting_phase crashes, and the delay gives wrong timing. All four must be fixed, but the silent one is the most dangerous."
-    },
-    {
-      question: "Which use of LLM output is acceptable in a flow that ends in tape-out sign-off?",
-      objective: 4,
-      answers: [
-        { text: "Regenerating the assertion file from the spec in CI every night, so it is always current.", correct: false, feedback: "LLM output can change between identical requests, so CI would test different checks each night with nobody reviewing them." },
-        { text: "Letting the LLM add ignore_bins for holes it judges unreachable.", correct: false, feedback: "Exclusions change the sign-off metric. Each needs a spec reference and a human approver." },
-        { text: "Assertions an engineer reviewed against the spec, with each antecedent covered and a mutant that makes them fire, committed with the model, prompt and date recorded.", correct: true, feedback: "Correct. The AI drafted; the evidence and the decision came from engineers, and the artifact is reproducible." },
-        { text: "Closing a bug because the LLM's root-cause explanation sounds convincing.", correct: false, feedback: "An explanation is a hypothesis. Confirm it with a directed test before closing the bug." }
-      ],
-      explanation: "AI may draft, rank, cluster and suggest. Accepted artifacts need independent evidence (review, covers, mutants, simulation or formal) and provenance; plans, waivers and sign-off stay human."
-    },
-    {
-      question: "A junior engineer wants to paste an unreleased RTL module and its failing log into a public chatbot to get debugging help. What is the right answer?",
-      objective: 4,
-      answers: [
-        { text: "Fine, as long as the chat is deleted afterwards.", correct: false, feedback: "Deleting your copy does not control what the provider retains or how it uses the data." },
-        { text: "Fine for small modules, because they reveal little.", correct: false, feedback: "Size does not change confidentiality or export-control status." },
-        { text: "Fine, because chatbots never use prompts for anything.", correct: false, feedback: "Retention and use of prompts depend on the provider's terms; you cannot assume either." },
-        { text: "Only through a deployment the company has approved for that data class, under its retention and export-control rules; otherwise, do not share RTL or logs.", correct: true, feedback: "Correct. RTL and logs are confidential and may be export-controlled. The data boundary is a policy decision, not an individual one." }
-      ],
-      explanation: "Data leaving the company is governed by policy: approved deployments, retention terms, export control. A convenient public tool is not an approved one."
-    }
-  ]}
-/>
-
-### Flashcards
-
-The flashcards for this lesson follow below, under "Reinforce the essentials". They cover the coverage tail, what ML can and cannot close, test selection, triage, the claim scorecard, the SVA and sequence review checks, and the data and provenance rules.
 
 ### Review exercise: six AI-drafted checks with seeded bugs
 
@@ -1244,6 +1127,127 @@ For the VSO.ai quote, the source answers almost nothing on the scorecard: "produ
 
 </details>
 
+### Quiz
+
+<Quiz
+  questions={[
+    {
+      question: "A coverpoint has 100 bins, all equally likely under your constraints, and each sample hits exactly one bin. On average, about how many uniform random samples does it take to hit every bin at least once?",
+      objective: 1,
+      answers: [
+        { text: "About 100: one sample per bin.", correct: false, feedback: "Random samples repeat bins. Once most are covered, nearly every new sample lands on a covered bin." },
+        { text: "About 200: twice the bin count.", correct: false, feedback: "Too low. Reaching 80% alone takes about 159 samples; the last 20 bins cost far more than the first 80." },
+        { text: "About 519: 100 times the 100th harmonic number.", correct: true, feedback: "Correct. n × H(n) for n = 100 is about 518.7 (the coupon-collector result)." },
+        { text: "About 10,000: the number of bins squared.", correct: false, feedback: "Too high. The growth is n × H(n), roughly n ln n, not n squared." }
+      ],
+      explanation: "With i bins covered, a new bin appears with probability (100 − i)/100, so that step takes 100/(100 − i) samples on average. Summing over all steps gives 100 × H(100), about 519. The first 90% takes about 226 samples and the last 10% about 293."
+    },
+    {
+      question: "Three cross cells sit at 0% after 50,000 seeds. Analysis shows a constraint makes them impossible to generate. What can an RL-based stimulus optimizer do about these three cells?",
+      objective: 1,
+      answers: [
+        { text: "Hit them eventually, given enough training episodes.", correct: false, feedback: "A cell with probability 0 is never generated, however the knobs are tuned within the same constraints." },
+        { text: "Nothing within the current constraints. An engineer must decide from the spec whether to fix the constraint or exclude the cells (illegal_bins or ignore_bins).", correct: true, feedback: "Correct. Optimizers shift probability among reachable bins; they cannot reach a probability-0 bin or decide whether it is legal." },
+        { text: "Run 10x more seeds in parallel to find them faster.", correct: false, feedback: "More samples of a probability-0 event still give zero hits." },
+        { text: "Replace the coverage model with its own reward function, so the cells no longer count.", correct: false, feedback: "That is the misconception: ML closure optimizes against the coverage model, it does not replace it. Dropping the cells hides a possible real hole." }
+      ],
+      explanation: "ML helps with rare but reachable bins. Unreachable bins need a human decision based on the specification: a constraint bug if the combination is legal, an illegal or ignore bin if it is not."
+    },
+    {
+      question: "A colleague proposes to train a classifier on (seed number, coverage hit) pairs from past regressions, then use it to predict which new seed numbers will hit the remaining holes. What is wrong with the plan?",
+      objective: 1,
+      answers: [
+        { text: "Nothing; with enough data the classifier will find which seeds are good.", correct: false, feedback: "There is nothing to find: a new seed's number has no learnable relation to the stimulus it produces." },
+        { text: "The classifier must be a neural network, not a decision tree.", correct: false, feedback: "The model type is not the problem; the input feature is." },
+        { text: "Seeds cannot be reused, because random stability does not hold across runs.", correct: false, feedback: "Random stability is exactly what makes a known seed reproduce its run, so re-ranking known seeds from history is legitimate." },
+        { text: "Seed numbers carry no learnable signal. Learned test selection predicts from features of the generated stimulus (or the knob settings), then simulates only the tests it ranks highest.", correct: true, feedback: "Correct. That is the pattern in Masamba, Eder and Blackmore (AITest 2022): generate many tests cheaply, select by stimulus features, simulate the subset." }
+      ],
+      explanation: "Features must describe the stimulus, which exists before simulation. Known seeds can be re-ranked from their recorded results, but a new seed number predicts nothing."
+    },
+    {
+      question: "A product page says: 'Up to 10x faster coverage closure.' Before you put it in a budget, which question matters most?",
+      objective: 2,
+      answers: [
+        { text: "To which coverage target, against which baseline flow and compute budget, on which designs, and is 10x the median or the best case?", correct: true, feedback: "Correct. Without those, the ratio cannot be checked or transferred to your design." },
+        { text: "None; vendors publish only verified numbers.", correct: false, feedback: "A vendor page is a marketing claim. 'Up to' is by definition the best case." },
+        { text: "Whether the tool uses reinforcement learning or a genetic algorithm.", correct: false, feedback: "The method matters far less than what was measured and against what." },
+        { text: "Whether the tool has a Python API.", correct: false, feedback: "Useful for integration, irrelevant to whether the speed-up applies to you." }
+      ],
+      explanation: "A speed-up claim is a ratio, and its denominator (baseline, compute) and its endpoint (target) decide its meaning. The design set decides whether it transfers. Score the claim, then pilot it."
+    },
+    {
+      question: "Two generators run on 100 equally likely bins: plain uniform random, and an ideal one that never repeats a bin. One report says the ideal generator is 1.38x faster; another says 5.19x faster. Both are computed correctly. What explains the difference?",
+      objective: 2,
+      answers: [
+        { text: "One report used a different simulator.", correct: false, feedback: "These are expected-sample counts; no simulator is involved." },
+        { text: "The reports measured to different coverage targets: 50% gives 68.8 versus 50 samples (1.38x), 100% gives 518.7 versus 100 (5.19x).", correct: true, feedback: "Correct. The tail grows near 100%, so the same pair of methods shows a larger ratio the closer the target is to full closure." },
+        { text: "One of the reports must be wrong, because a speed-up is a fixed property of a method.", correct: false, feedback: "A speed-up depends on where you stop measuring." },
+        { text: "The bins were not equally likely in one report.", correct: false, feedback: "Both use the same equally likely bins; only the target differs." }
+      ],
+      explanation: "Uniform random needs n(H(n) − H(n − k)) samples to reach k of n bins; the ideal needs k. At k = 50 the ratio is 1.38; at k = 100 it is 5.19. Always ask 'to which target?'."
+    },
+    {
+      question: "An LLM wrote `assert property (@(posedge clk) req && !rst_n |=> ack);` for the spec 'after reset (rst_n is active low), every req gets ack on the next cycle.' In this testbench req is never driven while reset is asserted. The regression reports zero failures. What is the most likely explanation?",
+      objective: 3,
+      answers: [
+        { text: "The DUT meets the spec: zero failures is the evidence.", correct: false, feedback: "Vacuous successes are not evidence (IEEE 1800-2023 §16.14.8). Check whether any attempt was non-vacuous." },
+        { text: "`|=>` should be `|->`; the assertion checks the wrong cycle.", correct: false, feedback: "Changing the timing does not help: the antecedent still never matches." },
+        { text: "The antecedent can only match during reset, when req is never driven, so every attempt is vacuous and ack is never checked. Fix the polarity to `req && rst_n` and add `cover property (@(posedge clk) req && rst_n)`.", correct: true, feedback: "Correct. A dead antecedent makes an assertion permanently green. The cover proves that the fixed check actually runs." },
+        { text: "It needs `disable iff (!rst_n)` to start checking.", correct: false, feedback: "A disable condition would also switch it off during reset, but the antecedent would still never match outside reset." }
+      ],
+      explanation: "The antecedent `req && !rst_n` requires reset to be active, and req is never driven then, so every attempt succeeds vacuously. This is the 'it compiles, so it is right' misconception: it compiles, runs and is green, and checks nothing."
+    },
+    {
+      question: "The LLM-drafted property `(fifo_full && write_en) |-> ##1 (fifo_count == $past(fifo_count))` runs on a correct 4-entry FIFO that drops writes when full and serves reads when not empty. At one edge, fifo_count is 4 (full), write_en is 1 and read_en is 1. What does that attempt report at the next edge?",
+      objective: 3,
+      answers: [
+        { text: "Pass: a write to a full FIFO never changes the count.", correct: false, feedback: "The write is dropped, but the read in the same cycle is served, so the count falls to 3." },
+        { text: "Vacuous success: read_en is 1, so the antecedent does not match.", correct: false, feedback: "read_en does not appear in the antecedent; fifo_full and write_en are both 1, so the attempt starts." },
+        { text: "Disabled, because the FIFO was full.", correct: false, feedback: "Only the disable iff condition (reset) disables an attempt." },
+        { text: "Fail: the count is 3 at the next edge, and $past(fifo_count) is 4, although the design behaved correctly.", correct: true, feedback: "Correct. The property over-specifies the spec: it forbids a legal read in the same cycle. Add `!read_en` to the antecedent and check the read case separately." }
+      ],
+      explanation: "The design served the read and dropped the write, so the count went 4 to 3. The draft assumed no read could happen. That is over-specification, and it also never checks the data, which the spec was about."
+    },
+    {
+      question: "An LLM-drafted UVM sequence contains these lines. Which one compiles and runs without any error message, yet can silently skip randomization in some regressions?",
+      objective: 3,
+      answers: [
+        { text: "`if (!req.compare_and_report(wdata[i])) ...`", correct: false, feedback: "`compare_and_report` does not exist in uvm-core 2020.3.1, so this fails at compile time. At least it is loud." },
+        { text: "`assert(req.randomize() with { write == 1; addr == 32'h1000 + i; });`", correct: true, feedback: "Correct. If assertions are switched off, the call inside the immediate assertion is not executed, so the item goes out with default field values. Use if (!req.randomize() with {...}) followed by a uvm_fatal report." },
+        { text: "`starting_phase.raise_objection(this);` when the test starts the sequence with seq.start(sqr)", correct: false, feedback: "This is a defect too, but a loud one: starting_phase is null here, so the call is a null-handle access and the simulation stops with an error." },
+        { text: "`#10ns;` placed before reading the read data", correct: false, feedback: "A guessed delay is a defect, but it does not affect randomization. Placed after finish_item it only wastes time, because finish_item already waited; it gives wrong data only when a delay replaces that wait and the bus is slower." }
+      ],
+      explanation: "Only the assert-wrapped randomize can silently do nothing: the side effect disappears with the assertion. The invented method fails to compile, the null starting_phase crashes, and the delay after finish_item only adds an unneeded gap, because finish_item already waited. All four must be fixed, but the silent one is the most dangerous."
+    },
+    {
+      question: "Which use of LLM output is acceptable in a flow that ends in tape-out sign-off?",
+      objective: 4,
+      answers: [
+        { text: "Regenerating the assertion file from the spec in CI every night, so it is always current.", correct: false, feedback: "LLM output can change between identical requests, so CI would test different checks each night with nobody reviewing them." },
+        { text: "Letting the LLM add ignore_bins for holes it judges unreachable.", correct: false, feedback: "Exclusions change the sign-off metric. Each needs a spec reference and a human approver." },
+        { text: "Assertions an engineer reviewed against the spec, with each antecedent covered and a mutant that makes them fire, committed with the model, prompt and date recorded.", correct: true, feedback: "Correct. The AI drafted; the evidence and the decision came from engineers, and the artifact is reproducible." },
+        { text: "Closing a bug because the LLM's root-cause explanation sounds convincing.", correct: false, feedback: "An explanation is a hypothesis. Confirm it with a directed test before closing the bug." }
+      ],
+      explanation: "AI may draft, rank, cluster and suggest. Accepted artifacts need independent evidence (review, covers, mutants, simulation or formal) and provenance; plans, waivers and sign-off stay human."
+    },
+    {
+      question: "A junior engineer wants to paste an unreleased RTL module and its failing log into a public chatbot to get debugging help. What is the right answer?",
+      objective: 4,
+      answers: [
+        { text: "Fine, as long as the chat is deleted afterwards.", correct: false, feedback: "Deleting your copy does not control what the provider retains or how it uses the data." },
+        { text: "Fine for small modules, because they reveal little.", correct: false, feedback: "Size does not change confidentiality or export-control status." },
+        { text: "Fine, because chatbots never use prompts for anything.", correct: false, feedback: "Retention and use of prompts depend on the provider's terms; you cannot assume either." },
+        { text: "Only through a deployment the company has approved for that data class, under its retention and export-control rules; otherwise, do not share RTL or logs.", correct: true, feedback: "Correct. RTL and logs are confidential and may be export-controlled. The data boundary is a policy decision, not an individual one." }
+      ],
+      explanation: "Data leaving the company is governed by policy: approved deployments, retention terms, export control. A convenient public tool is not an approved one."
+    }
+  ]}
+/>
+
+### Flashcards
+
+The flashcards for this lesson follow below, under "Reinforce the essentials". They cover the coverage tail, what ML can and cannot close, test selection, triage, the claim scorecard, the SVA and sequence review checks, and the data and provenance rules.
+
 ## References & Next Topics
 
 **Primary sources**
@@ -1253,7 +1257,7 @@ For the VSO.ai quote, the source answers almost nothing on the scorecard: "produ
 - C. Ioannides and K. I. Eder, "Coverage-Directed Test Generation Automated by Machine Learning: A Review", ACM TODAES 17(1), article 7, 2012.
 - N. Masamba, K. Eder and T. Blackmore, "Supervised Learning for Coverage-Directed Test Selection in Simulation-Based Verification", IEEE AITest 2022, pp. 19-25 (arXiv 2205.08524).
 - Z. Poulos and A. Veneris, "Clustering-based Failure Triage for RTL Regression Debugging", IEEE ITC 2014.
-- D. Sheridan, L. Liu and S. Vasudevan, "GoldMine: Automatic Assertion Generation Using Data Mining and Static Analysis", DATE 2010.
+- S. Vasudevan, D. Sheridan, S. J. Patel, D. Tcheng, W. Tuohy and D. R. Johnson, "GoldMine: Automatic Assertion Generation Using Data Mining and Static Analysis", DATE 2010, pp. 626-629.
 - M. Kang, M. Liu, G. Bany Hamad, S. Suhaib and H. Ren, "FVEval: Understanding Language Model Capabilities in Formal Verification of Digital Hardware", arXiv 2410.23299, 2024.
 - G. Huang et al., "Machine Learning for Electronic Design Automation: A Survey", ACM TODAES (arXiv 2102.03357).
 - H. He, "Defeating Nondeterminism in LLM Inference", Thinking Machines Lab, September 2025.

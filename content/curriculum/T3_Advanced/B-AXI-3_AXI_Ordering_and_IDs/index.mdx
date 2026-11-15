@@ -21,10 +21,10 @@ sources:
 
 <ArchitectureDiagram
   title="ID streams: ordered inside a stream, free between streams"
-  caption="Each box is one ordering stream: the transactions of one master that use one ID in one direction. Inside a box, transactions complete in the order they were issued. A line marked any order joins two streams that have no order between them: two IDs in the same direction, or a read and a write, even when the read's ARID equals the write's AWID. Read data from different ARIDs may also interleave beat by beat."
+  caption="Each inner box is one ordering stream: the transactions of one master that use one ID in one direction. Inside a box, transactions complete in the order they were issued. A line marked any order joins two streams that have no order between them: two IDs in the same direction, or a read and a write, even when the read's ARID equals the write's AWID. The same holds for every other pair of boxes. Read data from different ARIDs may also interleave beat by beat."
   legend={false}
-  cellWidth={140}
-  gapX={90}
+  cellWidth={130}
+  gapX={80}
   nodes={[
     { id: "rd", label: "Reads", kind: "generic", col: 0, row: 0, rowSpan: 2, container: true },
     { id: "r0", label: "ARID 0 stream", sublabel: "in issue order", kind: "generic", col: 0, row: 0 },
@@ -55,7 +55,7 @@ sources:
 
 **How to read this lesson.** The core path is four rules, each with a waveform: same ID in order, different IDs in any order, AXI4 write data in address order, and no order between reads and writes. Between them sit the two ideas the rules rely on (outstanding transactions and IDs) and, after them, the interconnect and where each check lives in a testbench. Device-versus-Normal memory and the full AXI4 ordering model are practitioner and expert depth; you can skip them on a first pass, because the four rules do not depend on them.
 
-**Reading the waveforms.** Each waveform shows the value of every signal at numbered rising edges of the clock. A hatched bus value means nothing is being transferred on that bus at that edge (not an error). Markers above the waveform flag the edges to look at: ✓ a transfer the rules allow, ● a point to notice, ▼ a monitor action. Hover over a marker for its text; the caption carries the same information.
+**Reading the waveforms.** Each waveform shows the value of every signal at numbered rising edges of the clock. A hatched bus value means nothing is being transferred on that bus at that edge (not an error). Markers above the waveform flag the edges to look at: ✓ a transfer the rules allow, ● a point to notice, ▼ a monitor action, … a step still waiting (the transaction is not complete yet), ✕ a transfer that breaks a rule. Hover over a marker for its text; the caption carries the same information.
 
 **Words you need first.**
 - A **master** starts transactions (a CPU, a DMA engine); a **slave** answers them (a memory controller, a register block). IHI0022E uses these words; later Arm issues say **manager** and **subordinate** for the same roles. This track says master and slave.
@@ -70,23 +70,25 @@ The picture below puts *issued* and *complete* on one waveform, for one two-beat
 
 <TimingDiagram
   title="Issued to complete: one read and one write"
-  caption="The x-axis is the rising edges of ACLK, numbered 0 to 8; each column shows the value sampled at that edge. READY signals are held at 1. The read (ARID 1) is issued at edge 1 and completes at its RLAST beat, edge 3. The write (AWID 2) is issued at edge 4; its last write beat (WLAST) is at edge 6, but it completes only at the B handshake, edge 8. The shaded spans are the edges where each transaction is outstanding."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 8; each column shows the value sampled at that edge. READY signals are held at 1. The read (ARID 1) is issued at edge 1 and completes at its RLAST beat, edge 3. The write (AWID 2) is issued at edge 4; its last write beat (WLAST) is at edge 6, but it completes only at the B handshake, edge 8. RID 1 on the read data and BID 2 on the write response tie each response to its request. The shaded spans are the edges where each transaction is outstanding: blue for the read, green for the write."
   edges={9}
   signals={[
     { name: "ACLK", kind: "clock" },
     { name: "ARVALID", kind: "bit", values: [0, 1, 0, 0, 0, 0, 0, 0, 0] },
     { name: "ARID", kind: "bus", values: [undefined, "1", undefined, undefined, undefined, undefined, undefined, undefined, undefined] },
     { name: "RVALID", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0, 0] },
+    { name: "RID", kind: "bus", values: [undefined, undefined, "1", "1", undefined, undefined, undefined, undefined, undefined] },
     { name: "RLAST", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0, 0] },
     { name: "AWVALID", kind: "bit", values: [0, 0, 0, 0, 1, 0, 0, 0, 0] },
     { name: "AWID", kind: "bus", values: [undefined, undefined, undefined, undefined, "2", undefined, undefined, undefined, undefined] },
     { name: "WVALID", kind: "bit", values: [0, 0, 0, 0, 0, 1, 1, 0, 0] },
     { name: "WLAST", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0, 0] },
-    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 1] }
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 1] },
+    { name: "BID", kind: "bus", values: [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "2"] }
   ]}
   highlights={[
     { from: 1, to: 3, tone: "info", label: "read outstanding: AR handshake to RLAST" },
-    { from: 4, to: 8, tone: "attempt", label: "write outstanding: AW handshake to B" }
+    { from: 4, to: 8, tone: "pass", label: "write outstanding: AW handshake to B" }
   ]}
   markers={[
     { edge: 1, tone: "info", label: "AR handshake: the read is issued" },
@@ -103,9 +105,12 @@ In AHB, one transfer at a time is in its data phase and transfers finish in orde
 
 **Predict first.** A master issues three single-beat reads with ARIDs 0, 1 and 2, in that order. Must the read data come back in the order 0, 1, 2?
 
+<details>
+<summary>Answer: the waveform and debrief</summary>
+
 <TimingDiagram
   title="Three single-beat reads with ARIDs 0, 1 and 2"
-  caption="READY signals are held at 1, so every edge with a VALID of 1 is a handshake. The master issues reads with ARID 0, 1 and 2 at edges 1, 2 and 3; after edge 3 all three are outstanding. The slave returns ID 2 first (edge 5), then ID 0, then ID 1. Each read has one beat, so every R beat carries RLAST."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 8. READY signals are held at 1, so every edge with a VALID of 1 is a handshake. The master issues reads with ARID 0, 1 and 2 at edges 1, 2 and 3; after edge 3 all three are outstanding. The slave returns ID 2 first (edge 5), then ID 0, then ID 1. Each read has one beat, so every R beat carries RLAST."
   edges={9}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -123,6 +128,8 @@ In AHB, one transfer at a time is in its data phase and transfers finish in orde
 />
 
 **Debrief.** No. The three reads have different IDs, so the slave may answer in any order (§A5.3), for example because ID 2 hit a fast buffer while ID 0 went to DRAM. Had all three used one ARID, only the order 0, 1, 2 would be legal. The rest of this lesson makes that difference precise.
+
+</details>
 
 **Why outstanding transactions exist.** One read to a memory with a 100-cycle latency, issued alone, leaves the R channel idle for 100 cycles. With several reads outstanding, their latencies overlap: while the first is still in the memory, the next ones are already queued behind it. Throughput then grows with the number outstanding until the R channel is full. *Push Further* turns this into a sizing estimate.
 
@@ -144,20 +151,18 @@ Each channel has its own ID signal (§A5.2, Table A5-1):
 
 IHI0022E describes the effect as one port acting as several: "a single physical port can support out-of-order transactions by acting as a number of logical ports, each of which handles its transactions in order" (§A5.1). Each ID is one such logical port.
 
-**How wide is an ID?** The width "is IMPLEMENTATION DEFINED". The specification recommends up to 4 bits at a master, up to 4 more bits added by the interconnect for master-port numbers, and 8 bits of ID support at a slave (§A5.3.6). A master that needs only one ordered stream may tie its ID outputs to a constant such as 0, and then everything it issues is in order. **AXI4-Lite** has no IDs at all: "all transactions must be in order" (§B1.1.4; [B-AMBA-1](/curriculum/T3_Advanced/B-AMBA-1_Protocol_Families_and_Tradeoffs/index) covers AXI4-Lite).
+**How wide is an ID?** The width "is IMPLEMENTATION DEFINED". The specification recommends up to 4 bits at a master, up to 4 more bits added by the interconnect for master-port numbers, and 8 bits of ID support at a slave (§A5.3.6). A master that needs only one ordered stream may tie its ID outputs to a constant such as 0, and then everything it issues is in order. **AXI4-Lite** does not support IDs: all accesses use one fixed ID value, so "all transactions must be in order" (an AXI4-Lite slave may optionally carry ID signals so that it can connect to a full AXI interface; §B1.1.4; [B-AMBA-1](/curriculum/T3_Advanced/B-AMBA-1_Protocol_Families_and_Tradeoffs/index) covers AXI4-Lite).
 
 ### Rule 1: same ID, same direction, issue order
 
-The exact rule (§A5.3, §A5.3.1, §A6.1):
-- **Reads:** read data of transactions with the same ARID returns in the order the master issued the addresses. The beats of two same-ID reads are never mixed: all of the first read's beats come before any beat of the second.
-- **Writes:** writes with the same AWID complete in issue order, so their B responses with that BID come back in AW order.
-- **Only within one direction.** A read and a write are never ordered by sharing an ID value. That is Rule 4.
-
 **Predict first.** Reads A and B both use ARID 3 and both have two beats. A was issued first. May B's first beat arrive between A's two beats?
+
+<details>
+<summary>Answer: the waveform and debrief</summary>
 
 <TimingDiagram
   title="Two ARID 3 reads, A then B, two beats each"
-  caption="READY signals are held at 1. Read A (ARID 3, address 0x100) is issued at edge 1 and read B (ARID 3, address 0x200) at edge 2. The slave returns A0 and A1 (RLAST at edge 5), then B0 and B1 (RLAST at edge 7)."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 7. READY signals are held at 1. Read A (ARID 3, address 0x100) is issued at edge 1 and read B (ARID 3, address 0x200) at edge 2. The slave returns A0 and A1 (RLAST at edge 5), then B0 and B1 (RLAST at edge 7)."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -177,6 +182,13 @@ The exact rule (§A5.3, §A5.3.1, §A6.1):
 
 **Debrief.** No. Same-ID beats never mix, so B0 cannot sit between A0 and A1, and B cannot return first either: the orders B0, B1, A0, A1 and A0, B0, A1, B1 are both illegal (§A5.3.1). Only the drawn order is legal. This is also what makes a monitor's job simple for one ID: every beat with RID 3 belongs to the **oldest** outstanding read with ARID 3.
 
+</details>
+
+The exact rule (§A5.3, §A5.3.1, §A6.1):
+- **Reads:** read data of transactions with the same ARID returns in the order the master issued the addresses. The beats of two same-ID reads are never mixed: all of the first read's beats come before any beat of the second.
+- **Writes:** writes with the same AWID complete in issue order, so their B responses with that BID come back in AW order.
+- **Only within one direction.** A read and a write are never ordered by sharing an ID value. That is Rule 4.
+
 **Pitfall: one slot per ID.** Rule 1 exists because several transactions with one ID can be outstanding at once, as A and B are here. A model that keeps a single entry per ID, such as `pending[id]`, overwrites A when B's address arrives. It then compares A's data with B's request, and finds no request at all when B's data arrives. Per-ID state must be a queue in issue order, as `exp_q[id][$]` is in *Make It Work* (§A5.3.1).
 
 The same waveform, through both kinds of per-ID state:
@@ -194,13 +206,14 @@ The same waveform, through both kinds of per-ID state:
 
 ### Rule 2: different IDs, any order, and read data may interleave
 
-"Transactions from the same master, but with different ID values, have no ordering restrictions. They can complete in any order" (§A5.3). This applies to reads and to writes. For reads it goes one step further: "read data of transactions with different ARID values can be interleaved" (§A5.3.1), that is, beats of two reads can alternate on R.
-
 **Predict first.** Read A (ARID 1, two beats) is issued before read B (ARID 2, two beats). Is the R order B0, A0, B1, A1 legal?
+
+<details>
+<summary>Answer: the waveform and debrief</summary>
 
 <TimingDiagram
   title="Read A (ARID 1) then read B (ARID 2), two beats each"
-  caption="READY signals are held at 1. Read A (ARID 1) is issued at edge 1 and read B (ARID 2) at edge 2. The slave returns B0, A0, B1, A1, alternating the two bursts beat by beat. Each burst ends with its own RLAST: B at edge 6, A at edge 7."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 7. READY signals are held at 1. Read A (ARID 1) is issued at edge 1 and read B (ARID 2) at edge 2. The slave returns B0, A0, B1, A1, alternating the two bursts beat by beat. Each burst ends with its own RLAST: B at edge 6, A at edge 7."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -220,21 +233,24 @@ The same waveform, through both kinds of per-ID state:
 
 **Debrief.** Yes. Overtaking and interleaving are both legal across IDs. So RLAST ends a burst *for its RID only*: a monitor must collect R beats per RID and must never assume a burst arrives in one piece.
 
+</details>
+
+"Transactions from the same master, but with different ID values, have no ordering restrictions. They can complete in any order" (§A5.3). This applies to reads and to writes. For reads it goes one step further: "read data of transactions with different ARID values can be interleaved" (§A5.3.1), that is, beats of two reads can alternate on R.
+
 **Why it exists.** A slave that receives reads for IDs 1 and 2 can return ID 2's data first if ID 2 hits in a cache while ID 1 misses and goes to DRAM. Without reordering, every slow transaction would block every fast one behind it.
 
 **Pitfall: one queue for all IDs.** A scoreboard that keeps a single first-in, first-out queue for every read flags this legal waveform as an error. Keep one queue per ID ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) teaches the keyed-queue pattern).
 
 ### Rule 3: AXI4 write data follows the write-address order
 
-The W channel in AXI4 has **no ID**. "In AXI4, all write data for a transaction must be provided in consecutive transfers on the write data channel", and "all write data must be in the same order as the associated write addresses" (§A5.4, §A5.4.1). This holds "even if the write transactions have different AWID values, and even if they come from different masters" (§A5.3.2). So W beats are never interleaved across writes, whatever the AWIDs.
-
-There is one twist a monitor must handle. AXI defines no timing relation between the AW and W channels, so "the write data can appear at an interface before the write address for the transaction" (§A3.3). The *order* of the bursts on W still follows the order of the addresses on AW; only the timing can lead.
-
 **Predict first.** The master issues write X (AWID 0, two beats), then write Y (AWID 1, one beat). Is the W order Y0, X0, X1 legal, given that the IDs differ?
+
+<details>
+<summary>Answer: the waveform and debrief</summary>
 
 <TimingDiagram
   title="AXI4: write X (AWID 0, two beats), then write Y (AWID 1, one beat)"
-  caption="READY signals are held at 1. W beats X0 and X1 (WLAST at edge 2) are followed by Y0 (WLAST at edge 3). AW for X (AWID 0) arrives at edge 2, after X0 has already been transferred at edge 1; AW for Y (AWID 1) arrives at edge 3, the same edge as Y0."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 5. READY signals are held at 1. W beats X0 and X1 (WLAST at edge 2) are followed by Y0 (WLAST at edge 3). AW for X (AWID 0) arrives at edge 2, after X0 has already been transferred at edge 1; AW for Y (AWID 1) arrives at edge 3, the same edge as Y0."
   edges={6}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -255,11 +271,17 @@ There is one twist a monitor must handle. AXI defines no timing relation between
 
 The monitor's two queues, edge by edge on the waveform above:
 
-| Edge | On the pins | W side of the monitor | AW queue | Paired |
+| Edge | On the pins | W side (before pairing) | AW queue (before pairing) | Paired |
 |---|---|---|---|---|
 | 1 | X0 | collecting a burst: X0 | empty | nothing yet |
-| 2 | AW with AWID 0; X1 with WLAST | burst X complete: [X] | [AWID 0] | first W burst with first AW: X with AWID 0 |
+| 2 | AW with AWID 0; X1 with WLAST | burst X complete: [X] | [AWID 0] | X with AWID 0 (first with first) |
 | 3 | AW with AWID 1; Y0 with WLAST | burst Y complete: [Y] | [AWID 1] | Y with AWID 1 |
+
+</details>
+
+The W channel in AXI4 has **no ID**. "In AXI4, all write data for a transaction must be provided in consecutive transfers on the write data channel", and "all write data must be in the same order as the associated write addresses" (§A5.4, §A5.4.1). This holds "even if the write transactions have different AWID values, and even if they come from different masters" (§A5.3.2). So W beats are never interleaved across writes, whatever the AWIDs.
+
+There is one twist a monitor must handle. AXI defines no timing relation between the AW and W channels, so "the write data can appear at an interface before the write address for the transaction" (§A3.3). The *order* of the bursts on W still follows the order of the addresses on AW; only the timing can lead.
 
 **Pitfall: assuming AW comes first.** A monitor that treats W data with no AW yet as an error, or that pairs each W burst with the AW nearest in time, breaks on legal traffic like the waveform above. Pair by order, not by time.
 
@@ -283,15 +305,16 @@ The visualizer below holds six situations. For each one, read the summary, choos
 
 ### Rule 4: reads and writes are not ordered, even with one ID
 
-"AXI has no ordering restrictions between read and write transactions. They can complete in any order, even if the ARID value of a read transaction is the same as the AWID value of a write transaction" (§A5.3.4). The AXI4 ordering model says why: "because the read and write address channels are independent", a master that needs an order between a read and a write "must wait to receive a response to the first transaction before issuing the second", and "if a master issues a transaction in one direction before it has received a response to an earlier transaction in the opposite direction then there are no ordering guarantees between the two transactions" (§A6.1).
-
-**Memory types, briefly.** Every AW and AR request also carries an AxCACHE value (AWCACHE or ARCACHE). It marks the access as **Device** memory (peripherals, such as control registers) or **Normal** memory (RAM), and it says whether a write is **Bufferable**, which lets a buffer on the way (such as a write buffer in the interconnect) give the write response before the write reaches its destination (Table A4-3). *Device and Normal memory* below shows what the type changes, and [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index) decodes AxCACHE bit by bit. For Rule 4 the type changes nothing: with Device or Normal memory alike, a read and a write are ordered only if the second is issued after the first has received its response (§A4.3.2 Note, §A6.1).
+**Memory types, briefly.** Every AW and AR request also carries an AxCACHE value (AWCACHE or ARCACHE). It marks the access as **Device** memory (peripherals, such as control registers) or **Normal** memory (RAM), and it says whether a write is **Bufferable**, which lets a buffer on the way (such as a write buffer in the interconnect) give the write response before the write reaches its destination (Table A4-3). *Device and Normal memory* below shows what the type changes, and [B-AXI-4](/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index) decodes AxCACHE bit by bit.
 
 **Predict first.** A master writes 0x42 to address 0x100 with AWID 1. Before the write response arrives, it reads 0x100 with ARID 1. The memory is Normal. The read returns the old value 0x00. Is that a bug?
 
+<details>
+<summary>Answer: the waveform and debrief</summary>
+
 <TimingDiagram
   title="AWID 1 write and ARID 1 read of 0x100, read issued before the write's B"
-  caption="Normal memory, READY signals held at 1. AW (AWID 1, AWADDR 0x100) at edge 1; W (0x42, WLAST 1) and AR (ARID 1, ARADDR 0x100) at edge 2; R (RID 1, data 0x00, RLAST 1) at edge 4; B (BID 1, OKAY) at edge 6."
+  caption="The x-axis is the rising edges of ACLK, numbered 0 to 7. Normal memory, READY signals held at 1. AW (AWID 1, AWADDR 0x100) at edge 1; W (0x42, WLAST 1) and AR (ARID 1, ARADDR 0x100) at edge 2; R (RID 1, data 0x00, RLAST 1) at edge 4; B (BID 1, OKAY) at edge 6."
   edges={8}
   signals={[
     { name: "ACLK", kind: "clock" },
@@ -319,6 +342,10 @@ The visualizer below holds six situations. For each one, read the summary, choos
 />
 
 **Debrief.** Not a bug. The read was issued before the write's response, so there is no order between them and the old data is legal (§A5.3.4, §A6.1). Sharing the value 1 between AWID and ARID means nothing across directions, and with Device memory the answer would be the same (§A4.3.2 Note). If the master needed to read back 0x42, it had to wait for B and only then issue the AR.
+
+</details>
+
+"AXI has no ordering restrictions between read and write transactions. They can complete in any order, even if the ARID value of a read transaction is the same as the AWID value of a write transaction" (§A5.3.4). The AXI4 ordering model says why: "because the read and write address channels are independent", a master that needs an order between a read and a write "must wait to receive a response to the first transaction before issuing the second", and "if a master issues a transaction in one direction before it has received a response to an earlier transaction in the opposite direction then there are no ordering guarantees between the two transactions" (§A6.1). The memory type changes nothing here: with Device or Normal memory alike, a read and a write are ordered only if the second is issued after the first has received its response (§A4.3.2 Note, §A6.1).
 
 The safe pattern is "wait for the response, then issue":
 
@@ -447,9 +474,7 @@ Of the three options offered, only B, A, C is legal; A, B, C and A, C, B would b
 
 </details>
 
-**Same ID, different slaves.** The ordering rule applies at the master, wherever the transactions go: "the interconnect must ensure that the read data from a sequence of transactions with the same ARID value targeting different slaves is received by the master in the order in which it issued the addresses" (§A5.3.1). The same holds for B responses with one ID (§A6.3).
-
-**Predict first.** M0 issues read A (ARID 1) to slow slave S0, then read B (ARID 1) to fast slave S1. S1 has B's data ready first. What must the interconnect do?
+**Same ID, different slaves. Predict first.** M0 issues read A (ARID 1) to slow slave S0, then read B (ARID 1) to fast slave S1. S1 has B's data ready first. What must the interconnect do?
 
 <details>
 <summary>Debrief (open after you have decided)</summary>
@@ -505,6 +530,8 @@ The stall option, step by step:
 />
 
 </details>
+
+The ordering rule applies at the master, wherever the transactions go: "the interconnect must ensure that the read data from a sequence of transactions with the same ARID value targeting different slaves is received by the master in the order in which it issued the addresses" (§A5.3.1). The same holds for B responses with one ID (§A6.3).
 
 **Write data through an interconnect.** When the interconnect combines writes from several masters into one slave, "it must ensure that it forwards the write data in address order" (§A5.3.2). This is the root of the classic AXI4 write-data deadlock in [B-AXI-5](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index).
 
@@ -597,7 +624,7 @@ a_bid_known: assert property (@(posedge ACLK) disable iff (!ARESETn)
 
 <VisualRecap
   title="AXI ordering and IDs at a glance"
-  rule="One master, one ID and one direction make one ordered stream: same-ID reads return their data, and same-ID writes their B responses, in issue order, and two same-ID read bursts never mix; different IDs may complete in any order and their read data may interleave; AXI4 write data has no ID and moves whole bursts in write-address order; a read and a write are ordered only if the later one is issued after the earlier one is complete."
+  rule="One master, one ID, one direction is one ordered stream; different IDs are free and their read data may interleave; AXI4 write data follows AW order; a read and a write are ordered only if the later one is issued after the earlier one's response."
   code={`// abridged from axi_order_model in Make It Work
 exp_q[id].push_back(r);          // on_ar: one queue per ARID, in issue order
 exp  = exp_q[id][0];             // on_r: a beat belongs to the oldest read with its RID
@@ -607,10 +634,10 @@ void'(exp_q[id].pop_front());    // on RLAST: that oldest read is finished`}
 >
   <ArchitectureDiagram
     title="ID streams, with the write data channel"
-    caption="The picture from the Quick Take, completed. Each box is one ordering stream: one master, one ID, one direction, completing in issue order. A line marked any order joins two streams with no order between them, including a read and a write that share an ID value. Write data carries no ID: it follows the AW order of every write, whatever its AWID."
+    caption="The picture from the Quick Take, completed. Each ID box is one ordering stream: one master, one ID, one direction, completing in issue order. A line marked any order joins two streams with no order between them, including a read and a write that share an ID value. The same holds for every other pair of ID boxes. Write data carries no ID: it follows the AW order of every write, whatever its AWID."
     legend={false}
-    cellWidth={140}
-    gapX={90}
+    cellWidth={130}
+    gapX={80}
     nodes={[
       { id: "rd", label: "Reads", kind: "generic", col: 0, row: 0, rowSpan: 2, container: true },
       { id: "r0", label: "ARID 0 stream", sublabel: "in issue order", kind: "generic", col: 0, row: 0 },
@@ -819,7 +846,7 @@ endgroup
 The kata model does not compute these arguments yet. At the RLAST of a read with ID `id`, before the pop, it can derive them like this:
 - `depth`: the sum of `exp_q[k].size()` over every ID `k`.
 - `overtook`: add an issue number `seq` to `rd_t`, set from a counter in `on_ar`. The read overtook another if some other ID's oldest read has a smaller `seq`.
-- `interleaved`: count every R beat in one counter for the whole channel, and record its value at each read's first beat. The burst was interleaved if more beats passed on R since that point than the read itself has.
+- `interleaved`: count every R beat in one counter for the whole channel, and record the counter's value just before counting each read's first beat. The burst was interleaved if, at its RLAST, the counter has advanced by more than the read's own beat count.
 - `id_reused`: `exp_q[id].size() > 1`, that is, a younger read with the same ID was issued before this one completed.
 
 **Check yourself.** Apply these derivations to the Rule 2 waveform: read A (ARID 1, two beats) is issued at edge 1 and read B (ARID 2, two beats) at edge 2, no other read is outstanding, and R carries B0, A0, B1, A1 at edges 4 to 7, with B's RLAST at edge 6 and A's at edge 7. What does `sample()` receive at each RLAST?
@@ -843,7 +870,7 @@ Covergroups, coverpoints, bins and crosses are taught in [I-SV-3A](/curriculum/T
 | Symptom in the log | Likely cause | How to confirm and fix |
 |---|---|---|
 | `RID=3 has no outstanding read` | The DUT or interconnect returned an ID it never received (a bug in appending or stripping ID bits); the monitor missed the AR (wrong sampling edge); or the monitor uses the master's ID width at the slave port | Compare with the AR log at the same interface; check the ID width at each port |
-| `RID=3 beat 0: got 0xB00, expected 0xA00` with two ARID 3 reads outstanding | The DUT returned the second same-ID read first: a same-ID ordering bug (§A5.3.1) | Confirm with the AR and R handshake times; it is a DUT bug, not a checker to relax |
+| `RID=3 beat 0: got 0xb00, expected 0xa00` with two ARID 3 reads outstanding | The DUT returned the second same-ID read first: a same-ID ordering bug (§A5.3.1) | Confirm with the AR and R handshake times; it is a DUT bug, not a checker to relax |
 | `RLAST on beat 1 of 2` | Early RLAST, a dropped beat, or two same-ID reads of different lengths returned in the wrong order | Check RLAST against ARLEN per ID; early termination is not allowed (§A3.4.1) |
 | End of test: reads with ID 4 never completed | A hung slave, RREADY held low, or an interconnect still holding a younger read's data behind an older same-ID read to another slave | Print the outstanding table at end of test; check the READY signals |
 | The scoreboard flags legal cross-ID reordering | One queue for all IDs | Use one queue per ID (A-UVM-6) |
@@ -874,7 +901,7 @@ Who owes what, section by section (a summary of the clauses, not their full text
 | §A6.2 | master | relies on: same-ID, same-direction responses in issue order; arrival at the slave in issue order for Device memory, and for Normal memory at the same or overlapping addresses |
 | §A6.3 | interconnect | keeps the order of same-ID, same-direction transactions to Device memory or to the same or overlapping addresses, and of same-ID read and write responses; any ID manipulation keeps the ordering of the original IDs |
 | §A6.4 | slave | an answered read or write is observed by every later read or write, whatever its ID; a Device write is observed by later same-ID Device writes, and a Normal write by later same-ID writes to the same or an overlapping address, and a Device read by later same-ID Device reads, even before a response; same-ID responses go out in arrival order |
-| §A6.3, §A6.5 | early responder | keeps those ordering requirements until the transaction reaches its final destination, and makes the transaction visible to transactions from any upstream master |
+| §A6.3, §A6.5 | early responder | keeps those ordering requirements until the transaction reaches its final destination, and makes the transaction visible to later transactions from any upstream master to the same or an overlapping address |
 | §A6.6 | interface with Ordered_Write_Observation | two same-ID writes are observed by all other agents in issue order |
 
 The parts that trip up experienced engineers:
@@ -895,7 +922,7 @@ The estimate on a few cases (one beat per cycle; round N up to a whole read):
 | L | B | Formula | Estimate | N |
 |---|---|---|---|---|
 | 100 to the first beat | 16 | (L + B) / B | 116 / 16 = 7.25 | 8 |
-| about 116 to the last beat (100 + 16 beats) | 16 | L / B | 116 / 16 = 7.25 | 8, the same memory measured the other way |
+| about 115 to the last beat (100 + 15 more beats) | 16 | L / B | 115 / 16 = 7.19 | 8, the same memory measured the other way |
 | 100 to the first beat, wrongly put into L / B | 16 | L / B | 100 / 16 = 6.25 | 7, one read short |
 | 100 to the first beat | 1 | (L + B) / B | 101 / 1 = 101 | 101: single-beat reads need deep queues |
 | 10 to the first beat | 16 | (L + B) / B | 26 / 16 = 1.625 | 2 |
@@ -943,7 +970,7 @@ AXI3 allowed a slave to accept interleaved write data with different AWIDs, iden
   markers={[
     { edge: 2, tone: "info", label: "X0 first: first data items follow the address order (A5.3.3)" },
     { edge: 3, tone: "info", label: "Y0 between X0 and X1, named by WID 1: AXI3 interleaving" },
-    { edge: 4, tone: "fail", label: "X1 after Y0: in AXI4 this breaks A5.4, because X's data must be consecutive" }
+    { edge: 4, tone: "fail", label: "AXI4 only: X1 after Y0 breaks A5.4 there, because X's data must be consecutive" }
   ]}
 />
 
@@ -957,8 +984,8 @@ Answer each one before you open the feedback.
   options={[
     { text: "Nothing: ordering is per slave, so each slave keeps its own order.", isCorrect: false, feedback: "The rule is at the master: same-ARID data to different slaves must reach the master in issue order (IHI0022E A5.3.1)." },
     { text: "Give the second read a new ID at the slave so it can overtake.", isCorrect: false, feedback: "ID manipulation must preserve the ordering of the original IDs (A6.3). The master would still see the data out of order." },
-    { text: "Answer the second read with SLVERR and let the master retry.", isCorrect: false, feedback: "AXI has no retry, and an error response does not remove the ordering obligation." },
-    { text: "Deliver all of the first read's data first, either by stalling the second read (latency, head-of-line blocking) or by buffering its data (area).", isCorrect: true, feedback: "Correct (A5.3.1, A6.3). Mention that the choice is the interconnect's; only the result is specified." }
+    { text: "Answer the second read with SLVERR and let the master retry it once the first read's data has come back.", isCorrect: false, feedback: "AXI has no retry, and an error response does not remove the ordering obligation." },
+    { text: "Deliver all of the first read's data first, by stalling the second read or by buffering its data.", isCorrect: true, feedback: "Correct (A5.3.1, A6.3). Stalling costs latency (head-of-line blocking); buffering costs area. Mention that the choice is the interconnect's; only the result is specified." }
   ]}
 />
 
@@ -966,9 +993,9 @@ Answer each one before you open the feedback.
   title="Interview: stale read after a write"
   question="A read with the same ID as an earlier write to the same address returned the old data. Is it a bug, and what would make it one?"
   options={[
-    { text: "Always a bug: the same ID orders the read after the write.", isCorrect: false, feedback: "IDs never order a read against a write (A5.3.4)." },
+    { text: "Always a bug: the same ID orders the read after the write, so the read must return the new data however early it was issued.", isCorrect: false, feedback: "IDs never order a read against a write (A5.3.4)." },
     { text: "Never a bug: AXI gives no read-after-write guarantee at all.", isCorrect: false, feedback: "It does, once the write has been answered: A6.4 requires the slave to make it observed by any subsequent read, whatever the ID." },
-    { text: "Legal if the AR was issued before the write's B; a bug if the AR was issued after B and no other master wrote in between.", isCorrect: true, feedback: "Correct (A5.3.4, A6.1, A6.4). A strong answer also mentions the single-copy atomicity mix for writes larger than the single-copy atomicity size (A7.1)." },
+    { text: "Legal if the AR was issued before the write's B; a bug if it was issued after B and no other master wrote in between.", isCorrect: true, feedback: "Correct (A5.3.4, A6.1, A6.4). A strong answer also mentions the single-copy atomicity mix for writes larger than the single-copy atomicity size (A7.1)." },
     { text: "A bug only for Device memory.", isCorrect: false, feedback: "Device memory does not order a read and a write issued without waiting either (A4.3.2 Note)." }
   ]}
 />
@@ -977,9 +1004,9 @@ Answer each one before you open the feedback.
   title="Interview: why AXI4 dropped WID"
   question="What does the specification say about why AXI4 dropped WID, and what does the loss of write interleaving cost an interconnect that merges writes from several masters?"
   options={[
-    { text: "Without interleaving, WID is redundant, and AXI4 removed it to reduce pin count. The cost: the interconnect must forward each write's data whole and in address order, so a slow source stalls the others, and badly ordered AW and W paths can deadlock.", isCorrect: true, feedback: "Correct (A5.4.1 for WID and pin count; A5.3.2 and A5.4 for the forwarding rule). The specification gives pin count as the reason for removing WID; it separately notes that most slave designs do not support write interleaving (A5.3.2 Note), but it does not call that the motive. Link the deadlock to B-AXI-5 for extra credit." },
-    { text: "WID was never used by real designs, so removing it saved pins at no cost to an interconnect.", isCorrect: false, feedback: "Interleaving had a real use: merging a slow and a fast write stream without stalling (A5.3.3, usage models). Losing it has a cost." },
-    { text: "So that writes with different AWIDs complete in order, which the B channel could not guarantee with WID.", isCorrect: false, feedback: "B responses with different IDs may still complete in any order (A5.3). Only the data order is fixed." },
+    { text: "WID was never used by real designs, so removing it saved pins at no cost to an interconnect, which can still merge write streams from several masters freely.", isCorrect: false, feedback: "Interleaving had a real use: merging a slow and a fast write stream without stalling (A5.3.3, usage models). Losing it has a cost." },
+    { text: "So that writes with different AWIDs complete in order, which the B channel could not guarantee while WID let the W beats of several writes mix.", isCorrect: false, feedback: "B responses with different IDs may still complete in any order (A5.3). Only the data order is fixed." },
+    { text: "Without interleaving, WID is redundant, so AXI4 removed it to reduce pin count; the interconnect must now forward each write's data whole, in address order.", isCorrect: true, feedback: "Correct (A5.4.1 for WID and pin count; A5.3.2 and A5.4 for the forwarding rule). The cost: a slow source stalls the others, and badly ordered AW and W paths can deadlock. The specification gives pin count as the reason for removing WID; it separately notes that most slave designs do not support write interleaving (A5.3.2 Note), but it does not call that the motive. Link the deadlock to B-AXI-5 for extra credit." },
     { text: "Because AXI4 W beats carry the AWID of their write, which makes a separate WID a duplicate.", isCorrect: false, feedback: "AXI4 W has no ID at all; its order is implied by the AW order (A5.4.1)." }
   ]}
 />
@@ -991,7 +1018,7 @@ Answer each one before you open the feedback.
     { text: "About 6, because 100 / 16 = 6.25.", isCorrect: false, feedback: "That ignores the 16 cycles each read spends returning its own data. With L measured to the first beat, use (L + B) / B." },
     { text: "8, because each read holds a slot for about 100 + 16 cycles and one must start every 16 cycles: 116 / 16 = 7.25, rounded up.", isCorrect: true, feedback: "Correct, as a queueing estimate (Little's law). State that IHI0022E sets no depth; it is a design parameter." },
     { text: "16, one per beat.", isCorrect: false, feedback: "Beats of one burst share one outstanding slot." },
-    { text: "It cannot be estimated, because the slave's reordering depth is unknown.", isCorrect: false, feedback: "Reordering depth limits how freely the slave may reorder, not how many reads keep R busy. The estimate needs only latency and burst length." }
+    { text: "It cannot be estimated, because the slave's read data reordering depth is unknown to the master and no mechanism can discover it.", isCorrect: false, feedback: "Reordering depth limits how freely the slave may reorder, not how many reads keep R busy. The estimate needs only latency and burst length." }
   ]}
 />
 
@@ -1001,8 +1028,8 @@ Answer each one before you open the feedback.
   options={[
     { text: "Compare each B with the oldest outstanding write with that BID.", isCorrect: false, feedback: "Both B responses carry the same BID and OKAY, so they are indistinguishable at the pins (A3.4.4)." },
     { text: "Assert that BVALID never rises twice in a row with the same BID.", isCorrect: false, feedback: "Back-to-back same-ID responses are perfectly legal." },
-    { text: "Make the responses distinguishable, for example by aiming one write at an address that answers SLVERR, so a swap shows the wrong BRESP; and check the effect end to end by reading overlapping addresses back after the last B (A6.2, A6.4).", isCorrect: true, feedback: "Correct. With identical responses a pure B swap is invisible at the pins; only distinguishable responses or the effect on memory reveal ordering errors." },
-    { text: "It cannot matter, because B responses carry no data.", isCorrect: false, feedback: "Same-ID responses must be issued in arrival order (A6.4), and a master may rely on that order, for example to free its write buffers in order. A swap is a real bug even when every BRESP is OKAY." }
+    { text: "Make the two responses differ, say one SLVERR, so a swap shows the wrong BRESP; and read overlapping addresses back after the last B.", isCorrect: true, feedback: "Correct. Make the responses distinguishable, for example by aiming one write at an address that answers SLVERR, and check the effect end to end by reading overlapping addresses back after the last B (A6.2, A6.4). With identical responses a pure B swap is invisible at the pins; only distinguishable responses or the effect on memory reveal ordering errors." },
+    { text: "It cannot matter: B responses carry no data, so the master loses nothing when two OKAY responses with one BID come back in swapped order.", isCorrect: false, feedback: "Same-ID responses must be issued in arrival order (A6.4), and a master may rely on that order, for example to free its write buffers in order. A swap is a real bug even when every BRESP is OKAY." }
   ]}
 />
 
@@ -1010,10 +1037,10 @@ Answer each one before you open the feedback.
   title="Interview: same-ID writes that arrive out of order"
   question="Two writes with one AWID go to Normal memory at different, non-overlapping addresses. The interconnect delivers the second to the memory before the first, yet the master must still see the B responses in issue order. Why is that legal?"
   options={[
-    { text: "It is not legal: writes with one ID must always arrive at the slave in the order they were issued.", isCorrect: false, feedback: "That holds for Device memory. For Normal memory, A6.2 orders arrival only for the same or overlapping addresses." },
+    { text: "It is not legal: writes with one ID must always arrive at the slave in the order they were issued, whatever the memory type and whatever the addresses.", isCorrect: false, feedback: "That holds for Device memory. For Normal memory, A6.2 orders arrival only for the same or overlapping addresses." },
     { text: "Because the writes were Bufferable, and Bufferable writes are exempt from the AXI ID ordering rules.", isCorrect: false, feedback: "The Bufferable bit allows an early response; it does not lift any ordering rule. An early responder must keep the ordering requirements until the write reaches its destination (A6.3)." },
     { text: "Because A6.2 orders arrival at a Normal-memory slave only for the same or overlapping addresses, while it always orders the responses at the master.", isCorrect: true, feedback: "Correct (A6.2). The interconnect must still return the two B responses in issue order (A6.3), for example by holding the younger response until the older one has gone back." },
-    { text: "Because the B order may follow the arrival order at the slave, so the master accepts the responses in that order.", isCorrect: false, feedback: "The order of response at the master must be the order of issue (A6.2), and the interconnect must preserve the order of same-ID write responses (A6.3)." }
+    { text: "Because the B responses may follow the order of arrival at the slave, and the master then accepts them in that order instead of issue order.", isCorrect: false, feedback: "The order of response at the master must be the order of issue (A6.2), and the interconnect must preserve the order of same-ID write responses (A6.3)." }
   ]}
 />
 
@@ -1125,7 +1152,7 @@ Each question names the objective it checks. Answer from the rules, not from mem
       objective: 4
     },
     {
-      question: "Two ARID 3 reads, A then B, are outstanding. Your model prints 'FAIL: RID=3 beat 0: got 0xB00, expected 0xA00'. What happened?",
+      question: "Two ARID 3 reads, A then B, are outstanding. Your model prints 'FAIL: RID=3 beat 0: got 0xb00, expected 0xa00'. What happened?",
       answers: [
         { text: "Legal cross-ID reordering: relax the check", correct: false, feedback: "Both reads have ARID 3, so this is not cross-ID." },
         { text: "The model should match each beat with any outstanding read that has the same ID", correct: false, feedback: "That change would hide exactly this bug." },
