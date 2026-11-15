@@ -126,7 +126,7 @@ endclocking
 
 | Term | In the example | Meaning |
 |---|---|---|
-| **Block name** | ① `cb` | The name your code uses. The word `default` also makes the block the default clocking of this interface, so `##` in this interface counts its cycles (§14.12). |
+| **Block name** | ① `cb` | The name your code uses. The word `default` also makes the block the default clocking of this interface, so the cycle delay `##N` (wait N clock cycles, taught in "Cycle delays and default clocking" below) in this interface counts its cycles (§14.12). |
 | **Clocking event** | ② `@(posedge clk)` | The event the block is clocked on. Every skew is measured from it (§14.3, §14.4). |
 | **Skew** | ③ `#1step`, `#0` | How long before the clocking event an input is sampled, or how long after it an output is driven (§14.4). |
 | **Clocking signal** | the interface variable `in_vld` | A net or variable in the surrounding scope that the block lists (§14.3). |
@@ -170,7 +170,7 @@ So with `inout` the read returns the latest sample, not the value just driven. W
 | Naming an existing block as the default | `default clocking cb;` | Makes an existing clocking block the default for `##` in this scope (§14.12). |
 | Unnamed block | `default clocking @(posedge clk); … endclocking` | Only a default clocking block may be unnamed (§14.3); a global clocking, below, may also omit its name (§14.14). Its clockvars cannot be referenced, so an unnamed default serves only as the clock of `##` and of concurrent assertions (§14.12, §16.16). |
 
-**Where the pieces live.** The diagram shows the M1 bench from Make It Work. Before you read the caption, decide which boxes may write `in_vld` and which may only read it.
+**Where the pieces live.** The diagram shows the M1 bench from Make It Work. Notice which box is the only one with an arrow that writes `in_vld`, and which block has no outputs at all.
 
 <ArchitectureDiagram
   title="The M1 bench: where the clocking blocks live"
@@ -478,7 +478,7 @@ endtask
   ]}
 />
 
-**Predict with the visual.** Go back to the experiment above, open "Show advanced: ## and default clocking", and untick "Declare cb as default clocking". Before you look at the result: which of the three drive forms stops compiling?
+**Predict with the visual.** Go back to the experiment above and open "Show advanced: ## and default clocking". Before you look: with `cb` as the default clocking and all three forms reached at 15 ns, at which edge does the flop capture A5 for each form, and which form holds the testbench thread? Then untick "Declare cb as default clocking" and confirm which form stops compiling.
 
 <details>
 <summary>Check your prediction: which form fails, and when each one is captured</summary>
@@ -605,9 +605,15 @@ An asynchronous reset must be able to change between clock edges, at the moment 
 <figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
   <svg viewBox="0 0 340 176" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns. Written directly, rst_n falls at 12 ns and the DUT resets at 12 ns. Driven through a clocking block at 12 ns, rst_n stays high until the 15 ns edge and falls in the Re-NBA region of that time slot, after the flops' normal capture at 15 ns." style={{ width: "100%", maxWidth: 420 }}>
     <title>Asserting an asynchronous reset directly versus through a clocking block</title>
-    <line x1="85" y1="14" x2="85" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="175" y1="14" x2="175" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="265" y1="14" x2="265" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="14" x2="85" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="66" x2="85" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="108" x2="85" y2="130" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="14" x2="175" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="66" x2="175" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="108" x2="175" y2="130" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="14" x2="265" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="66" x2="265" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="108" x2="265" y2="130" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
     <line x1="148" y1="50" x2="148" y2="128" stroke="currentColor" strokeOpacity="0.5" />
     <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
     <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
@@ -639,7 +645,7 @@ A synchronous drive cannot do what reset needs: a drive executed between edges a
 </details>
 
 So reset stays a direct write. The M1 bench therefore:
-1. Declares `rst_n` as a plain interface variable with a declaration initializer, `logic rst_n = 1'b0;`. The initializer runs at time 0, before any `initial` or `always` procedure starts (§6.8), so the DUT is in reset from the start.
+1. Declares `rst_n` as a plain interface variable with a declaration initializer, `logic rst_n = 1'b0;`. The initializer runs at time 0, before any `initial` or `always` procedure starts (§6.8), so `rst_n` is asserted from time 0, and the DUT's flops hold their reset values by the first clock edge, 5 ns, at the latest. The DUT reads its own input port, a net driven by an implicit continuous assignment that is evaluated at time 0 (§23.2.2.3, §4.9.1, §4.9.6). So whether its `always_ff` also sees an x-to-0 `negedge rst_n` at time 0, and resets at once, depends on process order (§4.7). Either way, the flops are in reset before any data reaches them.
 2. Releases it with a direct write between edges: `#12 bus.rst_n = 1'b1;`. This is practice, not a rule of the standard: assert reset whenever you need to, but release it away from the active clock edge. Real cell libraries add recovery and removal checks, whose values are library- and tool-dependent.
 3. Lists `rst_n` as an **input** of `mon_cb`, and the monitor skips every edge whose sample shows reset asserted. Sampling reset through a clocking block is enough here because this bench applies only a power-on reset and its clock runs freely. It is not a general rule: a clocking block samples only at its clocking event (§14.13), so it sees an asynchronous reset that arrives mid-test late, or never. A short pulse between two edges, or a reset held while the clock is gated off, leaves no sample at all. A monitor for such a DUT also watches the raw signal, with `@(negedge bus.rst_n)` in a fork against its sampling loop. A modport-typed handle reaches only what its modport lists (§25.5), so such a monitor also needs the raw reset in its modport: `modport mon_mp (clocking mon_cb, input rst_n);`.
 4. Starts driving only after the release, then synchronizes with `@(bus.cb)`. A reusable driver that does not release reset itself does the same with `wait (bus.rst_n === 1'b1); @(bus.cb);`.
@@ -648,9 +654,12 @@ So reset stays a direct write. The M1 bench therefore:
   <div className="mb-2 text-sm font-semibold text-foreground">A reset pulse between two edges leaves no sample</div>
   <svg viewBox="0 0 340 150" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns. rst_n goes low at 17 ns and returns high at 22 ns, between the 15 and 25 ns edges. mon_cb samples rst_n only at the three edges and reads 1 each time. A raw @(negedge bus.rst_n) wakes at 17 ns." style={{ width: "100%", maxWidth: 420 }}>
     <title>A reset pulse between two edges leaves no sample</title>
-    <line x1="85" y1="14" x2="85" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="175" y1="14" x2="175" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="265" y1="14" x2="265" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="14" x2="85" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="68" x2="85" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="14" x2="175" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="68" x2="175" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="14" x2="265" y2="48" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="68" x2="265" y2="92" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
     <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
     <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
     <text x="4" y="80" fontSize="11" fill="currentColor">rst_n</text>
@@ -736,13 +745,13 @@ In cycle 3 three drives mature in one Re-NBA region, and `expr4`, executed last,
 
 A rule that fits every drive in the table: a `<= ##N` drive matures at the *N*-th clocking event after the statement executes, not counting the event of the time slot it executes in; a drive without `##` matures at the clocking event of its own time slot, or at the next one when it executes between edges.
 
-**Mixing drives with other writes.** An ordinary procedural assignment to a variable that a clocking block lists as an output is legal: it changes the variable at once, and the value holds until the next drive or assignment. If a synchronous drive and a nonblocking assignment write the same variable in one time slot, they take effect in arbitrary order (§14.16.2). Push Further covers glitches, nets and double-data-rate drives.
+**Mixing drives with other writes.** An ordinary procedural assignment to a variable that a clocking block lists as an output is legal: it gives the variable a new value (at once for a blocking `=`, in NBA for `<=`), and the value holds until the next drive or assignment (§14.16.2). If a synchronous drive and a nonblocking assignment write the same variable in one time slot, they take effect in arbitrary order (§14.16.2). Push Further covers glitches, nets and double-data-rate drives.
 
 ### Program blocks
 
 A **program** is a testbench building block with special scheduling. §24.2 gives it three purposes: an entry point for testbench execution, a scope for program-wide data, tasks and functions, and a context whose code is scheduled in the reactive region set.
 
-**Predict before you read the table:** does a program with an `always` procedure compile, and in which region does its `initial` code start?
+**Predict before you read the table:** does a program with an `always` procedure compile, and how does a run with a program end when nobody calls `$finish`?
 
 <details>
 <summary>Check your prediction: module and program compared</summary>
@@ -772,7 +781,12 @@ A **program** is a testbench building block with special scheduling. §24.2 give
 
 <SVSchedulerRegionVisualizer scenario="program-reactive" scenarios={["program-reactive"]} />
 
+<details>
+<summary>Check your prediction: what seen reads, and when led follows cmd</summary>
+
 **Debrief.** `seen` gets the *new* `q`: program code runs in the Reactive region, which starts only after the active region set, including the NBA update of `q`, is empty (§24.3.1). Its `cmd <= 1` lands in Re-NBA, and the design's `assign led = cmd` then runs in a later Active pass of the same time slot (§4.5). A clocking-block read of `q` in the same program would return the photo from before the edge instead.
+
+</details>
 
 The same contrast in a program you can run:
 
@@ -1213,7 +1227,7 @@ Use this whenever you inherit a bench that drives the DUT with raw assignments:
 3. **Drives.** Make the driver wait on `@(bus.cb)`, and turn every `bus.sig = v;` or `bus.sig <= v;` into `bus.cb.sig <= v;`.
 4. **Reads.** Make the monitor wait on `@(bus.mon_cb)` and read only `bus.mon_cb.sig`. Delete every `@(posedge clk)` from testbench code.
 5. **Asynchronous signals.** Leave reset, and any other asynchronous input, as direct writes made between edges. If an asynchronous reset can arrive mid-test, the monitor also watches the raw signal, as "Reset stays outside the clocking block" describes.
-6. **Verify.** Declare time units in every design element, rerun, compare the log with the old one, and run the mutant: the bench must fail with `.BUG(1)`.
+6. **Verify.** Declare time units in every design element, so that every plain-number delay and skew has a known unit instead of one inherited from a `` `timescale `` or a tool-specific default (§3.14.2.3, §22.7). Rerun, compare the log with the old one, and run the mutant: the bench must fail with `.BUG(1)`.
 
 **Before and after.** The racy driver you will use in Kata 1 and a monitor that waits on the clock, then the same two tasks after the six steps. The comments in the second block name the step behind each line; steps 1 and 2 are the two clocking blocks of `pipe_if`, and step 5 leaves `rst_n` out of `cb`.
 
@@ -1285,11 +1299,15 @@ endtask
   <div className="mb-2 text-sm font-semibold text-foreground">One variable, two clocking blocks: a double-data-rate drive</div>
   <svg viewBox="0 0 340 134" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns and falling edges at 10, 20 and 30 ns. Block pe drives j to a at 5 ns and to c at 15 ns and to d at 25 ns. Block ne drives j to b at 10 ns and issues no drive at 20 ns, so j holds c from 15 ns to 25 ns." style={{ width: "100%", maxWidth: 420 }}>
     <title>One variable, two clocking blocks</title>
-    <line x1="85" y1="14" x2="85" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="130" y1="14" x2="130" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
-    <line x1="175" y1="14" x2="175" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
-    <line x1="220" y1="14" x2="220" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
-    <line x1="265" y1="14" x2="265" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="14" x2="85" y2="46" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="85" y1="64" x2="85" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="130" y1="14" x2="130" y2="46" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
+    <line x1="130" y1="64" x2="130" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
+    <line x1="175" y1="14" x2="175" y2="46" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="64" x2="175" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="220" y1="14" x2="220" y2="46" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="1 3" />
+    <line x1="265" y1="14" x2="265" y2="46" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="64" x2="265" y2="96" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
     <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
     <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
     <text x="85" y="58" fontSize="9.5" fill="currentColor" textAnchor="middle"><tspan className="fill-amber-600 dark:fill-amber-300">◆</tspan>{" pe"}</text>
@@ -1414,8 +1432,8 @@ Answer each one before you open the feedback.
   question="Your monitor waits on @(posedge vif.clk) and then reads vif.mon_cb.data. It passes on one simulator and fails on another with the same seed. What is going on, and what do you change?"
   options={[
     { text: "The input skew is too small. Change mon_cb to default input #2ns.", isCorrect: false, feedback: "A skew moves where the photo is taken, not when your code reads it. The read still competes with the block's own sample update." },
-    { text: "The read races the clocking block's update of its samples: a process woken by @(posedge clk) runs in the Active region alongside it. Wait on @(vif.mon_cb) instead.", isCorrect: true, feedback: "Correct (§14.13, §14.4 NOTE). The clocking block event fires in Observed, after the samples are stored, so a read after @(vif.mon_cb) always sees this edge's photo." },
     { text: "mon_cb needs an output skew for its inputs to be stable.", isCorrect: false, feedback: "Output skews apply only to drives. mon_cb has no outputs." },
+    { text: "The read races the clocking block's update of its samples: a process woken by @(posedge clk) runs in the Active region alongside it. Wait on @(vif.mon_cb) instead.", isCorrect: true, feedback: "Correct (§14.13, §14.4 NOTE). The clocking block event fires in Observed, after the samples are stored, so a read after @(vif.mon_cb) always sees this edge's photo." },
     { text: "Clocking blocks remove races only in program blocks, so the bench must become a program.", isCorrect: false, feedback: "In a program this read would be safe (§14.4 NOTE), but the simple fix is to wait on the clocking block event. Clocking blocks work in module and class code." }
   ]}
 />
@@ -1425,9 +1443,9 @@ Answer each one before you open the feedback.
   question="Two tasks in different processes both resume from @(cb) and drive cb.data at the same edge, one with 8'h0F and one with 8'hF0. What does the DUT see, and is it deterministic?"
   options={[
     { text: "8'hFF: the two drives are combined like two drivers on a wire.", isCorrect: false, feedback: "Drives to one clockvar are not separate drivers that resolve; within one Re-NBA region only the last value is driven (§14.16.2)." },
-    { text: "Only the value of the drive that executed last. Which process ran last is the simulator's choice, so the result is a race.", isCorrect: true, feedback: "Correct (§14.16.2, §4.7). Give each clockvar one writer per cycle." },
     { text: "X, because two drives in one cycle conflict.", isCorrect: false, feedback: "The standard defines the result: the last drive wins. The problem is that 'last' depends on process order." },
-    { text: "Both values, one cycle apart, in the order the tasks were called.", isCorrect: false, feedback: "Without a cycle delay both drives mature in the same Re-NBA region. Use cb.data <= ##1 v to move one of them." }
+    { text: "Both values, one cycle apart, in the order the tasks were called.", isCorrect: false, feedback: "Without a cycle delay both drives mature in the same Re-NBA region. Use cb.data <= ##1 v to move one of them." },
+    { text: "Only the value of the drive that executed last. Which process ran last is the simulator's choice, so the result is a race.", isCorrect: true, feedback: "Correct (§14.16.2, §4.7). Give each clockvar one writer per cycle." }
   ]}
 />
 
@@ -1435,8 +1453,8 @@ Answer each one before you open the feedback.
   title="Interview: ## in a class"
   question="Why does ##2; compile inside your interface but fail inside the driver class that uses it, which is declared in a package?"
   options={[
-    { text: "Classes may not contain timing controls.", isCorrect: false, feedback: "Class methods may use @, # and wait. The problem is specific to ##." },
     { text: "## counts cycles of the default clocking, which applies only in the module, interface, program or checker that declares it and in scopes nested in it. A class in a package has none, so the compiler reports an error.", isCorrect: true, feedback: "Correct (§14.11, §14.12). In the class, write repeat (2) @(vif.cb); or call an interface task that uses ##." },
+    { text: "Classes may not contain timing controls.", isCorrect: false, feedback: "Class methods may use @, # and wait. The problem is specific to ##." },
     { text: "The virtual interface handle is still null when the class is compiled.", isCorrect: false, feedback: "Handles are bound at run time; this is a compile-time scope rule." },
     { text: "## is only legal inside program blocks.", isCorrect: false, feedback: "## is legal in modules, interfaces, programs and checkers that have a default clocking." }
   ]}
@@ -1457,8 +1475,8 @@ Answer each one before you open the feedback.
   title="Interview: reading an inout clockvar"
   question="cb declares inout a and output b. At one clocking event the code executes cb.a <= c; and then cb.b <= cb.a;. What does b receive?"
   options={[
-    { text: "c, because the drive to a executed first.", isCorrect: false, feedback: "The drive to a only matures in Re-NBA, and it never changes the input side of the clockvar." },
     { text: "The value of a sampled at this clocking event, from before the drive: reading an inout clockvar returns its input sample.", isCorrect: true, feedback: "Correct (§14.16.1). The standard uses this exact example." },
+    { text: "c, because the drive to a executed first.", isCorrect: false, feedback: "The drive to a only matures in Re-NBA, and it never changes the input side of the clockvar." },
     { text: "X, because a is being driven in the same cycle.", isCorrect: false, feedback: "Reading the input side is always defined: it is the last sample." },
     { text: "Nothing: an inout clockvar cannot be read.", isCorrect: false, feedback: "Reading an inout clockvar is legal and equivalent to reading its input clockvar (§14.3)." }
   ]}
@@ -1474,9 +1492,9 @@ Answer each one before you open the feedback.
       question: "A clocking block has no default item and lists input data. Which value does cb.data return after @(cb)?",
       answers: [
         { text: "The value at the edge itself, sampled in the Observed region", correct: false, feedback: "That is an explicit #0 input skew. #0 is the default for outputs, not inputs." },
-        { text: "The last value before the edge's time slot began, the same as a Preponed sample", correct: true, feedback: "Right: the default input skew is 1step (§14.3), and #1step sampling is identical to sampling in the Preponed region (§4.4.2.1)." },
         { text: "The value 1 ns before the edge", correct: false, feedback: "A #1ns skew applies only when you write it." },
-        { text: "Nothing reliable: the skew is undefined until you write a default item", correct: false, feedback: "§14.3 defines both defaults: input 1step, output 0." }
+        { text: "Nothing reliable: the skew is undefined until you write a default item", correct: false, feedback: "§14.3 defines both defaults: input 1step, output 0." },
+        { text: "The last value before the edge's time slot began, the same as a Preponed sample", correct: true, feedback: "Right: the default input skew is 1step (§14.3), and #1step sampling is identical to sampling in the Preponed region (§4.4.2.1)." }
       ],
       explanation: "Without a default item, inputs use #1step and outputs #0 (§14.3). #1step returns the last value before the edge's time slot, however long ago it changed, which equals a Preponed sample (§4.4.2.1, §14.4).",
       objective: 1
@@ -1484,8 +1502,8 @@ Answer each one before you open the feedback.
     {
       question: "An input has skew #2ns. The clocking event is a rising edge at 25 ns, and the DUT output changes from 1 to 2 at 24 ns. What does the testbench read after @(cb) at 25 ns?",
       answers: [
-        { text: "2, the value just before the edge", correct: false, feedback: "That is what #1step would return." },
         { text: "1, the value in the Postponed region of 23 ns", correct: true, feedback: "Right: a #2ns skew samples 2 ns before the edge (§14.13), before the change at 24 ns." },
+        { text: "2, the value just before the edge", correct: false, feedback: "That is what #1step would return." },
         { text: "2, the value in the Observed region of 25 ns", correct: false, feedback: "Only an explicit #0 input skew samples in Observed." },
         { text: "1 or 2: the read races", correct: false, feedback: "Reading after @(cb) is always deterministic (§14.13). The 24 ns change is simply seen one cycle later." }
       ],
@@ -1518,9 +1536,9 @@ Answer each one before you open the feedback.
       question: "A driver class declared in a package contains ##2; and drives through vif.cb. The interface declares cb as its default clocking. What happens?",
       answers: [
         { text: "It waits two cycles of cb, because the default clocking follows the virtual interface handle", correct: false, feedback: "A default clocking applies only in the scope that declares it and in nested modules, interfaces and checkers (§14.12)." },
-        { text: "Compile error: no default clocking is in effect in that scope", correct: true, feedback: "Right (§14.11). Use repeat (2) @(vif.cb); or call an interface task that uses ##." },
         { text: "It waits two time units, like #2", correct: false, feedback: "## counts clocking block events, never time units." },
-        { text: "It waits for two edges of any clock in the design", correct: false, feedback: "## has no meaning without a default clocking; it does not pick a clock." }
+        { text: "It waits for two edges of any clock in the design", correct: false, feedback: "## has no meaning without a default clocking; it does not pick a clock." },
+        { text: "Compile error: no default clocking is in effect in that scope", correct: true, feedback: "Right (§14.11). Use repeat (2) @(vif.cb); or call an interface task that uses ##." }
       ],
       explanation: "If no default clocking has been specified for the current module, interface, checker or program, the compiler shall issue an error (§14.11). A package and a class have no default clocking, and the interface's default does not travel with the handle (§14.12).",
       objective: 2
@@ -1528,8 +1546,8 @@ Answer each one before you open the feedback.
     {
       question: "Which statement compiles in a module that has no default clocking, and updates cb.data two cycles of cb later without blocking the process?",
       answers: [
-        { text: "##2 cb.data <= v;", correct: false, feedback: "The prefix ##2 counts default-clocking cycles, so it needs a default clocking, and it blocks the process." },
         { text: "cb.data <= ##2 v;", correct: true, feedback: "Right: a cycle delay inside a drive counts cycles of the clockvar's own block and does not block (§14.16)." },
+        { text: "##2 cb.data <= v;", correct: false, feedback: "The prefix ##2 counts default-clocking cycles, so it needs a default clocking, and it blocks the process." },
         { text: "cb.data <= #2 v;", correct: false, feedback: "Ordinary intra-assignment delays are illegal in a synchronous drive (§14.16)." },
         { text: "cb.data = ##2 v;", correct: false, feedback: "A clockvar can only be written with the synchronous drive form, and ## is not legal inside an ordinary assignment (§14.11, §14.16)." }
       ],
@@ -1540,8 +1558,8 @@ Answer each one before you open the feedback.
       question: "At one clocking event, one process executes pe.nibble <= 4'b0101; and then pe.nibble <= 4'b0011; with output skew #0. What value does nibble take?",
       answers: [
         { text: "4'b0101: the first drive wins", correct: false, feedback: "Both drives mature in the same Re-NBA region, and only the last value is driven." },
-        { text: "4'b0011: the last drive is the only one driven", correct: true, feedback: "Right: this is the standard's own example (§14.16.2)." },
         { text: "4'b0111: the two drives resolve like two drivers on a net", correct: false, feedback: "Drives to one clockvar are not separate net drivers; the last value wins, for a variable or a net." },
+        { text: "4'b0011: the last drive is the only one driven", correct: true, feedback: "Right: this is the standard's own example (§14.16.2)." },
         { text: "X: two drives in one cycle conflict", correct: false, feedback: "The standard defines the result. Only the last drive takes effect." }
       ],
       explanation: "When several synchronous drives to one clocking output mature in the same Re-NBA region of the same time slot, the last value is the only value driven, whether the signal is a variable or a net (§14.16.2). Inside one process the last drive is the later statement; across two processes it depends on process order.",
@@ -1572,8 +1590,8 @@ Answer each one before you open the feedback.
     {
       question: "A monitor uses @(posedge vif.clk) and then reads vif.mon_cb.out_data. It passes on one simulator and fails on another. What is the cause?",
       answers: [
-        { text: "The input skew is too small", correct: false, feedback: "The skew decides where the photo is taken. The failure comes from when the code reads it." },
         { text: "It reads a clockvar after @(posedge clk), racing the clocking block's update of its samples; it should wait on @(vif.mon_cb)", correct: true, feedback: "Right (§14.13, §14.4 NOTE)." },
+        { text: "The input skew is too small", correct: false, feedback: "The skew decides where the photo is taken. The failure comes from when the code reads it." },
         { text: "mon_cb has no output skew", correct: false, feedback: "A monitor block has no outputs, so it needs no output skew." },
         { text: "Clocking blocks work only in program blocks", correct: false, feedback: "They work in modules, interfaces, checkers and programs; module code only has to wait on the clocking block event." }
       ],
@@ -1595,9 +1613,9 @@ Answer each one before you open the feedback.
       question: "The only program in a design forks a monitor with join_none from its only initial procedure. Then that initial procedure reaches its end. What happens?",
       answers: [
         { text: "The monitor keeps running until someone calls $finish", correct: false, feedback: "Program termination ends the threads that the program's initial procedures started (§24.3)." },
-        { text: "The program ends the monitor at once, and because no program thread is left, the simulation ends with an implicit $finish", correct: true, feedback: "Right (§24.3). Keep the main thread alive until checking is done." },
         { text: "Nothing: programs never end a simulation on their own", correct: false, feedback: "If any program has an initial procedure, the end of all program threads triggers an implicit $finish (§24.3)." },
-        { text: "The monitor moves to the Active region and keeps running", correct: false, feedback: "Threads do not change region sets, and this one is ended." }
+        { text: "The monitor moves to the Active region and keeps running", correct: false, feedback: "Threads do not change region sets, and this one is ended." },
+        { text: "The program ends the monitor at once, and because no program thread is left, the simulation ends with an implicit $finish", correct: true, feedback: "Right (§24.3). Keep the main thread alive until checking is done." }
       ],
       explanation: "When all initial procedures of a program have ended, the program immediately terminates their descendant threads; once every thread started from the initial procedures of all programs has ended, the simulation ends through an implicit $finish (§24.3).",
       objective: 5

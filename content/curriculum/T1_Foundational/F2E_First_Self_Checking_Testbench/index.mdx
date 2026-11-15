@@ -162,7 +162,7 @@ always #5 clk = ~clk;    // 10 ns period: rising edges at 5, 15, 25 ns ...
 
 The initializer matters. A `logic` variable without one starts at x (§6.8, Table 6-7), and `~x` is x (§11.4.8), so `logic clk; always #5 clk = ~clk;` never toggles and nothing clocked ever runs. The other common form, an `initial` block that sets `clk` to 0 and then loops `forever #5 clk = ~clk;`, works as well.
 
-**Reset.** `reset_dut()` drives every DUT input to a known value, holds `rst_n` low for two rising edges, then releases it with `<=` just after an edge, so the DUT sees the release on the next edge. Rule R1 needs at least one edge with `rst_n` low; check your design's specification for how many it needs. Until reset is released the checker compares nothing; afterwards it insists that `out_valid` is never x or z, using `$isunknown` (§20.9). If your DUT resets asynchronously, assert reset at any time but release it the same way; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) explains why reset stays outside clocking blocks.
+**Reset.** `reset_dut()` drives every DUT input to a known value, holds `rst_n` low for two rising edges, then releases it with `<=` just after an edge, so the DUT sees the release on the next edge. Rule R1 needs at least one edge with `rst_n` low; check your design's specification for how many it needs. Until reset is released the checker compares nothing; afterwards it insists that `out_valid` is never x or z, using `$isunknown` (§20.9). If your DUT resets asynchronously, assert reset at any time but release it the same way; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) explains why reset stays outside clocking blocks (declarations, defined below, that time a bench's drives and samples against a clock).
 
 <TimingDiagram
   title="Clock and reset: edges 0 to 3"
@@ -202,15 +202,15 @@ Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the sam
 
 </details>
 
-<figure
-  className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4"
-  role="img"
-  aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every Active read (section 4.9.4)."
->
+<figure className="my-6 rounded-xl border border-border/70 bg-muted/20 p-4">
   <div className="mb-2 text-sm font-semibold text-foreground">
     Inside one rising-edge time slot: why <code>&lt;=</code> separates writes from reads
   </div>
-  <div className="space-y-2 text-xs">
+  <div
+    className="space-y-2 text-xs"
+    role="img"
+    aria-label="Two-rung time-slot ladder for one rising clock edge. Rung 1 is Active: the DUT always_ff reads a while a blocking send() with a = 9 writes immediately in an order left open by IEEE 1800-2023 section 4.7, causing a race. Rung 2 is NBA: nonblocking updates a <= 9 and sum <= next_sum land after every Active read (section 4.9.4)."
+  >
     <div className="rounded-lg border border-border/70 bg-background/50 p-3">
       <div className="font-semibold text-foreground">
         1. Active (processes woken by <code>@(posedge clk)</code> run in any order, §4.7)
@@ -251,7 +251,7 @@ With blocking drives, the edge on which the DUT sees each input depends on an or
 What the model shows:
 - **`din = 7` is a race.** Some legal orders let the flop capture 7, one cycle early, exactly like the blocking row of the table above.
 - **`din <= 7` is deterministic.** The flop captures 3 in every order. This is the style `send()`, `idle()` and `reset_dut()` use.
-- **`cb.din <= 7` is deterministic too.** It is the clocking-block form you will write from F4C onward.
+- **`cb.din <= 7` is deterministic too.** It drives through a **clocking block** (`cb`), a declaration taught in F4C that fixes when a bench samples and drives signals relative to a clock; you will write this form from F4C onward.
 - **The bench's read of `q` sees the old value in every order**, because the DUT writes `q` with `<=`. This lesson's checker relies on the same fact; Push Further explains when it stops being true.
 
 The opposite-edge style is also race-free, because no flop in this DUT reads anything on the falling edge:
@@ -267,7 +267,7 @@ task automatic send_negedge(input logic [W-1:0] a_val, input logic [W-1:0] b_val
 endtask
 ```
 
-Inputs then change mid-cycle, which reads well in a waveform. The style breaks when the design also uses falling edges or several clocks, and in gate-level simulation the half cycle becomes a real timing budget. This lesson drives with `<=` after the rising edge, because that is the idea a **clocking block** formalises: a declaration, taught in F4C, that fixes when a bench samples and drives a group of signals relative to a clock. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) lets you run every legal process order and watch the race appear and disappear; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) replaces this rule with clocking blocks, which every bench from milestone M1 onward uses.
+Inputs then change mid-cycle, which reads well in a waveform. The style breaks when the design also uses falling edges or several clocks, and in gate-level simulation the half cycle becomes a real timing budget. This lesson drives with `<=` after the rising edge, because that is the idea a clocking block formalises. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) lets you run every legal process order and watch the race appear and disappear; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) replaces this rule with clocking blocks, which every bench from milestone M1 onward uses.
 
 **Code-review rule until F4C:** no `=` to a DUT input after `@(posedge clk)`.
 
@@ -363,7 +363,7 @@ It is written differently from the RTL on purpose. The RTL relies on its 9-bit t
   ]}
 />
 
-At edge 6 two results are in flight (`{15, 19}`), and the queue absorbs them: the shaded band across edges 6 and 7 marks where the checker pops 15 at edge 7 and 19 at edge 8. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
+At edge 6 two results are in flight (`{15, 19}`), and the queue absorbs them: the shaded band across edges 6 and 7 marks the cycle in which two results are in flight (`{15, 19}` after edge 6); the checker then pops 15 at edge 7 and 19 at edge 8. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
 
 </details>
 
@@ -430,7 +430,7 @@ The checker compares with the **case inequality** operator `!==`, never with `!=
     <text x="292" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">1</text>
     <rect x="305" y="87" width="22" height="20" rx="3" fill="url(#f2e-x-hatch-cmp)" stroke="currentColor" strokeOpacity="0.55" />
     <text x="316" y="101" textAnchor="middle" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">X</text>
-    <text x="8" y="124" fontSize="10" fill="currentColor" opacity="0.75">{"bits [8:1] match 10; bit [0] is X → relation is ambiguous (§11.4.5)"}</text>
+    <text x="8" y="124" fontSize="10" fill="currentColor" opacity="0.75">{"bits [8:1] match; bit [0] is X → ambiguous (§11.4.5)"}</text>
     <text x="8" y="142" fontSize="10" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">{"!= 10: x → pass_cnt++ ✕   |   !== 10: 1 → fail_cnt++ ✓"}</text>
 
     <text x="8" y="182" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fill="currentColor">9&apos;b1_0000_101x</text>
@@ -466,7 +466,7 @@ Two more ways X hides:
 - **In a control signal.** `if (out_valid)` with `out_valid` at x simply skips the compare: no failure, no pass, nothing. The checker therefore tests `$isunknown(out_valid)` first (§20.9).
 - **In a 2-state copy.** Copying `sum` into an `int` or a `bit` turns x into 0 before any compare ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). Keep DUT values in 4-state `logic`.
 
-Choose `a != b` in the explorer below, set `a = 101x` and `b = 1010`, predict `a != b` and reveal; then cycle the top bit of `a` to `0` (`001x` versus `1010`: a known bit differs), and compare `!=` (`1`) with `!==` (`1`).
+Choose `a != b` in the explorer below, set `a = 101x` and `b = 1010`, and predict both `a != b` and `a !== b` before you reveal; then cycle the top bit of `a` to `0` (`001x` versus `1010`: now a known bit differs) and predict both again.
 
 <OperatorExplorer family="equality" />
 
@@ -504,7 +504,7 @@ One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for
 
 </details>
 
-**Predict, then check.** With the carry bit stuck at 0 (`BUG=1`), which tests fail? And with the off-by-one (`BUG=2`)? Press each cell of the lab below to predict whether that test will catch or miss that mutant, then reveal the runs; select a caught cell to step to its first failing edge, or an escaped one to read why the bug got through.
+**Predict, then check.** The plan names one target test per mutant. With the carry bit stuck at 0 (`BUG=1`), does any test other than `corners` fail? With the off-by-one (`BUG=2`), does any test let it escape? Press each cell of the lab below to predict whether that test will catch or miss that mutant, then reveal the runs; select a caught cell to step to its first failing edge, or an escaped one to read why the bug got through.
 
 <SelfCheckBenchLab mode="matrix" scope="plan" />
 
@@ -1213,7 +1213,7 @@ Step through one rising-edge time slot below to compare this bench's plain `<=` 
 
 - **Exit codes.** `$fatal` terminates the simulation "with an error code" (§20.10), but the standard does not define its value, and `$finish` only returns control to the operating system (§20.2). Exit statuses are tool-dependent, so regression scripts decide from the log.
 - **The contract.** Exactly one summary line per run. A missing summary (a crash, an early `$fatal`, a killed job) is a failure. Match the whole line, `^PASS=\d+ FAIL=0$`; some simulators prefix every transcript line (for example with `# `), so strip the tool's prefix first (tool-dependent).
-- **Errors your counters never see.** A `$error` from an immediate assertion in the RTL, from a vendor model or from someone else's code does not touch `fail_cnt`. Scan the log for the tool's error messages as well, or route every check through one counter. The planned UVM lesson on reporting and pass/fail does the same for UVM's report counts.
+- **Errors your counters never see.** A `$error` from an immediate assertion in the RTL, from a vendor model or from someone else's code does not touch `fail_cnt`. Scan the log for the tool's error messages as well, or route every check through one counter. [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) does the same for UVM's report counts.
 - **Seeds.** A directed bench gives the same result on every run. Once stimulus is random, the seed must be in the log so that a failure can be reproduced ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index)).
 
 Test your regression script's rule on six log endings: for each card, pick whether a naive `^PASS=\d+ FAIL=0$` matcher accepts it and whether the run really passed.

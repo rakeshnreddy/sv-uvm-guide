@@ -17,7 +17,7 @@ sources:
 | In the catalogue picture | In SystemVerilog |
 |---|---|
 | Ordering from a catalogue copies a part onto your board | Importing a package copies nothing: the name simply becomes visible, and every importer refers to the one declaration in the package (§26.3) |
-| Two catalogues list the same part number | They only clash when you actually order that part, not when you open both catalogues (§26.3) |
+| Two catalogues list the same part number | If you only browse both catalogues (two wildcard imports), they clash only when you use that part; naming the same part from both (two explicit imports) clashes at once (§26.3) |
 | A catalogue holds no running hardware | A package cannot contain `always` or `initial` processes (§26.2) |
 
 **You will be able to:**
@@ -33,7 +33,7 @@ sources:
 
 The core path runs in five steps: the picture of one small bench, then ports, parameters, connections and hierarchy, then packages and how names are found in them, and finally `` `include `` and compile order. Debugging and real-testbench practice come next. The expert layer is in Push Further.
 
-A few words first. A **module definition** is the code between `module` and `endmodule`. An **instance** is one copy of that definition placed inside another module, with its own name and its own signals; the same definition can be instantiated many times. **Compiling** reads the source files and checks the syntax and the names; **elaboration** then builds the instance tree from the top module down, applies parameter values and makes the port connections, before simulation time 0 (§3.12). Most errors on this page appear at one of those two steps, never at run time.
+A few words first. A **module definition** is the code between `module` and `endmodule`. An **instance** is one copy of that definition placed inside another module, with its own name and its own signals; the same definition can be instantiated many times. **Compiling** reads the source files and checks the syntax and the names; **elaboration** then builds the instance tree from the top module down, applies parameter values and makes the port connections, before simulation time 0 (§3.12). A **compilation unit** is the set of source files a tool compiles together, and its **compilation-unit scope** (named `$unit`) holds anything declared outside every module and package (§3.12.1); the section on compile order returns to it. Most errors on this page appear at one of those two steps, never at run time.
 
 <ArchitectureDiagram
   title="From source files to time 0"
@@ -96,7 +96,7 @@ The import lines end on the box that uses the names: `apply()` uses `cmd_t` and 
 **Predict before you read on.** Three questions, answered in the sections below:
 1. `tb_pkg` imports `cnt_pkg`. Does importing `tb_pkg` into `tb_top` also make `op_e` visible there?
 2. Inside `counter`, may an `always_ff` block assign to `din`?
-3. If you split the file into four files, which one must the compiler read first?
+3. If you split the bench into four files, `cnt_pkg.sv`, `tb_pkg.sv`, `counter.sv` and `tb_top.sv`, which one must the compiler read first?
 
 ### Modules and ports: who may drive what
 
@@ -256,7 +256,7 @@ An **instantiation** creates one instance and connects its ports: `module_name #
 **Equivalent** types have the same structure: for vectors, the same total number of bits, both 2-state or both 4-state, and the same signedness (§6.22.2).
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
-<summary className="cursor-pointer font-semibold">Predict: tb_top has logic [3:0] din, and the port is 8 bits. Which of these compile?</summary>
+<summary className="cursor-pointer font-semibold">Predict: tb_top has logic [3:0] din, and the port is 8 bits. Which of .din(din), .din and .* compile?</summary>
 
 With `.din`, a 4-bit `din` in the parent and an 8-bit port is a compile error, where `.din(din)` would compile and zero-extend.
 
@@ -409,7 +409,7 @@ endpackage
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Check your prediction 3: which of the four files must the compiler read first?</summary>
 
-`cnt_pkg`. `tb_pkg` imports it and the header of `counter` imports it, and a package must be compiled before any scope that imports it (§26.3). Follow the import lines in the picture and the full compile order is `cnt_pkg`, `tb_pkg`, `counter`, `tb_top`. Break-it step 4 in Make It Work shows what the tool says when you get this wrong.
+`cnt_pkg`. `tb_pkg` imports it and the header of `counter` imports it, and a package must be compiled before any scope that imports it (§26.3). Follow the import lines in the picture: `cnt_pkg` comes first, and `tb_pkg` must also come before `tb_top`. One valid order is `cnt_pkg`, `tb_pkg`, `counter`, `tb_top`; the language requires only that each package come before every scope that imports it, so putting the design before the bench is a convention, not a rule (§26.3). Break-it step 4 in Make It Work shows what the tool says when you get this wrong.
 
 </details>
 
@@ -441,7 +441,7 @@ Importing copies nothing: "Importing does not copy the declaration of that ident
     { id: "s2", label: "2. wildcard candidates", sublabel: "imported earlier; 2+ packages = error", kind: "generic", col: 0, row: 2 },
     { id: "s3", label: "3. next outer scope", sublabel: "repeat steps 1 and 2 there", kind: "generic", col: 0, row: 3 },
     { id: "s4", label: "4. compilation unit", sublabel: "its scope is searched last", kind: "generic", col: 0, row: 4 },
-    { id: "bind", label: "bind x here", sublabel: "wildcard match now imported", kind: "generic", col: 1, row: 2 },
+    { id: "bind", label: "bind x here", sublabel: "search stops; step 2 imports it", kind: "generic", col: 1, row: 2 },
     { id: "err", label: "not found", sublabel: "error; calls search upward", kind: "generic", col: 1, row: 4 }
   ]}
   edges={[
@@ -451,7 +451,9 @@ Importing copies nothing: "Importing does not copy the declaration of that ident
     { from: "s3", to: "s4", style: "causal", label: "no match" },
     { from: "s4", to: "err", style: "causal", label: "no match" },
     { from: "s1", to: "bind", style: "data", label: "match" },
-    { from: "s2", to: "bind", style: "data", label: "match" }
+    { from: "s2", to: "bind", style: "data", label: "match" },
+    { from: "s3", to: "bind", style: "data", label: "match" },
+    { from: "s4", to: "bind", style: "data", label: "match" }
   ]}
 />
 
@@ -484,7 +486,14 @@ package q; int x = 2; typedef logic [7:0] data_t; endpackage
 | `import pkg::state_e, pkg::IDLE;` | yes | yes |
 | `import pkg::*;` | yes, imported when referenced | yes, imported when referenced |
 
-**Imports are not transitive.** `tb_pkg` imports `cnt_pkg`, but a module that imports `tb_pkg` does not see `op_e` through it (§26.6). That answers prediction 1: `tb_top` imports both packages. A package can re-export with `export cnt_pkg::*;`, covered in Push Further.
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction 1: does importing tb_pkg make op_e visible in tb_top?</summary>
+
+No. `tb_pkg`'s own import of `cnt_pkg` is private to `tb_pkg` (§26.6), so `tb_top` must import `cnt_pkg` itself: `tb_top` imports both packages, which is why the bench picture shows two imports into it.
+
+</details>
+
+**Imports are not transitive.** `tb_pkg` imports `cnt_pkg`, but a module that imports `tb_pkg` does not see `op_e` through it (§26.6). A package can re-export with `export cnt_pkg::*;`, covered in Push Further.
 
 <ArchitectureDiagram
   title="Imports stop at the package that wrote them"
@@ -554,7 +563,7 @@ Testbenches use both together. Each class lives in its own `.svh` file, and the 
 
 What fails depends on the type: enum variables reject a literal of another enum type (§6.19.3); class handles of two "identical" classes are type incompatible with each other (§6.22.5), so a `uvm_config_db` lookup or a `$cast` between them fails; packed structs, by contrast, are *equivalent* to any packed type of the same total width, state and signedness (§6.22.2), so they assign silently. **The fix** is one owner: put `mode_e` in one package (`mode_pkg`), and let `pkg_a` and `pkg_b` import it.
 
-**Compilation units.** A **compilation unit** is a set of source files compiled together; its **compilation-unit scope** holds every declaration outside all modules, packages and other design elements, and `$unit` names that scope (§3.12.1). Which files form one unit is tool-specific, but every tool must offer both modes:
+**Compilation units.** As defined at the start, a compilation unit is a set of source files compiled together; its **compilation-unit scope** holds every declaration outside all modules, packages and other design elements, and `$unit` names that scope (§3.12.1). Which files form one unit is tool-specific, but every tool must offer both modes:
 
 | Same four files, compiled as | A typedef written outside every module in `a.sv` | `` `default_nettype `` or `` `define `` set in `a.sv` | A package used before its file is compiled |
 |---|---|---|---|
@@ -893,7 +902,7 @@ Error wording varies by tool, so this table names the error *class*.
 | Multiple drivers on a variable | the parent's variable connected to an output port is also assigned, or two continuous drivers write one variable | one writer per variable; declare the signal as a net only for real multi-driver buses (§6.5, §23.3.3.2) |
 | A `.*` or `.name` connection is rejected | same-named signal with a different width, signedness or 4-state/2-state kind, or a missing name | declare the signal with the port's exact type, or connect that port by name |
 | An enum or class assignment fails between two types with the same name | the same `.svh` file is `` `include ``d into two packages: two types | one package owns the type; others import it (§6.22.1) |
-| A hierarchical reference such as `tb_top.dut.q` cannot be resolved after a block is reused or an instance is renamed | the path is baked into the code, and the new bench has different top or instance names | pass the signal through a port or interface, or `bind` the block where the path is known (§23.6) |
+| A hierarchical reference such as `tb_top.dut.q` cannot be resolved after a block is reused or an instance is renamed | the path is baked into the code, and the new bench has different top or instance names | pass the signal through a port or interface, or `bind` the block where the path is known (§23.6, §23.11) |
 
 **Checklist before moving on:**
 - [ ] Every type shared by the DUT and the bench is declared once, in a package.
@@ -925,7 +934,7 @@ The full table, for `c` declared in package `p` (and in `q`, where a column name
 
 - **Per-instance types.** "Each instance with a user-defined type declared inside the instance creates a unique type" (§6.22). A struct typedef declared *inside* a module therefore differs in every instance; for matching across instances, classes, enums and unpacked structs must come from a package or an outer scope, and for strict matching even packed structs must (§6.22).
 - **Package typedefs match everywhere.** "A typedef for an enum, struct, union, or class type declared in a package always matches itself, regardless of the scope into which the type is imported" (§6.22.1 h).
-- **Anonymous types** match only objects declared in the same declaration: `struct packed {...} a, b;` gives `a` and `b` one type, and a second identical declaration gives another (§6.22.1, §6.22.2).
+- **Anonymous types** match only objects declared in the same declaration: `struct packed {...} a, b;` gives `a` and `b` one matching type; a second identical declaration gives a type that does not match it (§6.22.1 c), although as a packed type it is still equivalent (§6.22.2 c). For an unpacked struct it is not even equivalent (§6.22.2 b).
 - **Equivalent is weaker than matching.** Packed structs, packed unions, packed arrays and integral types of the same total width, state and signedness are *equivalent* (§6.22.2 c), so a two-types trap with packed structs compiles and silently connects fields in whatever order each copy declares them. Enums are strongly typed (§6.19.3), and class handles of different class types are incompatible (§6.22.5), so those fail loudly.
 - **UVM consequence.** If `my_cfg.svh` is included into two agent packages, `uvm_config_db#(pkg_a::my_cfg)::set` and `uvm_config_db#(pkg_b::my_cfg)::get` use two different specializations, and the `get` returns 0 although the code "looks identical". The fix is the one-owner rule. ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) teaches the configuration database.)
 
@@ -1136,7 +1145,7 @@ Answer from memory first. Each question names the objective it checks.
         { text: "din connects and is zero-extended, like .din(din)", correct: false, feedback: "Only an explicit named connection converts like an assignment (23.3.3.8). .* requires equivalent types." },
         { text: "din is left unconnected, and the port floats at z", correct: false, feedback: ".* does not skip a same-named signal of the wrong type; it reports the mismatch." },
         { text: "It connects with a width-mismatch warning", correct: false, feedback: "That is typical for an explicit named connection. For .* and .name the types must be equivalent, so it is an error." },
-        { text: "Elaboration error: the implicit connection needs equivalent types, and 4 bits is not 8 bits", correct: true, feedback: "Right. .* is an implicit .name for every port, and .name requires equivalent data types (23.3.2.3, 23.3.2.4, 6.22.2)." }
+        { text: "An error before simulation starts: the implicit connection needs equivalent types, and 4 bits is not 8 bits", correct: true, feedback: "Right (reported at compile or elaboration, depending on the tool). .* is an implicit .name for every port, and .name requires equivalent data types (23.3.2.3, 23.3.2.4, 6.22.2)." }
       ],
       explanation: "Implicit connections trade flexibility for safety: same name and equivalent type, or an error. Connect such a port by name if you really want conversion.",
       objective: 1

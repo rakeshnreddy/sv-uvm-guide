@@ -79,6 +79,8 @@ sources:
 | *No kitchen beat* | Re-Inactive | Reactive-set code resumed after `#0` (§4.4.2.7). The analogy skips this region, but it is still one of the nine |
 | *Where it breaks* | The climb back to Active | A plate or an order can send the cooks back to work in the same instant, any number of times (§4.5), and the scheduler's inspector grades the photo, not today's plates |
 
+Program blocks, concurrent assertions and their action blocks, clocking blocks and `#1step` are each introduced in a few lines under "Testbench constructs on this page" below.
+
 </details>
 
 **You will be able to:**
@@ -117,11 +119,11 @@ Two notes before the details. **Delta cycle** is the industry name for one more 
 
 The region table names four constructs that later lessons teach in full. Here you only need what each one is and how it looks, so you can place it in a region.
 
-**Before you open the comparison under the code snippet:** where do you expect a program's `<=` and a clocking drive to land? Both are written like ordinary nonblocking assignments.
+**Before you open the comparison under the code snippet:** both a program's `<=` and a clocking drive are written like ordinary nonblocking assignments. Why might the standard send them to a different region from the design's `<=`, and which one?
 
 - **Program block.** `program` … `endprogram` is a module-like container for testbench code (§24.3). It may hold data, subroutines and `initial` and `final` procedures, but no `always` procedures and no instances of modules, interfaces or other programs. Its code runs in the reactive region set (§24.3.1). [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches when to use one.
 - **Concurrent assertion and its action blocks.** `assert property (...)` checks a property at every clock event (§16.5). The statement after it is the **pass action block**; the statement after `else` is the **fail action block**. Without an `else`, a failure calls `$error` (§16.14.1). [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) teaches the syntax.
-- **Clocking block.** `clocking cb @(posedge clk);` … `endclocking` groups signals that are synchronous to one clock event (§14.3). Each listed signal gets a **clockvar** with the same name, read or driven as `cb.gnt` or `cb.req`. The **input skew** says when inputs are sampled relative to the clock event, and the **output skew** says when drives take effect after it; the defaults are `#1step` and 0 (§14.3, §14.4). A **clocking drive** is a nonblocking assignment to an output clockvar, such as `cb.req <= 1;` (§14.16). F4C teaches the syntax.
+- **Clocking block.** `clocking cb @(posedge clk);` … `endclocking` groups signals that are synchronous to one clock event (§14.3). Each listed signal gets a **clockvar** with the same name, read or driven as `cb.gnt` or `cb.req`. The **input skew** says when inputs are sampled relative to the clock event, and the **output skew** says when drives take effect after it; the defaults are `#1step` and 0 (§14.3, §14.4). A **clocking drive** is written with the nonblocking operator but is not a nonblocking assignment: `cb.req <= 1;` drives the output clockvar `cb.req` with the clocking block's own timing (§14.16, §14.16.1). F4C teaches the syntax.
 - **The `checker` construct.** `checker` … `endchecker` is a SystemVerilog block that packages assertions with the modelling code they need (Clause 17; [I-SV-4C](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index)). It is **not** a testbench's checking code, such as the comparison code of [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index) or the `always @(posedge clk)` checker of [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index). Those are ordinary module code and run in the active region set. On this page, "`checker` construct" always means the language block.
 
 ```systemverilog
@@ -144,7 +146,7 @@ endclocking
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold py-2">Check your prediction: where each construct on this page lands</summary>
 
-A program's `<=` and a zero-skew clocking drive both land in Re-NBA, the reactive-set counterpart of NBA, not in NBA itself (§24.3.1, §14.16). Here is where each construct on this page lands, with one ordinary checker as the contrast.
+The why first: program code runs in the reactive set, which starts only after the design's whole active set, its own NBA updates included, has settled for this edge (§24.3.1, §4.5). Its `<=` writes therefore go to the reactive set's own update region, and §14.16 sends a zero-skew clocking drive to that same region whichever code executes it. Either way the write reaches the design only after the design has finished with this edge, the way a real driver's would. So a program's `<=` and a zero-skew clocking drive both land in Re-NBA, the reactive-set counterpart of NBA, not in NBA itself (§24.3.1, §14.16). Here is where each construct on this page lands, with one ordinary checker as the contrast.
 
 | Construct | Its code runs in | Its writes land in | Taught in |
 |---|---|---|---|
@@ -399,14 +401,15 @@ The picture shows the same five steps. Solid rungs repeat; dashed rungs run once
 
 **Watch the loop run.** The visualizer below runs one time slot on a tested scheduler model. Pick a scenario, read the code and answer its prediction before you step. Every event is filed under the region it was scheduled in, and Δ counts each return to an earlier region. Work through all three scenarios, in order.
 
-In this next-region mode the run also pauses each time the executing region runs dry and asks where the loop goes next, so name the region before you step on. When you have finished the three, the picker offers a fourth, *program watcher*: a second program thread waits on `cmd`, and the update of `cmd` wakes both it and the design's `assign led = cmd`. Predict which runs first, then check it against step 4 of the picture.
+In this next-region mode the run also pauses each time the executing region runs dry and asks where the loop goes next, so name the region before you step on. The picker also has a fourth scenario, *program watcher*; try it after the three. In it a second program thread waits on `cmd`, and the update of `cmd` wakes both it and the design's `assign led = cmd`. Predict which runs first, then check it against steps 3 and 4 of the picture.
 
 <SVSchedulerRegionVisualizer mode="next-region" scenario="comb-after-nba" scenarios={['comb-after-nba','zero-delay-prints','program-reactive','program-watcher']} />
 
-**What the three scenarios showed.**
+**What the four scenarios showed.**
 - **NBA → combinational.** The NBA update of `q` is itself an event: it wakes `assign y = q`, which runs in Active again, and the change of `y` wakes the `always_comb`. It all happens at one simulation time, so a waveform viewer draws `q`, `y` and `z` changing together (§4.5, §4.9.1).
 - **`$display` · `#0` · `$strobe`.** `#0` resumes the process in Inactive, which still comes before NBA, so the second `$display` prints the old `q` as well. Only `$strobe`, which prints in Postponed, sees the new value (§4.4.2.3, §21.2.2).
 - **program block.** The program thread runs in Reactive, after the active set has drained, so `seen = q` reads the *new* `q`. Its `cmd <= 1` lands in Re-NBA. That update wakes the design's `assign led = cmd`, and the outer loop takes the slot back to Active: the dashed arrow in the picture (§24.3.1, §4.5).
+- **program watcher.** The Re-NBA update of `cmd` wakes both threads, but the reactive loop drains first, so the program's `@(cmd)` thread runs in Reactive before the design's `assign led = cmd` runs in the next Active pass, and it still reads the old `led` (§4.5, §24.3.1).
 
 Tie each run back to the numbered picture, for objective 3. Which numbered step does each return belong to: the NBA update waking `assign y = q`, the `#0` resuming in Inactive, and the Re-NBA update waking `assign led = cmd`? Name the steps before you open the answer.
 
@@ -418,6 +421,7 @@ Tie each run back to the numbered picture, for objective 3. Which numbered step 
 | NBA → combinational | Step 2, the solid arrow to Active |
 | `$display` · `#0` · `$strobe` | Step 2, where the loop returns to Active before NBA runs; then step 5, where `$strobe` prints |
 | program block | Step 3, where Re-NBA updates `cmd`; then step 4's dashed arrow back to Active |
+| program watcher | Step 3 (the watcher, in Reactive), then step 4's dashed arrow (`assign led`) |
 
 </details>
 
@@ -432,7 +436,7 @@ Active for the module `initial`, Reactive for the program. The same task runs in
 
 </details>
 
-**Sort the first-read set before you read the tables.** Place each of the eight constructs named above on every region where it runs or lands, then check. Each card explains its answer; for any miss, find its row in the tables below.
+**Sort the first-read set before you read the tables.** Place each of the eight constructs named above on every region where it runs or lands, or in the No region tray if it has none (`final`), then check. Each card explains its answer; for any miss, find its row in the tables below.
 
 <EventRegionGame items="first-read" />
 
@@ -592,7 +596,7 @@ A concurrent assertion does its work in three places of the same slot, with the 
 
 </details>
 
-**Try it edge by edge.** The lab below runs the same `a_q_was_low` check on a longer trace. At each edge, predict the verdict and, for a pass, what the message prints for `$sampled(q)` and for plain `q`, then reveal the Preponed, Observed and Reactive steps of that slot. Notice the edges where the two printed values differ. Then add `disable iff (rst)` and watch the exception above at work: the disable condition uses the current value of `rst`, not its sample.
+**Try it edge by edge.** The lab below runs the same `a_q_was_low` check on a longer trace. At each edge, predict the verdict and, for a pass, what the message prints for `$sampled(q)` and for plain `q`, then reveal the Preponed, Observed and Reactive steps of that slot. Notice the edge where the two printed values differ. The lab's flop also has a synchronous reset `rst`. Then add `disable iff (rst)` and watch the exception above at work: the disable condition uses the current value of `rst`, not its sample.
 
 <SvaSequenceWaveformVisualizer initialPreset="flop-output-low" modes={['learn']} />
 
@@ -633,7 +637,7 @@ Trace what that means for real code. For each row, decide whether the standard f
 
 <RaceConditionDebugger bench="nba-writers" />
 
-The regions are what rescue the fourth row: write `x` with `x <= 1;` and `y = x` always reads the old `x`, because every read in Active happens before the NBA update. Written that way for every flop, process order cannot leak into the result. The third row has no region fix: one variable needs one writer. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) proves both points and shows what else still races.
+The regions are what rescue the fourth row: write `x` with `x <= 1;` and `y = x` always reads the old `x`, because every read in Active happens before the NBA update. Written that way for every flop, process order cannot leak into the result. To try it, open the Two-flop shift register tab in the debugger above and switch each assignment between `=` and `<=`. The third row has no region fix: one variable needs one writer. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) proves both points and shows what else still races.
 
 <figure className="not-prose my-6">
 <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
@@ -830,7 +834,7 @@ cb.req <= 1;   // zero-skew drive: lands in Re-NBA`}
 
 ### Worked example: one time slot, region by region
 
-This bench prints five lines from four regions of one time slot (Active, Inactive, Reactive twice, Postponed) at the first rising edge, t = 5. Read it, predict all five lines, then check them against the trace.
+This bench prints five lines from four regions of one time slot (Active, Inactive, Reactive twice, Postponed) at the first rising edge, t = 5. Read it, then predict the five lines in the exercise below.
 
 ```systemverilog
 // compile
@@ -872,7 +876,7 @@ module tb_top;
 endmodule
 ```
 
-**Predict in the exercise.** Order the five lines and check them, then step through the trace one row at a time and watch which rung of the region ladder each row runs on. Its last part makes the changes of steps 5 to 7 in "How to work through it" below, one at a time, and asks which lines survive before it shows them.
+**Predict in the exercise.** Order the five lines and check them, then step through the trace one row at a time and watch which rung of the region ladder each row runs on. Its last part makes the same changes as steps 5 to 7 of "How to work through it" below, one at a time, and asks which lines survive before it shows them; if you do them here, you can skip those steps later.
 
 <RegionTraceExercise preset="f3b-worked-example" />
 
@@ -972,7 +976,7 @@ Steps 2 and 3 may swap without changing any output, and so may steps 8 and 9, wh
 
 **How to work through it:**
 1. Write the region of each print next to the code before you run anything.
-2. Predict the five lines, including which two might swap.
+2. Keep your exercise answer for the five lines, including which two might swap, to compare with the log.
 3. Run the bench and compare the log with your prediction and with the trace.
 4. Explain every difference with a region or a clause, not with "the simulator did it".
 5. Change `#1 $finish;` to `$finish;` and predict again.
@@ -1182,6 +1186,8 @@ end
 Now step through it yourself. The lab runs the standard's own version of this snippet (§16.4.2): `assign not_a = !a;` and a block `b1` that checks `not_a != a` as an immediate assertion `a1` and an observed deferred assertion `a2`, plus a final deferred `a3` that the lab adds. Pick an assertion, predict whether it reports, then step the regions and watch each queued report get flushed or mature. Then toggle `Program writes a (Reactive) instead of <=` and notice which form can now report the glitch, as the bullet on loops above says.
 
 <DeferredReportVisualizer preset="assert-forms-glitch" />
+
+If a2 reported in the Program-writes mode: that is its time-0 report, made on the x values; it matured in Observed before the program's write woke b1 again.
 
 ### Expert: PLI and VPI callback regions
 
@@ -1438,7 +1444,7 @@ Preponed, then the active set (Active, Inactive, NBA), then Observed, then the r
 
 ### Game: place the events
 
-The game below asks where a series of events land, then for the order of a printed log. Every answer is computed by the same scheduler model as the visualizer above, and every round explains its answer. Aim for a perfect score; for each miss, find the matching row in "Where each construct runs" before you play again.
+The game below asks where a series of events land, then for the order of a printed log. Unlike the sorter under "Where each construct runs", which covered the first-read set, this game adds rows beyond it (the right-hand side of `<=`, a program's `#0`, clocking-block samples and `@(cb)`, `assign` after an NBA update) and ends with a log-order round. Every answer is computed by the same scheduler model as the visualizer above, and every round explains its answer. Aim for a perfect score; for each miss, find the matching row in "Where each construct runs" before you play again.
 
 <EventRegionGame />
 
@@ -1470,7 +1476,7 @@ a_y_high: assert property (@(posedge clk) y == 1'b1)
 
 **What to reflect on:** what the log would lose if `$finish` had no `#1` in front of it, and why the D line prints before the C line.
 
-**Try requirements 1, 2 and 4 here first.** In the exercise below, pick every region for L1 to L6, order the four lines and predict the D line; after you check, it changes L6 to `$sampled(y)` for requirement 4. Notice which lines need more than one region. Requirement 3 still needs a simulator.
+**Try requirements 1, 2 and 4 here first.** In the exercise below, pick every region for L1 to L6, order the four lines and predict the D line; after you check, it changes L6 to `$sampled(y)` for requirement 4. Some lines may land in more than one region. Requirement 3 still needs a simulator.
 
 <RegionTraceExercise preset="f3b-kata" />
 

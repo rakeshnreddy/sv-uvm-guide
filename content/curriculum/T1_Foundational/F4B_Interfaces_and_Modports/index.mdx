@@ -212,7 +212,7 @@ A module uses the bus by declaring a port whose type is the interface. There are
 |---|---|---|
 | `module slave_dut (simple_bus_if.slave bus, …);` | This interface type, seen through the `slave` modport | The normal case: the header documents the role |
 | `module any_user (simple_bus_if bus);` | This interface type, no modport: every variable is reachable as `ref` and every net as `inout` (§25.5) | Rarely; prefer a modport |
-| `module generic_user (interface bus, …);` | A **generic interface port**: any interface type, chosen when the module is instantiated (§25.3.3) | Reusable modules; it is legal only in ANSI-style headers, and must be connected by name |
+| `module generic_user (interface bus, …);` | A **generic interface port**: any interface type, chosen when the module is instantiated (§25.3.3) | Reusable modules; it is legal only in ANSI-style headers, and it cannot be connected implicitly with `.name` or `.*`: §25.3.3 requires a named connection, such as `.bus(bus_if)` |
 
 The top module creates one instance and passes it to every user:
 
@@ -287,7 +287,7 @@ module master_driver (simple_bus_if.master bus, input logic rst_n);
       bus.valid <= 1'b1;             // next request (the previous one handshaked)
       bus.addr  <= bus.addr + 32'h4;
     end
-    // bus.ready <= 1'b0;  // compile error: ready is an input in modport master
+    // bus.ready <= 1'b0;  // ready is an input in modport master: what happens? (predict below)
   end
 endmodule
 
@@ -304,7 +304,7 @@ endmodule
     { target: "12-13", title: "Slave modport", explanation: "The DUT's view: it reads the request signals and drives `ready`." },
     { target: "15-16", title: "Monitor modport", explanation: "Every member is an input, so code connected through this view cannot drive the bus through its port." },
     { target: "19-31", title: "VALID does not wait for READY", explanation: "The master raises `valid` on its own and holds it until it sees `ready` at a clock edge. If the master waited for `ready` while the slave waited for `valid`, neither would ever move: a deadlock." },
-    { target: "29", title: "Enforced direction", explanation: "Uncommenting this line is a compile-time error: `ready` is an input in the master modport, and assigning to a variable declared as an input port is illegal (§25.5, §23.3.3.2)." },
+    { target: "29", title: "Enforced direction", explanation: "`ready` is an input in the master modport. What does the tool do if you uncomment this line? Predict it with the Modport Explorer below; the answer and its clauses (§25.5, §23.3.3.2) follow it, under What you just saw." },
     { target: "33-38", title: "Slave", explanation: "The slave drives only `ready`, the one output in its view." }
   ]}
 />
@@ -326,10 +326,10 @@ endmodule
 What you just saw:
 
 - **Four views, one set of signals.** `master`, `slave` and `monitor` list the same five variables of the one `simple_bus_if`, and `drv` reaches them through `cb`. No view owns a copy; a modport creates no signals and stores nothing. It only states the direction each user has.
-- **Direction violations are static.** A write to an `input` through a modport is rejected when the design is compiled or elaborated, before time 0 (§23.3.3.2). It never waits until the line runs.
+- **Direction violations are static.** A write to an `input` through a modport is rejected when the design is compiled or elaborated, before time 0 (§23.3.3.2): assigning to a variable declared as an input port is illegal, and a modport's `input` is such a port (§25.5). It never waits until the line runs. So uncommenting `bus.ready <= 1'b0;` in `master_driver` is a compile-time error.
 - **Not listed means not reachable.** A net, variable, task or clocking block that a modport does not list cannot be reached through a port of that modport (§25.5). Through `drv`, only `cb` is visible; the next subsection explains it.
 
-**The limits.** A modport restricts only what a module does *through that port*. Predict, for each access, whether a modport can stop it: a write to an `input` through the port; a member the modport does not list, reached through the port; the hierarchical reference `tb_top.bus_if.ready`; a type or parameter of the interface; a second module writing through the same view; and a plain `simple_bus_if bus` port with no modport at all.
+**The limits.** A modport restricts only what a module does *through that port*. You have already met two of them: a hierarchical reference such as `tb_top.bus_if.ready` and a second module writing through the same view both get past a modport. Predict, for each of the other four accesses, whether a modport can stop it: a write to an `input` through the port; a member the modport does not list, reached through the port; a type or parameter of the interface; and a plain `simple_bus_if bus` port with no modport at all.
 
 <details>
 <summary>Check your prediction: what a modport can and cannot stop</summary>
@@ -372,6 +372,8 @@ modport drv (clocking cb);      // the driver sees only cb (§25.5.5)
 ```
 
 Code connected through `drv` can drive `cb.valid <= 1'b1;` and read `cb.ready`, with the clocking block's timing, and can reach nothing else. The directions are those of the clocking block, again seen from the user (§25.5.5). This is the view a testbench driver should use: it makes "drive the DUT only through the clocking block" a rule that the compiler checks.
+
+Unlike a module's `output` port, a clocking-block `output` can only be driven: reading `cb.valid` is illegal, and so is writing the input `cb.ready` (§14.3).
 
 <ArchitectureDiagram
   title="What code on a .drv port can reach"
@@ -468,6 +470,8 @@ Now try it. The visual below generates a small bench from three choices: the han
 3. **Direct drive via drv**: the driver writes `vif.valid` through a `.drv` handle.
 4. **Monitor handle drives**: a `.monitor` handle used to drive.
 5. **Read cb.valid**: reading a clocking-block output.
+
+The handle-type menu also offers a plain `virtual simple_bus_if` with no modport. If you pick it and drive `cb`, the widget reports the drive as legal, as many simulators accept; §25.9.2 does not guarantee it, because `simple_bus_if` has modports (Push Further explains).
 
 <InterfaceSignalFlow />
 
@@ -623,12 +627,15 @@ always_ff @(posedge bus.clk) bus.ready <= bus.valid;
 
 `ready` stays 0 because `valid` is 0, and `valid` stays 0 because `ready` is 0. Nothing errors; the simulation runs until something stops it. That is why the Make It Work bench has a watchdog.
 
-**Predict before you look at the waveform.** In the Make It Work bench, `run()` starts at 30 ns and calls `write()` twice; the slave toggles `ready` on every edge after reset. Rising edges are at 5, 15, 25 … ns, numbered 0, 1, 2 …. At which edge does the first transfer happen? At the 45 ns edge `ready` is low: may `valid` drop there?
+**Predict before you look at the waveform.** In the Make It Work bench, reset is released at the 20 ns falling edge; from the next rising edge on, the slave toggles `ready` on every edge, starting from 0. `run()` starts at 30 ns and calls `write()` twice. Rising edges are at 5, 15, 25 … ns, numbered 0, 1, 2 …. At which edge does the first transfer happen? At the 45 ns edge `ready` is low: may `valid` drop there?
+
+<details>
+<summary>Check your prediction: the handshake on the waveform</summary>
 
 <TimingDiagram
   title="The handshake in the Make It Work bench"
   cycleWidth={24}
-  caption={"Edge k is the rising edge at 5 + 10k ns. Each column is the value sampled at that edge, which is what the monitor and the clocking block read there; a drive through cb lands just after an edge, so it appears in the next column. Hatching means unknown (x): before 5 ns nothing has driven valid, ready or addr. rst_n rises at 20 ns, a falling edge, although the diagram draws every change just after the previous rising edge. Bus values are hexadecimal."}
+  caption={"Edge k is the rising edge at 5 + 10k ns. Each column is the value sampled at that edge, which is what the monitor and the clocking block read there; a drive through cb lands just after an edge, so it appears in the next column. Hatching means unknown (x): before 5 ns nothing has driven valid or ready, and addr stays x until write() first drives it just after the 35 ns edge. rst_n rises at 20 ns, a falling edge, although the diagram draws every change just after the previous rising edge. Bus values are hexadecimal."}
   edges={9}
   signals={[
     { name: "clk", kind: "clock" },
@@ -650,6 +657,8 @@ What the waveform shows:
 - **The first transfer is at edge 5 (55 ns)**, the first edge where both columns are 1. At edge 4 `valid` is 1 but `ready` is 0, so `valid` and `addr` hold; dropping `valid` there would withdraw a request the slave never accepted.
 - **READY before VALID is fine.** At edge 3 the slave is ready and the master is not. Nothing happens, and nothing is wrong: the destination may raise READY whenever it likes.
 - **The cost of this simple task.** `write()` drops `valid` for a cycle after each transfer (edge 6) before the next request. Push Further shows how a driver keeps `valid` high for back-to-back transfers.
+
+</details>
 
 **Who calls whom.** The class never touches a signal. It calls `vif.write()`, the task runs inside `bus_if`, and the clocking block applies its drives:
 
@@ -1512,6 +1521,55 @@ endmodule
 mem_slave dut (.clk(clk), .rst_n(rst_n), .addr(addr), .wdata(wdata),
                .rdata(rdata), .rw(rw), .valid(valid), .ready(ready),
                .err(err), .size(size), .prot(prot), .last(last));
+```
+
+The starter bench around that instance drives one write and one read by hand and prints a line for every handshake:
+
+```systemverilog
+// snippet: the starter tb_top; the mem_slave instance above sits where marked
+module tb_top;
+  logic        clk = 1'b0, rst_n = 1'b0;
+  logic [31:0] addr, wdata, rdata;
+  logic        rw, valid, ready, err, last;
+  logic [1:0]  size;
+  logic [2:0]  prot;
+  always #5 clk = ~clk;                          // rising edges at 5, 15, 25 ... ns
+
+  // mem_slave dut (...);  the twelve-connection instance shown above
+
+  // The log the refactor must not change: one line per handshake.
+  always @(posedge clk)
+    if (valid === 1'b1 && ready === 1'b1)
+      $display("t=%0d: rw=%b addr=%h wdata=%h", $time, rw, addr, wdata);
+
+  initial begin
+    repeat (2) @(negedge clk);
+    rst_n = 1'b1;                                // on a falling edge (20 ns)
+    // Request 1, a write: drive on the falling edge, away from the DUT's edge.
+    @(negedge clk);
+    addr <= 32'h10; wdata <= 32'hCAFE_0000; rw <= 1'b0; size <= 2'b10;
+    prot <= 3'b000; last <= 1'b1; valid <= 1'b1;   // VALID does not wait
+    do @(posedge clk); while (ready !== 1'b1);     // hold until the handshake
+    @(negedge clk);
+    valid <= 1'b0;
+    // Request 2, a read.
+    @(negedge clk);
+    addr <= 32'h14; wdata <= 32'h0; rw <= 1'b1; size <= 2'b10;
+    prot <= 3'b000; last <= 1'b1; valid <= 1'b1;
+    do @(posedge clk); while (ready !== 1'b1);
+    @(negedge clk);
+    valid <= 1'b0;
+    repeat (2) @(negedge clk);
+    $finish;
+  end
+endmodule
+```
+
+**Starter log** (illustrative: traced by hand, not captured from a simulator). `ready` is 1 at the 35 ns and 55 ns edges, so each request completes at the first rising edge after it starts:
+
+```text
+t=35: rw=0 addr=00000010 wdata=cafe0000
+t=55: rw=1 addr=00000014 wdata=00000000
 ```
 
 **Requirements:**

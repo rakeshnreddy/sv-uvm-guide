@@ -76,7 +76,7 @@ This is the first lesson that asks you to read SystemVerilog code. Six terms are
 - **Procedure and procedural assignment.** An `initial` procedure runs its statements once, starting at time 0. An `always` procedure repeats forever; `always_comb` and `always_ff` are its RTL forms (§9.2). A statement inside a procedure, such as `y = 1;`, is a **procedural assignment**: it writes a value once, when the statement runs, and a variable keeps that value until the next write (§10.4).
 - **Process.** Each procedure and each continuous assignment is a **process**: a thread that the simulator runs concurrently with every other process (§4.3).
 - **Compile, elaborate, simulate.** A tool first compiles the source (reads and checks it), then elaborates it (builds the instance hierarchy and connects every driver to its net or variable), then simulates it. Driver errors, such as two continuous drivers on one variable, are usually found at elaboration. The standard calls every error reported before simulation starts a compile-time error, whichever step finds it (§3.12), so this lesson says **does not compile** for all of them.
-- **Testbench statements.** `#1` waits one time unit, `$display` prints a line using format codes such as `%b` (binary), `%h` (hex) and `%0d` (decimal), and `$finish` ends the simulation. [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) and [F2D](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) teach them properly; here you only need to read them.
+- **Testbench statements.** `#1` waits one time unit, `$display` prints a line using format codes such as `%b` (binary), `%h` (hex) and `%0d` (decimal), and `$finish` ends the simulation. `@(posedge clk)` waits for the next rising edge of `clk` (§9.4.2), `repeat (n)` runs its statement `n` times (§12.7.2), and `always #5 clk = ~clk;` toggles a clock every 5 time units. `<=` is a **nonblocking** assignment: it schedules the write instead of making it at once, so other processes at the same clock edge still read the old value (§10.4.2). A **function** is a named block of statements that the code calls by name, such as `check(...)`; a `void` function returns no value (§13.4), and `automatic` gives each call its own copy of the function's variables (§13.4.2). In an instance, `.*` connects each port to the signal of the same name (§23.3.2.4). [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) and [F2D](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) teach them properly; here you only need to read them.
 
 The three steps as one picture, with the error this lesson mentions most often placed where a tool finds it:
 
@@ -331,7 +331,7 @@ Three mistakes this table prevents:
 - `v = 4'bx` leaves the upper 12 bits at 0, because a sized unsigned value is zero-extended (§10.7, §11.8.3). Write `v = 'x` to make every bit unknown (§5.7.1). Block 10 of the bench in Make It Work checks both.
 - An unsized constant cannot appear in a concatenation: `{a, 1}` is illegal, so write `{a, 1'b1}` (§11.4.12).
 
-Now decode the table's literals one step at a time. Pick a literal, predict the bits it stores in `logic [15:0] v`, then step through: read the parts, turn the digits into bits, fit them to the size, then extend or cut them into `v`. Notice which step adds the twelve zeros of `4'bx` and which step makes `'x` fill all sixteen bits; the two syntax-error cards show why `{a, 1}` does not compile.
+Now decode the table's literals one step at a time. Pick a literal, predict the bits it stores in `logic [15:0] v`, then step through: read the parts, turn the digits into bits, fit them to the size, then extend or cut them into `v`. Notice which step adds the twelve zeros of `4'bx` and which step makes `'hx` (it behaves like `'x`) fill all sixteen bits; one syntax-error card shows why `{a, 1}` does not compile, and the other shows that `8'd-6` is illegal.
 
 <LiteralDecoder preset="hex-ff" presets={["decimal-12", "hex-ff", "signed-hex-ff", "binary-10x1", "binary-x", "hex-3x", "unsized-x", "sized-x", "fill-ones", "decimal-1"]} />
 
@@ -341,12 +341,12 @@ In testbenches the fill literals do daily work: `'0` for reset values, `'1` for 
 
 SystemVerilog has four families of equality. They differ only in what `x` and `z` do:
 
-| Operators | Name | What `x` and `z` do | With `a = 4'b10x1` |
-|---|---|---|---|
-| `==` and `!=` | logical equality | The result is `x` when unknown bits make it ambiguous; a known bit that differs decides it (§11.4.5) | `a == 4'b10x1` is `x`; `a == 4'b00x1` is 0 |
-| `===` and `!==` | case equality | `x` and `z` are compared as ordinary values; the result is always 0 or 1 (§11.4.5) | `a === 4'b10x1` is 1 |
-| `==?` and `!=?` | wildcard equality | `x`, `z` and `?` bits in the **right** operand match anything; an `x` on the left can still make the result `x` (§11.4.6) | `a ==? 4'b10?1` is 1 |
-| `inside` | set membership | Compares integral values with `==?`, so `x` and `z` bits in a set member are wildcards; returns `x` if nothing matches but some comparison was `x` (§11.4.13) | `a inside {4'b10?1, 4'd0}` is 1 |
+| Operators | Name | What `x` and `z` do |
+|---|---|---|
+| `==` and `!=` | logical equality | The result is `x` when unknown bits make it ambiguous; a known bit that differs decides it (§11.4.5) |
+| `===` and `!==` | case equality | `x` and `z` are compared as ordinary values; the result is always 0 or 1 (§11.4.5) |
+| `==?` and `!=?` | wildcard equality | `x`, `z` and `?` bits in the **right** operand match anything; an `x` on the left can still make the result `x` (§11.4.6) |
+| `inside` | set membership | Compares integral values with `==?`, so `x` and `z` bits in a set member are wildcards; returns `x` if nothing matches but some comparison was `x` (§11.4.13) |
 
 The explorer below opens on the **Equality** family with `a = 4'b1x10` and `b = 4'b1x10`. Write down your predictions for `a == b`, `a === b` and `a ==? b` first. Then:
 
@@ -361,6 +361,7 @@ What you should have seen:
 - `a == b` is `x`: the two unknown bits might differ, so the relation is ambiguous. `a === b` is 1, because `===` compares the two `x` bits as identical symbols. `a ==? b` is 1, because the `x` in `b` is a wildcard.
 - With `b = 4'b0x10`, `a == b` became a definite 0. Bit 3 is known and differs, which settles the answer whatever the unknown bit is.
 - `inside` returned 1 because the member `4'b1x1x` has wildcard bits. An `x` in `a` itself is never a wildcard.
+- The same rules with `a = 4'b10x1`: `a == 4'b10x1` is `x`; `a == 4'b00x1` is 0; `a === 4'b10x1` is 1; `a ==? 4'b10?1` is 1; `a inside {4'b10?1, 4'd0}` is 1.
 
 One pair of values, three answers. Now that the explorer has shown you the pattern, cover the right-hand columns and work each row across; the last row has the same shape as the explorer's starting case:
 
@@ -402,13 +403,13 @@ Tab 3 of the explorer in [Four values](#four-values-0-1-x-and-z) runs `if`, `?:`
     <text x="108" y="24" fontSize="10.5" fill="currentColor" fontWeight="700">{"X-optimistic (a branch runs)"}</text>
     <rect x="310" y="13" width="36" height="20" rx="5" fill="rgba(100,116,139,0.15)" stroke="rgb(100,116,139)" strokeWidth="1.5" />
     <text x="328" y="27" textAnchor="middle" fontSize="10.5" fontWeight="700" fontFamily="ui-monospace, monospace" fill="currentColor">0/1</text>
-    <text x="108" y="42" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">{"if (a)  if (!a)  case → default  casex"}</text>
+    <text x="108" y="42" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">{"if (a) · if (!a) · case → default · casex"}</text>
     <text x="108" y="58" fontSize="10" fill="currentColor" fillOpacity="0.85">{"clean 0 or 1: x hidden (§12.4, §12.5.1)"}</text>
     <rect x="100" y="100" width="252" height="74" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.45" />
     <text x="108" y="116" fontSize="10.5" fill="currentColor" fontWeight="700">{"X-pessimistic (value computed)"}</text>
     <rect x="310" y="105" width="36" height="20" rx="5" fill="url(#f2a-roads-hatch)" stroke="rgb(244,63,94)" strokeWidth="1.5" />
     <text x="328" y="119" textAnchor="middle" fontSize="10.5" fontWeight="700" fontFamily="ui-monospace, monospace" fill="currentColor">x</text>
-    <text x="108" y="134" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">{"a ? b : c   a + 1   a == b"}</text>
+    <text x="108" y="134" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">{"a ? b : c · a + 1 · a == b"}</text>
     <text x="108" y="150" fontSize="10" fill="currentColor" fillOpacity="0.85">{"the x stays visible: the result is x"}</text>
     <text x="108" y="165" fontSize="10" fill="currentColor" fillOpacity="0.85">{"(§11.4.3, §11.4.5, §11.4.11)"}</text>
   </svg>
@@ -430,7 +431,7 @@ The else branch. `!x` is still `x` (§11.4.7), and an `x` condition is not true 
 | `case (sel)` | Items must match bit for bit, including `x` and `z`, like `===` (§12.5) | An `x` select usually falls to `default` |
 | `casez (sel)` | `z` and `?` bits in the select or in an item are do-not-cares; an `x` must still match exactly (§12.5.1) | A floating select matches items it should not |
 | `casex (sel)` | `x` and `z` bits in the select or in an item are do-not-cares (§12.5.1) | X-optimistic: an unknown select runs a real branch |
-| `a ? b : c` | With an `x` condition both sides are evaluated, and bits that differ become `x` (§11.4.11, Table 11-20) | X-pessimistic: the unknown stays visible |
+| `a ? b : c` | With an `x` condition both sides are evaluated; a bit keeps its value only where both sides hold the same 0 or 1, and every other bit becomes `x` (§11.4.11, Table 11-20) | X-pessimistic: the unknown stays visible |
 | `x + 1` and other arithmetic | Any `x` or `z` operand bit makes the whole result `x` (§11.4.3) | X-pessimistic: the unknown spreads |
 
 What follows for code you write:
@@ -469,7 +470,7 @@ This rule answers many "why does this not compile?" and "why is my signal `x`?" 
   </Card>
 </div>
 
-The two columns as one picture. Solid arrows carry a written value and are labelled with the value that travels:
+The two columns as one picture. Solid arrows carry a written value and are labelled with the value that travels; the two marked ✕ are writes the tool rejects:
 
 <ArchitectureDiagram
   title="One net, one variable: who may write them"
@@ -787,7 +788,9 @@ Then a signed and an unsigned operand, with `logic signed [3:0] s = -4;` (bits `
 | 4. extend `s` | zero-extended: `0000_1100` = 12 | sign-extended: `1111_1100` = −4 |
 | 5. add and store | 12 + 10, so `r = 22` | −4 + 10, so `r = 6` |
 
-The signed target `r` did not make the first sum signed. Now try the traps yourself. The lab opens on **the lost carry**, with `a8 = 200`, `b8 = 100` and an 8-bit target `s`, at the code variant `s = (9'(a8) + b8) >> 1`. `9'(a8)` is a size cast: it widens `a8` to 9 bits before the add (§6.24.1; [Casting at a glance](#casting-at-a-glance) below has every cast). This variant is the fix; the 8-bit average `s = (a8 + b8) >> 1` is the trap it avoids. Predict `s` for both from the context width, as in the tables above; the shift count 1 does not count toward the context (§11.6.1). Write down both values before you reveal: the reveal checks both.
+The signed target `r` did not make the first sum signed. Now try the traps yourself.
+
+The lab opens on **carry out of 8 bits** (the lost carry), with `a8 = 200`, `b8 = 100` and an 8-bit target `s`, at the code variant `s = (9'(a8) + b8) >> 1`. `9'(a8)` is a size cast: it widens `a8` to 9 bits before the add (§6.24.1). [Casting at a glance](#casting-at-a-glance) below has every cast. This variant is the fix; the 8-bit average `s = (a8 + b8) >> 1` is the trap it avoids. Predict `s` for both from the context width, as in the tables above; the shift count 1 does not count toward the context (§11.6.1). Write down both values before you reveal: the reveal checks both.
 
 Then step through the variants the reveal has not shown, the 8-bit and 9-bit sums and `s = (a8 + b8 + 0) >> 1`, and predict `s` for each. Last, switch the trap to **signed + unsigned** and predict **a + u**, **$signed(a) + u** and **a + $signed(u)**.
 
@@ -866,7 +869,7 @@ Predict each value before you read the last column. Take `w = 32'hAABB_CCDD` and
 | `b[1:2]` | a slice of two elements; a slice of an unpacked array is unpacked | `'{8'h22, 8'h33}` |
 | `b[5]`, or `b[i]` while `i` is `x` | an invalid index | `'x` for this 4-state array; `'0` if it were `bit` (§7.4.5, Table 7-1) |
 
-Now try selections on the same `w` and `b`. Pick an expression, predict what it selects and its value, then check: the explorer highlights the lanes or elements it touches. Notice that a slice of `w` stays one packed vector, while a slice of `b` stays a set of separate elements.
+Now cover the Value column and try these selections again on the same `w` and `b`. Pick an expression, predict what it selects and its value, then check: the explorer highlights the lanes or elements it touches. Notice that a slice of `w` stays one packed vector, while a slice of `b` stays a set of separate elements.
 
 <ArraySelectExplorer mode="select" preset="packed-unpacked" />
 
@@ -948,7 +951,7 @@ Practise the indexed part-select and range-direction rules. Move the base of `v[
   <figcaption className="mt-2 text-sm text-muted-foreground">Slate boxes are separate unpacked elements; cyan lanes and cells are parts of one packed vector. Indices apply unpacked first, then packed, each group left to right (§7.4.4), so <code>mem[5][2][3]</code> walks word 5, byte lane 2, bit 3.</figcaption>
 </figure>
 
-See the same memory in three dimensions. Pick a select, predict whether it reads a word, a byte or a bit and its value, then reveal it; the text view beside the scene lists every byte. Notice that each index you add removes one dimension, and try `mem[16]` and `mem[i]` with `i` holding `x`: both are invalid unpacked indices, and the `b[5]` row of the table above gives the rule for what they read (§7.4.5, Table 7-1).
+See the same memory in three dimensions. Pick a select, predict whether it reads a word, a byte or a bit and its value, then reveal it; the text view with the scene lists every byte. Notice that each index you add removes one dimension, and try `mem[16]` and `mem[i]` with `i` holding `x`: both are invalid unpacked indices, and the `b[5]` row of the table above gives the rule for what they read (§7.4.5, Table 7-1).
 
 <SystemVerilog3DVisualizer initialScene="mem-block" syncSceneToUrl={false} />
 
@@ -974,7 +977,7 @@ Declare each shared type once, usually in a package that the DUT and the testben
 
 <ArchitectureDiagram
   title="One typedef in a package, two anonymous enums that never match"
-  caption="Plain lines are imports. The package defines cmd_t and state_t once, so the dut's c and tb_top's t have the same type and t = c compiles. The two anonymous enums e1 and e2 are two different types even with identical members (§6.22.1), so e2 = e1 does not compile without a cast (§6.19.3). Tag: DUT = design under test."
+  caption="Plain lines are imports, except the bottom line, which marks that e1 and e2 do not match. The package defines cmd_t and state_t once, so the dut's c and tb_top's t have the same type and t = c compiles. The two anonymous enums e1 and e2 are two different types even with identical members (§6.22.1), so e2 = e1 does not compile without a cast (§6.19.3). Tag: DUT = design under test."
   cellWidth={130}
   gapX={90}
   spreadAnchors={true}
@@ -1089,13 +1092,12 @@ A `string` is an ordered collection of characters whose length can change during
 
 - Methods: `len()`, `getc(i)`, `putc(i, c)`, `toupper()`, `tolower()`, `compare(s)`, `icompare(s)`, `substr(i, j)`, and conversions such as `atoi()` and `atohex()` (§6.16.1 to §6.16.9).
 - Operators: `==`, `!=`, `<`, `>` (lexicographic), concatenation `{a, b}` and replication (Table 6-9).
-- Out-of-range indices do not raise errors: `getc` returns 0, `putc` leaves the string unchanged, and `substr` returns `""` (§6.16.2, §6.16.3, §6.16.8).
 
 In the explorer, set `i` to 20, past the end of `"SystemVerilog"` (its `len()` is 13), and predict what `getc(20)` returns and what `putc(20, "s")` does to `s`. Then set `i` back to 0 and call `substr(0, 5)`.
 
 <StringMethodExplorer />
 
-What the explorer showed: `getc(20)` returned 0 and `putc(20, "s")` left `s` unchanged, with no error. `substr(i, j)` includes both ends, so `substr(0, 5)` is `"System"`. Silent defaults like these let string bugs survive, so check `len()` before you index. In testbenches, strings carry messages, report IDs and file names; [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) builds them with `$sformatf`.
+What the explorer showed: `getc(20)` returned 0 and `putc(20, "s")` left `s` unchanged, with no error. Out-of-range indices do not raise errors: `getc` returns 0, `putc` leaves the string unchanged, and `substr` returns `""` (§6.16.2, §6.16.3, §6.16.8). `substr(i, j)` includes both ends, so `substr(0, 5)` is `"System"`. Silent defaults like these let string bugs survive, so check `len()` before you index. In testbenches, strings carry messages, report IDs and file names; [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) builds them with `$sformatf`.
 
 ### Casting at a glance
 
@@ -1475,7 +1477,7 @@ The same policy as a picture, with the one place where 4-state becomes 2-state:
 - **Implicit nets.** An undeclared name in a port connection, or on the left of a continuous assignment, silently becomes a 1-bit net of the default net type, normally `wire` (§6.10, §22.8). A typo in a port connection therefore compiles into a dangling wire. `` `default_nettype none `` turns it into an error. Input ports also take the default net type (§23.2.2.3), so under `none` give ports an explicit kind (`input wire logic a`); how strictly tools enforce this varies (tool-dependent).
 - **`uwire`** makes "at most one driver" a checked rule for a net (§6.6.2). An undriven `uwire` is legal and reads `z`.
 
-Try the per-bit rule before you read the tables. The lab opens on the bits of `logic [1:0] v`: pick a set of writers, predict whether the tool accepts them, then check. Notice that the verdict depends on which bits each writer touches, not on how many writers the variable has.
+Try the per-bit rule before you read the tables. The lab opens on the bits of `logic [1:0] v`: pick a set of writers, predict whether the tool accepts them, then check. Notice that the verdict depends on which bits each writer touches and what kind of writer it is, not on how many writers the variable has.
 
 <NetResolutionSimulator initialMode="legality" pattern="bitwise" />
 
@@ -1506,9 +1508,11 @@ Then the port-kind rules of §23.2.2.3 for an ANSI port list:
 - `tri0` and `tri1` behave like a `wire` with a constant pull-strength 0 or 1 driver: any strong driver overrides the pull, and with every driver off the net reads the pull value (§6.6.5).
 - A `trireg` never makes a transition to `z`. When all its drivers turn off it keeps its last value at its charge strength, which is `small`, `medium` (the default) or `large` (§6.3.2.1, §6.6.4). If its declaration gives a charge decay time, as the third delay in `trireg #(d1, d2, d3) n;`, a stored 0 or 1 becomes `x` once that time has passed without a driver (§28.16.2). The **trireg holds charge** mode of the [net resolution simulator](#who-may-drive-a-signal-nets-and-variables) shows the stored value.
 
-  The same mode is embedded here. Pick a charge strength and the value `a` drives first, predict what the `trireg` reads at 10 ns once every driver is `z`, then compare it with a `wire` driven the same way. Notice that the `wire` floats to `z` while the `trireg` keeps its stored value.
+  The same mode is embedded here. Pick a charge strength and the value `a` drives first, predict what the `trireg` reads at 10 ns once every driver is `z`, then compare it with a `wire` driven the same way.
 
   <NetResolutionSimulator initialMode="trireg" />
+
+  Notice that the `wire` floats to `z` while the `trireg` keeps its stored value.
 
 - `supply0` and `supply1` drive at supply strength, the top of the scale (§6.6.6, Table 28-7).
 - **Open-drain lines in a testbench.** Strengths model a pulled-up line with several devices that can only pull it low:
@@ -1525,7 +1529,7 @@ Then the port-kind rules of §23.2.2.3 for an ANSI port list:
   Either device pulls `sda` low with a strong 0. When both let go, they drive at `highz` and the pull-up makes `sda` read 1 (§10.3.4, §6.6.5).
 - An `x` on the enable of a tri-state driver produces an ambiguous strength rather than a single level, and §28.12.2 defines how such signals combine. Awareness is enough unless you model switch-level circuits.
 
-The open-drain line as a picture, then its truth table:
+The open-drain line as a picture, then a lab to drive it and its truth table:
 
 <ArchitectureDiagram
   title="Two open-drain devices on one pulled-up line"
@@ -1544,6 +1548,12 @@ The open-drain line as a picture, then its truth table:
   ]}
 />
 
+Now drive the line yourself. Toggle whether `dev_a` and `dev_b` pull low, and check what `sda` reads for each of the four combinations against the rule above.
+
+<NetResolutionSimulator initialMode="drivers" preset="open-drain" />
+
+Check your four results against the truth table:
+
 | `dev_a_pull_low` | `dev_b_pull_low` | `dev_a` drives | `dev_b` drives | `sda` |
 |---|---|---|---|---|
 | 0 | 0 | `highz1` (lets go) | `highz1` (lets go) | 1, from the `tri1` pull (§6.6.5) |
@@ -1551,9 +1561,7 @@ The open-drain line as a picture, then its truth table:
 | 0 | 1 | `highz1` | `strong0` | 0 |
 | 1 | 1 | `strong0` | `strong0` | 0: two strong 0s agree |
 
-Now drive the line yourself. Toggle whether `dev_a` and `dev_b` pull low, predict what `sda` reads for each of the four combinations, and check each one. Notice that `sda` reads 1 only when both devices let go, and that it never reads `x`, because a device can only drive a strong 0 or nothing.
-
-<NetResolutionSimulator initialMode="drivers" preset="open-drain" />
+Notice that `sda` reads 1 only when both devices let go, and that it never reads `x`, because a device can only drive a strong 0 or nothing.
 
 ### Expert: Literal and expression-size corner cases
 
@@ -1607,7 +1615,7 @@ The rules, including the four you just predicted:
 - When a signed operand is extended and its sign bit is `x` or `z`, the new bits are `x` or `z` too (§11.8.4).
 - Converting a `real` to an integer rounds to the nearest integer, with .5 rounded away from zero: `int'(2.5)` is 3 and `int'(-1.5)` is −2 (§6.12.1).
 
-Step through the literal corner cases with the same decoder. Predict the stored bits first, then watch the size step: `4'hFF` loses its upper digit, `'hx` fills all 40 bits of `logic [39:0] v`, `'h7_0000_0000` needs more than 32 bits, and `'1` on its own in a `$display` is 1 bit wide.
+Step through the literal corner cases with the same decoder. Predict the stored bits first, then watch the size step: which preset drops a digit, which fills the 40-bit target `logic [39:0] v`, which needs more than 32 bits, and how wide `'1` is on its own in a `$display`.
 
 <LiteralDecoder preset="truncated-hex" presets={["truncated-hex", "unsized-x-40", "wide-unsized", "fill-display"]} />
 
@@ -1616,7 +1624,7 @@ Step through the literal corner cases with the same decoder. Predict the stored 
 - **What the standard fixes.** `if`, `case` and `casex` are X-optimistic: an unknown condition still runs a real branch (§12.4, §12.5.1). `?:`, arithmetic and most operators are X-pessimistic (§11.4.11, §11.4.3). RTL that relies on `if` can therefore look healthy while the hardware it describes is not.
 - **Vector conditions.** `if (e)` means the same as `if (e != 0)` (§12.4). A vector with one known 1 bit is nonzero even when its other bits are `x`, so `if (4'b1x00)` runs the then-branch. Only a condition that is not known to be nonzero takes else.
 
-Try other vector conditions below. For each value of `e`, predict which branch `if (e)`, `if (!e)` and `e ? a : b` take, then check. Notice that one known 1 bit is enough for `if (e)` to run the then-branch, while an `x` bit with no known 1 sends it to else.
+Try other vector conditions below. For each value of `e`, predict which branch `if (e)`, `if (!e)` and `e ? 1'b1 : 1'b0` take, then check. Notice that one known 1 bit is enough for `if (e)` to run the then-branch, while an `x` bit with no known 1 sends it to else.
 
 <LogicStateDiagram initialTab="control" initialConstruct="if" preset="vector-condition" />
 
@@ -1916,7 +1924,7 @@ Still `PASS=3 FAIL=0`. The copy now holds `x`, but `err_q != 1'b0` returns `x` a
 
 </details>
 
-Hunt the three lines in the lab below before you open the solution. Pick a suspect line to get a verdict, then apply the fixes one at a time and predict each log before it runs. Notice which fix finally turns the false passes into failures, and which fix makes the log honest again.
+Hunt the three lines in the lab below before you open the solution. The lab repeats the listing so you can pick lines from it, and applies the minimal `!==` fix; the Solution also adds `$isunknown` and prints the value. Pick a suspect line to get a verdict, then apply the fixes one at a time and predict each log before it runs. Notice which fix finally turns the false passes into failures, and which fix makes the log honest again.
 
 <XCheckLab mode="debug" preset="status-reg" />
 
@@ -1970,7 +1978,7 @@ Write a prediction for each line, then check it in the expression trap lab in [E
 
 | # | Trap lab scenario | Code | Your prediction |
 |---|---|---|---|
-| 1 | the lost carry | Set **Value of a8** to 150 and **Value of b8** to 120. Then `s = (a8 + b8) >> 1;` and `s = (a8 + b8 + 0) >> 1;` into the 8-bit `s` | |
+| 1 | carry out of 8 bits | Set **Value of a8** to 150 and **Value of b8** to 120. Then `s = (a8 + b8) >> 1;` and `s = (a8 + b8 + 0) >> 1;` into the 8-bit `s` | |
 | 2 | signed + unsigned | Set **Width of a** to 8 bits and keep `a = -4` and `u = 10`. Then `r = a + u;` into the signed 8-bit `r` | |
 | 3 | signed vs unsigned compare | `pos = a > 4'd0;` and `pos = a > 0;` with `a = -4` (4-bit signed) | |
 | 4 | `>>` vs `>>>` | `r = -4'sd1 >> 1;` and `r = -4'sd1 >>> 1;` with a 4-bit signed `r` | |

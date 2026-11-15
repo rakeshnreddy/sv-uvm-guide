@@ -92,7 +92,7 @@ endtask
 
 Read the declaration from left to right: the keyword `task`, the lifetime (`automatic`, explained below), the name, then the formal arguments, each with a direction and a type. `hold` has a **default value**, so a call may leave it out. The body drives with nonblocking assignments (`<=`, from [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)), so `par_reg`, which samples on the same clock edge, still sees the values from before the edge. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) explains the race that a blocking `=` would cause. Verilog's older declaration style, with `input` and `output` items listed after the header, is still legal, but default values work only in the ANSI style shown here (§13.5.3), so use ANSI style.
 
-**Predict first.** The test calls `write_word(8'h35)` at t = 20 ns, and the clock rises at 25 ns and 35 ns. When does the statement after the call run? Decide, then check the diagram.
+**Predict first.** The test calls `write_word(8'h35)` at t = 20 ns, and the clock rises at 25 ns and 35 ns. When does the statement after the call, `check_q(with_parity(8'h35), "load 35")`, start? (`with_parity` computes the expected value; `check_q`, built in Make It Work, waits for the falling clock edge and compares `q`.) Decide, then check the diagram.
 
 <details>
 <summary>Check your prediction</summary>
@@ -100,7 +100,7 @@ Read the declaration from left to right: the keyword `task`, the lifetime (`auto
 <SequenceDiagram
   title="A task call blocks its caller; a function call takes no time"
   caption="The initial block in tb_top waits inside write_word from 20 ns to 35 ns. with_parity runs at 35 ns in zero time, then check_q waits for the falling edge at 40 ns."
-  columnWidth={115}
+  columnWidth={130}
   participants={[
     { id: "tb", label: "tb_top initial", kind: "generic" },
     { id: "ww", label: "write_word", kind: "generic" },
@@ -245,8 +245,7 @@ Here is the static-lifetime bug in its smallest form. Two threads of a `fork…j
 // compile
 `timescale 1ns/1ps
 module tb_top;
-  // No lifetime keyword in a module: this task is STATIC,
-  // so every call shares one copy of id.
+  // No lifetime keyword in a module
   task send(input int id);
     #10 $display("t=%0d id=%0d", $time, id);
   endtask
@@ -290,7 +289,7 @@ endmodule
   ]}
 />
 
-The same run, step by step:
+With no lifetime keyword in a module, this task is static, so every call shares one copy of `id`. The same run, step by step:
 
 | t (ns) | What happens | Static: the one `id` | Automatic: call 1's `id`, call 2's `id` |
 |---|---|---|---|
@@ -317,7 +316,7 @@ t=12 id=2
 
 **What this shows.** There is no error and no warning: the static version is legal code that does the wrong thing. In a real bench the symptom is a transaction that carries another transaction's address or data, and it appears only when two calls overlap, so it comes and goes with timing. The fix is one keyword. This site's code standard makes module and interface subroutines `automatic`; do the same for package subroutines unless you have a reason to want static storage.
 
-**Try it in the lab.** The same `send` bench runs below, with the lifetime keyword as a switch on the `task send` line. Answer its question, then move call 2's start to `#12` and notice that the static version prints the right value once the calls no longer overlap. At `#10`, call 2 starts in the same time slot in which call 1 wakes, and the lab shows the outcomes of every order the standard allows (§4.7). The debug-prints box adds the enter and use lines from *Debug it* further down this page.
+**Try it in the lab.** The same `send` bench runs below, with the lifetime keyword as a switch on the `task send` line. It opens on the `#2` bench you just traced. Set call 2's start to `#12` (or `#10`) first, predict what call 1 prints, then answer the lab's question, and notice that the static version prints the right value once the calls no longer overlap. At `#10`, call 2 starts at the same simulation time (t = 10 ns) at which call 1 wakes, and the lab shows the outcome of every order in which the ready processes can run (§4.7). The debug-prints box adds the enter and use lines from [Debug it](#debug-it-symptom-cause-fix) further down this page.
 
 <SubroutineLab mode="lifetime" />
 
@@ -361,7 +360,7 @@ endfunction
 
 The second call starts from the 8 that the first call left behind, because a static function's variables keep their values between calls (§13.4.2, §6.21). Writing `static int n = 0;` behaves the same way: the initializer runs once. Declare the function `automatic`, so every call starts with a fresh `n` at 0, or assign `n = 0;` as the first statement of every call.
 
-The lab below runs `count_ones` and `count_calls` from this section. Switch the lifetime of `count_ones` and predict what its second call returns, watch `total` and `this_call` side by side over three calls, then pick a qualifier for an initialized declaration and see which choices compile.
+The lab below runs `count_ones` and `count_calls` from this section. Confirm the 9 for the static `count_ones`, then switch it to automatic and predict its second call before you run it, watch `total` and `this_call` side by side over three calls, then pick a qualifier for an initialized declaration and see which choices compile.
 
 <SubroutineLab mode="lifetime" preset="initializers" />
 
@@ -397,7 +396,7 @@ module tb_top;
   function int fact_static(input int n);
     int rest;
     if (n <= 1) return 1;
-    rest = fact_static(n - 1);   // the inner call copies a new value into n
+    rest = fact_static(n - 1);   // recursive call
     return rest * n;             // reads n after the call
   endfunction
 
@@ -431,7 +430,7 @@ endmodule
 | 6 | `fact_static(3)` | `rest = 1`, returns 1 × 1 = 1 | 1 | 1 |
 | 7 | `fact_static(4)` | `rest = 1`, returns 1 × 1 = 1 | 1 | 1 |
 
-Each `return rest * n` reads `n` after the call: it is now 1.
+Each inner call copies a new value into the shared `n`, and each `return rest * n` reads `n` after the call: it is now 1.
 
 **Expected output** (illustrative: computed by hand from §13.4.2):
 
@@ -535,10 +534,10 @@ module tb_top;
   int v_in = 5, v_out = 5, v_io = 5, v_ref = 5;
 
   task automatic show_dirs(input int a, output int b, inout int c, ref int d);
-    a = a + 10;   // a is a local copy: the caller never sees this
-    b = b + 20;   // b starts at 0, the int default, not at the caller's 5
-    c = c + 30;   // c is a copy of the caller's 5, copied back at the return
-    d = d + 40;   // d IS the caller's variable: it changes at once
+    a = a + 10;   // input
+    b = b + 20;   // output
+    c = c + 30;   // inout
+    d = d + 40;   // ref
     #10;          // the caller is blocked here, from t=0 to t=10
   endtask
 
@@ -573,13 +572,16 @@ The trace, one row per direction:
 | `c` | `inout` | a copy of `v_io` (5); the task makes it 35 | `v_io` = 5 | `v_io` = 35: copied out at the return |
 | `d` | `ref` | is `v_ref` itself; the task makes it 45 | `v_ref` = 45 | `v_ref` = 45 |
 
+Notes on the four assignments in `show_dirs`:
+
+- `a = a + 10;`: `a` is a local copy, so the caller never sees this.
+- `b = b + 20;`: `b` starts at 0, the `int` default, not at the caller's 5.
+- `c = c + 30;`: `c` is a copy of the caller's 5, copied back at the return.
+- `d = d + 40;`: `d` IS the caller's variable, so it changes at once.
+
 Two lessons hide in the `output` row. First, an output is not an input: inside an automatic task it starts at its type's default value (0 for `int`, X for `logic`), not at the caller's value (§13.3.2). Second, the caller sees nothing until the return.
 
 </details>
-
-The lab below runs `show_dirs` with every direction as a control in the code. Change one direction at a time, predict the during and after lines, then watch when each caller variable changes: at the call, at the return, or at once.
-
-<SubroutineLab mode="directions" />
 
 **What this shows.** A task that writes `valid = 1; #10 valid = 0;` to an output argument never shows a pulse to anyone, because only the final 0 is copied out. To make a pin move, a task must write the module signal itself (later, an interface signal), as `write_word` does with `ld` and `d`.
 
@@ -596,6 +598,10 @@ The lab below runs `show_dirs` with every direction as a control in the code. Ch
     { edge: 3, tone: "drive", short: "wr 0", label: "Step 3: task writes valid = 0 and returns; valid (out) copies out 0, valid (ref) falls just after" }
   ]}
 />
+
+The lab below runs `show_dirs` with every direction as a control in the code. Change one direction at a time, predict the during and after lines, then watch when each caller variable changes: at the call, at the return, or at once.
+
+<SubroutineLab mode="directions" />
 
 ### Types and directions you did not write
 
@@ -963,7 +969,7 @@ $display("t=%0d enter id=%0d", $time, id);
 $display("t=%0d use   id=%0d", $time, id);   // differs from enter: shared storage
 ```
 
-To see the technique work, tick the debug-prints box in the lifetime lab under *Two callers, one shared variable* and compare the enter and use lines for a static and an automatic `send`.
+To see the technique work, tick the debug-prints box in the lifetime lab under [Two callers, one shared variable](#two-callers-one-shared-variable) and compare the enter and use lines for a static and an automatic `send`.
 
 **Checklist before moving on:**
 
@@ -1070,7 +1076,7 @@ endtask
 <SequenceDiagram
   title="What a zero-time function may start"
   caption="flag <= 1 schedules an update in the NBA region of this time slot; -> ev triggers the event at once; the fork...join_none child runs after f() returns."
-  columnWidth={115}
+  columnWidth={130}
   participants={[
     { id: "tb", label: "initial block", kind: "generic" },
     { id: "fn", label: "function f()", kind: "generic" },
@@ -1218,10 +1224,10 @@ Answer each one before you look at the feedback.
   title="Interview angle: fork…join_none in a function"
   question="Why may a function contain fork…join_none but not fork…join?"
   options={[
-    { text: "fork…join would suspend the function until its children finish; fork…join_none returns at once, and its children run after the function has returned.", correct: true, feedback: "Right. The function still returns in zero time; only the spawned processes wait (§13.4 rule a, §13.4.4)." },
     { text: "The children of fork…join_none are not allowed to contain delays.", correct: false, feedback: "They may contain anything legal in a task, including delays (§13.4.4). They simply run after the function returns." },
+    { text: "fork…join would suspend the function until its children finish; fork…join_none returns at once.", correct: true, feedback: "Right. The children of fork…join_none run after the function has returned, so the function still returns in zero time; only the spawned processes wait (§13.4 rule a, §13.4.4)." },
     { text: "Only an automatic function may fork, and fork…join needs a static one.", correct: false, feedback: "Lifetime is not the issue. §13.4 forbids fork…join and fork…join_any in every function, because they would suspend the caller." },
-    { text: "Neither is allowed: a function can never start a process.", correct: false, feedback: "fork…join_none is explicitly allowed (§13.4.4), as long as the call comes from a thread started by initial, always or a fork." }
+    { text: "Neither is allowed: a function can never start a process, because any process it started could wait.", correct: false, feedback: "fork…join_none is explicitly allowed (§13.4.4), as long as the call comes from a thread started by initial, always or a fork." }
   ]}
 />
 
@@ -1229,10 +1235,10 @@ Answer each one before you look at the feedback.
   title="Interview angle: the pulse that never arrives"
   question="A task drives output logic valid with valid = 1; #10 valid = 0; through an output argument, and the DUT never sees the pulse. Explain and fix it."
   options={[
-    { text: "The output is copied to the caller's variable only when the task returns, so the DUT sees just the final 0. Drive the module or interface signal from the task instead.", correct: true, feedback: "Right. Copy-out happens once, at the return (§13.3)." },
-    { text: "The task should write valid <= 1 so that the DUT samples it.", correct: false, feedback: "In an automatic task a nonblocking write to the output formal is a compile error (§13.3.2). In a static task it is legal but changes nothing: the copy still happens only at the return." },
-    { text: "10 ns is shorter than one clock period.", correct: false, feedback: "Width is not the issue: the pulse never reaches the caller's signal at all." },
-    { text: "valid should be declared inout.", correct: false, feedback: "An inout is also copied out only at the return (§13.3)." }
+    { text: "The task should write valid <= 1 so that the DUT samples it.", correct: false, feedback: "In an automatic task a nonblocking write to the output formal is a compile error (§13.3.2). In a static task it is legal, but no pulse arrives either: the copy happens only at the return, and because valid <= 0 has not updated yet when the task returns, the copy-out carries the old 1 and leaves the caller's signal stuck at 1 (§13.3, §4.4.2.4)." },
+    { text: "10 ns is shorter than one clock period, so the DUT samples valid only after it has dropped.", correct: false, feedback: "Width is not the issue: the pulse never reaches the caller's signal at all." },
+    { text: "The output is copied out only at the return, so the DUT sees just the final 0. Drive the module or interface signal instead.", correct: true, feedback: "Right. Copy-out happens once, at the return, to the caller's variable (§13.3), so the task must drive the module or interface signal itself." },
+    { text: "valid should be declared inout, so the task's writes reach the caller's signal.", correct: false, feedback: "An inout is also copied out only at the return (§13.3)." }
   ]}
 />
 
@@ -1240,10 +1246,10 @@ Answer each one before you look at the feedback.
   title="Interview angle: two meanings of static"
   question="In a class, what is the difference between static task t1(); and task static t2();?"
   options={[
-    { text: "t1 is a static method: it can be called without an object and has no this, but its variables are automatic. t2 is illegal: a class method cannot have a static lifetime.", correct: true, feedback: "Right (§8.10, §8.6)." },
     { text: "They are the same: both make the task's variables static.", correct: false, feedback: "Before task, static makes a static method; after task, it sets the lifetime, which a class method cannot have (§8.10)." },
     { text: "t1 is illegal, and t2 declares a static method.", correct: false, feedback: "It is the other way round: static task t1() is the static method, and task static t2() is the illegal one (§8.10)." },
-    { text: "Both are legal; t2 shares its variables across every object of the class.", correct: false, feedback: "A static lifetime is illegal for any class method (§8.6)." }
+    { text: "Both are legal: t1 can be called without an object, and t2 shares its variables across every object of the class.", correct: false, feedback: "A static lifetime is illegal for any class method (§8.6)." },
+    { text: "t1 is a static method (no object needed, no this, automatic variables); t2 is illegal: a method cannot have a static lifetime.", correct: true, feedback: "Right. t1 can be called without an object and has no this, but its variables are automatic; a class method cannot have a static lifetime (§8.10, §8.6)." }
   ]}
 />
 
@@ -1251,8 +1257,8 @@ Answer each one before you look at the feedback.
   title="Interview angle: is a static function safe?"
   question="A static function in a package never waits. Two threads call it in the same time slot. Is that safe?"
   options={[
-    { text: "Not guaranteed. The standard lets a simulator suspend a process mid-statement and interleave another (§4.7), and whether a tool does so is tool-dependent. Declare the function automatic.", correct: true, feedback: "Right. Recursion and fork…join_none children can also overlap activations; automatic removes the shared storage." },
-    { text: "Yes, always: a function runs in zero time, so two calls can never overlap.", correct: false, feedback: "Zero simulation time is not atomic execution. §4.7 allows interleaving, and recursion overlaps activations by design." },
+    { text: "Not guaranteed: §4.7 lets a simulator suspend a process mid-statement and run another. Declare the function automatic.", correct: true, feedback: "Right. Whether a tool actually interleaves inside a function is tool-dependent. Recursion and fork…join_none children can also overlap activations; automatic removes the shared storage." },
+    { text: "Yes, always: a function runs in zero time, so two calls can never overlap and no other process can run in between.", correct: false, feedback: "Zero simulation time is not atomic execution. §4.7 allows interleaving, and recursion overlaps activations by design." },
     { text: "No: calling a static function from two threads is a compile error.", correct: false, feedback: "It is legal. The risk is the shared storage, not a compile error." },
     { text: "Yes, because package subroutines are automatic by default.", correct: false, feedback: "Package subroutines are static by default, like module ones (§13.3.1, §13.4.2)." }
   ]}
@@ -1270,9 +1276,9 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "Can a function wait #10 before it returns its result?",
       objective: 1,
       answers: [
-        { text: "No: a function body cannot contain a time control such as #10, so the code must become a task.", correct: true, feedback: "Right. Time controls such as #, ##, @ and wait are illegal in a function (§13.4)." },
         { text: "Yes, as long as the function is declared automatic, so each call has its own variables.", correct: false, feedback: "automatic decides where the arguments and variables live. It does not let a function consume time." },
         { text: "Yes, as long as the function is declared void, so no caller is waiting for a value.", correct: false, feedback: "void only removes the return value. A void function still runs in zero time (§13.4)." },
+        { text: "No: #10 is a time control, which a function cannot contain; make it a task.", correct: true, feedback: "Right. A function body cannot contain a time control, so the code must become a task. Time controls such as #, ##, @ and wait are illegal in a function (§13.4)." },
         { text: "Yes, in testbench modules; the zero-time rule applies to RTL code only.", correct: false, feedback: "The rule is part of the language and applies to every function, wherever it is declared." }
       ],
       explanation: "A function is evaluated inside an expression, so it must return without suspending the process that called it (§13.4). A fork-join_none inside a function may start a process that waits, but that process runs after the function has returned (§13.4.4)."
@@ -1281,8 +1287,8 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "A plain module (no lifetime keyword on the module) declares task send(input int id); with no lifetime keyword on the task. What is the task's lifetime?",
       objective: 2,
       answers: [
-        { text: "Static: every call shares one copy of id.", correct: true, feedback: "Right. Subroutines in modules default to static (§13.3.1)." },
         { text: "Automatic: SystemVerilog made every task automatic.", correct: false, feedback: "Only class methods are automatic by default. Module, interface, program and package subroutines are static (§13.3.1)." },
+        { text: "Static: every call shares one copy of id.", correct: true, feedback: "Right. Subroutines in modules default to static (§13.3.1)." },
         { text: "Automatic in testbench modules and static in design modules.", correct: false, feedback: "The language does not distinguish testbench modules from design modules. Every module defaults to static." },
         { text: "It depends on the simulator.", correct: false, feedback: "The default is fixed by the standard (§13.3.1), so it does not vary between simulators." }
       ],
@@ -1292,10 +1298,10 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "A static task send(input int id) waits #10 and then prints t=<time> id=<id>. At t=0 the bench runs fork send(1); #2 send(2); join. What is printed?",
       objective: 4,
       answers: [
-        { text: "t=10 id=2, then t=12 id=2", correct: true, feedback: "Right. Call 2 copied 2 into the shared id at t=2, while call 1 was still waiting." },
         { text: "t=10 id=1, then t=12 id=2", correct: false, feedback: "That is the automatic version. A static task has one id for both calls (§13.3.2)." },
         { text: "t=10 id=1, then t=12 id=1", correct: false, feedback: "Call 2 does write id: its input is copied into the same variable at t=2." },
-        { text: "Nothing: one task cannot run twice at once, so it is a compile error", correct: false, feedback: "Concurrent calls are legal (§13.3.2). A static task simply shares its storage between them." }
+        { text: "Nothing: one task cannot run twice at once, so it is a compile error", correct: false, feedback: "Concurrent calls are legal (§13.3.2). A static task simply shares its storage between them." },
+        { text: "t=10 id=2, then t=12 id=2", correct: true, feedback: "Right. Call 2 copied 2 into the shared id at t=2, while call 1 was still waiting." }
       ],
       explanation: "In a static task there is a single id for all activations (§13.3.2). Call 1 copies in 1 at t=0, call 2 overwrites it with 2 at t=2, and both print 2. With task automatic the log is t=10 id=1, then t=12 id=2."
     },
@@ -1303,8 +1309,8 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "task automatic split(input logic [15:0] word, output logic [7:0] hi, lo); What is the direction of lo?",
       objective: 3,
       answers: [
-        { text: "output, inherited from hi", correct: true, feedback: "Right. Once a direction is written, later formals inherit it (§13.3)." },
         { text: "input, because a formal with no direction is always an input", correct: false, feedback: "input is the default only until a direction is written (§13.3)." },
+        { text: "output, inherited from hi", correct: true, feedback: "Right. Once a direction is written, later formals inherit it (§13.3)." },
         { text: "inout, because it has no direction of its own", correct: false, feedback: "No rule makes a formal inout by default. lo inherits the last direction written, output." },
         { text: "None: it is a compile error, because every formal needs a direction", correct: false, feedback: "Formals without a direction are legal: they take the default or inherit one (§13.3)." }
       ],
@@ -1314,9 +1320,9 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "task automatic pulse(output logic sig); sig = 1; #10 sig = 0; endtask is called at t=0 as pulse(tb_sig), where tb_sig is 0. What does tb_sig do from t=0 to t=10?",
       objective: 3,
       answers: [
-        { text: "It stays 0: the output is copied to tb_sig only when the task returns at t=10, and that value is 0.", correct: true, feedback: "Right. An output is copied out once, at the return (§13.3)." },
-        { text: "It is 1 from t=0 to t=10, then 0.", correct: false, feedback: "That would need ref. An output is a local copy until the task returns." },
+        { text: "It is 1 from t=0 to t=10, then 0, because the task writes sig before it waits.", correct: false, feedback: "That would need ref. An output is a local copy until the task returns." },
         { text: "It is X from t=0 to t=10, because an automatic output starts at X.", correct: false, feedback: "The formal sig does start at X inside the task (§13.3.2), but the caller's tb_sig is not touched until the return." },
+        { text: "It stays 0: tb_sig is written only at the return (t=10), with the final 0.", correct: true, feedback: "Right. An output is copied to tb_sig only when the task returns at t=10, and that value is 0: it is copied out once, at the return (§13.3)." },
         { text: "Nothing happens: writing an output twice is a compile error.", correct: false, feedback: "A task may write its outputs as often as it likes. Only the final value is copied out." }
       ],
       explanation: "§13.3: an output is copied out at the end of the task. The caller sees only the final 0, so no pulse ever appears. To make a pulse, drive the signal itself, or pass it by ref."
@@ -1325,10 +1331,10 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "Which line is illegal directly in the body of a function?",
       objective: 1,
       answers: [
-        { text: "write_word(8'h35); (a direct call to a task)", correct: true, feedback: "Right. A function cannot call a task, even one that never waits (§13.2, §13.4 rule b)." },
         { text: "flag <= 1'b1; (a nonblocking assignment to a module variable)", correct: false, feedback: "Legal: nonblocking assignments do not block (§13.4.4)." },
         { text: "-> done; (an event trigger)", correct: false, feedback: "Legal: an event trigger does not block (§13.4.4)." },
-        { text: "fork #5 ready = 1; join_none (a process that waits after the function returns)", correct: false, feedback: "Legal: fork-join_none returns at once, and its child waits after the function has returned (§13.4.4)." }
+        { text: "fork #5 ready = 1; join_none (a process that waits after the function returns)", correct: false, feedback: "Legal: fork-join_none returns at once, and its child waits after the function has returned (§13.4.4)." },
+        { text: "write_word(8'h35); (a direct call to a task)", correct: true, feedback: "Right. A function cannot call a task, even one that never waits (§13.2, §13.4 rule b)." }
       ],
       explanation: "A function may do work that does not block, including nonblocking assignments, event triggers and fork-join_none (§13.4.4), but it may not call a task directly (§13.2, §13.4)."
     },
@@ -1336,8 +1342,8 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "A module's recursive function int fact(input int n) has no lifetime keyword and one local variable, int rest. Its body is: if (n <= 1) return 1; rest = fact(n - 1); return rest * n; and fact(4) returns 1 instead of 24. What is the right fix?",
       objective: 4,
       answers: [
-        { text: "Declare it function automatic int fact(input int n);", correct: true, feedback: "Right. Each activation then has its own n and rest (§13.4.2)." },
         { text: "Rewrite it as a task with an output argument for the result.", correct: false, feedback: "A task in a module is static by default too, so its activations would still share n." },
+        { text: "Declare it function automatic int fact(input int n);", correct: true, feedback: "Right. Each activation then has its own n and rest (§13.4.2)." },
         { text: "Declare its local variable as static int rest;", correct: false, feedback: "rest is already static in a static function, and n is still shared. Nothing changes." },
         { text: "Return n * rest instead of rest * n.", correct: false, feedback: "Both orders read n after the recursive call has overwritten it." }
       ],
@@ -1347,9 +1353,9 @@ Answer the quiz without scrolling up, work through the kata, then do the lab. Th
       question: "A module with no lifetime keywords declares task drive(ref logic [7:0] d); What happens?",
       objective: 3,
       answers: [
-        { text: "A compile error: ref arguments are illegal in a static subroutine", correct: true, feedback: "Right (§13.5.2). Write task automatic drive(ref logic [7:0] d);" },
         { text: "It works, and d is another name for the caller's variable", correct: false, feedback: "That is what ref means, but only in an automatic subroutine. In a static one it is illegal (§13.5.2)." },
         { text: "It works, but d is silently copied in and out like an inout", correct: false, feedback: "The compiler does not quietly change the direction. It reports an error (§13.5.2)." },
+        { text: "A compile error: ref arguments are illegal in a static subroutine", correct: true, feedback: "Right (§13.5.2). Write task automatic drive(ref logic [7:0] d);" },
         { text: "It compiles with a warning, and ref is treated as input", correct: false, feedback: "The standard makes it illegal, not a warning (§13.5.2)." }
       ],
       explanation: "Pass by reference is illegal for subroutines with a static lifetime (§13.5.2), and a module task without automatic is static (§13.3.1)."
@@ -1420,7 +1426,7 @@ endmodule
 4. Write the corrected log. If you have a simulator, run both versions and compare.
 
 <details>
-<summary>Steps 2 to 4 in the lab (open after step 1: it shows the log as written)</summary>
+<summary>Work kata steps 2 to 4 in the lab (open after step 1: it shows the log as written)</summary>
 
 The lab shows the log of the bench as written. For each wrong or missing line, pick the declaration at fault, choose the smallest fix for each subroutine, then rerun: the model grades your log against the corrected one, and the step-by-step run opens after your first rerun.
 

@@ -121,16 +121,9 @@ An **operator** acts on **operands**; together they form an expression, and ever
 | 14 | `?:` | right |
 | 15 | `-> <->` | right |
 | 16 | assignment operators `= += -= <<= …` | none |
-| 17 | concatenation `{}` `{{}}` | lowest |
+| 17 | concatenation `{}` `{{}}` | — (lowest precedence) |
 
-All operators group left to right except `?:`, `->` and `<->`, which group right to left (§11.3.2). The groupings that cause real bugs:
-
-- `flags & mask == 0` means `flags & (mask == 0)`. Equality binds tighter than the binary `&`, `^` and `|`: in Table 11-2 the equality row sits above the three binary bitwise rows, as in C.
-- `x << 1 + y` means `x << (1 + y)`: addition binds tighter than shifts.
-- `!a == b` means `(!a) == b`: unary operators bind tightest.
-- `a < b < c` means `(a < b) < c`, which compares a 1-bit result with `c`.
-- `a || b && c` means `a || (b && c)`.
-- `s ? x : t ? y : z` means `s ? x : (t ? y : z)`: a right-associative priority chain.
+All operators group left to right except `?:`, `->` and `<->`, which group right to left (§11.3.2).
 
 **Predict before you look at the picture.** Commit to one answer; the feedback names the rule behind each option.
 
@@ -192,9 +185,18 @@ All operators group left to right except `?:`, `->` and `<->`, which group right
 
 The left tree is the answer: `mask == 0` is 0, which is extended to `4'b0000` before the `&`, so the condition is `4'b0000` and the branch does not run, although the bit being tested is clear. The fix is `if ((flags & mask) == 0)`. Both versions are legal code, which is why this bug survives until a test happens to need the branch.
 
-The explorer below opens on the same `flags & mask == 0` and builds the parse tree bottom-up, so you can watch which operator ends up at the root. Then pick `x << 1 + y`, `!a == b`, `a < b < c`, `a || b && c` and `s ? x : t ? y : z` from the expression list: for each, predict which operator is applied last and what the value is before you reveal it, and then press **Rewrite as meant** (or **Add parentheses**) to compare the result with the grouping the author intended.
+The explorer below opens on the same `flags & mask == 0` and builds the parse tree bottom-up, so you can watch which operator ends up at the root. Then pick `x << 1 + y`, `!a == b`, `a < b < c`, `a || b && c` and `s ? x : t ? y : z` from the expression list: for each, predict which operator is applied last, then check the value it reveals, and then press **Rewrite as meant** (or **Add parentheses**) to compare the result with the grouping the author intended (leave `2 ** 3 ** 2` and `-2 ** 2` for Push Further, where they are a prediction).
 
 <ExpressionTreeExplorer mode="precedence" />
+
+What the explorer showed: the groupings that cause real bugs:
+
+- `flags & mask == 0` means `flags & (mask == 0)`. Equality binds tighter than the binary `&`, `^` and `|`: in Table 11-2 the equality row sits above the three binary bitwise rows, as in C.
+- `x << 1 + y` means `x << (1 + y)`: addition binds tighter than shifts.
+- `!a == b` means `(!a) == b`: unary operators bind tightest.
+- `a < b < c` means `(a < b) < c`, which compares a 1-bit result with `c`.
+- `a || b && c` means `a || (b && c)`.
+- `s ? x : t ? y : z` means `s ? x : (t ? y : z)`: a right-associative priority chain.
 
 ### Four-state truth: logical, bitwise and reduction operators
 
@@ -287,7 +289,7 @@ If the operands differ in width, the narrower one is zero-extended, or sign-exte
 | `a ==? 4'b1010` | `x` | the `x` is in the left operand: not a wildcard |
 | `a ==? 4'b1??0` | `1` | `?` means `z`; both `?` bits are wildcards |
 
-The explorer starts with `a = 4'b1x10` and `b = 4'b1x10`. You predicted `==`, `===` and `==?` for these values in the index; this time, test the direction of the wildcard. Press bit 2 of `b` until it reads 0 (it passes through `z`), so that `b = 4'b1010`, and **predict** `a ==? b` and `a !=? b`. Then move the unknown to the other side: press bit 2 of `a` until it reads 0 (through `z`) and bit 2 of `b` until it reads `x` (through 1), and predict `a ==? b` again.
+The explorer starts with `a = 4'b1x10` and `b = 4'b1x10`. You predicted `==`, `===` and `==?` for these values in the index; this time, test the direction of the wildcard. Press bit 2 of `b` until it reads 0 (it passes through `z`), so that `b = 4'b1010`. The table above already gives `a ==? b` for these values, so **predict** `a !=? b`, then check both. Then move the unknown to the other side: press bit 2 of `a` until it reads 0 (through `z`) and bit 2 of `b` until it reads `x` (through 1), and predict `a !=? b` again before you check `a ==? b` against the table.
 
 <OperatorExplorer family="equality" />
 
@@ -382,7 +384,7 @@ Only the `casex` row takes a real branch, which is the whole argument for `case 
 The last row is the reason to prefer `case inside`. Written as `casex (op)` with plain items, the `x` in `op` would be a don't-care: `op = 3'b0x0` would match the first item, `3'b000`, and a corrupted opcode would quietly run the `NOP` branch (§12.5.1). With `case inside`, the same value reaches `default`, where a testbench can report it.
 </details>
 
-**Predict first.** The lab below runs this decoder as `casex` and as `case inside` side by side; `casex` cannot take a range, so its column lists `3'b100`, `3'b101` and `3'b110` as plain items. It starts at `op = 3'b0x0`, the corrupted opcode from the table above: predict the branch in each column, then walk the six trace values, check each `case inside` answer against the trace, and at `3'b1x0` predict the `casex` column too.
+**Predict first.** The lab below runs this decoder as `casex` and as `case inside` side by side; `casex` cannot take a range, so its column lists `3'b100`, `3'b101` and `3'b110` as plain items. It starts at `op = 3'b0x0`, the corrupted opcode from the table above: confirm the branch in each column against that table, then walk the six trace values, check each `case inside` answer against the trace, and at `3'b1x0` predict the `casex` column too.
 
 <DecisionLab mode="compare" preset="opcode-decoder" />
 
@@ -443,7 +445,7 @@ The unsized `0` is at least 32 bits wide (Table 11-21), so the bowl is 32 bits: 
 Comparison operands size each other and nothing else (§11.8.2): `a + b` and `8'd255` are both 8 bits, so the bowl for the sum is 8 bits and 300 wraps to 44. 44 > 255 is 0. Bowl: 8 bits. Extended: nothing. Carry: dropped. Written `a + b > 255`, the unsized constant makes the bowl 32 bits and the answer 1.
 </details>
 
-Before the full trace, try a statement you have not predicted yet. The lab below opens on `s8 = (a + b) >> 1` with the same `a` and `b`: predict the width of the bowl in which `a + b` is added, then the value stored in `s8`, and only then watch the bowls fill. Use its **Compare with** button to jump to `s8 = (a + b + 0) >> 1`, which differs in one constant, and notice which bowl the unsized `0` widens.
+Before the full trace, try the lab. It opens on `s8 = (a + b) >> 1` with the same `a` and `b`, the statement from the Quick Take picture, so answer its two prompts (the width of the bowl in which `a + b` is added, then the value stored in `s8`) from that picture, and then watch the bowls fill. Use its **Compare with** button to jump to `s8 = (a + b + 0) >> 1`, which differs in one constant, and notice which bowl the unsized `0` widens. Then press **Compare with** once more to reach `s8 = (a + b + 1'b0) >> 1`, a statement you have not predicted yet: predict its bowl width and stored value before you reveal them.
 
 <ExpressionTreeExplorer mode="width" preset="s8-shift" />
 
@@ -518,13 +520,13 @@ The sign of an expression decides how its operands are extended and how comparis
 | `-7 / 2` | yes | −3 | integer division truncates toward zero, not toward minus infinity (§11.4.3) |
 | `-7 % 2` | yes | −1 | the result of `%` takes the sign of the first operand (§11.4.3) |
 
-The lab below opens on a signed compare: `a` is a signed 4-bit `-4`. **Predict** `a > 4'd0`, `a > 0` and `a > 4'sd0`, then reveal each. Afterwards, choose the `int vs logic [31:0]` scenario from the scenario list and predict `i < w` for `i = -1` and `w = 1`.
+The lab below opens on a signed compare: `a` is a signed 4-bit `-4`. Its first two cases, `a > 4'd0` and `a > 0`, repeat the `s` rows of the table above; **predict** `a > 4'sd0` before you reveal it, then reveal each. Afterwards, choose the `int vs logic [31:0]` scenario from the scenario list and predict `i < w` for `i = -1` and `w = 1`.
 
 <SignednessVisualizer scenario="signed-compare" />
 
 What the lab showed: `a > 4'd0` is true, because the unsigned literal makes the comparison unsigned and `4'b1100` reads as 12. `a > 0` and `a > 4'sd0` compare signed values and are false: one letter, `s`, or the choice between a sized and an unsized literal decides the answer. In the `int vs logic [31:0]` scenario, `i < w` is false for `i = -1`, because the unsigned `logic [31:0]` turns the comparison unsigned and −1 reads as 4294967295.
 
-The second lab replays the two `w = sb` rows of the table: `sb` is a signed 8-bit `-8` and `w` is a signed 16-bit target. Step through `w = sb[7:0]` and find the step where the part-select drops the sign, then choose `w = $signed(sb[7:0])`. Edit `sb` to a positive value such as 5 and notice that all three forms agree: the trap only shows when the sign bit is 1.
+The second lab replays the two `w = sb` rows of the table: `sb` is a signed 8-bit `-8` and `w` is a signed 16-bit target. Step through `w = sb[7:0]` and find the step where the part-select makes the operand unsigned, so it is zero-extended, then choose `w = $signed(sb[7:0])`. Edit `sb` to a positive value such as 5 and notice that all three forms agree: the trap only shows when the sign bit is 1.
 
 <SignednessVisualizer scenario="part-select" />
 
@@ -543,7 +545,7 @@ logic [7:0]  b;
 word     = {hi, lo};          // 16'h1234: hi lands in the MSBs
 {hi, lo} = 16'hBEEF;          // a concatenation as a target: hi = 8'hBE, lo = 8'hEF
 fill     = {4{8'hA5}};        // 32'hA5A5_A5A5
-b        = {{4{n[3]}}, n};    // sign-extend by hand: 8'hFA, still -6
+b        = {{4{n[3]}}, n};    // sign-extend by hand: 8'hFA, the bits of -6 (reads as 250 unless cast)
 ```
 
 | Statement | Result |
@@ -719,7 +721,7 @@ How the stream meets its target (§11.4.14, §11.4.14.3):
 
 One more rule, from the standard's own example: `{<< 4 {6'b11_0101}}` is `6'b0101_11`. The slices are cut from the right, so the left-most slice keeps the two remaining bits, and it moves to the right end with no padding or truncation (§11.4.14.2).
 
-The lab below puts these rules to work on a three-field header, `hdr`, with `len = 8'h04`, `addr = 16'hBEEF` and `kind = 8'h01`; its code panel shows the declaration, which the next section explains in full. Each preset asks you to predict before it steps through pack, slice, reverse and fit. Try the 40-bit, 24-bit, unpack and remainder presets, and notice where the zeros land in the wider target and that the narrower target and the short source are errors, not truncations.
+The lab below puts these rules to work on a three-field header, `hdr`, with `len = 8'h04`, `addr = 16'hBEEF` and `kind = 8'h01` (the same record the next section calls `rec`); its code panel shows the declaration, which the next section explains in full. Each preset asks you to predict before it steps through the stream (pack or unpack, slice, reverse, fit). Try the 40-bit, 24-bit, unpack and remainder presets, and notice where the zeros land in the wider target and that the narrower target is an error, not a truncation; then, in the unpack preset, switch the source to 24 bits to see the short-source error.
 
 <StreamPackLab mode="stream" />
 
@@ -1091,9 +1093,11 @@ The operands of relational and equality operators are neither fully self-determi
 - In `sig == 1'bx` with a 4-bit `sig`, the 1-bit constant is zero-extended to `4'b000x`. Any 1 in `sig[3:1]` makes the result a definite 0 rather than `x` (§11.4.5). The branch never runs either way, because `if` treats 0 and `x` alike; test with `$isunknown(sig)` (§20.9).
 - Unsized constants are "at least 32 bits" (Table 11-21). Simulators commonly use exactly 32, but code that depends on the exact width of an unsized constant relies on the implementation (tool-dependent).
 
-The lab below draws the first consequence as bowls: `flag = (a + b > 255)` with `a = 8'd200` and `b = 8'd100`. Notice that the comparison gets a bowl of its own, separate from the 1-bit target, and that the 32-bit `255` sets its width; then use the **Compare with** button to switch to `8'd255` and watch the same sum lose its carry.
+The lab below draws the first consequence as bowls: `flag = (a + b > 255)` with `a = 8'd200` and `b = 8'd100`. Check the bullet above against it: find the comparison's own bowl, separate from the 1-bit target, and the operand that sets its width. Then use the **Compare with** button to switch to `8'd255` and watch the same sum lose its carry.
 
 <ExpressionTreeExplorer mode="width" preset="flag-255" />
+
+What the lab showed: the comparison gets a bowl of its own, separate from the 1-bit target, and the 32-bit `255` sets its width; with `8'd255` the same sum loses its carry.
 
 <details>
 <summary>Predict: <code>2 ** 3 ** 2</code> and <code>-2 ** 2</code></summary>
@@ -1113,7 +1117,7 @@ Table 11-4 (§11.4.3) in full, for an integral `op1 ** op2`:
 | `op1 == 1` | 1 | 1 | 1 |
 | `op1 > 1` | `op1 ** op2` | 1 | 0 |
 
-The explorer below opens on `2 ** 3 ** 2`; step through the tree to see the left-to-right grouping put the second `**` at the root, then pick `-2 ** 2` from the expression list and notice that the unary minus sits below the `**`, on its left operand.
+The explorer below opens on `2 ** 3 ** 2`; step through the tree to see the left-to-right grouping put the second `**` at the root, then pick `-2 ** 2` from the expression list and notice that the unary minus sits below the `**`, on its left operand. **Rewrite as meant** shows `2 ** (3 ** 2)` = 512, the grouping a mathematician expects; SystemVerilog gives 64.
 
 <ExpressionTreeExplorer mode="precedence" preset="power-chain" />
 
@@ -1128,16 +1132,17 @@ The explorer below opens on `2 ** 3 ** 2`; step through the tree to see the left
 - **`>>>` inside an unsigned expression.** In `r = (s >>> 1) + u;` with `u` unsigned, the whole expression is unsigned, so `s` is converted to unsigned before the shift and `>>>` fills with 0 (§11.8.1, §11.8.2, §11.4.10). Shift into a signed variable first, or make `u` signed.
 - **Part-selects and concatenations are unsigned**, even `s[7:0]` covering all of `logic signed [7:0] s`, and `{s}` (§11.8.1). `s[7:0] >>> 1` therefore fills with 0.
 
-The lab below runs both traps with `s = -8`, `u = 8'd1` and a signed 8-bit `r`. Predict `r = (s >>> 1) + u` before you reveal it, then compare `r = (s >>> 1) + $signed(u)` and `r = s[7:0] >>> 1`, and notice which bit fills the vacated position in each.
+The lab below runs both traps with `s = -8`, `u = 8'd1` and a signed 8-bit `r`. Predict the decimal value stored in `r` for `r = (s >>> 1) + u` before you reveal it, then compare `r = (s >>> 1) + $signed(u)` and `r = s[7:0] >>> 1`, and notice which bit fills the vacated position in each.
 
 <SignednessVisualizer scenario="ashr-unsigned-context" />
 
 - **Extension of an unknown sign bit.** Resizing a signed value whose sign bit is `x` fills the new bits with `x`; a `z` sign bit fills with `z` (§11.8.4).
 - **Mixed 2-state and 4-state operands** evaluate as if all were 4-state (§11.3.4): `i + l` is all `x` when the `logic` operand `l` holds an `x`, even though `i` is an `int`. Stored into an `int`, that `x` silently becomes 0 (§6.11.2).
 
-The next lab shows the same poisoning with two `logic` operands: `p = 4'b10x1` and `q = 4'd1`. Predict how many bits of `p + q` the one `x` reaches, then switch to the `bit` target to see what a 2-state variable keeps, and to `p | q` to compare a bitwise operator, where the `x` stays in its own bit.
+The next lab shows the same poisoning with two `logic` operands: `p = 4'b10x1` and `q = 4'd1`; an `int` operand would behave the same way, because §11.3.4 evaluates mixed operands as if all were 4-state. Predict how many bits of `p + q` the one `x` reaches, then switch to the `bit` target to see what a 2-state variable keeps, and to `p | q` to compare a bitwise operator, where the `x` stays in its own bit.
 
 <SignednessVisualizer scenario="x-arith" />
+
 - **Literal signedness.** `-4'sd12 / 3` is 1: `4'sd12` is the 4-bit pattern `1100`, which is −4, and negating it gives 4 (§11.3.3). Write negative constants as simple decimals, or size them generously.
 
 ### Expert: Streaming aggregates and byte order at scale
@@ -1153,9 +1158,11 @@ Yes. `byte` is an 8-bit slice, so this is the `{<< 8 {rec}}` row of the casting 
 - **Variable-length fields.** In an unpack, `with` limits how much of an array is filled: `{>> {hdr, payload with [0 +: hdr.len]}} = stream;` fills `hdr.len` elements of `payload`. The `with` expression is evaluated just before `payload` is unpacked, so it can use `hdr.len`, which the same operation unpacked a moment earlier (§11.4.14.4).
 - **Cast or stream?** A bit-stream cast keeps the order and, when either type is unpacked, needs equal total sizes (§6.24.3); streaming can reorder, left-aligns into a wider target, and resizes dynamic targets (§11.4.14).
 
-The lab opens on a per-field byte swap of the same header, each field streamed by its own `{<< 8 {…}}`. Predict the result, then compare it with the whole-struct row: only the whole-struct reversal moves `kind` to the front. The `with`-payload preset shows `hdr.len` setting how many bytes `payload` receives, and the little-endian preset shows a byte queue filled by `{<< 8 {hdr}}`.
+The lab opens on a per-field byte swap of the same header, each field streamed by its own `{<< 8 {…}}`. Predict the result, then compare it with the whole-struct row and note which fields move. The `with`-payload preset shows `hdr.len` setting how many bytes `payload` receives, and the little-endian preset shows a byte queue filled by `{<< 8 {hdr}}`.
 
 <StreamPackLab mode="stream" preset="whole-vs-field" />
+
+What the lab showed: only the whole-struct reversal moves `kind` to the front; the per-field swap keeps the field order and reverses the bytes inside each field.
 
 ### Expert: Evaluation order, side effects and short-circuits
 

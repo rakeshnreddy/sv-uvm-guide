@@ -85,7 +85,8 @@ This lesson uses a few industry words before later lessons teach the details. He
 | **Respin** | Fabricating a corrected chip, with new masks and new (or held) wafers. |
 | **ECO** (engineering change order) | A small, targeted change to the netlist and layout, instead of a full re-implementation. |
 | **Lint** | Static checks that read RTL code and flag suspicious constructs, without simulating it. |
-| **Formal verification** | Tools that prove a property holds in every reachable state, with no test vectors. |
+| **Formal verification** | Tools that prove a property holds in every reachable state, under stated input assumptions, with no test vectors. |
+| **DV** (design verification) | The work of checking that the design does what its spec says. **DV engineers** write the plans, testbenches and tests; the **DV team** is the group that does it. |
 
 ### The Multi-Million Dollar Question
 
@@ -170,7 +171,7 @@ When a bug is found late, the question after "how do we fix it?" is **escape ana
 
 ### Fixing silicon: ECO, metal-only respin or full respin
 
-An **ECO** is the change itself. *When* it happens decides what it costs. Before you read the picture, predict: for each kind of fix, which mask layers must change?
+An **ECO** is the change itself. *When* it happens decides what it costs. You met the two kinds of respin above. Before you read the picture, recall which mask layers each kind of fix changes, then check yourself against the cross-sections.
 
 <figure>
 <svg viewBox="0 0 340 326" role="img" aria-labelledby="f1a-respin-title" aria-describedby="f1a-respin-desc" style={{ width: "100%", maxWidth: 520 }}>
@@ -238,7 +239,7 @@ An **ECO** is the change itself. *When* it happens decides what it costs. Before
 | **Metal-only respin** ("metal spin"): a post-silicon ECO | New masks for some metal and via layers. Spare cells already placed in the design supply the extra gates. | A fraction of a full mask set. Weeks, because the fab can hold partly processed wafers below the metal layers and finish them with the new masks. | The fix fits in rewiring plus the available spare cells |
 | **Full (base-layer) respin** | New masks for the transistor layers too, usually most of the mask set | Highest. Months, because new wafers start from the beginning. | The fix needs new transistors or a larger logic change |
 
-Three more tools sit beside the table: a focused ion beam (FIB) edit, a firmware or microcode workaround and a defeature bit. Predict first, then open the table to check.
+Three more tools sit beside the table: a focused ion beam (FIB) edit, which cuts and adds wires on an individual chip; a firmware or microcode workaround, which changes the software the chip runs; and a defeature bit, a configuration bit that switches a feature off. Predict which of them can fix parts already in production, then open the table to check.
 
 <details>
 <summary>Predict: which of the three tools can fix a production part?</summary>
@@ -259,15 +260,15 @@ Two pitfalls:
 - **"Every silicon fix needs a full respin."** Wrong: metal-only respins exist because many fixes are small rewiring jobs. That is why designs carry spare cells.
 - **"A FIB edit fixes the product."** Wrong: it fixes a handful of samples. Production still needs new masks or a workaround.
 
-Try the rule on a real case. The lab opens on a control register with the wrong reset value: commit the fix you would choose, then open the answer and notice which layers of the cross-section change and why. The picker holds the four bugs of the Make It Work worked example, so you can predict each one before you meet its answer there.
+Try the rule on a worked case. The lab opens on a control register with the wrong reset value: commit the fix you would choose, then look at which layers of the cross-section change, if any, and why. The answer also shows the triage path you will meet in Make It Work. The picker holds the four bugs of the Make It Work worked example, so you can predict each one before you meet its answer there.
 
 <FixPathDecisionLab mode="decide" />
 
 ### Cautionary tales
 
-Bugs that escaped to silicon or to flight are the best teachers. As you page through the cards, ask what check would have caught each one, and when it would have run. Write down your answer for each card before you open its reveal; the table after the carousel is the check.
+Bugs that escaped to silicon or to flight are the best teachers. As you page through the cards, ask what check would have caught each one, and when it would have run.
 
-Each card keeps its lesson hidden until you pick the check you think was missing; after the last card, a summary slide asks what the three escapes have in common. Notice whether the check you picked would have run before the product shipped.
+Each card hides its lesson until you pick the check you think was missing; after the last card, a summary slide asks what the three escapes have in common. Notice whether the check you picked would have run before the product shipped. The table after the carousel is the check.
 
 <HallOfShameCarousel predict />
 
@@ -279,7 +280,7 @@ What each card teaches, read across as one pattern:
 | **Ariane 5 Flight 501 (1996)** | A software failure, included as a reuse lesson. Code that had flown on Ariane 4 overflowed under Ariane 5's faster trajectory. | Does the reused code still hold over the new operating range? | Verify reused code again over the new operating range. |
 | **Spectre and Meltdown (2018)** | Every instruction returned the architecturally correct value, so functional checks passed. The leak was in what cache timing reveals. | What does timing reveal about data the code may not read? | Security properties about information flow, beside the functional checks. |
 
-The common thread is not one missing technique. In each case **the plan never asked the question that failed**. That is the third classic mistake: **"passing simulation means correct silicon."** A passing regression shows only that the checks you wrote passed for the stimulus you ran.
+The common thread is not one missing technique. In each case **the plan never asked the question that failed**. That is the third misconception this lesson targets, after "every silicon fix needs a full respin" and "verification is overhead we can cut": **"passing simulation means correct silicon."** A passing regression shows only that the checks you wrote passed for the stimulus you ran.
 
 ### Shift left and the verification lifecycle
 
@@ -430,7 +431,7 @@ They do not disappear. The bugs that lint and block simulation would have found 
 
 </details>
 
-Now try it yourself. The timeline below starts with every activity from the table switched on. Switch activities off one at a time, or pick the "Schedule slipped" preset, and watch each kind of bug move right to the next activity that can catch it, with the cost multiplier rising as it goes.
+Now try it yourself. The timeline below starts with every activity from the table switched on (its last switch, "Full-chip simulation or emulation", covers the emulation row). Switch activities off one at a time, or pick the preset "Schedule slipped: cut lint and block regressions". Predict where each kind of bug lands, then watch it move right to the next activity that can catch it or, if none can, past the dashed tape-out line, with the cost multiplier rising as it goes.
 
 <ShiftLeftTimeline />
 
@@ -489,8 +490,8 @@ Why verification effort rivals design effort:
 <VisualRecap
   title="One bug, five stages, three fixes"
   rule="Each stage a bug survives costs about ten times more to fix (a rule of thumb, not data). After tape-out, a fix is a metal-only respin if it fits in rewiring plus spare cells, otherwise a full respin; firmware or a defeature bit can protect customers in the meantime."
-  code={`assign alarm = (temp >= 8'd100);   // the fix: >= where the RTL had >
-check(8'd99); check(8'd100); check(8'd101);  // the boundary test finds it at x10`}
+  code={`assign alarm = (temp >= 8'd100);   // the fix (Make It Work example): >= where the RTL had >
+check(8'd99); check(8'd100); check(8'd101);  // a test of the boundary value 100 finds it at ×10`}
   mistake="'Every silicon fix needs a full respin' and 'verification is overhead we can cut when the schedule slips'. Many fixes are rewiring jobs, which is why designs carry spare cells; and cutting checks only moves bugs to the right of this picture."
   inTestbench="Every late bug ends in escape analysis: name the activity that should have caught it, then add the scenario, the check and the coverage item to the plan, so that kind of bug is found at block level next time."
 >
@@ -555,29 +556,29 @@ This orientation lesson has no testbench to build yet. Its main worked example i
   <rect x="8" y="33" width="60" height="8" rx="1" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeDasharray="4 3" />
   <rect x="8" y="44" width="60" height="8" rx="1" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeDasharray="4 3" />
   <rect x="8" y="56" width="60" height="18" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeDasharray="4 3" />
-  <text x="38" y="92" fontSize="10.5" fill="currentColor" textAnchor="middle">{"database only;"}</text>
-  <text x="38" y="105" fontSize="10.5" fill="currentColor" textAnchor="middle">{"no masks yet"}</text>
+  <text x="38" y="92" fontSize="10" fill="currentColor" textAnchor="middle">{"database only;"}</text>
+  <text x="38" y="105" fontSize="10" fill="currentColor" textAnchor="middle">{"no masks yet"}</text>
   <text x="126" y="12" fontSize="10.5" fill="currentColor" fontWeight="600" textAnchor="middle">{"2 · metal-only"}</text>
   <rect x="96" y="22" width="60" height="8" rx="1" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
   <rect x="96" y="33" width="60" height="8" rx="1" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
   <rect x="96" y="44" width="60" height="8" rx="1" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
   <rect x="96" y="56" width="60" height="18" rx="2" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
-  <text x="126" y="92" fontSize="10.5" fill="currentColor" textAnchor="middle">{"upper metal + vias;"}</text>
-  <text x="126" y="105" fontSize="10.5" fill="currentColor" textAnchor="middle">{"held wafers"}</text>
+  <text x="126" y="92" fontSize="10" fill="currentColor" textAnchor="middle">{"upper metal + vias;"}</text>
+  <text x="126" y="105" fontSize="10" fill="currentColor" textAnchor="middle">{"held wafers"}</text>
   <text x="214" y="12" fontSize="10.5" fill="currentColor" fontWeight="600" textAnchor="middle">{"3 · full respin"}</text>
   <rect x="184" y="22" width="60" height="8" rx="1" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
   <rect x="184" y="33" width="60" height="8" rx="1" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
   <rect x="184" y="44" width="60" height="8" rx="1" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
   <rect x="184" y="56" width="60" height="18" rx="2" fill="url(#f1a-decisions-hatch)" stroke="currentColor" strokeWidth="1.2" />
-  <text x="214" y="92" fontSize="10.5" fill="currentColor" textAnchor="middle">{"every mask;"}</text>
-  <text x="214" y="105" fontSize="10.5" fill="currentColor" textAnchor="middle">{"new wafers"}</text>
+  <text x="214" y="92" fontSize="10" fill="currentColor" textAnchor="middle">{"every mask;"}</text>
+  <text x="214" y="105" fontSize="10" fill="currentColor" textAnchor="middle">{"new wafers"}</text>
   <text x="302" y="12" fontSize="10.5" fill="currentColor" fontWeight="600" textAnchor="middle">{"4 · firmware now"}</text>
   <rect x="272" y="22" width="60" height="8" rx="1" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
   <rect x="272" y="33" width="60" height="8" rx="1" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
   <rect x="272" y="44" width="60" height="8" rx="1" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
   <rect x="272" y="56" width="60" height="18" rx="2" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" />
-  <text x="302" y="92" fontSize="10.5" fill="currentColor" textAnchor="middle">{"silicon unchanged;"}</text>
-  <text x="302" y="105" fontSize="10.5" fill="currentColor" textAnchor="middle">{"masks later"}</text>
+  <text x="302" y="92" fontSize="10" fill="currentColor" textAnchor="middle">{"silicon unchanged;"}</text>
+  <text x="302" y="105" fontSize="10" fill="currentColor" textAnchor="middle">{"masks later"}</text>
 </svg>
 <figcaption>The four decisions in the encoding of the respin figure: dashed = no mask exists yet, hatched = new mask, solid = silicon that does not change (the respin figure's reused fill). Bug 2 changes only the upper metal and via masks on held wafers; bug 3 changes every mask; bug 4 changes none now and leaves the real fix to the next silicon revision.</figcaption>
 </figure>
@@ -662,7 +663,7 @@ After the fix, `assign alarm = (temp >= 8'd100);`, the same test prints `PASS=3 
 
 To run it, compile both modules with an IEEE 1800-compliant simulator and make `tb_top` the top module. The exact command is tool-dependent.
 
-Try the same test with your own values in the probe below. It opens on the typical values 50 and 150: predict the summary line, then switch to the boundary values or add values of your own, and notice that only 100 ever fails. Then fix the RTL to `>=` and run the same values again.
+Try the same test with your own values in the probe below. It opens on the typical values 50 and 150: predict the summary line, then switch to the boundary values or add values of your own, and check whether any value other than 100 can fail. Then fix the RTL to `>=` and run the same values again.
 
 <BoundaryProbe />
 
@@ -979,7 +980,7 @@ For each scenario, write down the fix you would choose, the stage where the bug 
 3. On first silicon, a 4-bit compare must become a 5-bit compare. The fix needs about 40 gates, but only 12 spare cells sit near that logic; more sit on the far side of the die.
 4. Six months after launch, a customer sees rare corruption when the DMA engine starts a transfer within two cycles of waking from clock gating. The boot firmware starts the DMA engine and can wait before doing so; the chip has no defeature bit for this path.
 
-Work the kata in the lab if you prefer: commit a fix for each of the four scenarios to see its answer, then put the five stages in order by cost and by delay and check your ranking. After each answer, notice which fact of the scenario decided it. The worked solution below gives the same answers in one table.
+Work the kata in the lab if you prefer: commit a fix for each of the four scenarios to see its answer (the lab repeats the four scenarios so it stands on its own), then put the five stages in order by cost and by delay and check your ranking. After each answer, notice which fact of the scenario decided it. The worked solution below gives the same answers in one table.
 
 <FixPathDecisionLab mode="kata" />
 

@@ -93,9 +93,9 @@ Where a family has a part on the dashboard from the Quick Take, the table names 
 | **Time** | `$time`, `$realtime`, `%t` (specifier), `$timeformat` | Query simulation time and format timestamps |
 | **File I/O** (fuel cap) | `$fopen`, `$fclose`, `$fscanf`, `$fgets`, `$fdisplay` | Read input stimulus files and write execution logs |
 | **Memory load** | `$readmemh`, `$readmemb` | Initialize memory arrays with hex or binary vectors |
-| **Plusargs** (fuel cap) | `$test$plusargs`, `$value$plusargs` | Parse command-line flags and runtime parameters |
+| **Plusargs** (fuel cap) | `$test$plusargs`, `$value$plusargs` | Parse command-line options that start with + (plusargs) |
 | **Random** | `$urandom`, `$urandom_range` | Generate unsigned 32-bit random data and delays |
-| **Waveforms** (trip recorder) | `$dumpfile`, `$dumpvars`, `$dumpoff` | Record VCD signal activity for waveform debugging |
+| **Waveforms** (trip recorder) | `$dumpfile`, `$dumpvars`, `$dumpoff` | Record a value change dump (VCD) file for waveform debugging |
 
 ### Printing: $display, $write and format specifiers
 
@@ -148,7 +148,7 @@ t=[               10000] [10000]
 | `%m` | `tb_top` | The hierarchical name of the scope that called the task. It takes no argument (§21.2.1.5). |
 | `%t` and `%0t` on `$time` at 10 ns | 15 spaces, then `10000`; then `10000` | Time in the default `%t` unit, 1 ps here, at least 20 characters wide. See "Printing time" below. |
 
-**Try it.** The lab below formats one value with the specifier you pick. Start with `r1`, then switch to `4'b10x1`, to a value whose bits are all `z` (printed with `%d`, so expect a single lowercase `z`), and to one digit that mixes `x` and `z`, and predict each line before you check it. Notice that `%0` shrinks the field to the minimum width, while the plain specifier pads to the width of the largest value the type can hold. The lab offers only these two forms, but any explicit width, such as `%5d`, also overrides the automatic size (§21.2.1.2). A hex digit prints an uppercase `X` when some, but not all, of its four bits are `x`. A digit with some `z` bits prints an uppercase `Z`, unless it also has an `x` bit, in which case it prints `X` (§21.2.1.3).
+**Try it.** The lab below formats one value with the specifier you pick. Start with `r1`, then switch to `4'b10x1`, to a value whose bits are all `z` (printed with `%d`, so expect a single lowercase `z`, right-justified in its field unless you use `%0d`), and to one digit that mixes `x` and `z`, and predict each line before you check it. Notice that `%0` shrinks the field to the minimum width, while the plain specifier pads to the width of the largest value the type can hold. The lab offers only these two forms, but any explicit width, such as `%5d`, also overrides the automatic size (§21.2.1.2). A hex digit prints an uppercase `X` when some, but not all, of its four bits are `x`. A digit with some `z` bits prints an uppercase `Z`, unless it also has an `x` bit, in which case it prints `X` (§21.2.1.3).
 
 <PrintingLab mode="format" />
 
@@ -262,7 +262,7 @@ So far every line printed at once. Two tasks wait instead. To see why that matte
 
 - `$display` and `$write` print when their statement runs, showing the values at that moment (§21.2.1).
 - `$strobe` prints at the end of the time slot, just before simulation time advances, after every update of that time has happened (§21.2.2).
-- `$monitor` sets up a watch. It prints once at the end of the time slot in which it is called, then at the end of every time slot in which one of its arguments changed, showing the new values. Changes of `$time`, `$stime` and `$realtime` do not count (§21.2.3).
+- `$monitor` sets up a watch. It prints at the end of every time slot in which one of its arguments changed, showing the new values; changes of `$time`, `$stime` and `$realtime` do not count (§21.2.3). Simulators also print one line at the end of the time slot in which `$monitor` is called. The clause does not state this, but it is common tool behaviour, and the traces below assume it.
 
 `$strobe` and `$monitor` both run in the **Postponed** region, the read-only end of the time slot (§4.4.2.9), as F2C showed. [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) names every region; here you only need "now" versus "when the time slot has settled".
 
@@ -281,7 +281,7 @@ end
 
 **What you just saw.** `$display` printed `q=0`: when it ran, the update from `q <= d` was scheduled but had not happened. `$strobe` printed `q=5`, because it waited until the time slot had settled. Neither line is wrong; they answer different questions. `$display` tells you what a process saw when it ran, which is what you need when you hunt a race ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). `$strobe` tells you where the time slot ended up. This is a preview: F3B names the regions the model steps through.
 
-`$monitor` needs a trace of its own, because it prints on changes and only one watch list can be active:
+`$monitor` needs a trace of its own, because it prints only when something it watches changes:
 
 ```systemverilog
 // compile
@@ -295,7 +295,7 @@ module tb_top;
     $monitor("t=%0d a=%0d", $time, a);
     #10 a = 1;
     #10 begin a = 2; a = 3; end   // two changes in one time slot
-    #10 b = 5;                    // b is not in the list
+    #10 b = 5;                    // b changes
     #10 $monitor("t=%0d b=%0d", $time, b);
     #10 begin a = 4; b = 6; end
     #10 $finish;
@@ -395,7 +395,7 @@ endmodule
 
 | Time | What happens in the time slot | Line printed at its end |
 |---|---|---|
-| 0 | `a` and `b` set to 0, then the first `$monitor` call | `t=0 a=0`: the call itself prints a first line |
+| 0 | `a` and `b` set to 0, then the first `$monitor` call | `t=0 a=0`: the call itself prints a first line (tool behaviour; see above) |
 | 10 | `a = 1` | `t=10 a=1` |
 | 20 | `a = 2`, then `a = 3` | `t=20 a=3`: one line, with the final value |
 | 30 | `b = 5` | nothing: `b` is not watched, and `$time` does not count |
@@ -553,7 +553,7 @@ if (timed_out)
   ]}
 />
 
-Now run it yourself. In the explorer below, pick the statement that the failing check calls (`$error`, `$fatal`, `$stop` or `$finish`) and whether the branch increments `n_fail`, predict which later lines print and what the summary says, then step through the process lanes. Notice which of the four statements returns to the `initial` block, whether the `final` summary prints, and how the `FAIL` count changes when you untick the `n_fail++`.
+Now run it yourself. In the explorer below, which runs a shortened version of the severity example in 10 ns steps, pick the statement that the failing check calls (`$error`, `$fatal`, `$stop` or `$finish`) and whether the branch increments `n_fail`, predict which later lines print and what the summary says, then step through the process lanes. Notice which of the four statements returns to the `initial` block, whether the `final` summary prints, and how the `FAIL` count changes when you untick the `n_fail++`.
 
 <RunEndingExplorer view="lanes" preset="severity-and-end" />
 
@@ -577,20 +577,20 @@ Now run it yourself. In the explorer below, pick the statement that the failing 
     <text x="170" y="33" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">#10 then #2.4 (`timescale 1ns/1ps)</text>
 
     {/* Left branch ($time) */}
-    <path d="M 120 40 L 85 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 120 40 L 85 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="94" y="50" fontSize="9.5" textAnchor="end" fill="currentColor">integer</text>
     <rect x="8" y="60" width="154" height="40" rx="6" fill="rgba(99,102,241,0.12)" stroke="rgb(99,102,241)" strokeWidth="1" />
     <text x="85" y="75" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$time (integer 1 ns)</text>
     <text x="85" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">rounds 12.4 → 12</text>
 
-    <path d="M 85 100 L 85 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 85 100 L 85 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="95" y="112" fontSize="9.5" fill="currentColor">%t</text>
     <rect x="8" y="120" width="154" height="50" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1" />
     <text x="85" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $time</text>
     <text x="85" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor" fontFamily="monospace" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[               12000]"}</text>
     <text x="85" y="162" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">12000 ps (width 20)</text>
 
-    <path d="M 85 170 L 85 188" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 85 170 L 85 188" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="95" y="182" fontSize="9.5" fill="currentColor">$timeformat</text>
     <rect x="8" y="190" width="154" height="48" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
     <text x="85" y="205" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$timeformat(-9,0," ns",8)</text>
@@ -598,20 +598,20 @@ Now run it yourself. In the explorer below, pick the statement that the failing 
     <text x="85" y="231" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">scaled to 1 ns, suffix</text>
 
     {/* Right branch ($realtime) */}
-    <path d="M 220 40 L 255 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 220 40 L 255 58" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="246" y="50" fontSize="9.5" fill="currentColor">real</text>
     <rect x="178" y="60" width="154" height="40" rx="6" fill="rgba(168,85,247,0.12)" stroke="rgb(168,85,247)" strokeWidth="1" />
     <text x="255" y="75" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$realtime (real 1 ns)</text>
     <text x="255" y="90" fontSize="9.5" textAnchor="middle" fill="currentColor">keeps fraction → 12.4</text>
 
-    <path d="M 255 100 L 255 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 255 100 L 255 118" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="265" y="112" fontSize="9.5" fill="currentColor">%t</text>
     <rect x="178" y="120" width="154" height="50" rx="6" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeWidth="1" />
     <text x="255" y="135" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">%t on $realtime</text>
     <text x="255" y="150" fontSize="9.5" textAnchor="middle" fill="currentColor" fontFamily="monospace" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[               12400]"}</text>
     <text x="255" y="162" fontSize="9.5" textAnchor="middle" fill="currentColor" opacity="0.8">12400 ps (width 20)</text>
 
-    <path d="M 255 170 L 255 188" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
+    <path fill="none" d="M 255 170 L 255 188" stroke="currentColor" strokeWidth="1.2" markerEnd="url(#f2d-arrow)" />
     <text x="265" y="182" fontSize="9.5" fill="currentColor">$timeformat</text>
     <rect x="178" y="190" width="154" height="48" rx="6" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" strokeWidth="1" />
     <text x="255" y="205" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">$timeformat(-9,0," ns",8)</text>
@@ -658,7 +658,7 @@ e: 12 12.4
 
 If one library in your build has a finer precision, line `b` changes, which is why benches call `$timeformat` once, at time 0, in the top module.
 
-The lab below runs this same `tb_top`, one print at a time. Step through it and notice that lines `b` and `c` read the Table 20-3 defaults until the `$timeformat` call; then open "Show advanced", set a `$timeformat` that runs before the code, and watch which lines of the log change.
+The lab below runs this same `tb_top`, one print at a time. Step through it and notice that lines `b` and `c` read the defaults of §20.4.3, Table 20-3, until the `$timeformat` call; then open "Show advanced", set a `$timeformat` that runs before the code, and watch which lines of the log change. Before you look, predict whether lines `d` and `e` change, and why.
 
 <TimescaleLab mode="read-time" preset="f2d-printing-time" />
 
@@ -762,26 +762,26 @@ end`}
   <svg viewBox="0 0 340 104" role="img" aria-label="System function return sentinels: $fopen returns 0 on error, which leads to $fatal; $fscanf separates clean EOF (-1), which breaks the loop, from bad data (0 to N-1 where N = fields expected), which leads to n_fail++ and $error." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="6" y="8" width="94" height="28" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="53" y="25" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$fopen()</text>
-    <path d="M 100 22 L 132 22" stroke="currentColor" strokeWidth="1.5" />
+    <path fill="none" d="M 100 22 L 132 22" stroke="currentColor" strokeWidth="1.5" />
     <rect x="134" y="8" width="70" height="28" rx="6" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
     <text x="169" y="25" fontSize="9.5" textAnchor="middle" fill="currentColor">0 (error)</text>
-    <path d="M 204 22 L 232 22" stroke="currentColor" strokeWidth="1.5" />
+    <path fill="none" d="M 204 22 L 232 22" stroke="currentColor" strokeWidth="1.5" />
     <rect x="234" y="8" width="100" height="28" rx="6" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
     <text x="284" y="25" fontSize="9.5" textAnchor="middle" fill="currentColor">$fatal(1, ...)</text>
 
     <rect x="6" y="44" width="94" height="52" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="53" y="73" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">$fscanf()</text>
-    <path d="M 100 56 L 132 56" stroke="currentColor" strokeWidth="1.2" />
+    <path fill="none" d="M 100 56 L 132 56" stroke="currentColor" strokeWidth="1.2" />
     <rect x="134" y="42" width="70" height="24" rx="5" fill="rgba(100,116,139,0.15)" stroke="currentColor" strokeOpacity="0.4" />
     <text x="169" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">-1 (EOF)</text>
-    <path d="M 204 56 L 232 56" stroke="currentColor" strokeWidth="1.2" />
+    <path fill="none" d="M 204 56 L 232 56" stroke="currentColor" strokeWidth="1.2" />
     <rect x="234" y="42" width="100" height="24" rx="5" fill="rgba(16,185,129,0.15)" stroke="rgb(16,185,129)" />
     <text x="284" y="58" fontSize="9.5" textAnchor="middle" fill="currentColor">break loop (clean)</text>
 
-    <path d="M 100 84 L 128 84" stroke="currentColor" strokeWidth="1.2" />
+    <path fill="none" d="M 100 84 L 128 84" stroke="currentColor" strokeWidth="1.2" />
     <rect x="130" y="72" width="76" height="24" rx="5" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
     <text x="168" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">0..N-1 (bad)</text>
-    <path d="M 206 84 L 232 84" stroke="currentColor" strokeWidth="1.2" />
+    <path fill="none" d="M 206 84 L 232 84" stroke="currentColor" strokeWidth="1.2" />
     <rect x="234" y="72" width="100" height="24" rx="5" fill="rgba(244,63,94,0.15)" stroke="rgb(244,63,94)" />
     <text x="284" y="88" fontSize="9.5" textAnchor="middle" fill="currentColor">n_fail++; $error</text>
   </svg>
@@ -935,7 +935,7 @@ The full form is `$readmemh(file, mem, start, finish)`, and both addresses are o
 
 The direction holds even after an `@` line in the file. Two more details matter when you pass both addresses. If the file has no `@` lines and its word count differs from the range, the tool issues a warning. An `@` address outside the range is an error that stops the load (§21.4). **In a real testbench:** `$readmemh` preloads memory models and ROM images and loads tables of expected values.
 
-**Try it.** The loader below opens on the lesson's `rom.hex` and steps through the file one token at a time, showing which cell each number lands in. Then pick `data.hex` and switch between the start and finish arguments to replay the table above, or try `@10` and a file with a sized number such as `8'h34`. Notice that the address only moves on an `@` line or after a number, and that every cell the file never reaches keeps its old value, which is X here because nothing wrote it.
+**Try it.** The loader below opens on the lesson's `rom.hex` and steps through the file one token at a time, showing which cell each number lands in. Then pick `data.hex` and switch between the start and finish arguments to replay the table above, or try `@10` and a file with a sized number such as `8'h34`. The picker also holds the files from the quiz and Kata 2; save them for later. Notice that the address only moves on an `@` line or after a number, and that every cell the file never reaches keeps its old value, which is X here because nothing wrote it.
 
 <ReadmemLoader />
 
@@ -944,7 +944,7 @@ The direction holds even after an `@` line in the file. Two more details matter 
 A **plusarg** is a simulation argument that starts with `+`, such as `+VERBOSE` or `+SEED=7`. Your code reads plusargs with two system functions (§21.6):
 
 - `$test$plusargs("VERBOSE")` returns nonzero if a plusarg begins with `VERBOSE`.
-- `$value$plusargs("SEED=%d", seed)` finds the first plusarg that begins with `SEED=`, converts the rest of it with the format (`%d`, `%h`, `%o`, `%b`, `%e`, `%f`, `%g` or `%s`), stores the result in `seed` and returns nonzero. If no plusarg matches, it returns 0, **leaves `seed` unchanged** and prints no warning.
+- `$value$plusargs("SEED=%d", seed)` finds the first plusarg that begins with `SEED=`, converts the rest of it with the format (`%d`, `%h` or `%x`, `%o`, `%b`, `%e`, `%f`, `%g` or `%s`), stores the result in `seed` and returns nonzero. If no plusarg matches, it returns 0, **leaves `seed` unchanged** and prints no warning.
 
 Both functions match by **prefix**: the string you pass has to match the beginning of a plusarg, not the whole of it. Set the default first, then let the plusarg override it:
 
@@ -976,7 +976,7 @@ Run it with `+VECTORS=vectors_bad.txt +VERBOSE`:
 
 The run prints `vectors=vectors_bad.txt seed=1 verbose=1`. Printing the effective configuration at time 0 is the cheapest defence against a misspelt plusarg, which is otherwise ignored in silence. Where you type plusargs on the simulator's command line is tool-specific. **In a real testbench:** plusargs select the test, the vector file, the seed, the verbosity and waveform dumping, so one compiled bench serves a whole regression.
 
-The lab below starts on this command line, `+VECTORS=vectors_bad.txt +VERBOSE`. Pick each lookup and watch which plusarg its prefix matches, including the query `"V"`, and notice that `SEED=%d` misses and leaves `seed` at its default, 1. Then add `+SEED=7` to the command line and run `SEED=%d` again.
+The lab below starts on this command line, `+VECTORS=vectors_bad.txt +VERBOSE`. Pick each lookup and watch which plusarg its prefix matches, including the query `"V"`, and notice that `SEED=%d` misses and leaves `seed` at its default, 1. Then add `+SEED=7` to the command line and run `SEED=%d` again. The lab also offers a few TEST lookups that the Expert section on plusargs explains; you can ignore them for now.
 
 <FileReadCursorVisualizer mode="plusargs" preset="lesson" />
 
@@ -1191,6 +1191,9 @@ endmodule
   ]}
 />
 
+<details>
+<summary>Check your prediction: the printed line and log.txt</summary>
+
 **Expected output** (illustrative: worked out by hand from IEEE 1800-2023):
 
 ```text
@@ -1203,6 +1206,8 @@ The file `log.txt` then holds:
 Timestamp: 0, Data: aabbccdd
 12345
 ```
+
+</details>
 
 ### Worked example: a plusarg-selected, file-driven test
 
@@ -1457,7 +1462,7 @@ PASS=0 FAIL=0
   options={[
     { text: "The adder computed all sums in zero simulation time, allowing simulation to exit immediately.", correct: false, feedback: "Combinational logic can settle in zero time, but 0 checks were performed because the loop never ran." },
     { text: "The vector file was completely empty, and the IEEE standard defines an empty file as passing.", correct: false, feedback: "An empty file checks nothing and must be treated as a failure; but here the file was never opened at all." },
-    { text: "$fopen returned 0 from a misspelt filename; without checking fd, the read loop never ran.", correct: true, feedback: "Right. System functions report failure through return sentinels. An unchecked $fopen returns 0, the first read returns EOF/error, and 0 checks execute." },
+    { text: "$fopen returned 0 from a misspelt filename; without checking fd, the read loop never ran.", correct: true, feedback: "Right. System functions report failure through return sentinels. The unchecked $fopen returned 0, the first read on that descriptor failed (how is tool-dependent), the loop never ran, and 0 checks executed." },
     { text: "$fscanf encountered an EOF marker on line 1, causing an immediate clean loop termination.", correct: false, feedback: "The file was never opened because the filename was wrong; fd was 0." }
   ]}
 />
@@ -1570,7 +1575,7 @@ These sections are for practitioners who run regressions and for interview prepa
       <text x="82" y="17" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">1. Summary line exists?</text>
       <text x="82" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">PASS=\d+ FAIL=\d+</text>
     </g>
-    <path d="M 92 52 L 92 76" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
+    <path fill="none" d="M 92 52 L 92 76" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="66" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
     <path d="M 175 31 L 240 31 L 240 144" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="27" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
@@ -1581,7 +1586,7 @@ These sections are for practitioners who run regressions and for interview prepa
       <text x="82" y="17" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">2. Checks ran?</text>
       <text x="82" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">PASS + FAIL &gt; 0</text>
     </g>
-    <path d="M 92 120 L 92 144" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
+    <path fill="none" d="M 92 120 L 92 144" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="134" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
     <path d="M 175 99 L 240 99 L 240 144" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="95" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
@@ -1592,7 +1597,7 @@ These sections are for practitioners who run regressions and for interview prepa
       <text x="82" y="17" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">3. Zero failures?</text>
       <text x="82" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">FAIL == 0</text>
     </g>
-    <path d="M 92 188 L 92 212" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
+    <path fill="none" d="M 92 188 L 92 212" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="202" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
     <path d="M 175 167 L 228 167" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
     <text x="195" y="163" fontSize="9.5" fill="rgb(225,29,72)" fontWeight="600">no</text>
@@ -1603,7 +1608,7 @@ These sections are for practitioners who run regressions and for interview prepa
       <text x="82" y="17" fontSize="9.5" textAnchor="middle" fill="currentColor" fontWeight="600">4. Log clean?</text>
       <text x="82" y="32" fontSize="9.5" textAnchor="middle" fill="currentColor">No &lt;Error&gt; / &lt;Fatal&gt;</text>
     </g>
-    <path d="M 92 256 L 92 280" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
+    <path fill="none" d="M 92 256 L 92 280" stroke="rgb(5,150,105)" strokeWidth="1.2" markerEnd="url(#f2d-arr-green)" />
     <text x="102" y="270" fontSize="9.5" fill="rgb(5,150,105)" fontWeight="700">yes</text>
     {/* Dashed red path from box 4 to FAIL */}
     <path d="M 175 235 L 240 235 L 240 190" fill="none" stroke="rgb(225,29,72)" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#f2d-arr-red)" />
@@ -1714,7 +1719,7 @@ The plusargs lab below starts on `+SEED=7 +SEED=2`; neither value is the default
 ### Expert: Random stability and seeds
 
 - Every thread has its own random number generator. A new thread's generator is seeded from its parent's, which the standard calls hierarchical seeding, and static processes are seeded from their module's initialization generator (§18.14.1).
-- The values a thread draws therefore depend on the order in which threads are created and numbers are drawn, not on the order in which threads run (§18.14.2). Add new threads and new random calls at the end of a block, so that earlier values stay the same from run to run.
+- The values a thread draws therefore depend on the order in which threads are created and numbers are drawn, not on the order in which threads run (§18.14.1, §18.14.2). Add new threads and new random calls at the end of a block, so that earlier values stay the same from run to run.
 - `$urandom(seed)` seeds the generator and returns a number (§18.13.1). Manual seeding of processes and objects is covered with class randomization in [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index).
 
 <figure className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4" aria-labelledby="f2d-seed-title">
@@ -1832,9 +1837,9 @@ Answer each question before you look at the feedback.
 
 Three more questions to answer aloud, each followed by the section that answers it:
 
-- Why can `$display` and `$strobe` disagree at one clock edge, and when is `$display` the one to trust? (When does it print?)
-- How do you make a regression's verdict robust against a bench that dies early, prints nothing or tests nothing? (Expert: Pass/fail you can trust)
-- Adding one thread to a test changed the random values that another thread drew. What does the standard promise, and how do you keep runs reproducible? (Expert: Random stability and seeds)
+- Why can `$display` and `$strobe` disagree at one clock edge, and when is `$display` the one to trust? ([When does it print?](#when-does-it-print-display-strobe-and-monitor))
+- How do you make a regression's verdict robust against a bench that dies early, prints nothing or tests nothing? ([Expert: Pass/fail you can trust](#expert-passfail-you-can-trust))
+- Adding one thread to a test changed the random values that another thread drew. What does the standard promise, and how do you keep runs reproducible? ([Expert: Random stability and seeds](#expert-random-stability-and-seeds))
 
 ## Practice & Reinforce
 
@@ -2283,13 +2288,13 @@ Use this after the quiz and the katas, not before them. Cover the words, say eac
     <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
       <svg viewBox="0 0 72 44" width="72" height="44" aria-hidden="true" className="shrink-0" style={{ flex: "none" }}>
         <text x="2" y="15" fontSize="9" fontFamily="monospace" fill="currentColor">%t</text>
-        <text x="20" y="15" fontSize="9" fontFamily="monospace" fill="currentColor" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[  10000]"}</text>
+        <text x="20" y="15" fontSize="9" fontFamily="monospace" fill="currentColor" xmlSpace="preserve" style={{ whiteSpace: "pre" }}>{"[…10000]"}</text>
         <text x="2" y="35" fontSize="9" fontFamily="monospace" fill="currentColor">%0t</text>
         <text x="20" y="35" fontSize="9" fontFamily="monospace" fill="currentColor">[10000]</text>
       </svg>
       <div className="min-w-0 text-sm text-foreground">
         <div className="font-semibold">Printing time</div>
-        <div>Call <code>$timeformat</code> once, at time 0. Plain <code>%t</code> pads to at least 20 characters; <code>%0t</code> drops the padding.</div>
+        <div>Call <code>$timeformat</code> once, at time 0. Plain <code>%t</code> pads to at least 20 characters (the icon shortens it); <code>%0t</code> drops the padding.</div>
       </div>
     </div>
     <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-card/60 p-3">
