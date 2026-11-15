@@ -657,3 +657,75 @@ describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {
     }
   });
 });
+
+/*
+ * "solid" on a hand-drawn figure's filled mark (DESIGN.md section 13, "Role only,
+ * tint or solid"): data-fig="<role> solid" fills the mark with the
+ * role's stroke colour at full opacity, and only on a shape filled in
+ * currentColor with no dash. Every role rule must use the stroke
+ * token of its hue and override fill-opacity, there must be no rule for "solid"
+ * alone, and the fill must hold 3:1 on every figure surface in every theme
+ * block (dark, light, the no-JavaScript light copy and print).
+ */
+const SOLID_ROLES: Record<string, keyof typeof FIG_HUES> = {
+  "bit-low": "slate",
+  "bit-high": "cyan",
+  active: "cyan",
+  x: "rose",
+  mismatch: "rose",
+  error: "rose",
+  z: "amber",
+  testbench: "amber",
+  design: "violet",
+  bus: "indigo",
+  data: "indigo",
+  interface: "indigo",
+  expected: "teal",
+  register: "teal",
+  match: "emerald",
+  ok: "emerald",
+};
+
+describe("solid figure marks (DESIGN.md section 13)", () => {
+  const solidRules = [...css.matchAll(/\[data-lesson-article\] svg \[data-fig~="([\w-]+)"\]\[data-fig~="solid"\]\[fill="currentColor"\]:not\(\[stroke-dasharray\]\):not\(\[fill-opacity="0"\], \[fill-opacity="0\.0"\], \[fill-opacity="0\.00"\], \[opacity="0"\], \[opacity="0\.0"\], \[opacity="0\.00"\]\):not\(text, tspan, g, marker\) \{([^}]*)\}/g)];
+
+  it("gives every role a solid rule that fills with its stroke token at full opacity", () => {
+    const seen = Object.fromEntries(solidRules.map(([, role, body]) => [role, body.trim()]));
+    expect(Object.keys(seen).sort()).toEqual(Object.keys(SOLID_ROLES).sort());
+    for (const [role, hue] of Object.entries(SOLID_ROLES)) {
+      expect(seen[role], role).toBe(`fill: hsl(var(--fig-${hue})); fill-opacity: 1;`);
+    }
+  });
+
+  it("does nothing for solid without a role, and draws a solid mark in CanvasText in forced colours", () => {
+    expect(css).not.toMatch(/\[data-fig="solid"\]/);
+    expect(css).not.toMatch(/svg \[data-fig~="solid"\](?!:is\()/);
+    // Only a shape filled in currentColor with no dash goes solid: never an outline (fill="none") or a dashed shape.
+    expect(css.match(/\[data-fig~="solid"\][^{]*\{/g)?.every((sel) => sel.includes('[fill="currentColor"]:not([stroke-dasharray])'))).toBe(true);
+    // An empty cell (fill-opacity 0) stays empty: solid never fills it.
+    expect(css.match(/\[data-fig~="solid"\][^{]*\{/g)?.every((sel) => sel.includes(':not([fill-opacity="0"], [fill-opacity="0.0"], [fill-opacity="0.00"], [opacity="0"], [opacity="0.0"], [opacity="0.00"])'))).toBe(true);
+    const forced = /@media \(forced-colors: active\) \{[^@]*\[data-fig~="solid"\]:is\(([^)]*)\)\[fill="currentColor"\]:not\(\[stroke-dasharray\]\):not\(\[fill-opacity="0"\], \[fill-opacity="0\.0"\], \[fill-opacity="0\.00"\], \[opacity="0"\], \[opacity="0\.0"\], \[opacity="0\.00"\]\):not\(text, tspan, g, marker\) \{ fill: CanvasText !important; fill-opacity: 1 !important; \}/.exec(css);
+    expect(forced, "forced-colours solid rule").not.toBeNull();
+    const roles = [...(forced?.[1] ?? "").matchAll(/\[data-fig~="([\w-]+)"\]/g)].map((m) => m[1]);
+    expect(roles.sort()).toEqual(Object.keys(SOLID_ROLES).sort());
+  });
+
+  it("fills a tint only on a closed box that is not dashed and not in a marker", () => {
+    // An open path, a polyline or a marker's arrowhead never takes a tint fill, and a dashed outline stays hollow.
+    const tintRules = css.match(/^\s*\[data-lesson-article\][^\n{]*\[data-fig~?="tint"\][^\n{]*\{/gm) ?? [];
+    expect(tintRules.length).toBe(18);
+    for (const sel of tintRules) {
+      expect(sel, sel).toContain("svg :is(rect, circle, ellipse, polygon)[data-fig");
+      expect(sel, sel).toContain(":not([stroke-dasharray], marker *)");
+    }
+  });
+
+  describe.each(themeBlocks().map((block) => [`${block.media || "screen"} ${block.selector}`, block] as const))("%s", (_name, block) => {
+    it.each(Object.entries(SOLID_ROLES))("%s solid (fig-%s at full opacity) holds 3:1 on every figure surface", (role, hue) => {
+      const fill = rgbOf(block.vars[`fig-${hue}`]);
+      for (const [surface, base] of figureSurfaces(block.vars)) {
+        expect(rgbContrast(fill, base), `${role} solid on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+    });
+  });
+});

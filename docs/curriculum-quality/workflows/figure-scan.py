@@ -2,7 +2,8 @@
 """List every figure in lesson MDX files and what a colour pass could do.
 
 Usage:
-  figure-scan.py [--tiers T3_Advanced,T4_Expert] [--json OUT] [lesson.mdx ...]
+  figure-scan.py [--tiers T3_Advanced,T4_Expert] [--json OUT] [--work-only] [lesson.mdx ...]
+  figure-scan.py --selftest
 
 With no files and no --tiers it scans all of content/curriculum. For each
 lesson it prints every figure with its line range:
@@ -10,23 +11,44 @@ lesson it prints every figure with its line range:
 - ArchitectureDiagram: title, nodes, nodes of kind "generic" (or no kind)
   with no role, edges.
 - SequenceDiagram: title, participants, participants with neither kind nor role.
-- TimingDiagram: counted only (the kit already colours values).
+- TimingDiagram: counted only (the kit already colours values); its caption
+  still gets the WARNING below.
 - hand-drawn <svg>: monochrome (only currentColor and neutrals), a little
   colour, or colourful; whether any data-fig is present; whether its
   figcaption names a colour (a colour pass must keep that sentence true).
-- For every figure: a WARNING when its caption (kit caption prop or
-  <Caption>, or the svg's figcaption) or the paragraph just before or after
-  it names a colour.
+  For a monochrome figure with solid candidates (shapes filled in
+  currentColor, not empty, with no text anchored on them), the note says that
+  a mark with its own text label beside it may take data-fig="<role> solid",
+  and that one without keeps its ladder; with none it says "no solid
+  candidates".
+- For every figure: a WARNING when its caption (kit caption prop, read
+  also when it is written as JSX or a template string, or <Caption>, or the
+  svg's figcaption) or the paragraph just before or after it names a colour
+  or uses an appearance word a colour pass can make false (shaded, darker,
+  highlighted, hollow, greyed, black, white, faded, tinted, filled, open dot,
+  solid, outline, thick, bold, dim, faint, empty, dark, light…). In a kit
+  caption "solid" does not warn: kit roles never change a line's style.
+- For a hand-drawn svg, the same WARNING for its own text: aria-label,
+  <title>, <desc> and the words drawn in <text>, which are lesson text too.
+- A hand-drawn svg that already has data-fig is not a candidate, but the line
+  says how many currentColor shapes are still unmarked.
 
 A lesson where no figure is a candidate is reported as "nothing to do".
 Standard library only. The rules for assigning roles are in
 docs/planning/site-design-refresh-2026-11-10/DESIGN.md section 13.
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
 import sys
+
+# The guard's JSX-aware tag and attribute reader (a "'" in JSX text, as in
+# caption={<>the DUT's flops</>}, is a letter, not the start of a string).
+_spec = importlib.util.spec_from_file_location("figure_guard", os.path.join(os.path.dirname(os.path.abspath(__file__)), "figure-guard.py"))
+guard = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(guard)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 CURRICULUM = os.path.join(ROOT, "content", "curriculum")
@@ -38,6 +60,17 @@ COLOUR_WORDS = re.compile(
     r"\b(red|green|blue|cyan|amber|yellow|orange|violet|purple|indigo|teal|emerald|rose|pink|grey|gray|slate|sky|magenta|colou?red|colou?r)\b",
     re.I,
 )
+# Words about how a part looks, which a colour pass can make false or ambiguous
+# ("the shaded boxes", "darker = more often", "the greyed rows", "an open dot").
+APPEARANCE_WORDS = re.compile(
+    r"\b(shaded|shading|shade|darker|darkest|lighter|lightest|highlighted|highlight|hollow|gr[ae]yed(?: out)?|black|white|faded|tinted|tint|filled|unfilled|open (?:dot|circle|marker)s?"
+    r"|solid|outlined|outlines?|thick|thin|bold|dim|dimmed|faint|heavy|empty|blank|dark|light|pale|bright|opaque)\b",
+    re.I,
+)
+# Kit roles never change a line's style, so in a kit caption "solid", "dashed"
+# and the like describe the kit's own edge styles and stay true; warning on
+# them there would be noise.
+KIT_QUIET_WORDS = {"solid", "dashed", "dotted"}
 
 
 def blank_code_fences(text):
@@ -50,65 +83,42 @@ def line_of(text, index):
 
 
 def jsx_element_end(text, start):
-    """End index (exclusive) of the JSX opening tag that starts at `start`, honouring strings and braces."""
-    i = start
-    depth = 0
-    quote = None
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if quote:
-            if c == "\\":
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-        elif c in "\"'`":
-            quote = c
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        elif depth == 0 and c == ">":
-            return i + 1
-        i += 1
-    return n
+    """End index (exclusive) of the JSX opening tag that starts at `start`, honouring strings, braces and JSX in props."""
+    m = re.match(r"<[A-Za-z][\w.:-]*", text[start:])
+    return min(len(text), guard._tag_end(text, start + m.end()) + 1)
+
+
+def tag_props(tag):
+    """{name: (quote, value)} for the top-level props of an opening tag's text."""
+    m = re.match(r"<[A-Za-z][\w.:-]*", tag)
+    return {n: (q, v) for n, q, v, _, _ in guard.parse_attrs(tag, m.end() if m else 0, len(tag))}
 
 
 def prop_expression(tag, name):
     """The text of a {…} prop (without the outer braces), or None."""
-    m = re.search(r"\b" + re.escape(name) + r"=\{", tag)
-    if not m:
-        return None
-    i = m.end()
-    depth = 1
-    quote = None
-    start = i
-    while i < len(tag):
-        c = tag[i]
-        if quote:
-            if c == "\\":
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-        elif c in "\"'`":
-            quote = c
-        elif c in "{[(":
-            depth += 1
-        elif c in "}])":
-            depth -= 1
-            if depth == 0:
-                return tag[start:i]
-        i += 1
-    return None
+    q, v = tag_props(tag).get(name, (None, None))
+    return v if q == "{" else None
 
 
-def prop_string(tag, name):
-    m = re.search(r"\b" + re.escape(name) + r'=(?:"([^"]*)"|\{\s*"([^"]*)"\s*\}|\{\s*\'([^\']*)\'\s*\})', tag)
-    if not m:
+def strip_jsx(expr):
+    """Readable words of a JSX or string expression: tags, braces and quotes removed."""
+    t = re.sub(r"<[^<>]*>", " ", expr)
+    t = re.sub(r"[{}`]|\$\{", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def prop_string(tag, name, jsx=False):
+    """A string prop: name="…", name={"…"} or name={'…'}; with jsx, also a JSX
+    or template-string value (caption={<>…</>}, caption={`…`}) as plain words."""
+    q, v = tag_props(tag).get(name, (None, None))
+    if v is None:
         return None
-    return next(g for g in m.groups() if g is not None)
+    if q in ('"', "'"):
+        return v
+    m = re.fullmatch(r"""\s*(?:"([^"]*)"|'([^']*)')\s*""", v)
+    if m:
+        return next(g for g in m.groups() if g is not None)
+    return strip_jsx(v) if jsx else None
 
 
 def array_items(expr):
@@ -196,8 +206,71 @@ def classify_svg(svg):
     return ("little" if share < 0.3 or len(hues) <= 1 else "colourful"), n, k
 
 
+def filled_marks(svg):
+    """Shapes filled in currentColor (bars, dots, cells, swatches) that
+    data-fig="<role> solid" could fill with a role colour: not an empty one
+    (fill opacity or opacity 0) and not one with a <text> or <tspan> anchored
+    inside its box (text never sits on a solid fill). The same tests as the guard."""
+    masked = guard.mask_code(svg)
+    opens, _ = guard.scan_tags(masked)
+    anchors = guard.text_anchors(masked, opens, 0, len(masked))
+    count = 0
+    for ta, tb, tag in opens:
+        if tag not in guard.SOLID_TAGS or tb >= len(masked):
+            continue
+        names = {n: (q, v) for n, q, v, _, _ in guard.parse_attrs(masked, ta + 1 + len(tag), tb)}
+        if names.get("fill", (None, None))[1] != "currentColor" or names.get("fill", (None,))[0] not in ('"', "'"):
+            continue
+        if "strokeDasharray" in names or "stroke-dasharray" in names or guard.zero_opacity(names):
+            continue
+        box = guard.shape_box(tag, names)
+        if box and any(box[0] <= x <= box[2] and box[1] <= y <= box[3] for x, y in anchors):
+            continue
+        count += 1
+    return count
+
+
 def colour_words(text):
-    return sorted({w.lower() for w in COLOUR_WORDS.findall(text or "")})
+    """Colour names and appearance words in `text` (both can be made false by a colour pass)."""
+    words = {w.lower() for w in COLOUR_WORDS.findall(text or "")}
+    words |= {re.sub(r"\s+", " ", w.lower()) for w in APPEARANCE_WORDS.findall(text or "")}
+    return sorted(words)
+
+
+def svg_own_text(svg):
+    """(source, words) for the svg's accessible and visible text: aria-label,
+    <title>, <desc> and the words drawn in <text>."""
+    out = []
+    for m in re.finditer(r"""aria-label=(?:"([^"]*)"|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)\s*\})""", svg):
+        out.append(("aria-label", next(g for g in m.groups() if g is not None)))
+    for tag in ("title", "desc"):
+        for m in re.finditer(r"<" + tag + r"\b[^>]*>([\s\S]*?)</" + tag + ">", svg):
+            out.append((f"<{tag}>", strip_jsx(m.group(1))))
+    drawn = " ".join(strip_jsx(m.group(1)) for m in re.finditer(r"<text\b[^>]*>([\s\S]*?)</text>", svg))
+    if drawn:
+        out.append(("<text>", drawn))
+    return out
+
+
+def unmarked_shapes(svg):
+    """currentColor shapes with no data-fig of their own and not inside a marked <g>."""
+    count, stack = 0, []
+    for m in re.finditer(r"<(/?)(g|rect|path|circle|ellipse|line|polyline|polygon)\b([^>]*?)(/?)>", svg):
+        close, name, attrs, selfclose = m.groups()
+        if name == "g":
+            if close:
+                if stack:
+                    stack.pop()
+            elif not selfclose:
+                stack.append("data-fig=" in attrs)
+            continue
+        if close:
+            continue
+        if "data-fig=" in attrs or any(stack):
+            continue
+        if re.search(r'\b(?:fill|stroke)="currentColor"', attrs):
+            count += 1
+    return count
 
 
 def nearby_colours(text, start, end):
@@ -222,14 +295,14 @@ def scan_file(path):
         tag = text[m.start():end]
         fig = {"type": name, "lines": [line_of(text, m.start()), line_of(text, end - 1)], "title": prop_string(tag, "title")}
         # Kit captions: the caption prop and any <Caption> child.
-        caption = prop_string(tag, "caption") or ""
+        caption = prop_string(tag, "caption", jsx=True) or ""
         if not tag.rstrip().endswith("/>"):
             close = text.find(f"</{name}>", end)
             if close >= 0:
                 inner = text[end:close]
                 caption += " " + " ".join(re.findall(r"<Caption[^>]*>([\s\S]*?)</Caption>", inner))
                 end = close + len(f"</{name}>")
-        fig["captionColours"] = colour_words(caption)
+        fig["captionColours"] = [w for w in colour_words(caption) if w not in KIT_QUIET_WORDS]
         fig["nearbyColours"] = nearby_colours(text, m.start(), end)
         if name == "ArchitectureDiagram":
             nodes = array_items(prop_expression(tag, "nodes"))
@@ -268,10 +341,13 @@ def scan_file(path):
             "shapes": shapes,
             "colouredShapes": coloured,
             "dataFig": "data-fig=" in svg,
+            "filledMarks": filled_marks(svg),
             "markers": svg.count("<marker"),
             "figcaption": bool(cap),
             "captionColours": caption_colours,
             "nearbyColours": nearby_colours(text, fig_start, fig_end),
+            "ownTextColours": [[src, w] for src, words in svg_own_text(svg) for w in [colour_words(words)] if w],
+            "unmarkedShapes": unmarked_shapes(svg) if "data-fig=" in svg else None,
         }
         fig["candidate"] = cls in ("monochrome", "little") and not fig["dataFig"]
         figures.append(fig)
@@ -301,7 +377,7 @@ def describe(fig):
         todo = f"{fig['untyped']} participant(s) could take a role" if fig["candidate"] else "nothing: every participant has a kind or role"
         return f"  {lines} sequence{title}: {fig['participants']} participants, {fig['untyped']} with neither kind nor role -> {todo}" + colour_note(fig)
     if t == "TimingDiagram":
-        return f"  {lines} timing{title} -> nothing (the kit colours values)"
+        return f"  {lines} timing{title} -> nothing (the kit colours values)" + colour_note(fig)
     cap = ""
     if fig["figcaption"]:
         cap = f", caption names colour: {', '.join(fig['captionColours'])}" if fig["captionColours"] else ", caption names no colour"
@@ -309,10 +385,108 @@ def describe(fig):
         cap = ", no figcaption"
     df = ", has data-fig" if fig["dataFig"] else ""
     todo = "mark parts with data-fig where the meaning is certain" if fig["candidate"] else "nothing"
+    if fig.get("unmarkedShapes"):
+        todo = f"partly marked: {fig['unmarkedShapes']} currentColor shape(s) still unmarked (leave those that are neutral by design)"
     if fig["colour"] == "little" and fig["candidate"]:
         todo = "check: a little colour; mark the remaining parts only if the meaning is certain"
+    if fig["colour"] == "monochrome" and fig.get("filledMarks"):
+        todo += (
+            f"; {fig['filledMarks']} solid candidate(s) (filled, not empty, no text on them): a mark whose own text label beside it names its side may take"
+            ' data-fig="<role> solid"; a mark without its own label keeps its ladder (fill opacity, dash) and stays neutral'
+        )
+    elif fig["colour"] == "monochrome":
+        todo += "; no solid candidates"
     near = f"\n      WARNING: nearby prose names colour: {', '.join(fig['nearbyColours'])} (keep those sentences true)" if fig.get("nearbyColours") else ""
+    if fig["captionColours"]:
+        near += f"\n      WARNING: caption names colour: {', '.join(fig['captionColours'])} (keep that sentence true)"
+    for src, words in fig.get("ownTextColours", []):
+        near += f"\n      WARNING: the svg's {src} names colour: {', '.join(words)} (keep it true)"
     return f"  {lines} svg{title}: {fig['colour']} ({fig['colouredShapes']}/{fig['shapes']} coloured shapes, {fig['markers']} marker(s){df}{cap}) -> {todo}" + near
+
+
+SELFTEST_MDX = """Intro.
+
+<figure>
+<svg viewBox="0 0 100 40" role="img" aria-label="WRAP8 of words from 0x34">
+  <rect x="0" y="0" width="20" height="10" fill="currentColor" fillOpacity="0.15" />
+  <rect x="30" y="0" width="20" height="10" fill="none" stroke="currentColor" strokeDasharray="3 2" />
+</svg>
+<figcaption>The shaded boxes are the burst's block (dashed boxes are outside it).</figcaption>
+</figure>
+
+<ArchitectureDiagram
+  title="Bus"
+  caption={<>The DUT's red path is the one that fails.</>}
+  nodes={[{ id: "a", label: "A", col: 0, row: 0 }]}
+/>
+
+<figure>
+<svg viewBox="0 0 100 40" role="img" aria-label={'The cyan bar is the expected value'}>
+  <desc>Darker cells are hit more often.</desc>
+  <rect x="0" y="0" width="20" height="10" fill="currentColor" data-fig="expected solid" />
+  <rect x="30" y="0" width="20" height="10" fill="currentColor" />
+  <g data-fig="design"><rect x="60" y="0" width="20" height="10" fill="none" stroke="currentColor" /></g>
+  <text x="0" y="30" fill="currentColor">greyed rows are skipped</text>
+</svg>
+<figcaption>Two bars.</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 100 40" role="img" aria-label="Memory cells">
+  <rect x="0" y="0" width="10" height="10" fill="currentColor" fillOpacity="0.0" />
+  <rect x="20" y="0" width="10" height="10" fill="currentColor" fillOpacity="0.3" />
+  <text x="25" y="7" fill="currentColor">5.6</text>
+  <rect x="40" y="0" width="30" height="10" fill="currentColor" fillOpacity="0.6" />
+  <text x="72" y="7" fill="currentColor">Testbench</text>
+</svg>
+<figcaption>Solid cells hold the numbers from the file. Hatched cells were never reached.</figcaption>
+</figure>
+
+<TimingDiagram
+  title="Clock"
+  caption="The red trace is the reset, drawn with a solid line."
+  signals={[]}
+/>
+
+<ArchitectureDiagram
+  title="Edges"
+  caption="Solid edges carry data; dashed edges are control."
+  nodes={[{ id: "b", label: "B", col: 0, row: 0 }]}
+/>
+"""
+
+
+def selftest():
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".mdx", delete=False, encoding="utf8") as fh:
+        fh.write(SELFTEST_MDX)
+    try:
+        figs = scan_file(fh.name)["figures"]
+    finally:
+        os.unlink(fh.name)
+    wrap, kit, part, cells, timing, edges = figs
+    own = dict((src, words) for src, words in part["ownTextColours"])
+    cases = [
+        ("an svg caption that says 'shaded' warns (the B-AHB-1 WRAP figure)", "shaded" in wrap["captionColours"]),
+        ("a kit caption written as JSX, with an apostrophe, is read and warns on 'red'", kit["captionColours"] == ["red"]),
+        ("a JSX caption does not end the kit tag early (one node counted)", kit["nodes"] == 1),
+        ("an svg aria-label written as a JSX string that names a colour warns", own.get("aria-label") == ["cyan"]),
+        ("an svg <desc> that says 'darker' warns", own.get("<desc>") == ["darker"]),
+        ("svg <text> that says 'greyed' warns", own.get("<text>") == ["greyed"]),
+        ("a partly marked svg reports its unmarked currentColor shapes", part["unmarkedShapes"] == 1 and not part["candidate"]),
+        ("an unmarked svg is a candidate", wrap["candidate"] and wrap["unmarkedShapes"] is None),
+        ("an empty cell and a cell with text on it are not solid candidates; a bar with its label beside it is", cells["filledMarks"] == 1),
+        ("an svg caption that says 'Solid cells' warns (the F2D memory grid)", "solid" in cells["captionColours"]),
+        ("a timing caption that names a colour prints a WARNING line, as the total counts it", "WARNING" in describe(timing) and timing["captionColours"] == ["red"]),
+        ("a kit caption's 'solid' (an edge style the kit keeps) does not warn", edges["captionColours"] == [] and "WARNING" not in describe(edges)),
+        ("a monochrome svg with no solid candidates says so", "no solid candidates" in describe({**cells, "filledMarks": 0})),
+    ]
+    failed = 0
+    for name, ok in cases:
+        failed += 0 if ok else 1
+        print(f"{'pass' if ok else 'FAIL'}: {name}")
+    print(f"{len(cases) - failed} of {len(cases)} selftest cases behave as expected")
+    return 1 if failed else 0
 
 
 def main(argv=None):
@@ -321,7 +495,10 @@ def main(argv=None):
     ap.add_argument("--tiers", help="comma-separated tier folders, e.g. T3_Advanced,T4_Expert")
     ap.add_argument("--json", dest="json_out", help="write the full result as JSON to this path")
     ap.add_argument("--work-only", action="store_true", help="print only lessons with something to do")
+    ap.add_argument("--selftest", action="store_true", help="check the warnings and counts on a small built-in lesson")
     args = ap.parse_args(argv)
+    if args.selftest:
+        return selftest()
 
     files = [os.path.abspath(f) for f in args.files]
     if not files:
@@ -346,6 +523,7 @@ def main(argv=None):
             if f["type"] == "svg":
                 totals["svgColour"][f["colour"]] = totals["svgColour"].get(f["colour"], 0) + 1
     totals["svgCaptionNamesColour"] = sum(1 for r in results for f in r["figures"] if f["type"] == "svg" and f["captionColours"])
+    totals["svgOwnTextNamesColour"] = sum(1 for r in results for f in r["figures"] if f.get("ownTextColours"))
     totals["kitCaptionNamesColour"] = sum(1 for r in results for f in r["figures"] if f["type"] != "svg" and f.get("captionColours"))
     totals["nearbyProseNamesColour"] = sum(1 for r in results for f in r["figures"] if f.get("nearbyColours"))
     totals["genericNodes"] = sum(f.get("genericNoRole", 0) for r in results for f in r["figures"])
@@ -366,7 +544,7 @@ def main(argv=None):
     print(f"Lessons: {totals['lessons']}; with something to do: {totals['lessonsWithWork']}")
     print("Figures: " + ", ".join(f"{k} {v}" for k, v in sorted(totals["figures"].items())))
     print("Candidates: " + (", ".join(f"{k} {v}" for k, v in sorted(totals["candidates"].items())) or "none"))
-    print("Hand-drawn svg: " + (", ".join(f"{k} {v}" for k, v in sorted(totals["svgColour"].items())) or "none") + f"; captions that name a colour: {totals['svgCaptionNamesColour']}")
+    print("Hand-drawn svg: " + (", ".join(f"{k} {v}" for k, v in sorted(totals["svgColour"].items())) or "none") + f"; captions that name a colour: {totals['svgCaptionNamesColour']}; own text that names a colour: {totals['svgOwnTextNamesColour']}")
     print(f"Kit captions that name a colour: {totals['kitCaptionNamesColour']}; figures whose neighbouring prose names a colour: {totals['nearbyProseNamesColour']}")
     print(f"Generic nodes with no role: {totals['genericNodes']}; participants with neither kind nor role: {totals['untypedParticipants']}")
 
