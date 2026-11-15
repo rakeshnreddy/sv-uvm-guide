@@ -30,13 +30,13 @@ sources:
 
 <ArchitectureDiagram
   title="The life of one setting, at a glance"
-  caption="Read top to bottom. A publisher calls set() with a value of type T, a name and the part of the tree it is for; the database keeps that entry. Later a component calls get() with a name, a type and its own path. If all three match an entry, get() returns 1 and writes the value; if any one differs, get() returns 0, prints nothing and leaves the variable as it was. Build Your Mental Model fills in each box."
+  caption="Read top to bottom. A publisher calls set() with a value of type T, a name and the part of the tree it is for; the database keeps that entry. Later a component calls get() with a name, a type and its own path. If all three match an entry, get() returns 1 and writes the value; if no entry matches all three (or none exists yet), get() returns 0, prints nothing (unless +UVM_CONFIG_DB_TRACE is on) and leaves the variable as it was. Build Your Mental Model fills in each box."
   nodes={[
     { id: "pub", label: "set()", sublabel: "value of type T · name · part of the tree", kind: "generic", col: 0, row: 0, colSpan: 2 },
     { id: "db", label: "uvm_config_db#(T)", sublabel: "keeps the entry", kind: "generic", col: 0, row: 1, colSpan: 2 },
     { id: "rd", label: "get()", sublabel: "same name · same T · its own path", kind: "generic", col: 0, row: 2, colSpan: 2 },
     { id: "hit", label: "returns 1", sublabel: "value written", kind: "generic", col: 0, row: 3, state: "ok" },
-    { id: "miss", label: "returns 0", sublabel: "no message · value unchanged", kind: "generic", col: 1, row: 3, state: "error" }
+    { id: "miss", label: "returns 0", sublabel: "no message unless traced · value unchanged", kind: "generic", col: 1, row: 3, state: "error" }
   ]}
   edges={[
     { from: "pub", to: "db", style: "causal", label: "publish" },
@@ -176,7 +176,8 @@ void'(uvm_config_db#(int unsigned)::get(this, "", "num_pkts", num_pkts));
   ]}
   messages={[
     { kind: "note", from: "tb", label: "elaboration: bus_if0 exists before time 0" },
-    { from: "tb", to: "db", label: "set(null, \"uvm_test_top.env.agt0.drv\", \"vif\", bus_if0)" },
+    { kind: "note", from: "tb", label: "scope = uvm_test_top.env.agt0.drv" },
+    { from: "tb", to: "db", label: "set(null, scope, \"vif\", bus_if0)" },
     { from: "tb", to: "test", label: "run_test(\"cfg_test\") creates uvm_test_top" },
     { kind: "divider", label: "build_phase, top-down" },
     { from: "test", to: "env", label: "build_phase: create(\"env\", this)" },
@@ -192,7 +193,7 @@ void'(uvm_config_db#(int unsigned)::get(this, "", "num_pkts", num_pkts));
 
 A `get()` sees an entry only when all three of these hold (uvm-core 2020.3.1, `uvm_resource_pool::lookup_name`):
 
-1. **The field name is identical.** Entries are found by exact field name. Do not put wildcards in field names.
+1. **The field name is identical.** Entries are found by exact field name. Do not put wildcards in field names. (IEEE 1800.2-2020 C.4.2.2.1 allows a pattern in `set()`'s `field_name`, but uvm-core 2020.3.1 looks field names up by exact string, so a wildcard field name never matches there.)
 2. **The type is identical.** `uvm_config_db#(T)` keeps entries of each type `T` apart, so a `get()` only sees entries stored with the same `T`.
 3. **The scope pattern matches the caller's path.**
 
@@ -209,7 +210,7 @@ if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", base_vif))
 vif = base_vif;                     // legal: no modport -> modport (IEEE 1800-2023 §25.9)
 ```
 
-**Scope patterns.** A scope is a **glob**, a pattern with wildcards, matched against the whole path:
+**Scope patterns.** A scope is a **glob**, a pattern with wildcards, matched against the whole path (IEEE 1800.2-2020 C.2.4.3, F.3.3.1, Table F.1):
 
 | Pattern character | Matches | Example scope | Matches `…agt0` itself? | Matches `…agt0.drv`? |
 |---|---|---|---|---|
@@ -220,7 +221,7 @@ vif = base_vif;                     // legal: no modport -> modport (IEEE 1800-2
 | `+` | one or more characters | `uvm_test_top.env.agt0+` | no | yes |
 | `/…/` | a regular expression | `/^uvm_test_top\.env\.agt[01]$/` | yes | no |
 
-The `+` and `/…/` forms use C regular-expression code that uvm-core calls through DPI, the Direct Programming Interface to C ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)); with `UVM_NO_DPI` only `*` and `?` work (uvm-core `src/dpi/uvm_regex.svh`). Prefer `*` and `?`. Also note that `agt0*` matches `agt00` as well, and that a scope of `"*"` set with a `null` context reaches every component in the tree.
+The standard defines all of these forms. uvm-core implements `+` and `/…/` with C regular-expression code that it calls through DPI, the Direct Programming Interface to C ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)); with `UVM_NO_DPI` only `*` and `?` work (uvm-core `src/dpi/uvm_regex.svh`). Prefer `*` and `?`. Also note that `agt0*` matches `agt00` as well, and that a scope of `"*"` set with a `null` context reaches every component in the tree.
 
 **Predict, then check.** In its `build_phase` the test calls `uvm_config_db#(int unsigned)::set(this, "env.agt*", "num_pkts", 4)`; the test's full name is `uvm_test_top`. Four components each call `uvm_config_db#(int unsigned)::get(this, "", "num_pkts", n)`: `uvm_test_top.env`, `uvm_test_top.env.agt1`, `uvm_test_top.env.agt1.drv` and `uvm_test_top.env.agt10`. Using the scope rule and the pattern table above, decide which of the four find the setting before you open the answer.
 
@@ -294,7 +295,12 @@ The explorer below runs a model of these rules. Each scenario lists the `set()` 
 
 <ConfigDbExplorer />
 
+<details>
+<summary>Debrief: what the explorer showed (open after you have revealed all six scenarios)</summary>
+
 **What the explorer showed.** In "Test vs env (build)" the test's value wins although the env's `set()` ran later, because during build the context depth decides (999 beats 998). In "Top module vs test" `tb_top`'s value wins although the test's `set()` ran later: `tb_top` set its value before `run_test()`, so it has precedence 1000, and the test's `build_phase` set has 999. In "After build: last wins" the same two calls made in `run_phase` both get 1000, so the most recent one wins, and the component sees it only because it calls `get()` again. "How far does * reach?" shows that `env.agt*` reaches every component below each agent, drivers included, which is why per-agent settings belong in per-agent scopes. The two Debug scenarios show that a type or field mismatch returns 0 and leaves the variable unchanged, with no message unless the trace is on. Open the trace log in each scenario: it shows the `CFGDB/SET` and `CFGDB/GET` lines you will read in Make It Work.
+
+</details>
 
 <VisualRecap
   title="Who wins a config_db lookup"
@@ -830,13 +836,13 @@ UVM_ERROR :    0
 UVM_FATAL :    0
 ```
 
-How to read it: one `SET` and one `GET` per field, and every `GET` ends in a value, not `null (failed lookup)`. `check_config_usage()` printed nothing, because every setting was read. The driver finishes at the fifth rising edge (45 ns); the passive monitor counts the last transfer at the sixth edge (55 ns), one clock later because of the register stage; the test drops its objection at the eighth edge (75 ns). The two `MON` lines show a configuration field gating behaviour: `cfg1.coverage_enable` is 0, so `agt1`'s monitor counts the transfers but sends none to coverage.
+How to read it: one `SET` and one `GET` per field, and every `GET` ends in a value, not `null (failed lookup)`. `check_config_usage()` printed nothing, because every setting was read. The driver finishes at the fifth rising edge (edge 4 in the diagram, 45 ns); the passive monitor counts the last transfer at the sixth edge (edge 5, 55 ns), one clock later because of the register stage; the test drops its objection at the eighth edge (edge 7, 75 ns). The two `MON` lines show a configuration field gating behaviour: `cfg1.coverage_enable` is 0, so `agt1`'s monitor counts the transfers but sends none to coverage.
 
 <TimingDiagram
   title="The bench run, edge by edge"
-  caption="The x-axis is the rising edges of clk: edge 0 is at 5 ns and one follows every 10 ns, so edge 7 is at 75 ns. Each value is what a clocking-block input samples just before that edge; a hatched value is X, before anything has driven the signal. if0 is bus_if0 and if1 is bus_if1. mon0 (agt0's monitor) counts the four edges where if0.valid is 1 (edges 1 to 4); mon1 (agt1's monitor) counts edges 2 to 5, one clock later because of the register stage. Markers: ◆ drv at edge 4, where the driver drives valid back to 0 and prints drove 4 transfers (45 ns); ▼ m1 at edge 5, where mon1 counts its last transfer (55 ns); ● end at edge 7, where the test drops its objection (75 ns). Traced by hand from the code, like the log above."
+  caption="The x-axis is the rising edges of clk: edge 0 is at 5 ns and one follows every 10 ns, so edge 7 is at 75 ns. Each value is what a clocking-block input samples just before that edge; a hatched value is X: not yet driven, or for if1 the X that the register stage copied from if0 one clock earlier. if0 is bus_if0 and if1 is bus_if1. mon0 (agt0's monitor) counts the four edges where if0.valid is 1 (edges 1 to 4); mon1 (agt1's monitor) counts edges 2 to 5, one clock later because of the register stage. Markers: ◆ drv at edge 4, where the driver drives valid back to 0 and prints drove 4 transfers (45 ns); ▼ m1 at edge 5, where mon1 counts its last transfer (55 ns); ● end at edge 7, where the test drops its objection (75 ns). Traced by hand from the code, like the log above."
   edges={8}
-  cycleWidth={34}
+  cycleWidth={32}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "if0.valid", kind: "bit", values: [undefined, 1, 1, 1, 1, 0, 0, 0] },
@@ -878,16 +884,16 @@ UVM_FATAL … @ 0: uvm_test_top.env.agt0.drv [NOVIF] no virtual bus_if for uvm_t
 
 <ArchitectureDiagram
   title="Which of the five causes? Compare the SET and GET lines in order"
-  caption="Start from the GET line of your field and ask the four questions down the left column, each about the SET lines in the trace. The first no names the cause (1 to 4 in the list above) on the right. Four yes answers mean the lookup succeeds, so if the value is still wrong it is cause 5: list every matching SET and apply the precedence rules."
+  caption="Start from the GET line of your field and ask the four questions down the left column, each about the SET lines in the trace. The first no names the cause (1 to 4 in the list above) on the right. Four yes answers mean the lookup succeeds, so if the value is still wrong it is cause 5: list every matching SET and apply the precedence rules. A path typo shows up at the scope question (cause 3)."
   cellWidth={160}
   nodes={[
     { id: "start", label: "GET line of your field", sublabel: "from +UVM_CONFIG_DB_TRACE", kind: "generic", col: 0, row: 0 },
     { id: "q1", label: "SET, same name?", sublabel: "name='…' equal on both lines", kind: "generic", col: 0, row: 1 },
-    { id: "c1", label: "2 · field typo", sublabel: "check_config_usage: CFGNRD", kind: "generic", col: 1, row: 1, state: "error" },
+    { id: "c1", label: "2 · field-name typo", sublabel: "check_config_usage: CFGNRD", kind: "generic", col: 1, row: 1, state: "error" },
     { id: "q2", label: "same (type …)?", sublabel: "modport and sign count", kind: "generic", col: 0, row: 2 },
     { id: "c2", label: "1 · type mismatch", sublabel: "same type on both sides", kind: "generic", col: 1, row: 2, state: "error" },
     { id: "q3", label: "scope matches?", sublabel: "SET glob against GET path", kind: "generic", col: 0, row: 3 },
-    { id: "c3", label: "3 · scope", sublabel: "e.g. agt0.* against agt0", kind: "generic", col: 1, row: 3, state: "error" },
+    { id: "c3", label: "3 · scope", sublabel: "e.g. agt0.* against agt0, or a path typo", kind: "generic", col: 1, row: 3, state: "error" },
     { id: "q4", label: "SET before GET?", sublabel: "earlier in the log", kind: "generic", col: 0, row: 4 },
     { id: "c4", label: "4 · get before set", sublabel: "publish first, get in build", kind: "generic", col: 1, row: 4, state: "error" },
     { id: "ok", label: "get() returns 1", sublabel: "wrong value? 5 · precedence", kind: "generic", col: 0, row: 5, state: "ok" }
@@ -928,6 +934,8 @@ Two more tools, both uvm-core features: `print_config()` called on a component l
 
 - `uvm_config_db#(T)` and the resource it stores are parameterized classes. Two specializations are the same type only when their type parameters are matching types (IEEE 1800-2023 §8.25, §6.22.1), and the lookup compares the resource's type handle, so the rule is exact.
 - `typedef bit [31:0] word_t;` matches `bit [31:0]`, and `int unsigned` matches `bit [31:0]` (same width and signedness, both 2-state, range `[31:0]`). `int` does not match `bit [31:0]` (signedness), `logic [31:0]` does not match `bit [31:0]` (4-state against 2-state), and `uvm_bitstream_t` matches neither.
+- A modport is part of a virtual interface's type, and so are the interface's actual parameter values (§25.9). `virtual bus_if #(.W(8))` and `virtual bus_if #(.W(16))` are different database types.
+- Class types match only themselves: `uvm_config_db#(uvm_object)` does not see a `bus_agent_cfg` setting, and a `bus_agent_cfg` declared in two different packages is two types. Keep configuration classes in one package.
 
 | A setting stored as `bit [31:0]`, read with `get()` of… | Found? | Why (IEEE 1800-2023 §6.22.1) |
 |---|---|---|
@@ -937,8 +945,6 @@ Two more tools, both uvm-core features: `print_config()` called on a component l
 | `int` | no | `int` is signed |
 | `logic [31:0]` | no | 4-state against 2-state |
 | `uvm_bitstream_t` | no | `logic signed [UVM_STREAMBITS-1:0]`: 4-state, signed, 4096 bits by default (uvm-core `uvm_object_globals.svh`) |
-- A modport is part of a virtual interface's type, and so are the interface's actual parameter values (§25.9). `virtual bus_if #(.W(8))` and `virtual bus_if #(.W(16))` are different database types.
-- Class types match only themselves: `uvm_config_db#(uvm_object)` does not see a `bus_agent_cfg` setting, and a `bus_agent_cfg` declared in two different packages is two types. Keep configuration classes in one package.
 
 ### Expert: Automatic configuration modes and cost
 
@@ -981,7 +987,7 @@ Two more tools, both uvm-core features: `print_config()` called on a component l
 | `print_config()`, `check_config_usage()` | no | yes (`check_config_usage` is `@uvm-compat`) |
 | `uvm_resource_db#(T)::set_override` | no; the pool-level `uvm_resource_pool::set_override` is (Annex C.2.4.3.2) | yes (`@uvm-contrib`) |
 | replacing the implementation with `set_imp` | no | yes (`@uvm-contrib`) |
-| `+` and `/…/` scope patterns | the standard says each resource's scope is a regular expression (Annex C.2.4) but leaves the matching code to the implementation | only with the DPI regular-expression code; `UVM_NO_DPI` leaves `*` and `?` |
+| `+` and `/…/` scope patterns | yes: C.2.4.3 matches scopes with `uvm_is_match` (F.3.3.1), whose simplified notation is `*`, `+` and `?` (Table F.1) and whose `/…/` form is a POSIX regular expression | yes with the DPI regular-expression code; a library built with `UVM_NO_DPI` handles only `*` and `?`, a uvm-core limitation |
 
 ### Expert: Methodology trade-offs
 
@@ -992,15 +998,15 @@ Two more tools, both uvm-core features: `print_config()` called on a component l
 
 ### Expert: Interview angles
 
-Answer each one before you open the options.
+Answer each one in your own words before you read the options.
 
 <InterviewQuestionPlayground
   title="Interview angle: the knob that will not change"
   question="In build_phase the test sets num_pkts to 20 for env.agt0 with uvm_config_db#(int unsigned). The agent's checked get() of the same type succeeds, yet num_pkts is 1. What is the most likely cause?"
   options={[
-    { text: "tb_top also sets num_pkts for that agent, with the same type, before run_test(). That setting has precedence 1000 and beats the test's 999.", correct: true, feedback: "Right. During build the higher context wins, and a set() before phasing starts has the top precedence. Remove the tb_top default and give the agent a default in its own code instead." },
     { text: "The env set num_pkts to 1 later in its build_phase, and the most recent set() wins.", correct: false, feedback: "During build, the env's set() has precedence 998 and loses to the test's 999, whatever the order." },
     { text: "The field name is misspelled in the test.", correct: false, feedback: "Then the get() would miss or find another setting; a misspelled set() cannot by itself produce the value 1. Something else set 1." },
+    { text: "tb_top also sets num_pkts for that agent, with the same type, before run_test(). That setting has precedence 1000 and beats the test's 999.", correct: true, feedback: "Right. During build the higher context wins, and a set() before phasing starts has the top precedence. Remove the tb_top default and give the agent a default in its own code instead." },
     { text: "uvm_config_db can only pass int, not int unsigned.", correct: false, feedback: "Any type can be stored; set and get only have to use the same one." }
   ]}
 />
@@ -1009,8 +1015,8 @@ Answer each one before you open the options.
   title="Interview angle: two agents, one interface"
   question="Two agents of the same class end up driving the same interface, although tb_top set a different handle for each. Both sets use the scope uvm_test_top.* and the field vif. Why?"
   options={[
-    { text: "The two set() calls have the same context, scope, field and type, so the second one overwrites the first. One entry, holding the second handle, reaches both agents.", correct: true, feedback: "Right. Use a distinct scope per agent (or a distinct field name read by the test) so that each setting is its own entry and reaches exactly one agent." },
     { text: "The first set() wins, because the configuration database keeps the oldest entry.", correct: false, feedback: "That is the uvm_resource_db rule for a plain set(). Here the second uvm_config_db set() replaces the first, so only the second handle is left." },
+    { text: "The two set() calls have the same context, scope, field and type, so the second one overwrites the first. One entry, holding the second handle, reaches both agents.", correct: true, feedback: "Right. Use a distinct scope per agent (or a distinct field name read by the test) so that each setting is its own entry and reaches exactly one agent." },
     { text: "Virtual interfaces cannot be stored twice under one field name.", correct: false, feedback: "They can, under different scopes. Here the scope is the same too, so the second set() overwrites the first: one entry reaches both agents." },
     { text: "The factory replaced one agent with the other.", correct: false, feedback: "The factory chooses classes, not configuration values." }
   ]}
@@ -1020,10 +1026,10 @@ Answer each one before you open the options.
   title="Interview angle: what the command line can reach"
   question="+uvm_set_config_int=uvm_test_top.env.agt0,is_active,0 makes agt0 passive, but +uvm_set_config_int=uvm_test_top.env.agt0,num_pkts,5 has no effect on a value the agent reads with uvm_config_db#(int)::get. Why?"
   options={[
-    { text: "The plusarg stores a uvm_bitstream_t setting. uvm_agent reads is_active with a lookup that accepts integral types, but the int get() only sees int settings.", correct: true, feedback: "Right. Read the knob with uvm_config_int::get(), make it a uvm_field_int member, or read your own plusarg and copy it into the configuration object." },
     { text: "Command-line settings are applied after build_phase, too late for num_pkts.", correct: false, feedback: "They are applied in uvm_root's build_phase, before the test builds, with precedence 1000." },
     { text: "Only fields of type uvm_active_passive_enum can be set from the command line.", correct: false, feedback: "Any field-macro member of an integral type is reachable, and +uvm_set_config_string exists for strings." },
-    { text: "The path must end in a wildcard.", correct: false, feedback: "uvm_test_top.env.agt0 exactly matches the agent's own path." }
+    { text: "The path must end in a wildcard.", correct: false, feedback: "uvm_test_top.env.agt0 exactly matches the agent's own path." },
+    { text: "The plusarg stores a uvm_bitstream_t setting. uvm_agent reads is_active with a lookup that accepts integral types, but the int get() only sees int settings.", correct: true, feedback: "Right. Read the knob with uvm_config_int::get(), make it a uvm_field_int member, or read your own plusarg and copy it into the configuration object." }
   ]}
 />
 
@@ -1272,8 +1278,8 @@ The lab gives you a small agent whose run stops with a fatal. Find each of its c
 
 | Topic | The rule, with its conditions |
 |---|---|
-| What a `get()` sees | an entry whose field name is identical, whose type `T` is a matching type, and whose scope glob matches the caller's full path |
-| Scope globs | `*` matches any run of characters, dots included; a trailing `.*` excludes the node itself; `+` and `/…/` need the DPI regex code |
+| What a `get()` sees | an entry whose field name is identical, whose type `T` is a matching type, and whose scope glob matches the lookup path (`cntxt`'s full name, plus `.` and `inst_name` when `inst_name` is not empty) |
+| Scope globs | `*` matches any run of characters, dots included; a trailing `.*` excludes the node itself; `+` and `/…/` are standard (F.3.3.1) but in uvm-core need the DPI regex code |
 | Precedence | while `uvm_root`'s current phase is build: 1000 minus the depth of `cntxt` (`null` is `uvm_root`, 1000); at every other time: 1000 |
 | Ties | `uvm_config_db`: the most recent `set()` wins; a plain `uvm_resource_db::set()`: the first one wins |
 | Path specificity | never counts |
@@ -1287,7 +1293,7 @@ The lab gives you a small agent whose run stops with a fatal. Find each of its c
 **Primary sources**
 
 - IEEE 1800.2-2020 Annex C.4.2 (`uvm_config_db`): C.4.2.1 (class), C.4.2.2.1 `set`, C.4.2.2.2 `get`, C.4.2.2.3 `exists`, C.4.2.2.4 `wait_modified`, C.4.2.3.1 to C.4.2.3.4 (`uvm_config_int`, `uvm_config_string`, `uvm_config_object`, `uvm_config_wrapper`)
-- IEEE 1800.2-2020 Annex C.3.2 (`uvm_resource_db`): C.3.2.3.1 `set`, C.3.2.3.6 `read_by_name`; Annex C.2.4 (`uvm_resource_pool`): C.2.4.4.1 `lookup_name`, C.2.4.4.2 `get_highest_precedence`
+- IEEE 1800.2-2020 Annex C.3.2 (`uvm_resource_db`): C.3.2.3.1 `set`, C.3.2.3.6 `read_by_name`; Annex C.2.4 (`uvm_resource_pool`): C.2.4.4.1 `lookup_name`, C.2.4.4.2 `get_highest_precedence`; C.2.4.3 (scope matching); F.3.3.1 `uvm_is_match` and Table F.1 (scope notation)
 - IEEE 1800.2-2020 §13.1.4.1.1 (`build_phase` and automatic configuration), §13.1.5.1 `apply_config_settings`, §13.1.5.2 `use_automatic_config`, §13.4.2.2 `get_is_active`; Annex G.2.8 (`+uvm_set_config_int`, `+uvm_set_config_string`)
 - IEEE 1800-2023 §25.9 (virtual interfaces: null use, modport in the type, assignment rules), §8.25 (parameterized class specializations), §6.22.1 (matching types), §21.6 (`$value$plusargs`)
 - uvm-core 2020.3.1, for implementation behaviour and features outside IEEE 1800.2: `src/base/uvm_config_db.svh`, `uvm_config_db_implementation.svh`, `uvm_resource_db.svh`, `uvm_resource_db_implementation.svh`, `uvm_resource_pool.svh`, `uvm_resource_base.svh`, `uvm_component.svh`, `uvm_root.svh`, `uvm_topdown_phase.svh`; `src/comps/uvm_agent.svh`; `src/macros/uvm_object_defines.svh`, `uvm_resource_defines.svh`, `uvm_global_defines.svh`; `src/dpi/uvm_regex.svh`, `uvm_dpi.svh`

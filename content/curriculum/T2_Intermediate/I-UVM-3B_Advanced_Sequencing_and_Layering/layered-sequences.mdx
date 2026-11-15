@@ -3,7 +3,7 @@ title: "Layered Sequences and Protocol Layering"
 description: "Compose atomic sequences into scenario sequences, and write a translation sequence and a layered monitor that carry one protocol's items inside another's."
 flashcards: "I-UVM-3B_Layered_Sequences"
 sources:
-  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Clauses 14.1, 14.2, 15.2, 15.3 and 15.5; Annex F.2.4.1)"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Clauses 13.1.4.3.2, 13.9, 14.1, 14.2, 15.2, 15.3 and 15.5; Annex F.2.4.1)"
     type: "standard"
     identifier: "IEEE 1800.2-2020"
   - title: "IEEE Standard for SystemVerilog (§18.7 and §18.7.1, inline constraints and local::)"
@@ -15,7 +15,7 @@ sources:
 
 - **What it is:** In UVM, "layering" means two different things. **Sequence layering** builds big stimulus from small sequences: an **atomic sequence** sends one transaction, and a **scenario sequence** starts several atomic sequences to make a meaningful pattern, such as "program eight registers". **Protocol layering** carries one protocol's items inside another protocol's items, for example packets carried inside frames. A **translation sequence** turns each upper-layer item into one or more lower-layer items, and a **layered monitor** turns the lower-layer items back into upper-layer items.
 - **Why it matters:** Scenario sequences survive protocol changes, because only the atomic sequences touch the item fields. Protocol layering lets you send upper-layer traffic through an agent you already have, without writing a new driver, and lets the checks and coverage speak the upper layer's language.
-- **The Analogy:** Letters, mail bags and a sorting office. A writer (the upper sequence) hands a letter to a counter (the upper sequencer). A clerk (the translation sequence) takes it, puts it in a mail bag (a lower-layer frame) and hands the bag to the van driver (the lower-layer driver). At the far end, someone opens the bags and rebuilds the letters (the layered monitor). *Where it breaks:* this clerk tells the writer "delivered" only after the van has delivered the bag, so the writer cannot run ahead of the van; real post offices give no such guarantee. And here one long letter may be cut across several bags (fragmentation), which real mail never does.
+- **The Analogy:** Letters, mail bags and a sorting office: a writer hands a letter to a counter, a clerk puts it in a mail bag for the van driver, and someone at the far end opens the bags and rebuilds the letters. The table maps each role to its UVM piece and shows where the analogy breaks (real post offices give no "delivered" guarantee, and real mail never cuts one letter across several bags).
 
 **The analogy at a glance** (the UVM names are the ones this page builds):
 
@@ -59,7 +59,7 @@ The word appears in job interviews, in the manuals of **verification IP** (VIP: 
 | What is layered | Sequences of the **same** item type | Item types of **different** protocols |
 | Mechanism | A parent sequence starts child sequences: `child.start(m_sequencer, this)` | A translation sequence pulls upper items from an upper sequencer and sends lower items |
 | Sequencers involved | One | Two: an upper sequencer with no driver, and the lower agent's sequencer |
-| Where it lives | A sequence package next to the agent | A layering environment (or layering agent) around the lower agent |
+| Where it lives | A sequence package next to the agent | An environment around the lower agent that builds the upper sequencer, the translation sequence and the layered monitor (a **layering environment** or layering agent, defined below) |
 | On this page | `bus_write_atomic_seq` inside `bus_burst_scenario_seq` | `ip_packet` items carried in `eth_frame` items |
 
 The protocol-layering column gets its picture in "Protocol layering: the translation sequence" below. Here is the sequence-layering column: everything stays on one agent.
@@ -172,9 +172,12 @@ Sources: IEEE 1800.2-2020 §14.2.3.1 for the parent, priority and hooks; uvm-cor
 
 The diagram shows one child from start to finish. Before you read it, predict: when does the scenario's loop move on to `wr1`?
 
+<details>
+<summary>Reveal the answer</summary>
+
 <SequenceDiagram
   title="A scenario sequence runs one atomic child"
-  caption="The scenario's loop is blocked inside wr0.start() until wr0's body() finishes, which is after the driver's item_done(). The next child starts only then."
+  caption="One atomic child, wr0, from start() to the driver's item_done() and back to the scenario."
   participants={[
     { id: "scn", label: "burst", sublabel: "bus_burst_scenario_seq", kind: "sequence" },
     { id: "wr", label: "wr0", sublabel: "bus_write_atomic_seq", kind: "sequence" },
@@ -196,7 +199,9 @@ The diagram shows one child from start to finish. Before you read it, predict: w
   ]}
 />
 
-**What the diagram shows.** `start()` blocks until the child's `body()` has finished, and the child's `finish_item()` blocks until the driver's `item_done()`. So the eight writes go out strictly one after another, in loop order. To see every hook `start()` calls, and what changes when a child is started without `this`, step through the explorer in [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), section "Practitioner depth: hooks and nested sequences".
+**What the diagram shows.** The scenario's loop is blocked inside `wr0.start()` until wr0's `body()` finishes, which is after the driver's `item_done()`; the next child starts only then. `start()` blocks until the child's `body()` has finished, and the child's `finish_item()` blocks until the driver's `item_done()`. So the eight writes go out strictly one after another, in loop order. To see every hook `start()` calls, and what changes when a child is started without `this`, step through the explorer in [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), section "Practitioner depth: hooks and nested sequences".
+
+</details>
 
 ### Traced example: what `local::` changes
 
@@ -268,7 +273,9 @@ You already have an Ethernet agent: `eth_agt`, with its sequencer `eth_agt.sqr` 
   ]}
 />
 
-The heart of the translation sequence is a loop that behaves like a driver on one side and like a sequence on the other:
+The heart of the translation sequence is a loop that behaves like a driver on one side and like a sequence on the other.
+
+**Predict before you read the reveal.** Read the loop below. The test's IP sequence calls `finish_item(req)` for a packet at time 0, the Ethernet driver is already waiting in `get_next_item()`, and it takes 10 ns per frame. When does that `finish_item()` return: at once, when the frame starts on the wire, or when the frame has been driven?
 
 ```systemverilog
 // snippet: the body() of ip_to_eth_seq (the complete class is in Make It Work)
@@ -279,16 +286,17 @@ forever begin
   frm.ethertype = 16'h0800;
   frm.more      = 0;                 // one frame per packet in this version
   frm.payload   = pkt.to_bytes();
-  finish_item(frm);                  // returns after eth_agt.drv calls item_done()
-  ip_sqr.item_done();                // only now does the IP finish_item() return
+  finish_item(frm);                  // waits for the Ethernet handshake
+  ip_sqr.item_done();                // completes the IP handshake
 end
 ```
 
-**Predict before you read the diagram.** The test's IP sequence calls `finish_item(req)` for a packet at time 0, and the Ethernet driver takes 10 ns per frame. When does that `finish_item()` return: at once, when the frame starts on the wire, or when the frame has been driven?
+<details>
+<summary>Reveal the answer</summary>
 
 <SequenceDiagram
   title="One IP packet through the layers"
-  caption="The Ethernet driver is already waiting in get_next_item. The IP sequence's finish_item(req) returns only after the frame has been driven, because the translation sequence calls ip_sqr.item_done() after its own finish_item(frm) returns."
+  caption="Trace one IP packet from finish_item(req) to the wire and back. The Ethernet driver is already waiting in get_next_item."
   participants={[
     { id: "seq", label: "seq", sublabel: "ip_burst_seq", kind: "sequence" },
     { id: "ip_sqr", label: "env.ip_sqr", kind: "sequencer" },
@@ -316,9 +324,11 @@ end
 />
 
 **What the diagram shows.**
-- The IP sequence's `finish_item()` returns at 10 ns, when the frame has been driven. Because the translation sequence calls `ip_sqr.item_done()` *after* its own `finish_item(frm)`, the upper layer keeps the meaning it has on any agent: "the driver has finished with my item". (IEEE 1800.2-2020 §14.2.6.3 notes that `finish_item()` returning means the driver signalled completion, not necessarily that all its processing is done; here the loopback driver signals after driving.)
+- The IP sequence's `finish_item()` returns at 10 ns, when the frame has been driven: `finish_item(frm)` returns after `eth_agt.drv` calls `item_done()`, and only then does `ip_sqr.item_done()` let the IP `finish_item()` return. Because the translation sequence calls `ip_sqr.item_done()` *after* its own `finish_item(frm)`, the upper layer keeps the meaning it has on any agent: "the driver has finished with my item". (IEEE 1800.2-2020 §14.2.6.3 notes that `finish_item()` returning means the driver signalled completion, not necessarily that all its processing is done; here the loopback driver signals after driving.)
 - The upper sequencer's grant still comes from a "driver" asking, exactly as in the handshake you know. The only difference is that the asker is a sequence.
 - The frames are ordinary Ethernet items. If other Ethernet sequences run on `eth_agt.sqr` at the same time, the translation sequence's frames are arbitrated against theirs ([Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+
+</details>
 
 **Pitfalls of the translation sequence.**
 - **Calling `ip_sqr.item_done()` too early**, for example right after `get_next_item()`. The IP sequence's `finish_item()` then returns before the frame is driven, so the upper layer runs ahead of the wire, and a test that drops its objection when the IP sequence ends can end before the last frame is sent. Make It Work shows the log.
@@ -353,7 +363,7 @@ The first pitfall, drawn for the three packets of the Make It Work test (the tes
   markers={[
     { edge: 0, tone: "fail", label: "0 ns: packet 0 delivered before any frame", short: "p0" },
     { edge: 1, tone: "fail", label: "10 ns: packet 1 delivered; f1 has only started", short: "p1" },
-    { edge: 2, tone: "fail", label: "20 ns: packet 2 delivered; the test drops its objection and the run phase ends before f2 is driven", short: "p2" }
+    { edge: 2, tone: "fail", label: "20 ns: packet 2 delivered; the test drops its objection and the run phase ends before f2 finishes", short: "p2" }
   ]}
 />
 
@@ -392,7 +402,7 @@ The translation sequence's `body()` is a `forever` loop, so it never ends by its
 
 Checks and coverage must use what was actually sent, not what a sequence intended: a sequence knows what it *tried*, which can differ from what happened (a dropped, reordered or corrupted frame). So the upper layer gets its own monitor, fed by the lower layer.
 
-`ip_mon` is a subscriber of Ethernet frames. For every frame with `ethertype == 16'h0800` it appends the payload bytes to a buffer; when a frame with `more == 0` arrives, it builds a **new** `ip_packet` object from the buffer and writes it to its own analysis port `ap`. The IP scoreboard and IP coverage subscribe to `ip_mon.ap`, while Ethernet-level checks and coverage stay on the Ethernet monitor. In a pin-level agent, the Ethernet frames come from the Ethernet monitor; in the Make It Work example, which has no pins, the loopback driver publishes each frame it finishes on `wire_ap` instead.
+`ip_mon` is a subscriber of Ethernet frames. For every frame with `ethertype == 16'h0800` it appends the payload bytes to a buffer; when a frame with `more == 0` arrives, it builds an `ip_packet` object from the buffer and writes it to its own analysis port `ap`. The IP scoreboard and IP coverage subscribe to `ip_mon.ap`, while Ethernet-level checks and coverage stay on the Ethernet monitor. In a pin-level agent, the Ethernet frames come from the Ethernet monitor; in the Make It Work example, which has no pins, the loopback driver publishes each frame it finishes on `wire_ap` instead.
 
 Each layer's checks look at that layer's rules:
 
@@ -401,7 +411,7 @@ Each layer's checks look at that layer's rules:
 | **Lower layer** (Ethernet) | Frame format, `ethertype`, payload length | Frame-level (see "Checking and coverage per layer" in Push Further) | The Ethernet monitor (in Make It Work, the loopback driver's `wire_ap`) |
 | **Upper layer** (IP) | Every packet arrives once, in order, with the right contents | Packet-level coverage (sizes, ids, sequences of packet types) | `ip_mon.ap` |
 
-**Find the bug yourself.** Why does `ip_mon` build a new object for every packet? The challenge below shows the smallest form of the bug a layered monitor can have: a monitor that stores each sample as an expected item, and a scoreboard that then reports mismatches. Select the guilty line, then choose a fix, before you read the explanation after it.
+**Find the bug yourself.** The challenge below is the smallest form of a bug a layered monitor can have: a monitor stores each sample as an expected item, and the scoreboard then reports mismatches. Select the guilty line, then choose a fix, before you read the explanation after it.
 
 <ObjectHandleVisualizer mode="bug" />
 
@@ -830,16 +840,16 @@ Make one change at a time, predict the log, then run it (or reason it through wi
 
 Every drill starts from the Make It Work file: three IP packets, 10 ns per frame, and a test that raises its objection before `seq.start(env.ip_sqr)` and drops it when the IP sequence ends. Write your prediction down, then open the log.
 
-**Drill 1. Delete `xlate.start(eth_agt.sqr);` from `layer_env::run_phase`.** Predict: does any `DRV` line appear, where does the IP sequence wait, and how does the run end?
+**Drill 1. Delete `xlate.start(eth_agt.sqr);` from `layer_env::run_phase`.** Recall check (the debugging table above has the symptom): does any `DRV` line appear, where does the IP sequence wait, and how does the run end?
 
 <details>
 <summary>Reveal the log (drill 1)</summary>
 
-No `DRV` line ever appears. The IP sequence waits in `start_item(req0)` because nothing asks `ip_sqr` for an item, the objection is never dropped, and the run ends with `UVM_FATAL … [PH_TIMEOUT] Default timeout of … hit, indicating a probable testbench issue` when the default run-phase timeout of 9200 s expires (the message prints that time in your simulator's time format). (Shorten the wait with `uvm_root::get().set_timeout(1us)` in the test's `build_phase`; timeouts are taught in [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index).)
+No `DRV` line ever appears. The IP sequence waits in `start_item(req0)` because nothing asks `ip_sqr` for an item, the objection is never dropped, and the run ends with `UVM_FATAL … [PH_TIMEOUT] Default timeout of … hit, indicating a probable testbench issue` when the default run-phase timeout expires (9200 s in uvm-core 2020.3.1, `` `UVM_DEFAULT_TIMEOUT ``; IEEE 1800.2-2020 F.7.3.3 leaves the default to the implementation) (the message prints that time in your simulator's time format). (Shorten the wait with `uvm_root::get().set_timeout(1us)` in the test's `build_phase`; timeouts are taught in [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index).)
 
 </details>
 
-**Drill 2. Move `ip_sqr.item_done();` to just after `ip_sqr.get_next_item(pkt);`.** Recall check: the second timing diagram in "Protocol layering: the translation sequence" drew this run. Without scrolling back, recall: at what times do the three `packet … delivered` lines appear, how many frames are driven before the run ends, and what does `check_phase` report? (Answer before you compare with the second timing diagram in "Protocol layering: the translation sequence".) Then a new question it does not answer: with the same early `item_done()` and `n_pkts = 4` in `ip_burst_seq` (so the test sets `n_expected` to 4), when does the objection drop, and what does `check_phase` report?
+**Drill 2. Move `ip_sqr.item_done();` to just after `ip_sqr.get_next_item(pkt);`.** Recall check: the second timing diagram in "Protocol layering: the translation sequence" drew this run. Without scrolling back, recall: at what times do the three `packet … delivered` lines appear, how many frames are driven before the run ends, and what does `check_phase` report? Then a new question it does not answer: with the same early `item_done()` and `n_pkts = 4` in `ip_burst_seq` (so the test sets `n_expected` to 4), when does the objection drop, and what does `check_phase` report?
 
 <details>
 <summary>Reveal the log (drill 2)</summary>
@@ -850,7 +860,7 @@ With four packets, they are "delivered" at 0, 10, 20 and 30 ns, the objection dr
 
 </details>
 
-**Drill 3. Delete `eth_agt.drv.wire_ap.connect(ip_mon.analysis_export);`.** Predict: how many frames are driven, how many packets are "delivered", which `IP_SB` lines appear, and does anything report the missing connection?
+**Drill 3. Delete `eth_agt.drv.wire_ap.connect(ip_mon.analysis_export);`.** Recall check (the debugging table above has the symptom): how many frames are driven, how many packets are "delivered", which `IP_SB` lines appear, what exact numbers does `check_phase` report, and does anything report the missing connection?
 
 <details>
 <summary>Reveal the log (drill 3)</summary>
@@ -967,7 +977,10 @@ A real link often carries more than one upper protocol, for example IP packets a
   ]}
   ports={[
     { id: "eth_sqr.export", node: "eth_sqr", side: "bottom", kind: "export" },
-    { id: "eth_drv.port", node: "eth_drv", side: "top", kind: "port" }
+    { id: "eth_drv.port", node: "eth_drv", side: "top", kind: "port" },
+    { id: "eth_drv.wire_ap", node: "eth_drv", side: "bottom", kind: "analysis_port" },
+    { id: "ip_mon.imp", node: "ip_mon", side: "right", kind: "analysis_imp" },
+    { id: "ctrl_mon.imp", node: "ctrl_mon", side: "left", kind: "analysis_imp" }
   ]}
   edges={[
     { from: "ip_x", to: "ip_sqr", style: "control", label: "pulls" },
@@ -975,8 +988,8 @@ A real link often carries more than one upper protocol, for example IP packets a
     { from: "ip_x", to: "eth_sqr", style: "causal" },
     { from: "ctrl_x", to: "eth_sqr", style: "causal" },
     { from: "eth_drv.port", to: "eth_sqr.export", style: "data", label: "frames" },
-    { from: "eth_drv", to: "ip_mon", style: "data" },
-    { from: "eth_drv", to: "ctrl_mon", style: "data" }
+    { from: "eth_drv.wire_ap", to: "ip_mon.imp", style: "data" },
+    { from: "eth_drv.wire_ap", to: "ctrl_mon.imp", style: "data" }
   ]}
 />
 
@@ -1004,8 +1017,8 @@ Answer each question before you look at the feedback.
   question="You must verify an IP stack that runs over an Ethernet VIP you are not allowed to modify. How do you generate IP traffic, and where do the IP checks and coverage live?"
   options={[
     { text: "Write a new IP driver that drives the Ethernet pins directly.", correct: false, feedback: "That duplicates the VIP's driver, and the two drivers would fight over the same pins." },
-    { text: "Add a driverless IP sequencer and a translation sequence on the VIP's sequencer; rebuild packets in an IP monitor fed by the VIP's monitor, and attach the IP scoreboard and coverage to it.", correct: true, feedback: "Right. Nothing in the VIP changes: the translation sequence is just another sequence on its sequencer, and the IP monitor is just another subscriber of its analysis port." },
     { text: "Write IP scenario sequences built from the VIP's Ethernet atomic sequences.", correct: false, feedback: "That is sequence layering of Ethernet items. Tests would still think in frames, and nothing rebuilds IP packets for checking." },
+    { text: "Add a driverless IP sequencer and a translation sequence on the VIP's sequencer; rebuild packets in an IP monitor fed by the VIP's monitor, and attach the IP scoreboard and coverage to it.", correct: true, feedback: "Right. Nothing in the VIP changes: the translation sequence is just another sequence on its sequencer, and the IP monitor is just another subscriber of its analysis port." },
     { text: "Sample IP coverage in the IP sequences, because they know which packets they sent.", correct: false, feedback: "Sequences know what they tried, not what reached the wire. Coverage belongs on monitored traffic." }
   ]}
 />
@@ -1014,10 +1027,10 @@ Answer each question before you look at the feedback.
   title="Interview angle: item_done in a fragmenting layer"
   question="Your translation sequence splits each packet into several frames. When should it call item_done() on the upper sequencer, and what does the choice change?"
   options={[
+    { text: "After the last frame's finish_item() returns, so the upper finish_item() still means the whole packet was sent.", correct: true, feedback: "Right. The upper layer keeps its handshake meaning, and end of test based on the upper sequence stays safe." },
     { text: "Right after get_next_item(), so the upper sequence can prepare the next packet early.", correct: false, feedback: "Then the upper finish_item() returns before any frame is sent: the upper layer runs ahead of the wire and the test can end with frames unsent." },
     { text: "After the first frame, because the packet has started.", correct: false, feedback: "A started packet is not a delivered packet. The upper sequence would still run ahead by the remaining fragments." },
-    { text: "After the last frame's finish_item() returns, so the upper finish_item() still means the whole packet was sent.", correct: true, feedback: "Right. The upper layer keeps its handshake meaning, and end of test based on the upper sequence stays safe." },
-    { text: "It does not matter, because the lower sequencer orders the frames anyway.", correct: false, feedback: "The order of frames is not the question; the question is when the upper sequence is told its packet is done." }
+    { text: "It does not matter, because the lower sequencer orders the frames anyway and the upper sequence always waits for the wire.", correct: false, feedback: "The order of frames is not the question; the question is when the upper sequence is told its packet is done." }
   ]}
 />
 
@@ -1025,8 +1038,8 @@ Answer each question before you look at the feedback.
   title="Interview angle: reset in a layered stack"
   question="A reset arrives in the middle of a test while a packet is being translated. What must you do before restarting the layer?"
   options={[
-    { text: "Kill only the translation sequence and start a new one.", correct: false, feedback: "The upper sequencer still has the old packet outstanding: the new translation sequence logs 'Get_next_item called twice…' and resends the old packet." },
-    { text: "Call stop_sequences() on the upper sequencer and on the lower sequencer, then restart the translation sequence.", correct: true, feedback: "Right. stop_sequences() kills the registered sequences, clears the outstanding-item flags and flushes the request FIFO on each sequencer (§15.3.2.14)." },
+    { text: "Kill only the translation sequence and start a new one, because the upper sequencer keeps no state of its own between items.", correct: false, feedback: "The upper sequencer still has the old packet outstanding: the new translation sequence logs 'Get_next_item called twice…' and resends the old packet." },
+    { text: "Call stop_sequences() on the upper sequencer and on the lower sequencer, then restart the translation sequence.", correct: true, feedback: "Right. stop_sequences() kills the registered sequences and removes their queued requests, locks and responses (§15.3.2.14); in uvm-core 2020.3.1 it also clears the outstanding-item flags and flushes the request FIFO." },
     { text: "Nothing: sequencers reset themselves when the DUT reset is asserted.", correct: false, feedback: "Sequencers do not watch the DUT's reset. The testbench must reset its own stimulus state." },
     { text: "Call item_done() twice on the upper sequencer to clear it.", correct: false, feedback: "The second item_done() has no outstanding request and stops the test with SQRBADITMDN." }
   ]}
@@ -1042,9 +1055,9 @@ Answer each question before you look at the feedback.
     objective: 2,
     answers: [
       { text: "8'h40, because the right-hand addr means the sequence's field.", correct: false, feedback: "Unqualified names in an inline constraint are looked up in the randomized object first. Both names find the item's addr." },
-      { text: "Any legal (aligned) address: both names mean the item's own addr, so the constraint is always true.", correct: true, feedback: "Right. Write addr == local::addr to mean the sequence's field (IEEE 1800-2023 §18.7.1)." },
-      { text: "Randomization fails, because the constraint conflicts with itself.", correct: false, feedback: "x == x is always true, so it can never conflict. That is exactly why the bug is silent." },
-      { text: "A compile error, because the name addr is ambiguous.", correct: false, feedback: "The language defines the search order (object first, then the caller's scope), so there is no ambiguity and no error." }
+      { text: "Randomization fails, because the constraint compares addr with itself, which the solver treats as a conflict.", correct: false, feedback: "x == x is always true, so it can never conflict. That is exactly why the bug is silent." },
+      { text: "A compile error, because the name addr is ambiguous.", correct: false, feedback: "The language defines the search order (object first, then the caller's scope), so there is no ambiguity and no error." },
+      { text: "Any legal (aligned) address: both names mean the item's own addr, so the constraint is always true.", correct: true, feedback: "Right. Write addr == local::addr to mean the sequence's field (IEEE 1800-2023 §18.7.1)." }
     ],
     explanation: "Name resolution in randomize() with starts in the randomized object. The sequence's field is ignored unless it is written local::addr (or local::this.addr)."
   },
@@ -1053,9 +1066,9 @@ Answer each question before you look at the feedback.
     objective: 2,
     answers: [
       { text: "The child runs normally, because it runs on the same sequencer as the locked parent.", correct: false, feedback: "Running on the same sequencer is not enough. Only the lock holder and its children are exempt from the lock." },
-      { text: "The child is a root sequence, so the lock blocks it; the parent waits in wr.start() forever: a deadlock.", correct: true, feedback: "Right. Without a parent argument the child is not a child of the lock holder, so it cannot be granted while the lock is held." },
-      { text: "UVM reports an error because a locked sequencer cannot start new sequences.", correct: false, feedback: "Nothing reports it. The child simply never gets a grant, which is why this hang is hard to spot." },
-      { text: "The lock is released automatically when the child starts.", correct: false, feedback: "A lock lasts until unlock() or until the locking sequence ends." }
+      { text: "UVM reports an error because a locked sequencer cannot start new sequences until the lock holder calls unlock().", correct: false, feedback: "Nothing reports it. The child simply never gets a grant, which is why this hang is hard to spot." },
+      { text: "The lock is released automatically when the child starts.", correct: false, feedback: "A lock lasts until unlock(). If the locking sequence ends still holding it, uvm-core 2020.3.1 removes the lock and reports UVM_ERROR [SEQFINERR]." },
+      { text: "The child is a root sequence, so the lock blocks it; the parent waits in wr.start() forever: a deadlock.", correct: true, feedback: "Right. Without a parent argument the child is not a child of the lock holder, so it cannot be granted while the lock is held." }
     ],
     explanation: "Passing this makes the child part of the lock holder's family (uvm-core is_blocked() exempts children). A child started without a parent is blocked like any other sequence."
   },
@@ -1063,10 +1076,10 @@ Answer each question before you look at the feedback.
     question: "In protocol layering, what plays the role of the upper layer's driver?",
     objective: 3,
     answers: [
-      { text: "A new driver class connected to the upper sequencer.", correct: false, feedback: "Protocol layering needs no new driver; the lower agent's driver drives everything." },
       { text: "A translation sequence on the lower agent's sequencer that calls get_next_item() and item_done() on the upper sequencer.", correct: true, feedback: "Right. It pulls like a driver on the upper side and sends like a sequence on the lower side." },
+      { text: "A new driver class connected to the upper sequencer.", correct: false, feedback: "Protocol layering needs no new driver; the lower agent's driver drives everything." },
       { text: "The lower agent's monitor.", correct: false, feedback: "Monitors only observe. The layered monitor goes the other way, from lower items to upper items." },
-      { text: "The upper sequencer itself, which forwards its items to the lower sequencer through a TLM port.", correct: false, feedback: "A sequencer never forwards items to another sequencer. It only grants items to whatever pulls from it." }
+      { text: "The upper sequencer itself, which forwards each granted item to the lower sequencer through a TLM port connected in the layering environment's connect_phase.", correct: false, feedback: "A sequencer never forwards items to another sequencer. It only grants items to whatever pulls from it." }
     ],
     explanation: "The upper sequencer has no driver. The translation sequence pulls from it (get_next_item, item_done) and sends lower items with start_item and finish_item."
   },
@@ -1074,8 +1087,8 @@ Answer each question before you look at the feedback.
     question: "The translation sequence calls ip_sqr.item_done() right after ip_sqr.get_next_item(pkt), before building and sending the frame. Each frame takes 10 ns. When does the IP sequence's finish_item() for the first packet return?",
     objective: 3,
     answers: [
+      { text: "At 10 ns, because finish_item() always waits for the wire, whatever the translation sequence does.", correct: false, feedback: "finish_item() waits for item_done() on its own sequencer, not for any wire. The translation sequence decides when that is." },
       { text: "At 0 ns, before the frame is driven: the IP sequence runs ahead of the wire.", correct: true, feedback: "Right. finish_item() returns when item_done() is called on the sequencer it ran on, and here that happens before the frame is even started." },
-      { text: "At 10 ns, because finish_item() always waits for the wire.", correct: false, feedback: "finish_item() waits for item_done() on its own sequencer, not for any wire. The translation sequence decides when that is." },
       { text: "Never: an item_done() before the frame is sent is a hang.", correct: false, feedback: "Nothing waits for anything that never comes; the IP sequence simply finishes early." },
       { text: "UVM reports an error for an early item_done().", correct: false, feedback: "item_done() after get_next_item() is the normal pairing. UVM cannot know that the frame has not been sent yet." }
     ],
@@ -1085,9 +1098,9 @@ Answer each question before you look at the feedback.
     question: "A test starts ip_burst_seq on env.ip_sqr inside an objection. No frame ever appears, the IP sequence is stuck in start_item(), and the run ends with UVM_FATAL [PH_TIMEOUT]. What is the most likely cause?",
     objective: 5,
     answers: [
-      { text: "A sequencer without a driver is illegal, and UVM silently disables it.", correct: false, feedback: "A driverless upper sequencer is the normal protocol-layering pattern, and uvm-core reports nothing about it." },
-      { text: "Nobody started the translation sequence, so nothing calls get_next_item() on ip_sqr and its arbitration never grants.", correct: true, feedback: "Right. A grant needs someone pulling. Start xlate in the layering environment's run_phase." },
+      { text: "A sequencer without a driver is illegal, and UVM silently disables it at the end of elaboration, so none of its sequences is ever granted.", correct: false, feedback: "A driverless upper sequencer is the normal protocol-layering pattern, and uvm-core reports nothing about it." },
       { text: "The Ethernet sequencer is in the wrong arbitration mode.", correct: false, feedback: "Arbitration only decides between waiting requests. Here the Ethernet sequencer never receives one." },
+      { text: "Nobody started the translation sequence, so nothing calls get_next_item() on ip_sqr and its arbitration never grants.", correct: true, feedback: "Right. A grant needs someone pulling. Start xlate in the layering environment's run_phase." },
       { text: "The objection keeps the translation sequence from starting.", correct: false, feedback: "Objections only decide when the phase may end. They never block a sequence." }
     ],
     explanation: "start_item() waits for a grant, and a sequencer grants only when its driver side asks. In a protocol layer the asker is the translation sequence."
@@ -1096,9 +1109,9 @@ Answer each question before you look at the feedback.
     question: "Where should coverage of IP packet sizes live in a layered testbench?",
     objective: 4,
     answers: [
-      { text: "In the IP sequence, because it chooses the sizes.", correct: false, feedback: "A sequence knows what it tried. A dropped or corrupted frame would still be counted as covered." },
-      { text: "In the translation sequence, because it sees every packet.", correct: false, feedback: "It sees packets before they are sent, so it has the same problem as the IP sequence, and it mixes stimulus with checking." },
       { text: "In a subscriber of the layered IP monitor, which rebuilds packets from the frames actually sent.", correct: true, feedback: "Right. Coverage and checks belong on monitored traffic, at the layer whose rules they describe." },
+      { text: "In the IP sequence, because it chooses the sizes.", correct: false, feedback: "A sequence knows what it tried. A dropped or corrupted frame would still be counted as covered." },
+      { text: "In the translation sequence, because it sees every packet the test sends and every frame it builds from them.", correct: false, feedback: "It sees packets before they are sent, so it has the same problem as the IP sequence, and it mixes stimulus with checking." },
       { text: "In the Ethernet driver, because it sends every byte.", correct: false, feedback: "Drivers drive; they do not check or cover. The Ethernet layer's own coverage belongs on the Ethernet monitor." }
     ],
     explanation: "Each layer gets a monitor. Upper-layer checks and coverage subscribe to the layered monitor; lower-layer ones to the lower monitor."
@@ -1108,9 +1121,9 @@ Answer each question before you look at the feedback.
     objective: 1,
     answers: [
       { text: "A scenario sequence built from Ethernet atomic sequences.", correct: false, feedback: "That is sequence layering: the stimulus would still be Ethernet frames, with no IP packets for tests or checks." },
-      { text: "Protocol layering: a driverless IP sequencer and a translation sequence on the agent's sequencer.", correct: true, feedback: "Right. A different protocol riding on the one the agent drives is the protocol-layering case." },
       { text: "A second driver on the same interface that sends IP packets.", correct: false, feedback: "Two drivers on one interface fight over the pins, and you may not change the agent anyway." },
-      { text: "A virtual sequence on its own, with no other change.", correct: false, feedback: "A virtual sequence coordinates sequences on several sequencers. Something still has to turn packets into frames." }
+      { text: "A virtual sequence on its own, with no other change, starting IP sequences directly on the Ethernet agent's sequencer.", correct: false, feedback: "A virtual sequence coordinates sequences on several sequencers. Something still has to turn packets into frames." },
+      { text: "Protocol layering: a driverless IP sequencer and a translation sequence on the agent's sequencer.", correct: true, feedback: "Right. A different protocol riding on the one the agent drives is the protocol-layering case." }
     ],
     explanation: "Same protocol, higher abstraction: sequence layering. Different protocol on top of the agent's protocol: protocol layering."
   },
@@ -1118,8 +1131,8 @@ Answer each question before you look at the feedback.
     question: "The layering environment kills the translation sequence and starts a new one after a mid-test reset, without touching ip_sqr. The new sequence logs 'Get_next_item called twice without item_done or get in between'. Why?",
     objective: 5,
     answers: [
-      { text: "The new translation sequence was started on the wrong sequencer.", correct: false, feedback: "The message comes from ip_sqr's get_next_item(), so the new sequence is talking to the right upper sequencer." },
-      { text: "The old sequence was killed between get_next_item() and item_done(), so ip_sqr still has an item outstanding.", correct: true, feedback: "Right. Call ip_sqr.stop_sequences() (and stop the lower sequencer) before restarting: it clears the flags and flushes the request FIFO." },
+      { text: "The new translation sequence was started on the wrong sequencer, so its get_next_item() reaches a sequencer whose handshake is already open.", correct: false, feedback: "The message comes from ip_sqr's get_next_item(), so the new sequence is talking to the right upper sequencer." },
+      { text: "The old sequence was killed between get_next_item() and item_done(), so ip_sqr still has an item outstanding.", correct: true, feedback: "Right. Call ip_sqr.stop_sequences() (and stop the lower sequencer) before restarting: in uvm-core 2020.3.1 it clears the flags and flushes the request FIFO." },
       { text: "Two translation sequences are running at the same time.", correct: false, feedback: "Possible in theory, but the log matches the simpler story: one handshake was left open by the kill." },
       { text: "The ip_packet type is not registered with the factory.", correct: false, feedback: "A factory problem fails at create(), long before any get_next_item()." }
     ],

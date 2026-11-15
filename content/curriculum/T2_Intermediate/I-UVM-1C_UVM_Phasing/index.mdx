@@ -84,7 +84,7 @@ What the directions mean:
 
 - **Top-down** means a parent before its children (§9.7). `build_phase` must work this way: the parent's `build_phase` is what creates the children, so they cannot be visited first.
 - **Bottom-up** means every child (and its whole subtree) before its parent (§9.5). By the time a parent runs `connect_phase`, everything below it is connected.
-- The standard requires only children before parents for bottom-up phases (§9.5) and parents before children for top-down ones (§9.7). **In uvm-core 2020.3.1 both are depth-first walks**, not level-by-level sweeps: it finishes one branch of the tree before it starts the next (`uvm_bottomup_phase.svh`, `uvm_topdown_phase.svh`).
+- §9.5 describes bottom-up phases informally ("first on components without any children; once finished, … on each of the first sets' parents"), and §9.7 says only "top-down"; the portable invariant is children before parents (bottom-up) and parents before children (top-down). **In uvm-core 2020.3.1 both are depth-first walks**, not level-by-level sweeps: it finishes one branch of the tree before it starts the next (`uvm_bottomup_phase.svh`, `uvm_topdown_phase.svh`).
 - **Siblings** (children of the same parent) are visited in instance-name order in uvm-core 2020.3.1, because it stores children in an array indexed by name. The standard does not promise this, so never write code that depends on sibling order.
 
 Here is a traced example for one tree. The env's `build_phase` creates `scb` first and `agt` second, but name order decides the visit order:
@@ -124,11 +124,11 @@ final_phase   (top-down):  uvm_test_top, env, agt, drv, mon, scb
   ]}
 />
 
-The visualizer below uses a slightly bigger tree, with a sequencer `sqr` in the agent as well. Before you open it, **predict**: in `connect_phase`, which component is called first, and which is called last? Then click `connect` in the phase map, pick your answer in the "Who is called first?" experiment, and step through the calls.
+The visualizer below uses a slightly bigger tree, with a sequencer `sqr` in the agent as well. Before you open it, **predict**: in `connect_phase`, where does the new `sqr` fall, and which component is called first and last? Then click `connect` in the phase map, pick your answer in the "Who is called first?" experiment, and step through the calls.
 
 <UvmPhaseTimelineVisualizer />
 
-**What the experiment showed.** `connect_phase` starts at the deepest leaf of the first branch (`drv`) and ends at `uvm_test_top`, the root you wrote. Only `build` and `final` are top-down; every other function phase is bottom-up. `run_phase` is different again: UVM starts it on every component in the same time slot, each in its own thread, so its order on the map does not matter. When you are ready, sort all the phases yourself in the [UVM phase sorter](/exercises/uvm-phase-sorter).
+**What the experiment showed.** `connect_phase` starts at the deepest leaf of the first branch (`drv`) and ends at `uvm_test_top`, the root you wrote. The full order is `drv`, `mon`, `sqr`, `agt`, `scb`, `env`, `uvm_test_top`: `sqr` joins its siblings in name order, before their parent `agt`. Only `build` and `final` are top-down; every other function phase is bottom-up. `run_phase` is different again: UVM starts it on every component in the same time slot, each in its own thread, so its order on the map does not matter. When you are ready, sort all the phases yourself in the [UVM phase sorter](/exercises/uvm-phase-sorter).
 
 **Pitfall: connecting in `build_phase`.** A parent's `build_phase` runs before its children's `build_phase`, so a port or handle that a child creates in its own `build_phase` does not exist yet. Calling `connect()` on it from the parent's `build_phase` dereferences a null handle. In `connect_phase` every `build_phase` in the tree has finished, so both ends exist. The bottom-up direction is not what makes it safe; finishing the build is.
 
@@ -169,16 +169,21 @@ pre_reset → reset → post_reset → pre_configure → configure → post_conf
   ]}
 />
 
-`run_phase` "runs in parallel to the run-time phases" (§9.8.1.5). Both start after `start_of_simulation_phase`, and `extract_phase` starts only after both have ended. A **domain** is a named group of phases that advance together. The common phases belong to the **common** domain, the twelve run-time phases to the **uvm** domain, and every component is in both by default (§13.1.4.4.1). So all components step through `reset`, then `configure`, then `main` together: `configure_phase` starts for everyone when the last component's `reset_phase` work is done.
+`run_phase` "runs in parallel to the run-time phases" (§9.8.1.5). Both start after `start_of_simulation_phase`, and `extract_phase` starts only after both have ended. A **domain** is a named group of phases that advance together. The common phases belong to the **common** domain, the twelve run-time phases to the **uvm** domain, and every component's default domain is the uvm domain (§13.1.4.4.1), whose schedule runs inside the common domain beside `run_phase`, so every component steps through both. So all components step through `reset`, then `configure`, then `main` together: `configure_phase` starts for everyone when the last component's `reset_phase` work is done.
 
 The rule that surprises people: **`run_phase` cannot end before the schedule ends.** `run_phase` and `post_shutdown_phase` share a successor (`extract_phase`), which makes them **sibling phases**. Phase advancement "is delayed until all predecessors of the common successor are ready to proceed" (§9.6). So `run_phase` stays open, even with no objection of its own, until `post_shutdown_phase` is done. In the other direction, `post_shutdown_phase` cannot end while `run_phase` still has an objection.
 
 Open the visualizer above again and switch the experiment to **run_phase ∥ uvm schedule**. **Predict** the answer to "Runtime phases only" (nobody objects in `run_phase`; the schedule has work until 470 ns) before you check it, then try "Objection only in run_phase".
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your predictions</summary>
+
 **What the experiment showed.**
 - "Runtime phases only": `run_phase` ends with `post_shutdown`, at 470 ns, although nothing objected in it. A driver looping in `run_phase` therefore keeps running through every run-time phase.
 - "Objection only in run_phase": `main_phase` ends at once, because an objection keeps alive only the phase it was raised in. Code started in `main_phase` without an objection there is killed at once.
 - The timeline draws the `post_shutdown` bar ending at its own idle time. In uvm-core it stays open until `run_phase`'s objections have dropped too (§9.6), so read only the `main_phase` answer from that drawing.
+
+</details>
 
 **Two ways to organize the run.** Pick one place for objections per environment:
 
@@ -210,7 +215,7 @@ phase.drop_objection(this, "requests sent");
 
 1. UVM calls the phase task on every component, each in its own thread.
 2. It waits for the NBA region of that first time slot, so that any `raise_objection` executed before the first statement that consumes time is seen.
-3. If an objection has been raised, it waits until every objection has dropped and every drain time has passed (next section). If none has, it stops waiting for a first raise. With `+UVM_PHASE_TRACE` the log says "No objections raised, skipping phase".
+3. If an objection has been raised, it waits until every objection has dropped and every drain time (an optional fixed delay after a total reaches zero, next section) has passed. If none has, it stops waiting for a first raise. With `+UVM_PHASE_TRACE` the log says "No objections raised, skipping phase".
 4. It waits until its sibling phases also have no outstanding objections.
 5. It calls `phase_ready_to_end(phase)` on every component. If a component raises an objection there, UVM goes back to step 3 and later asks again.
 6. The phase ends. Threads still running in it "are forcibly and immediately killed" (§9.6), including everything they forked.
@@ -250,44 +255,6 @@ Two consequences decide most end-of-test bugs:
 
 - **Raise before anything consumes time.** If `run_phase` has no objection at the step-2 check and the schedule is idle, step 4 passes at once and the phase ends in the same time slot. A `raise_objection` placed after `#10ns` never executes: the thread is killed first. The test "passes" at 0 ns having checked nothing.
 - **Returning from the task does not end the phase.** If the test's `run_phase` returns at 100 ns but the scoreboard still objects until 300 ns, the phase ends at 300 ns. The opposite also holds: a task still running does not hold a phase open. Only objections do.
-
-**Traced example: counts and totals.** This is the run of the Make It Work test below. The test raises at 0 ns and drops at 40 ns with a 10 ns drain time set on `uvm_test_top`. The scoreboard, `env.scb`, re-raises from `phase_ready_to_end` because two responses are still in flight, and drops at 65 ns. Each cell shows count/total for the `run_objection`; a dash means the component holds nothing.
-
-| Time | What happens | `env.scb` | `env` | `uvm_test_top` | `uvm_top` |
-|---|---|---|---|---|---|
-| 0 ns | The test raises 1 | – | – | 1/1 | 0/1 |
-| 40 ns | The test drops; `uvm_test_top`'s total is 0, so its 10 ns drain starts | – | – | 0/0 | 0/1 |
-| 50 ns | The drain ends; the drop reaches `uvm_top`, whose total is 0 | – | – | 0/0 | 0/0 |
-| 50 ns | `phase_ready_to_end`: the scoreboard raises 1 | 1/1 | 0/1 | 0/1 | 0/1 |
-| 65 ns | The scoreboard drops; `uvm_test_top`'s drain starts again | 0/0 | 0/0 | 0/0 | 0/1 |
-| 75 ns | The drain ends; `uvm_top` is 0; `phase_ready_to_end` raises nothing; `run_phase` ends | 0/0 | 0/0 | 0/0 | 0/0 |
-
-<TimingDiagram
-  title="The Make It Work run, 0 to 75 ns"
-  caption="The x-axis is simulation time in 5 ns steps: column k is t = 5k ns (column 8 is 40 ns, column 15 is 75 ns), and each value is the one after everything at that time has happened; a change is drawn just before the column where it has happened. test obj and scb obj are the objections raised by uvm_test_top and env.scb; top total is uvm_top's total; pending is the scoreboard's pending count. The shaded spans are the two 10 ns drains (40 to 50 ns and 65 to 75 ns). r0 to r3 mark the four responses at 35, 45, 55 and 65 ns, P the phase_ready_to_end round at 50 ns, where two responses are pending and the scoreboard raises, and end the round at 75 ns, where nothing is pending and run_phase ends."
-  edges={16}
-  cycleWidth={14}
-  signals={[
-    { name: "test obj", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
-    { name: "scb obj", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0] },
-    { name: "top total", kind: "bus", values: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
-    { name: "pending", kind: "bus", values: [1, 1, 2, 2, 3, 3, 4, 3, 3, 2, 2, 1, 1, 0, 0, 0] }
-  ]}
-  highlights={[
-    { from: 8, to: 10, tone: "info", label: "first drain on uvm_test_top: 40 to 50 ns" },
-    { from: 13, to: 15, tone: "info", label: "second drain on uvm_test_top: 65 to 75 ns" }
-  ]}
-  markers={[
-    { edge: 7, tone: "sample", short: "r0", label: "35 ns: response 0 checked" },
-    { edge: 9, tone: "sample", short: "r1", label: "45 ns: response 1 checked" },
-    { edge: 10, tone: "pending", short: "P", label: "50 ns: phase_ready_to_end, 2 responses pending, the scoreboard raises" },
-    { edge: 11, tone: "sample", short: "r2", label: "55 ns: response 2 checked" },
-    { edge: 13, tone: "sample", short: "r3", label: "65 ns: response 3 checked, the scoreboard drops" },
-    { edge: 15, tone: "pass", short: "end", label: "75 ns: phase_ready_to_end raises nothing, run_phase ends" }
-  ]}
-/>
-
-Notice where the drain sits: between `uvm_test_top` and its parent. A drain time belongs to one object, and it runs every time that object's total falls to zero.
 
 ### Ending cleanly: drain time, `phase_ready_to_end` and the timeout
 
@@ -341,6 +308,44 @@ uvm_root::get().set_timeout(10us, 1);
 
 **Drain time is not a hang safety net.** It starts only when a count reaches zero. If an objection is never dropped, the count never reaches zero, the drain never starts, and only the timeout ends the run.
 
+**Traced example: counts and totals.** This is the run of the Make It Work test below, using the first two tools you just met: a drain time and `phase_ready_to_end`. The test raises at 0 ns and drops at 40 ns with a 10 ns drain time set on `uvm_test_top`. The scoreboard, `env.scb`, re-raises from `phase_ready_to_end` because two responses are still in flight, and drops at 65 ns. Each cell shows count/total for the `run_objection`; a dash means the component holds nothing.
+
+| Time | What happens | `env.scb` | `env` | `uvm_test_top` | `uvm_top` |
+|---|---|---|---|---|---|
+| 0 ns | The test raises 1 | – | – | 1/1 | 0/1 |
+| 40 ns | The test drops; `uvm_test_top`'s total is 0, so its 10 ns drain starts | – | – | 0/0 | 0/1 |
+| 50 ns | The drain ends; the drop reaches `uvm_top`, whose total is 0 | – | – | 0/0 | 0/0 |
+| 50 ns | `phase_ready_to_end`: the scoreboard raises 1 | 1/1 | 0/1 | 0/1 | 0/1 |
+| 65 ns | The scoreboard drops; `uvm_test_top`'s drain starts again | 0/0 | 0/0 | 0/0 | 0/1 |
+| 75 ns | The drain ends; `uvm_top` is 0; `phase_ready_to_end` raises nothing; `run_phase` ends | 0/0 | 0/0 | 0/0 | 0/0 |
+
+<TimingDiagram
+  title="The Make It Work run, 0 to 75 ns"
+  caption="The x-axis is simulation time in 5 ns steps: column k is t = 5k ns (column 8 is 40 ns, column 15 is 75 ns), and each value is the one after everything at that time has happened; a change is drawn between the previous column and the column where it has happened. test obj and scb obj are the objections raised by uvm_test_top and env.scb; top total is uvm_top's total; pending is the scoreboard's pending count. The shaded spans are the two 10 ns drains (40 to 50 ns and 65 to 75 ns). r0 to r3 mark the four responses at 35, 45, 55 and 65 ns, P the phase_ready_to_end round at 50 ns, where two responses are pending and the scoreboard raises, and end the round at 75 ns, where nothing is pending and run_phase ends."
+  edges={16}
+  cycleWidth={14}
+  signals={[
+    { name: "test obj", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "scb obj", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0] },
+    { name: "top total", kind: "bus", values: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0] },
+    { name: "pending", kind: "bus", values: [1, 1, 2, 2, 3, 3, 4, 3, 3, 2, 2, 1, 1, 0, 0, 0] }
+  ]}
+  highlights={[
+    { from: 8, to: 10, tone: "info", label: "first drain on uvm_test_top: 40 to 50 ns" },
+    { from: 13, to: 15, tone: "info", label: "second drain on uvm_test_top: 65 to 75 ns" }
+  ]}
+  markers={[
+    { edge: 7, tone: "sample", short: "r0", label: "35 ns: response 0 checked" },
+    { edge: 9, tone: "sample", short: "r1", label: "45 ns: response 1 checked" },
+    { edge: 10, tone: "pending", short: "P", label: "50 ns: phase_ready_to_end, 2 responses pending, the scoreboard raises" },
+    { edge: 11, tone: "sample", short: "r2", label: "55 ns: response 2 checked" },
+    { edge: 13, tone: "sample", short: "r3", label: "65 ns: response 3 checked, the scoreboard drops" },
+    { edge: 15, tone: "pass", short: "end", label: "75 ns: phase_ready_to_end raises nothing, run_phase ends" }
+  ]}
+/>
+
+Notice where the drain sits: between `uvm_test_top` and its parent. A drain time belongs to one object, and it runs every time that object's total falls to zero.
+
 **The three tools side by side.**
 
 | | Drain time | `phase_ready_to_end` | Timeout |
@@ -372,7 +377,7 @@ endtask
   mistake="Raising the objection in a driver, raising it after a delay, or treating drain time as a fix for a missing drop. Only the timeout ends a stuck objection, and it ends the test with UVM_FATAL."
   inTestbench="The test (or a top sequence) raises around the stimulus; scoreboards use phase_ready_to_end or a drain time for in-flight traffic; every regression sets a timeout. Debug with +UVM_OBJECTION_TRACE and +UVM_PHASE_TRACE."
 >
-  <svg viewBox="0 0 320 120" role="img" aria-label="Objection count over time: rises to 1 at raise, falls to 0 at drop, then a hatched drain period, then the phase ends." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 120" role="img" aria-label="Objection count over time: rises to 1 at raise, falls to 0 at drop, then a shaded drain period, then the phase ends." style={{ width: "100%", maxWidth: 360 }}>
     <line x1="10" y1="90" x2="310" y2="90" stroke="currentColor" strokeOpacity="0.4" />
     <path d="M 10 90 H 30 V 50 H 200 V 90 H 300" fill="none" stroke="rgb(6,182,212)" strokeWidth="2.5" />
     <rect x="200" y="50" width="50" height="40" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeDasharray="3 2" />
@@ -406,10 +411,10 @@ UVM_INFO @ 900: run_objection [UVM/OBJ/DISPLAY] The total objection count is 1
 Source  Total
 Count   Count   Object
 ---------------------------------------------------------
-0       1        uvm_top
-0       1          uvm_test_top
-0       1            env
-1       1              drv
+0       1       uvm_top
+0       1         uvm_test_top
+0       1           env
+1       1             drv
 ---------------------------------------------------------
 ```
 
@@ -473,7 +478,7 @@ cfg_done.wait_ptrigger();    // safe even if trigger() ran earlier in this time 
   ]}
 />
 
-The race behind `wait_trigger()` is the SystemVerilog race you met in [I-SV-5: Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events). The visualizer below models the plain `event` that `uvm_event` wraps: `wait_trigger()` behaves like `@(done)` and `wait_ptrigger()` like `wait (done.triggered)`. **Predict**: with `->` and `@(done)`, does the consumer always wake? Then flip the scheduler order.
+The race behind `wait_trigger()` is the SystemVerilog race you met in [I-SV-5: Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events). The visualizer below models the plain `event` that `uvm_event` wraps: `wait_trigger()` behaves like `@(done)` and `wait_ptrigger()` like `wait (done.triggered)`. **Predict**: with `->` and `@(done)`, which scheduler order loses the wake-up, producer first or consumer first? Then flip the scheduler order to check.
 
 <ForkJoinVisualizer scenario="event-race" scenarios={["event-race"]} />
 
@@ -528,7 +533,7 @@ You have met the two default domains. `set_domain()` can move a subtree of compo
 
 ### Recap
 
-- The phases before `run_phase` run at time 0, and the phases after it run when `run_phase` ends; all of them are zero-time functions. `build` and `final` are top-down; everything else is bottom-up. In uvm-core both are depth-first walks with siblings in name order (the standard requires only parents-first or children-first; do not rely on the rest).
+- The phases before `run_phase` run at time 0, and the phases after it run when `run_phase` ends; all of them are zero-time functions. `build` and `final` are top-down; everything else is bottom-up. In uvm-core both are depth-first walks with siblings in name order (the portable invariant is only parents-first or children-first; do not rely on the rest).
 - `run_phase` runs beside the twelve run-time phases and cannot end before `post_shutdown` ends. Objections belong to one phase.
 - A task phase ends when the objection totals of it and its siblings are zero after drain time and `phase_ready_to_end`; then its threads are killed. Returning from the task does not end it.
 - The test (or a top sequence) owns the objection and raises it before anything consumes time. Drivers never object.
@@ -742,7 +747,7 @@ UVM_FATAL :    0
 
 Read it against the rules:
 - `env` created `scb` before `bus`, yet `bus` is built and connected first: siblings go in name order (uvm-core).
-- The test drops at 40 ns, the drain ends at 50 ns, `phase_ready_to_end` holds the phase for the responses at 55 and 65 ns, and the drain runs once more to 75 ns. The traced table in "Objections: who keeps a task phase alive" shows the counts at each step.
+- The test drops at 40 ns, the drain ends at 50 ns, `phase_ready_to_end` holds the phase for the responses at 55 and 65 ns, and the drain runs once more to 75 ns. The traced table in "Ending cleanly: drain time, `phase_ready_to_end` and the timeout" shows the counts at each step.
 - [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) explains how to read the report summary and decide pass or fail.
 
 **Run it.** Compile uvm-core 2020.3.1 (`src/uvm_pkg.sv`, with `src` on the include path) and `phasing_tb.sv`, then simulate `tb_top`. The switches that do this are tool-dependent, and most commercial simulators also ship a precompiled UVM library. Add `+UVM_OBJECTION_TRACE` or `+UVM_PHASE_TRACE` to the run command for the traces. Full UVM support in open-source simulators is limited, and this example has not been run on one.
@@ -751,12 +756,22 @@ Read it against the rules:
 
 Make one change at a time, predict the log, then run it:
 
+1. Delete the scoreboard's `phase_ready_to_end`.
+2. Delete `phase.drop_objection` in the test.
+3. Put `#5ns;` before `raise_objection`.
+4. Delete the drop **and** move the `set_timeout` call to after the first `send` in `run_phase`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your predictions</summary>
+
 | Change | What you should see |
 |---|---|
 | Delete the scoreboard's `phase_ready_to_end` | `run_phase` ends at 50 ns. The response threads (forked inside the test's `run_phase`) are killed, so responses 2 and 3 never arrive: `UVM_ERROR … [SCB] 2 responses never arrived` and `matched=2 pending=2`. |
 | Delete `phase.drop_objection` in the test | The run reaches 10 µs and ends with `UVM_FATAL … [PH_TIMEOUT] Explicit timeout of … hit, indicating a probable testbench issue`. No `check_phase`, `report_phase` or `final` lines. |
 | Put `#5ns;` before `raise_objection` | The run ends at 0 ns with `matched=0 pending=0` and `UVM_ERROR :    0`: a false pass. `+UVM_PHASE_TRACE` shows `[PH/TRC/SKIP] Phase 'common.run' … No objections raised, skipping phase`. |
 | Delete the drop **and** move the `set_timeout` call to after the first `send` in `run_phase` | The watchdog started with the 9200 s default before the call, so the hang now runs to 9200 s of simulated time. Set the timeout before `run_phase` starts. |
+
+</details>
 
 ### How to write end-of-test control
 
@@ -788,7 +803,7 @@ The standard says how a phase ends (§9.6, §13.1.4.3.2) but not exactly when an
 
 <ArchitectureDiagram
   title="Where uvm-core looks for the first objection"
-  caption="Read top to bottom: the regions that matter here of the phase's first time slot (t = 0 for run_phase), then the next time slot. Observed, Reactive and the later regions are left out. The check runs back in the Active region, when the NBA update wakes uvm_wait_for_nba_region's @(nba), and reads the objection total. This is uvm-core 2020.3.1 behaviour beside an idle schedule (uvm_phase_hopper.svh), not a rule of IEEE 1800.2. A raise in the Active or Inactive region is seen by the check; a raise that waits for a later time slot never executes, because the phase ends in this slot and kills the thread."
+  caption="Read top to bottom: the regions of the phase's first time slot (t = 0 for run_phase) that matter here, then the next time slot. Preponed, Observed, Reactive and the other regions are left out. The check runs back in the Active region, when the NBA update wakes uvm_wait_for_nba_region's @(nba), and reads the objection total. This is uvm-core 2020.3.1 behaviour beside an idle schedule (uvm_phase_hopper.svh), not a rule of IEEE 1800.2. A raise in the Active or Inactive region is seen by the check; a raise that waits for a later time slot never executes, because the phase ends in this slot and kills the thread."
   cellWidth={200}
   cellHeight={50}
   gapY={44}
@@ -813,15 +828,15 @@ Teach and code to "raise before the first statement that can consume time". It w
 
 - **Normative part** (F.7.3.3, §9.8.1.5): `set_timeout(time timeout, bit overridable = 1)`; the value is "the maximum absolute simulation time"; it must be set "prior to `uvm_run_phase` starting"; with `overridable = 0` "any future calls to `set_timeout` have no effect"; the default is implementation specific.
 - **uvm-core 2020.3.1** (`uvm_root.svh`, `uvm_phase_hopper.svh`):
-  - The default is `` `UVM_DEFAULT_TIMEOUT `` = 9200 s, and the fatal then says "Default timeout"; after `set_timeout` it says "Explicit timeout".
-  - `+UVM_TIMEOUT=<integer>,<YES|NO>` is applied in `uvm_root::build_phase`, which runs before the test's `build_phase` (top-down). With `YES` (or nothing after the comma) the test's own `set_timeout` then replaces it. With `NO` the test's call is ignored with an info message `NOTIMOUTOVR`, so the command line wins.
+  - The default is `` `UVM_DEFAULT_TIMEOUT `` = 9200 s. uvm-core decides by the value, not by whether `set_timeout` was called: the fatal says "Default timeout" when the value in force is 9200 s and "Explicit timeout" otherwise.
+  - `+UVM_TIMEOUT=<integer>,<YES|NO>` is applied in `uvm_root::build_phase`, which runs before the test's `build_phase` (top-down). With `YES` (or anything other than exactly `NO`, including nothing after the comma) the test's own `set_timeout` then replaces it. With `NO` the test's call is ignored with an info message `NOTIMOUTOVR`, so the command line wins.
   - The value is parsed with `$sscanf("%d,%s")`: give a bare integer. `+UVM_TIMEOUT=2ms` parses as 2, which gives an almost immediate `PH_TIMEOUT` (derived from the source, not run).
   - The watchdog reads the value once, just after `run_phase` starts, and runs only in `run_phase`. It bounds hangs in the run-time phases too, because `run_phase` waits for the schedule. If the value is 0 at that moment, the watchdog waits for a non-zero value, so `set_timeout(0)` disables it.
   - With `+UVM_PHASE_TRACE`, the timeout also prints each phase's outstanding objections before the fatal.
 
 <SequenceDiagram
   title="Which timeout the watchdog uses (uvm-core 2020.3.1)"
-  caption="Time runs down the page. uvm_root's build_phase runs before the test's because build is top-down, so the plusarg is applied first. The watchdog reads the value once, just after run_phase starts. 'none' means nothing after the comma, which acts like YES. The fatal says Explicit timeout after any set_timeout call, and Default timeout (9200 s) if nobody set one. All of this is uvm-core implementation (uvm_root.svh, uvm_phase_hopper.svh); IEEE 1800.2 defines only set_timeout and its overridable flag (F.7.3.3)."
+  caption="Time runs down the page. uvm_root's build_phase runs before the test's because build is top-down, so the plusarg is applied first. The watchdog reads the value once, just after run_phase starts. 'none' stands for anything other than YES or NO, including nothing after the comma (or no comma): it acts like YES, so ',no' in lowercase does not lock the timeout. The fatal says Default timeout when the value in force is the 9200 s default, and Explicit timeout otherwise. All of this is uvm-core implementation (uvm_root.svh, uvm_phase_hopper.svh); IEEE 1800.2 defines only set_timeout and its overridable flag (F.7.3.3)."
   participants={[
     { id: "cl", label: "command line", kind: "generic" },
     { id: "root", label: "uvm_root", sublabel: "build_phase", kind: "generic" },
@@ -950,7 +965,7 @@ Start with the quiz, which covers all five objectives. Then use the hang simulat
     answers: [
       { text: "uvm_test_top, env, agt, drv, mon, scb", correct: false, feedback: "That is top-down, the build_phase order. connect_phase is bottom-up." },
       { text: "drv, mon, agt, scb, env, uvm_test_top", correct: true, feedback: "Right: in uvm-core the walk is depth-first, every subtree before its parent, siblings in name order (agt before scb, drv before mon). §9.5 itself only requires children before parents." },
-      { text: "drv, mon, scb, agt, env, uvm_test_top", correct: false, feedback: "That is level by level, deepest level first. §9.5 would allow it, since it only requires children before parents, but uvm-core walks depth-first: it finishes agt's subtree, including agt itself, before it starts scb." },
+      { text: "drv, mon, scb, agt, env, uvm_test_top", correct: false, feedback: "That is leaves first, then their parents: the order §9.5's informal wording describes. uvm-core instead walks depth-first: it finishes agt's subtree, including agt itself, before it starts scb." },
       { text: "In the order the components were created", correct: false, feedback: "Creation order does not matter. uvm-core visits siblings in instance-name order." }
     ],
     explanation: "connect_phase is bottom-up: §9.5 requires children before parents, and uvm-core implements that as a depth-first post-order walk (uvm_bottomup_phase.svh). agt's children drv and mon come first, then agt, then its sibling scb, then env and uvm_test_top. Only build and final are top-down."
@@ -1113,7 +1128,7 @@ Start with the quiz, which covers all five objectives. Then use the hang simulat
 
 ### Hang triage: name the owner, then fix it
 
-The simulator below runs four broken tests on a tested model. Work on **"One mismatch, then silence"** (a stuck objection) and **"The test passes in 0 ns"** (no objection) first: they use only this lesson. For each one, read the log, turn on the objection trace, name the component that owns the problem, and only then choose a fix. The other two scenarios need later lessons: "Same packet, over and over" depends on the driver's `item_done` call ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)), and "Stimulus stops after the interrupt" depends on `grab` ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)). Come back to them then. One wrong fix option is written as `phase.phase_done.set_drain_time(...)`; `phase_done` is a UVM 1.2 compatibility handle that uvm-core creates lazily, on the first `get_objection()` call (raise and drop make that call), so a direct `phase.phase_done` can be null, and current code writes `phase.get_objection().set_drain_time(...)`.
+The simulator below runs four broken tests on a tested model. Work on **"One mismatch, then silence"** (a stuck objection) and **"The test passes in 0 ns"** (no objection) first: they use only this lesson. For each one, read the log, turn on the objection trace, name the component that owns the problem, and only then choose a fix. The other two scenarios need later lessons: "Same packet, over and over" depends on the driver's `item_done` call ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)), and "Stimulus stops after the interrupt" depends on `grab` ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)). Come back to them then. The drain-time fix option is written in the current form, `phase.get_objection().set_drain_time(...)`. Older code writes `phase.phase_done.set_drain_time(...)`, but `phase_done` is a UVM 1.2 compatibility handle that uvm-core creates lazily, on the first `get_objection()` call (raise and drop make that call), so a direct `phase.phase_done` can be null.
 
 <DebuggingSimulator scenario="all" />
 

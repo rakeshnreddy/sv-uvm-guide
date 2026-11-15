@@ -6,7 +6,7 @@ sources:
   - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Clauses 13.7, 14 and 15; Annex B.3)"
     type: "standard"
     identifier: "IEEE 1800.2-2020"
-  - title: "IEEE Standard for SystemVerilog (§18.7.1 inline constraints and local::)"
+  - title: "IEEE Standard for SystemVerilog (§18.6.3 failed randomize() and §18.7.1 inline constraints and local::)"
     type: "standard"
     identifier: "IEEE 1800-2023"
 ---
@@ -33,16 +33,16 @@ sources:
 The first five subsections are the core path; read them in order. Subsections marked *Practitioner depth* add the forms and options you need for daily work. The expert layer is in Push Further.
 
 A few terms from earlier lessons appear on every line of this page:
-- A **component** is a `uvm_component`: it lives for the whole simulation, has a place in the testbench hierarchy and runs **phases**, the fixed steps UVM calls on every component (`build_phase`, `connect_phase`, `run_phase` and so on). See [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
+- A **component** is a `uvm_component`: it lives from its creation at the start of the simulation to the end, has a place in the testbench hierarchy and runs **phases**, the fixed steps UVM calls on every component (`build_phase`, `connect_phase`, `run_phase` and so on). See [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) and [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
 - An **object** is a `uvm_object`: it is created, used and dropped, and has no place in the hierarchy. Items and sequences are objects.
 - `::type_id::create` builds an object or component through the **factory**, so a test can replace its type ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
 - A **TLM port** calls methods that a connected **export** implements ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
 
 **Component or object, at a glance.** The two base classes behave differently in every way that matters for this lesson:
 
-| | `uvm_component` | `uvm_object` |
+| Property | `uvm_component` | `uvm_object` |
 | --- | --- | --- |
-| Lifetime | the whole simulation | created, used and dropped |
+| Lifetime | from `build_phase` to the end of the simulation | created, used and dropped |
 | Place in the hierarchy | yes: a parent and a full name such as `uvm_test_top.env.agt` | none |
 | Runs phases | yes: `build_phase`, `connect_phase`, `run_phase` and so on | no |
 | Created in this lesson with | `bus_driver::type_id::create("drv", this)`: a name and a parent | `bus_item::type_id::create("req")`: a name only |
@@ -90,7 +90,7 @@ The sequencer and driver are built and connected inside an **agent**, as [I-UVM-
 
 A **sequence item** is a class that extends `uvm_sequence_item` (IEEE 1800.2-2020 §14.1). It holds the fields of one transaction, declared `rand` so that `randomize()` can choose them, plus constraints that keep the choices legal ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). It is an object, so you create a new one for every transaction.
 
-Scoreboards and drivers also need to copy, compare and print items. `uvm_object` gives every item the methods `copy()`, `clone()`, `compare()`, `print()` and `convert2string()` (§5.3.6.4, §5.3.8, §5.3.9). Your class tells them about its fields in one of two ways.
+Scoreboards and drivers also need to copy, compare and print items. `uvm_object` gives every item the methods `copy()`, `clone()`, `compare()`, `print()` and `convert2string()` (§5.3.5.2, §5.3.6.1, §5.3.6.4, §5.3.8, §5.3.9). Your class tells them about its fields in one of two ways.
 
 **Way 1: field macros.** Each `` `uvm_field_* `` macro registers one field, and the library then copies, compares and prints it for you.
 
@@ -170,7 +170,18 @@ How the calls fit together in uvm-core 2020.3.1:
 
 The two ways can be mixed. A field that is in a field macro *and* in `do_copy` is simply copied twice. The details of printers, comparers and copier policies belong to [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index).
 
-**Predict, then check: what does `clone()` copy?** Suppose `bus_item` gains two more members that the hand-written methods above do not mention: `byte payload[$]` (a queue) and `bus_cfg cfg` (a handle to a configuration object). Predict the clone's values and the `compare()` result for each row before you read the table.
+**Predict, then check: what does `clone()` copy?** Suppose `bus_item` gains two more members that the hand-written methods above do not mention: `byte payload[$]` (a queue) and `bus_cfg cfg` (a handle to a configuration object). Predict the clone's values and the `compare()` result for each row, then open the check.
+
+| Member | How the class handles it | `orig` |
+| --- | --- | --- |
+| `addr` | copied in `do_copy`, compared in `do_compare` | `8'h34` |
+| `payload[$]` | in neither method, no field macro | `'{1, 2, 3}` |
+| `cfg` | `do_copy` assigns `cfg = rhs_.cfg;` | handle to object A |
+| `cfg` | `` `uvm_field_object(cfg, UVM_ALL_ON) `` | handle to object A |
+| `cfg` | `` `uvm_field_object(cfg, UVM_ALL_ON | UVM_REFERENCE) `` | handle to object A |
+
+<details>
+<summary>Check your prediction</summary>
 
 | Member | How the class handles it | `orig` | `clone` after `$cast(c, orig.clone())` | Does `orig.compare(c)` check it? |
 | --- | --- | --- | --- | --- |
@@ -181,9 +192,11 @@ The two ways can be mixed. A field that is in a field macro *and* in `do_copy` i
 | `cfg` | `` `uvm_field_object(cfg, UVM_ALL_ON | UVM_REFERENCE) `` | handle to object A | handle to the same object A | yes, by handle |
 
 What the table shows:
-- **Queues and dynamic arrays are values in SystemVerilog.** Copying one copies its elements; nothing is ever shared. The real danger is the opposite: a field nobody registered is not copied at all, and `compare()` ignores it, so a scoreboard reports a match although the data differ.
+- **Queues and dynamic arrays are values in SystemVerilog.** Copying one copies its elements, so a queue of bytes is never shared (a queue of class handles copies the handles, so the objects are still shared). The real danger is the opposite: a field nobody registered is not copied at all, and `compare()` ignores it, so a scoreboard reports a match although the data differ.
 - **Class handles are references.** Assigning a handle copies the reference, so the original and the clone share one object (a *shallow* copy). Write `cfg = rhs_.cfg.clone()` (with a `$cast`) if each item needs its own copy.
 - **Every field must appear somewhere**: in a field macro, or in both `do_copy` and `do_compare`.
+
+</details>
 
 **Pitfalls and how to spot them.**
 
@@ -191,7 +204,7 @@ What the table shows:
 | --- | --- | --- |
 | *An unregistered field* | The scoreboard says "match" while waveforms differ. | Print both items with `convert2string()` and compare by eye; then add the field. |
 | *A missing `super.do_copy(rhs)`* | The base classes' state is not copied. | Always call `super` first. |
-| *A missing `$cast` check* | Copying from the wrong type then reads null fields. | Check the cast as above. |
+| *A missing `$cast` check* | `rhs_` stays null, and the first `rhs_.op` stops the run with a null-handle error from the simulator. | Check the cast as above. |
 
 ### The handshake: sequence ↔ sequencer ↔ driver
 
@@ -271,7 +284,7 @@ What each call does in uvm-core 2020.3.1 (`uvm_sequence_base.svh`, `uvm_sequence
 
 <SequenceDiagram
   title="One item through the handshake, with a get_next_item driver"
-  caption="Follow the numbers: the sequence is released twice, once by the grant (step 3) and once by item_done (step 8). From step 5 to step 7 the item sits in the sequencer's request FIFO."
+  caption="Follow the numbers: the sequence is released twice, once by the grant (step 3) and once by item_done (step 7), which lets finish_item return (step 8). From step 5 to step 7 the item sits in the sequencer's request FIFO."
   participants={[
     { id: "seq", label: "seq", sublabel: "bus_write_seq", kind: "sequence" },
     { id: "sqr", label: "sqr", kind: "sequencer" },
@@ -350,8 +363,6 @@ get_response(rsp);                    // blocks until a response for this sequen
 // or: get_response(rsp, req.get_transaction_id());  waits for this request's response
 ```
 
-`item_done(rsp)` is one zero-time function call: it completes the request, then queues the response, and only after it returns can the waiting `finish_item()` resume. So by the time `finish_item()` returns, the response is already waiting and `get_response()` returns at once.
-
 <SequenceDiagram
   title="How a response finds its sequence"
   caption="The sequencer routes by the ids that set_id_info copied. Each sequence keeps its responses in its own queue until get_response takes them."
@@ -375,8 +386,9 @@ get_response(rsp);                    // blocks until a response for this sequen
 <AnimatedUvmSequenceDriverHandshakeDiagram initialPreset="responses" />
 
 **What the explorer showed, and the rules behind it** (uvm-core 2020.3.1):
+- **When `get_response()` returns** → at once: `item_done(rsp)` is one zero-time function call: it completes the request, then queues the response, and only after it returns can the waiting `finish_item()` resume. So by the time `finish_item()` returns, the response is already waiting and `get_response()` returns at once.
 - **No `set_id_info`** → `UVM_FATAL … [SQRPUT] Driver put a response with null sequence_id`. The sequencer never guesses where a response belongs.
-- **Responses never collected** → each sequence queues at most 8 responses (`get_response_queue_depth()`, §14.2.7.6). Further responses are **dropped silently**, unless the sequence called `set_response_queue_error_report_enabled(1)` (§14.2.7.5). Worse, a later `get_response()` returns the oldest response, which may belong to an earlier item.
+- **Responses never collected** → each sequence queues at most 8 responses (`get_response_queue_depth()`, §14.2.7.6). Further responses are dropped. IEEE 1800.2-2020 §14.2.7.5 says an overflow generates an error by default, but uvm-core 2020.3.1 starts the enable bit at 0, so it drops them **silently** unless the sequence calls `set_response_queue_error_report_enabled(1)`. Worse, a later `get_response()` returns the oldest response, which may belong to an earlier item.
 - **Waiting for a response nobody sends** → the sequence hangs in `get_response()`, and the driver idles in `get_next_item()`.
 - **A response for a sequence that has already finished** → `UVM_WARNING … Dropping response for sequence N, sequence not found`.
 
@@ -497,6 +509,8 @@ endtask
 6. `post_body()` runs only when `call_pre_post` is 1.
 7. `post_start()` always runs.
 
+The explorer offers three ways to start a child: `child.start(m_sequencer, this)`, `child.start(m_sequencer)` with no parent, and the macro `` `uvm_do(child) ``, which (as the macros section below shows) creates and randomizes the child, then calls `child.start(m_sequencer, this, priority, 0)`: it passes a parent, and its final argument sets `call_pre_post` to 0.
+
 **Predict, then step.** In the explorer, `top_seq` starts two children. Change the start style of each child, predict which hooks run for `write_seq`, then step through. Tick **Show the calls inside start_item() / finish_item()** to see where each item enters the handshake.
 
 <UvmSequenceHierarchyVisualizer />
@@ -536,7 +550,7 @@ class bus_rw_seq extends uvm_sequence #(bus_item); /* ... */ endclass
 | Poll | `try_next_item(req)`; if `req == null`, drive an idle cycle; otherwise drive and `item_done()` | after the drive | the bus needs something every cycle (idle cycles) even when no sequence has work |
 | Take | `get(req)`, drive, optionally `put(rsp)` | as soon as `get()` returns, **before** the drive | the driver queues items itself, for example a pipelined bus |
 
-`try_next_item(req)` does not wait for a sequence to appear. It waits only inside the current **time slot**, the set of events at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)): one `wait_for_sequences()` call by default, which lasts a few **delta cycles**, zero-time scheduling steps ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). If no sequence has offered an item by then, it returns `null`. No simulation time passes.
+`try_next_item(req)` does not wait for a sequence to appear (the standard, §15.2.1.2.2, says only that it returns immediately). In uvm-core 2020.3.1 it waits only inside the current **time slot**, the set of events at one simulation time ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)): one `wait_for_sequences()` call by default, which lasts a few **delta cycles**, zero-time scheduling steps ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). If no sequence has offered an item by then, it returns `null`. No simulation time passes.
 
 ```systemverilog
 // snippet: a polling driver that drives idle cycles
@@ -573,7 +587,7 @@ end
   ]}
 />
 
-**Predict, then check: where is the sequence at t = 5 ns?** A sequence sends A1, A2 and A3 with the `bus_write_seq` loop (create, `start_item`, checked `randomize()`, `finish_item`, nothing else). The driver needs 10 ns per item and takes A1 at 0 ns. At 5 ns it is halfway through A1. For a `get_next_item` driver and for a `get()` driver, which call is the sequence blocked in, and what releases it?
+**Predict, then check: get_next_item or get(), where is the sequence at t = 5 ns?** A sequence sends A1, A2 and A3 with the `bus_write_seq` loop (create, `start_item`, checked `randomize()`, `finish_item`, nothing else). The driver needs 10 ns per item and takes A1 at 0 ns. At 5 ns it is halfway through A1. For a `get_next_item` driver and for a `get()` driver, which call is the sequence blocked in, and what releases it?
 
 <details>
 <summary>Check your prediction</summary>
@@ -603,7 +617,7 @@ For a child sequence, `` `uvm_do(child) `` creates and randomizes the child, the
 
 The rest of the family: `` `uvm_create `` only creates; `` `uvm_send `` sends what you created without randomizing; `` `uvm_rand_send `` randomizes and sends (B.3.1.1 to B.3.1.3).
 
-| | Explicit calls | `` `uvm_do `` family |
+| Aspect | Explicit calls | `` `uvm_do `` family |
 | --- | --- | --- |
 | Lines of code | more | fewer |
 | A failed `randomize()` | your check stops the test | a warning, and the item is sent anyway |
@@ -618,7 +632,7 @@ This course writes the explicit calls, because they show where the sequence bloc
 | --- | --- | --- |
 | No `item_done()` | `Get_next_item called twice…`, the same item driven forever, the sequence stuck in `finish_item()` | One `item_done()` per `get_next_item()` |
 | Response without `set_id_info(req)` | `SQRPUT` fatal | `rsp.set_id_info(req)` before `item_done(rsp)` |
-| Responses never collected | silent drop after 8; later `get_response()` returns stale responses | Collect after every item, or by `transaction_id` |
+| Responses never collected | dropped after 8 (silently in uvm-core 2020.3.1); later `get_response()` returns stale responses | Collect after every item, or by `transaction_id` |
 | Unchecked `randomize()` | an unrandomized item is sent | `if (!req.randomize() …)` followed by `` `uvm_fatal `` |
 | Unregistered item field | not copied, not compared: false matches | Field macro, or `do_copy` plus `do_compare` |
 | Automatic objection without a starting phase | test ends at 0 ns, no error | `set_starting_phase(phase)` first |
@@ -1033,7 +1047,7 @@ The order as written in `uvm_sequence_base::start()` in uvm-core 2020.3.1 (uvm-c
 | 10 | only if `call_pre_post` is 1: `#0`; `post_body()` | `UVM_POST_BODY` |
 | 11 | `#0`; `post_start()`; the automatic objection is dropped if enabled | `UVM_POST_START` |
 | 12 | `#0`; the forked process ends and `start()` joins it | `UVM_FINISHED` |
-| 13 | after the join, if the state is neither `UVM_FINISHED` nor `UVM_STOPPED`: the `SEQBDYZMB` warning, then `kill()` | |
+| 13 | after the join, if the state is neither `UVM_FINISHED` nor `UVM_STOPPED`: the `SEQBDYZMB` warning, then `kill()` | not changed after the join |
 
 So for this child: `pre_start()`, the parent's `pre_do(0)` (and `mid_do`), `body()`, the parent's `post_do`, then `post_start()`. `pre_body()` and `post_body()` are skipped, and the parent's `pre_do(0)` runs while the state is still `UVM_PRE_START`, because step 6 never ran. This is the `` `uvm_do(child) `` case from Build Your Mental Model.
 
@@ -1054,14 +1068,14 @@ The response-queue settings of a sequence, as one lookup table (defaults from uv
 | Setting | Default in uvm-core 2020.3.1 | Effect | Clause |
 | --- | --- | --- | --- |
 | `get_response_queue_depth()`, `set_response_queue_depth(n)` | 8 | a response that arrives when `n` are already waiting is dropped; `n = -1` makes the queue unbounded | §14.2.7.6, §14.2.7.7 |
-| `set_response_queue_error_report_enabled(1)` | off (the flag starts at 0) | a dropped response is reported as a `UVM_ERROR` ("Response queue overflow, response was dropped") instead of vanishing | §14.2.7.5 |
-| `get_response(rsp)` | | pops the oldest waiting response, whichever request it answers | §14.3.3.3 |
-| `get_response(rsp, tid)` | | waits for the response whose `transaction_id` is `tid`; the others stay queued | §14.3.3.3 |
+| `set_response_queue_error_report_enabled(1)` | off (the flag starts at 0; §14.2.7.4 says on) | a dropped response is reported as a `UVM_ERROR` ("Response queue overflow, response was dropped") instead of vanishing | §14.2.7.5 |
+| `get_response(rsp)` | n/a (a call, not a setting) | pops the oldest waiting response, whichever request it answers | §14.3.3.3 |
+| `get_response(rsp, tid)` | n/a (a call, not a setting) | waits for the response whose `transaction_id` is `tid`; the others stay queued | §14.3.3.3 |
 | `use_response_handler(1)` | off | responses go to `response_handler()` instead of the queue ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake)) | §14.2.7.1 |
 
 - **Where the ids come from.** `send_request` assigns a `transaction_id` when the item still has `-1`, and always writes the sequence's `sequence_id` for this sequencer. `set_id_info` copies both (§14.1.2.4). A request object that is sent twice keeps its first `transaction_id`, which is one more reason to create a new item per transfer.
 - **`SQRPUT` is not universal.** The null-id check in `uvm_sequencer_param_base::put_response` is compiled out when the vendor define `CDNS_NO_SQR_CHK_SEQ_ID` is set; the response is then dropped without a message (tool-dependent).
-- **The standard and the code disagree on overflow reporting.** The source comment says overflow errors are reported by default, but the flag `response_queue_error_report_enabled` starts at 0, so uvm-core 2020.3.1 drops silently until you call `set_response_queue_error_report_enabled(1)` (§14.2.7.5). `set_response_queue_depth(-1)` makes the queue unbounded (§14.2.7.7), at the cost of memory if nobody collects.
+- **The standard and the code disagree on overflow reporting.** IEEE 1800.2-2020 §14.2.7.4 and §14.2.7.5 (and the source comment) say an overflow is an error by default, but in uvm-core 2020.3.1 the flag `response_queue_error_report_enabled` starts at 0, so uvm-core 2020.3.1 drops silently until you call `set_response_queue_error_report_enabled(1)` (§14.2.7.5). `set_response_queue_depth(-1)` makes the queue unbounded (§14.2.7.7), at the cost of memory if nobody collects.
 - **`get_response(rsp, tid)`** waits until a response with that `transaction_id` arrives and leaves other responses in the queue. A related trap: `wait_for_item_done(tid)` for an item that has already completed waits forever, because it missed the notification.
 - **Out-of-order responses.** For drivers that answer in a different order than requests arrived, a sequence can turn on `use_response_handler(1)` and override `response_handler()` (§14.2.7.1); that is taught in [the I-UVM-3B handshake lesson](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake).
 
@@ -1074,13 +1088,13 @@ The response-queue settings of a sequence, as one lookup table (defaults from uv
 
 The two ways of starting stimulus side by side, from the bullets above:
 
-| | `seq.start(env.agt.sqr)` in the test | A `default_sequence` resource or `+uvm_set_default_sequence` |
+| Aspect | `seq.start(env.agt.sqr)` in the test | A `default_sequence` resource or `+uvm_set_default_sequence` |
 | --- | --- | --- |
 | Where the stimulus is visible | in the test's `run_phase` code | in a resource set for `<sequencer path>.<phase>_phase`, or on the command line |
 | Who sets the starting phase | you, with `set_starting_phase(phase)`, only if you want pattern B | `start_phase_sequence`, for the phase named in the scope |
 | What keeps the phase alive | the test's objection (pattern A) or the automatic objection with a starting phase (pattern B) | nothing, unless the sequence turns on the automatic objection or raises through `get_starting_phase()` |
 | A misspelt path | `env.agt.sqr` is a member path, so the compiler reports a typo | the scope string matches nothing and the default sequence silently never starts |
-| Changing it without editing the test | choose another test with `+UVM_TESTNAME` (Annex G.2.1), or replace the sequence's type with a factory override ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)), because the test builds it with `create` | `+uvm_set_default_sequence=uvm_test_top.env.agt.sqr,main_phase,bus_rw_seq` (Annex G.2.9) |
+| Changing it without editing the test | choose another test with `+UVM_TESTNAME` (Annex G.2.1), or replace the sequence's type with a factory override ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)), because the test builds it with `create` | `+uvm_set_default_sequence=uvm_test_top.env.agt.sqr,main_phase,bus_rw_seq` (Annex G.2.9); `bus_rw_seq` must first turn on its automatic objection (row above), or `main_phase` ends at once |
 
 ### Expert: Randomization corner cases
 
@@ -1243,7 +1257,7 @@ Answer each question before you look at the feedback.
     explanation: "set_id_info(req) copies sequence_id and transaction_id. Without them the default build stops the test at the first response."
   },
   {
-    question: "A driver answers every item with item_done(rsp). The sequence sends 10 items and never calls get_response(). How many responses are waiting in the sequence's queue afterwards?",
+    question: "In uvm-core 2020.3.1, a driver answers every item with item_done(rsp). The sequence sends 10 items and never calls get_response(). How many responses are waiting in the sequence's queue afterwards?",
     objective: 4,
     answers: [
       { text: "10: the queue grows without limit.", correct: false, feedback: "Only set_response_queue_depth(-1) makes it unbounded." },
@@ -1308,8 +1322,8 @@ Before you flip the cards, picture the lesson on one page: each role with the on
 <ArchitectureDiagram
   title="The lesson on one page: one rule per role"
   caption="Item: register every field, or copy and compare it by hand. Sequence: start_item, then a checked randomize(), then finish_item, which returns at item_done. Sequencer: one item in its request FIFO, and responses routed by sequence_id. Driver: exactly one item_done per get_next_item, and set_id_info(req) on every response. Test: the objection around start(), never in the driver."
-  cellWidth={150}
-  gapX={64}
+  cellWidth={130}
+  gapX={72}
   nodes={[
     { id: "agt", label: "agt (bus_agent)", kind: "agent", col: 0, row: 0, rowSpan: 2, container: true },
     { id: "sqr", label: "sqr", sublabel: "one item; routes by ids", kind: "sequencer", col: 0, row: 0 },
@@ -1323,7 +1337,7 @@ Before you flip the cards, picture the lesson on one page: each role with the on
     { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
   ]}
   edges={[
-    { from: "drv.port", to: "sqr.export", style: "control", label: "item_done" },
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item / item_done" },
     { from: "test", to: "seq", style: "causal", label: "start()" }
   ]}
 />
@@ -1416,7 +1430,7 @@ For each one, write down the first log line you would search for in a real regre
 - IEEE 1800.2-2020 §13.7 (`uvm_driver`); §14.1 (`uvm_sequence_item`; §14.1.2.4 `set_id_info`); §14.2 (`uvm_sequence_base`): §14.2.2.3 `set_randomize_enabled`, §14.2.3.1 `start` and §14.2.3.2 to §14.2.3.9 its hooks, §14.2.4.1 `get_starting_phase`, §14.2.4.2 `set_starting_phase`, §14.2.4.4 `set_automatic_phase_objection`, §14.2.6.1 to §14.2.6.6 item execution (`create_item`, `start_item`, `finish_item`, `wait_for_grant`, `send_request`, `wait_for_item_done`), §14.2.7.1 `use_response_handler`, §14.2.7.5 to §14.2.7.8 the response queue; §14.3 (`uvm_sequence`; §14.3.3.2 `get_current_item`, §14.3.3.3 `get_response`).
 - IEEE 1800.2-2020 §15.2.1 (`uvm_sqr_if_base`): §15.2.1.2.1 `get_next_item`, §15.2.1.2.2 `try_next_item`, §15.2.1.2.3 `item_done`, §15.2.1.2.6 `get`, §15.2.1.2.7 `peek`, §15.2.1.2.8 `put`, §15.2.1.2.9 `put_response`, §15.2.1.2.10 `disable_auto_item_recording`; §15.2.2.1 `uvm_seq_item_pull_port`; §15.5 `uvm_sequencer`.
 - IEEE 1800.2-2020 §5.3.6.4 `convert2string`, §5.3.8 copying, §5.3.9 comparing; §16.3.3.2 `compare_field_int`, §16.3.3.6 `compare_string`; Annex B.3.1.1 to B.3.1.4 (`` `uvm_create ``, `` `uvm_send ``, `` `uvm_rand_send ``, `` `uvm_do ``); Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.9 `+uvm_set_default_sequence`.
-- IEEE 1800-2023 §18.7.1 (`local::` in inline constraints); §3.14.2.2 (`timeunit` and `timeprecision`).
+- IEEE 1800-2023 §18.6.3 (a failed `randomize()` leaves the random variables unchanged); §18.7.1 (`local::` in inline constraints); §3.14.2.2 (`timeunit` and `timeprecision`).
 - uvm-core 2020.3.1 (uvm-core impl.): `src/seq/uvm_sequence_base.svh`, `src/seq/uvm_sequencer.svh`, `src/seq/uvm_sequencer_param_base.svh`, `src/seq/uvm_sequencer_base.svh`, `src/seq/uvm_sequence.svh`, `src/comps/uvm_driver.svh`, `src/macros/uvm_sequence_defines.svh`, `src/deprecated/macros/uvm_sequence_defines.svh`, `src/base/uvm_copier.svh`, `src/base/uvm_comparer.svh`, `src/base/uvm_root.svh`.
 - IEEE 1800.2 clause numbers for individual methods are taken from the `@uvm-ieee 1800.2-2020` annotations next to each method in the uvm-core 2020.3.1 source.
 

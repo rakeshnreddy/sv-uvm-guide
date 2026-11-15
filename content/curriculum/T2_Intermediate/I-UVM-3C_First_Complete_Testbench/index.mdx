@@ -59,7 +59,7 @@ Each term was taught in an earlier lesson; this list is a reminder, with the lin
 
 ### The bench at a glance
 
-Here is the whole bench this lesson builds. Before you read the caption, **predict**: which component creates the stimulus, which one touches the pins, and through which object does the driver find the interface it drives?
+Here is the whole bench this lesson builds. **Find in the picture**: which component creates the stimulus, which one touches the pins, and through which object the driver finds the interface it drives. Then check your reading against the caption and the debrief.
 
 <ArchitectureDiagram
   title="The complete mem bench: the component tree under uvm_test_top and the module tb_top"
@@ -145,7 +145,7 @@ The waveform shows the boundary between the smoke test's writes and its reads. E
   ]}
 />
 
-**Predict before you read on:** a read of address 3 is accepted at 225 ns. At which edge does the monitor publish it, and with which `rdata`?
+**Predict before you read on:** the smoke test first wrote `{a, ~a}` to every address `a` (address 0 holds `0F`, address 1 holds `1E`). A read of address 3 is accepted at 225 ns. At which edge does the monitor publish it, and with which `rdata`?
 
 <details>
 <summary>Answer</summary>
@@ -296,7 +296,7 @@ endclass
 
 The agent does four things in `build_phase`, in this order:
 1. Gets `cfg` (`uvm_config_db#(mem_cfg)::get(this, "", "cfg", cfg)`), and stops with `` `uvm_fatal `` if it is missing or its `vif` is `null`. One check here protects the driver and the monitor.
-2. Copies `cfg.is_active` into its own `is_active`, the field `get_is_active()` returns (IEEE 1800.2-2020 §13.4.2.2). `uvm_agent` itself builds nothing; it only stores the setting.
+2. Copies `cfg.is_active` into its own `is_active`. That member is uvm-core's (`uvm_agent.svh`); the default `get_is_active()` returns it. IEEE 1800.2-2020 §13.4.2.2 defines only `get_is_active()` and the `is_active` configuration parameter. `uvm_agent` itself builds nothing; it only stores the setting.
 3. Always creates the monitor (and the coverage subscriber when `cfg.coverage_enable` is 1).
 4. Creates the sequencer and driver only when `get_is_active()` returns `UVM_ACTIVE`.
 
@@ -344,7 +344,10 @@ end
 
 A drive through a clocking block with output skew `#0` lands in the Re-NBA region of the edge's time slot, after the DUT's flip-flops have sampled that edge (IEEE 1800-2023 §14.16), so the DUT sees it at the next edge. A drive made between edges takes effect as if made at the next clocking event. When two drives to the same clocking output mature in the same slot, the last one wins (§14.16.2). That is why the bus stays busy with back-to-back items: `valid <= 0` after one item is overridden by `valid <= 1` for the next item in the same slot.
 
-**Trace the start, and predict first.** Reset is released with `rst_n <= 1'b1` at the 15 ns edge, and the driver waits until `drv_cb` samples `rst_n` as 1. At which rising edge does the driver leave its reset loop and drive the first request (a write of `0F` to address 0), and at which edge does the DUT accept it? Commit to two times, then read the waveform. As before, each value is the one sampled at that rising edge.
+**Trace the start, and predict first.** Reset is released with `rst_n <= 1'b1` at the 15 ns edge, and the driver waits until `drv_cb` samples `rst_n` as 1. At which rising edge does the driver leave its reset loop and drive the first request (a write of `0F` to address 0), and at which edge does the DUT accept it? Commit to two times, then open the answer. As before, each value is the one sampled at that rising edge.
+
+<details>
+<summary>Answer: the waveform from reset to the first accept</summary>
 
 <TimingDiagram
   title="mem_if0 from reset to the first accepted request"
@@ -366,6 +369,8 @@ A drive through a clocking block with output skew `#0` lands in the Re-NBA regio
 />
 
 **Debrief.** The driver drives at 25 ns, and the DUT accepts at 35 ns: one edge between the drive and the accept, every time, because a zero-skew clocking drive matures after the flip-flops of its own edge have sampled. The same one-edge offset explains every time in this lesson's logs: item `k` of the smoke test is accepted at 35 + 10k ns.
+
+</details>
 
 The **monitor** watches every edge, creates a **new** item for every transfer, and publishes it. Writes are complete at once; a read waits one edge for its data:
 
@@ -391,7 +396,7 @@ end
 ```
 
 - **Why `#1step` for every input here.** `mon_cb` samples every signal just before the edge: the values the DUT's flip-flops used at that edge. Everything that qualifies a transfer (`valid`, `we`, `addr`, `wdata`) must be seen this way. With an input skew of `#0`, the monitor would see a value *after* the edge's nonblocking updates (§14.4, §14.13) and mix "before" and "after" in one transaction. This bench also reads `rdata` with `#1step`, one edge after the read was accepted, which is why the monitor holds the read in `rd_pending`.
-- **The one exception, and this module's lab.** A result that the DUT registers at the *same* edge as the request may be sampled with `#0` at that edge, because `#0` sees it after the update. The lab's FIFO samples its `dout` that way. Its earlier version broke because it also sampled the `full` and `empty` flags with `#0`: the flags qualify the transfer, so they need `#1step`. The rule, from the expert item on monitor sampling skew in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): `#1step` for whatever decides whether a transfer happened; `#0` only for a same-edge registered result.
+- **The one exception, and this module's lab.** A result that the DUT registers at the *same* edge as the request may be sampled with `#0` at that edge, because `#0` sees it after the update. The lab's FIFO samples its `dout` that way. A monitor that also sampled the `full` and `empty` flags with `#0` would break: the flags qualify the transfer, so they need `#1step`. The rule, from the expert item on monitor sampling skew in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): `#1step` for whatever decides whether a transfer happened; `#0` only for a same-edge registered result.
 - **Why a new item each time.** Subscribers receive the handle, not a copy. Reusing one object would let the next transfer overwrite an item the scoreboard has not read yet.
 - **Why `rdata` is `logic`.** The item's `rdata` field is 4-state, so an X from the DUT reaches the scoreboard and fails the compare, instead of silently turning into 0.
 
@@ -404,12 +409,15 @@ The sampling rule, signal by signal (`mon_cb` declares `default input #1step`; t
 | `wdata` | the data of a write | `#1step` | It belongs to the transfer accepted at that edge. |
 | `rst_n` | in reset, the monitor drops a read in flight | `#1step` | It qualifies every edge, like `valid`. |
 | `rdata` | the result of a read, filled into `rd_pending` | `#1step`, one edge after the accept | The DUT registers it at the accept edge; the next edge's `#1step` sample sees it. |
-| lab FIFO: `full`, `empty` | decide whether a push or pop happened | `#1step` | They qualify the transfer; sampling them with `#0` was the earlier version's bug. |
+| lab FIFO: `full`, `empty` | decide whether a push or pop happened | `#1step` | They qualify the transfer; sampling them with `#0` is the classic bug. |
 | lab FIFO: `dout` | the result registered at the same edge | `#0` allowed | `#0` sees the value after that edge's update. |
 
 ### One transaction through the bench
 
 Follow one read, of address 3, from the sequence to the scoreboard. The times come from the smoke test: the request is driven at 215 ns, accepted at 225 ns, and its data is published at 235 ns. **Predict** first: when does `finish_item()` return to the sequence, before or after the scoreboard has checked this read?
+
+<details>
+<summary>Answer: one read, step by step</summary>
 
 <SequenceDiagram
   title="One read through the mem bench"
@@ -443,6 +451,8 @@ Follow one read, of address 3, from the sequence to the scoreboard. The times co
 />
 
 **Debrief.** The handshake (steps 1 to 5 and 9 to 10) and the checking path (steps 8 and 11 to 13) are independent; steps 6 and 7 are the pin activity between them, the driver's drive and the DUT's accept. The sequence finishes as soon as the driver has put the item on the pins; the item the scoreboard checks is a *different* object, built by the monitor from what the pins showed. That independence is the point of the architecture: the checker sees what the DUT did, not what the stimulus intended. It is also why the end of the sequence is not the end of the checking.
+
+</details>
 
 ### The scoreboard: an analysis FIFO and check_phase accounting
 
@@ -633,7 +643,7 @@ Each failure is one missing line, and each line has an owner. The picture marks 
 Four details make the signatures reliable:
 - **A fatal skips the checking phases.** `PH_TIMEOUT` and `NOVIF` end the run through uvm-core's `die()`, which runs `pre_abort()` and prints the report summary but never runs `check_phase` or `report_phase` (`uvm_root.svh`). A log without `SCB_SUMMARY` is never a pass.
 - **Failure 3 is silent by design.** `uvm_analysis_port` requires zero connections, and the end-of-elaboration check reports only ports and exports below their minimum (or above their maximum) connection count. Compare: if `mem_sb` forgot its *own* line, `item_export.connect(item_fifo.analysis_export)`, the export (which needs at least one connection) fails loudly at 0 ns: `UVM_ERROR @ 0 ns: uvm_test_top.env.sb.item_export [Connection Error] connection count of 0 does not meet required minimum of 1`, then `UVM_FATAL @ 0 ns: reporter [BUILDERR] stopping due to build errors`. Coverage at 100% next to a scoreboard with no traffic is the giveaway: the monitor ran, the scoreboard was never told.
-- **Failure 4 floods the log.** One error per clock until the timeout. Add `+UVM_MAX_QUIT_COUNT=5` (Annex G.2.6) while you debug: the run stops after five errors, and the summary says `Quit count reached!`.
+- **Failure 4 floods the log.** One error per clock until the timeout. Add `+UVM_MAX_QUIT_COUNT=5,NO` (Annex G.2.6; uvm-core also accepts the count alone, `=5`) while you debug: the run stops after five errors, and the summary says `Quit count reached!`.
 - **A null handle that slips past the check** (a driver that reads its own `vif` and forgets to test the `get()` result) is a simulator error, not a UVM message: using a null virtual interface "shall result in a fatal run-time error" (IEEE 1800-2023 §25.9), and the message points at the driver line, far from the missing `set()`. Check every required `get()` and stop with `` `uvm_fatal ``.
 
 **See failure 4 happen.** The handshake explorer below runs a model of the sequencer. It opens on the bug scenario "no item_done()". **Predict** before you step: where is the sequence when the driver loops back to `get_next_item()`, and what does the log show? Then step through and compare.
@@ -687,7 +697,7 @@ Three details make the reuse work:
 - **The test, not the agent, decides.** `mem_sys_env` creates `mem_agent` exactly as `mem_env` does. If the agent were active here, its driver would fight `mem_traffic_gen` for the bus.
 - **Check the shape and the count.** The second test prints the topology at the end of elaboration: under `mem_agt` you must see `cov` and `mon` and no `sqr` or `drv`. The scoreboard must report `matches=16` for the 16 reads the RTL makes.
 
-**Try it on a generic bench.** The explorer below uses its own two-agent bench (`in_agt`, `out_agt`, `bus_*` classes), not `mem_agent`. It opens with `out_agt` set to `UVM_PASSIVE`: predict which children `out_agt` builds, then check. Its controls also let you make `in_agt` passive, and a further option shows what skipping `super.build_phase` breaks.
+**Try it on a generic bench.** The explorer below uses its own two-agent bench (`in_agt`, `out_agt`, `bus_*` classes), not `mem_agent`. It opens with `out_agt` set to `UVM_PASSIVE`: predict which children `out_agt` builds, then check. Its controls also let you make `in_agt` passive, and two bug checkboxes show what skipping `super.build_phase` or the `connect_phase` `get_is_active()` guard breaks.
 
 <AnimatedUvmTestbenchDiagram />
 
@@ -1297,7 +1307,7 @@ UVM_FATAL :    0
 
 How to read it:
 - **The verdict:** `UVM_ERROR :    0`, `UVM_FATAL :    0` and an `SCB_SUMMARY` line with `matches=16`, the 16 reads. All three are needed.
-- **The times:** the first request is accepted at 35 ns and the 32nd at 345 ns; the last read's data is published at 355 ns; the 20 ns drain ends `run_phase` at 365 ns, where `check_phase` and `report_phase` run. Reports come bottom-up, so `cov` (inside `agt`) reports before `sb`.
+- **The times:** the first request is accepted at 35 ns and the 32nd at 345 ns; the last read's data is published at 355 ns; the 20 ns drain ends `run_phase` at 365 ns, where `check_phase` and `report_phase` run. Each subtree reports before its parent, and in uvm-core siblings go in name order, so the whole `agt` subtree (`cov` included) reports before `sb`.
 - **The six INFO messages:** the banner, `RNTST`, the topology header, the test's `TEST` line, and the two summaries. Raise the verbosity with `+UVM_VERBOSITY=UVM_HIGH` and every `SCB_MATCH` appears too ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
 
 For `+UVM_TESTNAME=mem_rand_test`, the lines that differ are:
@@ -1312,7 +1322,10 @@ UVM_INFO @ <end> ns: uvm_test_top.env.sb [SCB_SUMMARY] SCB_SUMMARY matches=<read
 
 ### Prove it can fail
 
-A bench you have never seen fail is not evidence. Set `.BUG(1)` on the DUT in `tb_top` (reads ignore address bit 3) and rerun the smoke test. **Predict** how many mismatches appear and when, then compare:
+A bench you have never seen fail is not evidence. Set `.BUG(1)` on the DUT in `tb_top` (reads ignore address bit 3) and rerun the smoke test. **Predict** how many mismatches appear and when, then compare.
+
+<details>
+<summary>Answer: the .BUG(1) log and every upper-half read</summary>
 
 ```text
 UVM_ERROR @ 285 ns: uvm_test_top.env.sb [SCB_MISMATCH] READ  addr=8 rdata=0f, expected rdata=87
@@ -1325,7 +1338,7 @@ UVM_ERROR :    8
 UVM_FATAL :    0
 ```
 
-The reads of addresses 0 to 7 still match; each read of 8 to F returns the location eight below it (address 8 returns `0f`, what address 0 holds). Eight errors, one per broken read, and a summary that names the damage. Set `.BUG(0)` again before you go on.
+The reads of addresses 0 to 7 still match; each read of 8 to F returns the location eight below it (address 8 returns `0f`, what address 0 holds). Eight errors, one per broken read, and a summary that names the damage.
 
 Every read of the upper half, worked out (the read of address `n` is published at 205 + 10n ns, expects `{n, ~n}` and, with the bug, returns what address `n - 8` holds; the rows a to f are hex addresses, as in the log):
 
@@ -1340,6 +1353,10 @@ Every read of the upper half, worked out (the read of address `n` is published a
 | d | 335 ns | `d2` | `5a` | ✕ mismatch |
 | e | 345 ns | `e1` | `69` | ✕ mismatch |
 | f | 355 ns | `f0` | `78` | ✕ mismatch |
+
+</details>
+
+Set `.BUG(0)` again before you go on.
 
 ### The same agent, passive, in a second bench
 
@@ -1611,8 +1628,8 @@ The two endings side by side (the fatal column follows `uvm_root::die()` in uvm-
 | `$finish` | called by default | always called |
 
 - **Normal end.** After the last objection drops and every drain time has passed, `run_phase` ends, its threads are killed (IEEE 1800.2-2020 §9.6, §10.5.1), and `extract_phase`, `check_phase`, `report_phase` and `final_phase` run (§9.8.1). `run_test()` then prints the report summary and, by default, calls `$finish`.
-- **Fatal end.** A `UVM_FATAL` (including `PH_TIMEOUT`, `NOVIF` and a reached quit count) calls `uvm_root::die()` in uvm-core 2020.3.1, which runs `pre_abort()` on every component and prints the summary, then calls `$finish` (`uvm_root.svh`). `check_phase` and `report_phase` never run. Override `pre_abort()` in the scoreboard to print the pending count when a run is killed.
-- **The default timeout** is 9200 s (`` `UVM_DEFAULT_TIMEOUT ``, `uvm_global_defines.svh`), and its fatal says "Default timeout"; after `set_timeout()` it says "Explicit timeout" (`uvm_phase_hopper.svh`). `set_timeout()` must be called before `run_phase` starts (Annex F.7.3.3).
+- **Fatal end.** A `UVM_FATAL` (`PH_TIMEOUT`, `NOVIF`), or the `UVM_ERROR` that reaches the quit count, has the `UVM_EXIT` action, which calls `uvm_root::die()` in uvm-core 2020.3.1 (`uvm_report_server.svh`); `die()` runs `pre_abort()` on every component and prints the summary, then calls `$finish` (`uvm_root.svh`). `check_phase` and `report_phase` never run. Override `pre_abort()` in the scoreboard to print the pending count when a run is killed.
+- **The default timeout** is 9200 s (`` `UVM_DEFAULT_TIMEOUT ``, `uvm_global_defines.svh`), and its fatal says "Default timeout"; after `set_timeout()` it says "Explicit timeout" (`uvm_phase_hopper.svh`). `set_timeout()` must be called before `run_phase` starts (IEEE 1800.2-2020 §9.8.1.5; `set_timeout` is Annex F.7.3.3). uvm-core's watchdog reads the value once, as `run_phase` starts (`uvm_phase_hopper.svh`).
 - **Drain time versus `phase_ready_to_end`.** A drain time is right when the leftover work has a known bound (one read latency here). When it does not, the component that knows (usually the scoreboard) raises an objection from `phase_ready_to_end` and drops it when its expected items have arrived ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index), [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
 - **Interview angle:** "A regression job's log ends with `PH_TIMEOUT` and the report summary shows `UVM_ERROR : 0`. Is it a pass?" (No: a fatal is a failure, and the checking phases never ran.)
 
@@ -1637,7 +1654,7 @@ The two endings side by side (the fatal column follows `uvm_root::die()` in uvm-
 
 ### Expert: the same agent on both sides of a hierarchy
 
-- **Passive is a build-time decision.** `uvm_agent` reads `is_active` in its `build_phase` (IEEE 1800.2-2020 §13.4.2.2; uvm-core also accepts integer and string settings for it). Changing `cfg.is_active` after the build changes nothing.
+- **Passive is a build-time decision.** uvm-core's `uvm_agent` reads the `is_active` configuration parameter in its `build_phase` (IEEE 1800.2-2020 §13.4.2.2 allows it as an enum or a string; uvm-core also accepts integers). Changing `cfg.is_active` after the build changes nothing.
 - **Nets make the interface reusable.** A clocking-block output on a net adds a driver that stays `'z` until the first synchronous drive (IEEE 1800-2023 §14.16); on a variable, an output clocking signal and a continuous driver from RTL cannot coexist (see the expert item on one interface type on both sides of the DUT in [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
 - **End of test without a sequence.** A passive bench has no stimulus of its own to wait for. This page's second test waits on the bus going idle, which works because the stand-in sends one burst; a real subsystem test ends on its own active stimulus, and the passive agents simply keep watching ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
 - **Interview angle:** "Your passive agent at chip level reports zero transactions. List three causes in order of likelihood." (The `vif` points at the wrong instance; the monitor waits for a reset or clock that is now different at chip level; the agent's analysis port is not connected in the new env.)
@@ -1651,8 +1668,8 @@ Attempt each question before you open the feedback.
   question="A new UVM bench prints UVM_ERROR : 0 and UVM_FATAL : 0 on its first run. What do you check before you call it a pass?"
   options={[
     { text: "Nothing more: a clean report summary is the definition of a passing UVM test.", correct: false, feedback: "A clean summary is also what a run with no objection (ended at 0 ns) or an unconnected scoreboard prints. The summary counts problems reported; it does not count checks made." },
-    { text: "That the scoreboard checked a non-zero number of items, nothing was pending, the run ended after the stimulus, and a planted bug makes it fail.", correct: true, feedback: "Right. Look for SCB_SUMMARY with matches greater than 0 and pending=0, the end time of the run, and a mutant run with errors. Make the zero-traffic case an error so it can never pass again." },
-    { text: "That the topology printed at the end of elaboration contains every expected component.", correct: false, feedback: "A correct topology shows the bench was built, not that anything ran through it or was checked. An unconnected analysis port does not appear in it." },
+    { text: "That SCB_SUMMARY shows matches > 0 and pending=0 after the stimulus, and that a planted bug makes it fail.", correct: true, feedback: "Right. Look for SCB_SUMMARY with matches greater than 0 and pending=0, the end time of the run, and a mutant run with errors. Make the zero-traffic case an error so it can never pass again." },
+    { text: "That the topology printed at the end of elaboration lists every expected component under the right parent, with no child missing.", correct: false, feedback: "A correct topology shows the bench was built, not that anything ran through it or was checked. An unconnected analysis port does not appear in it." },
     { text: "That the run reached the global timeout, which proves all stimulus was sent.", correct: false, feedback: "Reaching the timeout is a UVM_FATAL, which is a failure; and a fatal skips check_phase and report_phase entirely." }
   ]}
 />
@@ -1661,10 +1678,10 @@ Attempt each question before you open the feedback.
   title="Interview angle: bring-up triage"
   question="A colleague's new bench hangs until the timeout, and the log shows one UVM_ERROR per clock from the sequencer. What do you look at first?"
   options={[
-    { text: "The driver's loop: an item_done() is missing, so get_next_item() is called twice and the sequence never leaves finish_item().", correct: true, feedback: "Right. The sequencer's error text names it: Get_next_item called twice without item_done or get in between. One item_done() per get_next_item() fixes both the errors and the hang." },
     { text: "The objection in the test: it was never raised, so the run cannot end.", correct: false, feedback: "A missing raise ends the run at 0 ns, the opposite symptom. The hang here comes from a sequence that cannot finish." },
     { text: "The scoreboard's run_phase: its get() is blocked and holds the phase open.", correct: false, feedback: "A blocked thread never holds a phase open; only objections do. When run_phase ends, the scoreboard's thread is simply killed." },
-    { text: "The analysis connection from the agent to the scoreboard.", correct: false, feedback: "A missing analysis connection is silent and does not hang the run; it ends normally with no checked transactions." }
+    { text: "The driver's loop: an item_done() is missing, so get_next_item() is called twice and finish_item() never returns.", correct: true, feedback: "Right. The sequencer's error text names it: Get_next_item called twice without item_done or get in between. The sequence never leaves finish_item(). One item_done() per get_next_item() fixes both the errors and the hang." },
+    { text: "The analysis connection from the agent's analysis port to the scoreboard's export, which the env makes in connect_phase.", correct: false, feedback: "A missing analysis connection is silent and does not hang the run; it ends normally with no checked transactions." }
   ]}
 />
 

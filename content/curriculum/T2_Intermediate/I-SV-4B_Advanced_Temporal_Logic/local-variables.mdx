@@ -163,7 +163,10 @@ a_shared: assert property (@(posedge clk) disable iff (!rst_n)
   in_vld |-> ##2 (out_data == last_data));   // compares with whatever is stored now
 ```
 
-Run it on the same trace. **Predict:** which attempt fails?
+Run it on the same trace as above: `last_data` takes `in_data` on every edge where `in_vld` is high, and the assertion reads its sampled value. **Predict:** which attempt fails, and on which edge?
+
+<details>
+<summary>Check your prediction</summary>
 
 <TimingDiagram
   title="A module-level variable is shared by every attempt"
@@ -185,6 +188,8 @@ Run it on the same trace. **Predict:** which attempt fails?
 
 **Why it fails.** `last_data` is one variable, so the input at edge 2 overwrites the value A1 still needs. The check passes for isolated transfers and fails only when transfers overlap, which is exactly when the design is busiest. That is the misconception to drop: *local variables are not shared between attempts; module variables are*. If you ever do need state shared across attempts, such as a running count, that is the job of a module-level variable written by procedural code, as the ticket counters later on this page are.
 
+</details>
+
 ### Variable latency: wait with `[->1]`, check with `##0`
 
 When the output can come any number of ticks later, wait for the output handshake instead of counting ticks. Two operators from the module overview do this:
@@ -201,7 +206,10 @@ property p_var_latency;
 endproperty
 ```
 
-Read it as: "when a byte enters, from the next tick wait for the first `out_vld`, and on that same tick `out_data` must equal the stored byte." **Predict:** in the trace below, on which edge does each version compare `out_data`?
+Read it as: "when a byte enters, from the next tick wait for the first `out_vld`, and on that same tick `out_data` must equal the stored byte." One byte, 5A, enters at edge 1. `out_vld` is high only at edge 4, where `out_data` is 5A; at edge 5 `out_data` has moved on to 77. **Predict:** on which edge does the `##0` version compare `out_data`, on which edge does a `##1` version compare it, and what does each report?
+
+<details>
+<summary>Check your prediction</summary>
 
 <TimingDiagram
   title="##0 checks on the handshake tick, ##1 one tick later"
@@ -222,6 +230,8 @@ Read it as: "when a byte enters, from the next tick wait for the first `out_vld`
 />
 
 **Mistake 2: `##1` where `##0` was meant.** `##0` does not wait a cycle in a singly clocked sequence: it starts the second sequence on the same clock tick where the first one ends (§16.7). Writing `##1` after `[->1]` checks the data one tick after the handshake, which fails on a correct design whose output moves on at once. Crossing clocks changes this rule, see [Multiclock Assertions](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking).
+
+</details>
 
 **A related slip: `[=1]` instead of `[->1]`.** Nonconsecutive repetition `out_vld[=1]` is `out_vld[->1] ##1 !out_vld[*0:$]` (Annex F.3.4.2.3): it can end on the handshake tick *or on any later tick before the next `out_vld`*. With `[=1] ##0`, a wrong value on the handshake tick passes if the right value shows up on one of those later ticks. The two operators are not interchangeable here; use `[->1]`.
 
@@ -270,6 +280,9 @@ First, the obvious property:
 
 **Predict:** which attempts fail, and on which edges?
 
+<details>
+<summary>Check your prediction</summary>
+
 <TimingDiagram
   title="The pairing bug: each attempt grabs the next output handshake"
   caption="Edge n is the rising edge at 10n + 5 ns; reset is released before edge 2. Values are those sampled at each edge, including the X the FIFO shows before its memory is written. T1 enters at edge 3 while T0 is still inside, so T1's goto ends at T0's handshake at edge 4 and compares A1 with B2. T2 and T3 both end at T1's handshake at edge 7 and compare B2. None of the three failures points at the real bug in T2."
@@ -290,6 +303,8 @@ First, the obvious property:
 />
 
 **What went wrong.** Each attempt is private, so this is not Mistake 1. The problem is *which* handshake each attempt waits for. T1's goto starts at edge 4 and ends at the first output handshake it sees, which belongs to T0, the older transfer still in flight. The property is wrong even on a perfect design: remove the planted bug and the same three attempts still fail.
+
+</details>
 
 **The fix: a ticket.** Count the transfers on each side with two counters in the bench. When a byte enters, capture the input count as its ticket; the byte's output is the handshake where the output count equals that ticket.
 
@@ -433,7 +448,7 @@ The rules, each from §16.11:
     { kind: "divider", label: "t = 85 ns: rising edge 8" },
     { kind: "async", from: "pre", to: "obs", label: "sampled values at 85 ns" },
     { kind: "self", from: "obs", label: "tkt 2 found" },
-    { kind: "async", from: "obs", to: "rea", label: "schedule show_pair(2, C3, C2)" },
+    { kind: "async", from: "obs", to: "rea", label: "schedule show_pair" },
     { kind: "self", from: "obs", label: "C2≠C3: fail", tone: "error" },
     { kind: "async", from: "obs", to: "rea", label: "schedule the else action block" },
     { kind: "note", from: "rea", label: "show_pair prints its pair line and $error prints, in either order" }
@@ -451,7 +466,7 @@ Make It Work shows the log this produces.
 | Attach assignments and calls only to a subsequence that cannot match empty | `(a ##1 b[*0:1], x = e)` | `a ##1 (b[*0:1], x = e)` | An empty match has no tick at which to perform the assignment | §16.10, §16.11 |
 | Goto and nonconsecutive repetition take only a Boolean | `(b[->1], v = d)` | `(b, v = d)[->1]` | `[->]` and `[=]` apply to an expression; a parenthesised sequence with match items allows only `[*]` | §16.9.2 (Syntax 16-6) |
 | Match items may change only local variables | `(a, n++)` with `n` a local variable already assigned | `(a, cnt++)` with `cnt` a module variable | Assertion expressions must have no side effects on design or bench state | §16.6 |
-| Not in a disable condition | `disable iff (!rst_n)` | `disable iff (v == 0)` | The disable condition is evaluated with current values and applies to all attempts at once, so there is no single attempt's copy to read | §16.12 |
+| Not in a disable condition | `disable iff (!rst_n)` | `disable iff (v == 0)` | The disable condition is evaluated with current (not sampled) values, separately from the sequence evaluation that holds each attempt's copies, and the standard forbids local variables in it | §16.12, §16.6 |
 | Not in a sampled-value function or a clocking event | `$stable(out_data)` | `$past(v)`, `@(posedge v)` | A sampled-value function samples its argument at earlier clock ticks, and a clocking event decides when attempts run; a local variable exists only inside one attempt | §16.9.3, §16.10 |
 | Not visible outside the property | a §16.11 call that prints `v` | `v` in the action block; `p.v` from elsewhere | The variable exists only inside the attempt | §16.10 |
 
@@ -727,7 +742,10 @@ The two lines at 85 ns both come from the Reactive region of the same time slot,
 
 ### Break it on purpose
 
-1. **Remove the ticket.** In the consequent, replace `(out_vld && out_rdy && out_cnt == tkt)` with `(out_vld && out_rdy)` and rerun. **Predict** before you run: the attempts now pair with the next handshake, as in the pairing-bug picture.
+1. **Remove the ticket.** In the consequent, replace `(out_vld && out_rdy && out_cnt == tkt)` with `(out_vld && out_rdy)` and rerun. **Predict** before you run: which pairings fail now, at what times, and what does the last line say?
+
+   <details>
+   <summary>Check your prediction</summary>
 
    ```text
    [45] pair ticket 0: expected a1, got a1
@@ -742,9 +760,18 @@ The two lines at 85 ns both come from the Reactive region of the same time slot,
 
    (Illustrative; lines with the same time may appear in a different order.) Three failures, and the log blames the wrong transfers. Now also set `.CORRUPT(-1)`: the same three failures remain, which proves the property, not the FIFO, is wrong.
 
+   </details>
+
 2. **Fix the FIFO instead.** Restore the ticket and set `.CORRUPT(-1)`. All four pairings pass and the last line becomes `[115] PASS=4 FAIL=0`.
 
-3. **Swap `##0` for `##1`.** Restore everything, then change `##0 (out_data == exp_data)` to `##1 (out_data == exp_data)`. **Predict** which pairings fail. (T0 is compared at edge 5, where `out_data` already shows B2, so it fails; work out the other three yourself, then check against the trace table.)
+3. **Swap `##0` for `##1`.** Restore everything, then change `##0 (out_data == exp_data)` to `##1 (out_data == exp_data)`. **Predict** which pairings fail. (T0 is compared at edge 5, where `out_data` already shows B2, so it fails; work out the other three yourself, then open the answer.)
+
+   <details>
+   <summary>Check your prediction</summary>
+
+   With `##1` every comparison moves one tick past its own handshake. T0 is compared at edge 5 (B2, not A1), T1 at edge 8 (C2, not B2), T2 at edge 9 (D4, not C3) and T3 at edge 10. At edge 10 the FIFO is empty and `out_data` reads the never-written `mem[4]`, which is X. A comparison with X is false (§16.6), so T3 fails too. The `show_pair` lines do not change, because the call is attached to the goto and still runs on each handshake. Four `$error` lines appear, at 55, 85, 95 and 105 ns, and the last line becomes `[115] PASS=0 FAIL=4`.
+
+   </details>
 
 ### How to write a data-integrity property
 

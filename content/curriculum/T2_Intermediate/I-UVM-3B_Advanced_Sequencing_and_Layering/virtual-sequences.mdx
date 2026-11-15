@@ -79,14 +79,18 @@ Two facts follow, and juniors get both wrong:
 - **Items never pass through the virtual sequence.** There is no TLM connection from a virtual sequence (or a virtual sequencer) to any agent. It holds plain class **handles** (references) to the agent sequencers and hands them to `start()`.
 - **Only `body()` decides the order across agents.** Each agent sequencer grants items only among the sequences running on *it*; it has no idea another agent exists.
 
-The map below shows the two ways a virtual sequence reaches the agents. Select each block to read its role and code, toggle between **With a virtual sequencer** and **Handles in the sequence (start(null))**, then answer the prediction prompt before you read on.
+The map below shows the two ways a virtual sequence reaches the agents. Select each block to read its role and code, toggle between **With a virtual sequencer** and **Handles in the sequence (start(null))**, then use the prompt under the map to check the rule above, before you open the debrief.
 
 <UvmVirtualSequencerDiagram />
 
-**What the map showed.**
+<details>
+<summary>After you answer: what the map showed</summary>
+
 - In both architectures the dotted lines are handles and the only item path is the solid pull connection inside each agent, from the driver's port to its sequencer's export.
 - `cfg_seq`'s items are arbitrated on `cfg_sqr`, the handle passed to `c.start()`. The virtual sequencer, when there is one, never sees an item; it is only where `soc_vseq` itself runs. (That rule assumes the handle is not null; a null handle behaves differently, as a later section shows.)
 - The two architectures differ only in *who supplies the handles*: the env (into a virtual sequencer) or the test (into the sequence). The order still comes from `body()` in both.
+
+</details>
 
 ### Your first virtual sequence, line by line
 
@@ -281,11 +285,11 @@ Sequential `start()` calls are the right tool for "this, then that". When two ag
 - **One after another** is the only pattern that meets the rule: D1 starts at 40 ns, `body()` returns at 70 ns.
 - **`fork…join` runs the agents in parallel; it does not order them.** D1 runs at 0 ns. The run passes silently unless a checker looks at the order, which is why the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) adds one. `body()` returns when the longer branch (configuration) ends, at 40 ns.
 - **`fork…join_none` with nothing waiting ends the test.** `vseq.start()` returns at 0 ns, so the test carries on at 0 ns (the Make It Work bench prints its `TEST` line then), drops its objection, and the run phase ends and kills the children. The children do start at 0 ns and the drivers may even print `start C1` and `start D1`; no item completes.
-- **`fork…join_any`** (Pattern 4) would return at 30 ns, when `data_seq` finishes first, while C2 is still being written. If `body()` then returns, the run ends at 30 ns in the middle of C2.
+- **`fork…join_any`** (Pattern 4) returns at 30 ns, when `data_seq` finishes first, while C2 is still being written; with nothing waiting, `body()` returns and the run ends at 30 ns in the middle of C2.
 
 </details>
 
-The [dispatch explorer on the next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) runs the same three patterns on a virtual sequencer, with a timeline you can replay.
+The [dispatch explorer on the next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) runs three of these patterns (in order, fork…join and fork…join_none; it has no join_any) on a virtual sequencer, with a timeline you can replay.
 
 **Patterns you will write in real virtual sequences.** Each fragment is a `body()` of `soc_vseq` or an extension of it; `bg` is an endless background sequence (for example a responder that answers the DUT's requests for ever) on some agent sequencer `rsp_sqr`.
 
@@ -380,7 +384,7 @@ To see these process rules step by step, replay the *timeout-disable-fork* and *
 
 ### Where the handles come from: a null sequencer or a virtual sequencer
 
-So far the test copied the handles into the sequence. The other standard style puts them in a **virtual sequencer**: a `uvm_sequencer` component with no driver, built by the env next to the agents, whose handle fields the env assigns in `connect_phase`. The virtual sequence then runs *on* that component, and reaches the handles through a typed handle called `p_sequencer`, which the `` `uvm_declare_p_sequencer(soc_vsqr) `` macro declares and casts when the sequence starts (Annex B.3.3). The body is the same; only the handle expressions and the `start()` argument change:
+So far the test copied the handles into the sequence. The other standard style puts them in a **virtual sequencer**: a `uvm_sequencer` component with no driver, built by the env next to the agents, whose handle fields the env assigns in `connect_phase`. The virtual sequence then runs *on* that component, and reaches the handles through a typed handle called `p_sequencer`, which the `` `uvm_declare_p_sequencer(soc_vsqr) `` macro declares (Annex B.3.3) and, in uvm-core 2020.3.1, casts from the sequence's sequencer when start() sets it (`m_set_p_sequencer()` in `uvm_sequence_defines.svh`). The body is the same; only the handle expressions and the `start()` argument change:
 
 ```systemverilog
 // snippet: the same body() when soc_vseq runs on a virtual sequencer soc_vsqr
@@ -410,12 +414,11 @@ Both styles are in wide use; teams usually pick one per project and keep it.
 
 ### What `start()` does with a null handle
 
-A forgotten handle assignment is the most common virtual-sequence bug, and its symptom depends on the parent. When `start(sequencer, parent)` begins, it calls `set_item_context()` (§14.1.2.2). In uvm-core 2020.3.1, if `sequencer` is null *and* a parent was given, the child takes **the parent's sequencer** instead (`uvm_sequence_item.svh`, `set_item_context()`).
+A forgotten handle assignment is the most common virtual-sequence bug, and its symptom depends on the parent. In uvm-core 2020.3.1, `start(sequencer, parent)` begins by calling `set_item_context()` (the §14.1.2.2 method), and if `sequencer` is null *and* a parent was given, the child takes **the parent's sequencer** instead (`uvm_sequence_item.svh`, `set_item_context()`). The standard does not say what a null sequencer with a parent does.
 
 <SequenceDiagram
   title="A null child handle, with and without a sequencer on the parent"
   caption="The same forgotten handle gives a fatal error when soc_vseq was started with start(null), and a silent hang when soc_vseq runs on the virtual sequencer soc_vsqr, a sequencer component with no driver."
-  columnWidth={200}
   participants={[
     { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
     { id: "d", label: "d", sublabel: "data_seq", kind: "sequence" },
@@ -448,6 +451,8 @@ Without a parent (`d.start(null_handle)`) both styles give the `UVM_FATAL [SEQ]`
 - **A child on the wrong agent.** `cfg_seq` started on `data_sqr` compiles, because `start()` takes any `uvm_sequencer_base`, but the first `finish_item()` fails with `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item` (uvm-core 2020.3.1, `uvm_sequencer_param_base.svh`).
 
 ### Debugging: symptom, cause, fix
+
+The symptoms quote the log of the Make It Work bench below, whose test prints a `TEST` line after `vseq.start()` returns and whose drivers print `start C1`, `start D1` and so on.
 
 | What you see | Likely cause | Fix |
 |---|---|---|
@@ -810,19 +815,19 @@ Reading `start()` in uvm-core 2020.3.1 (`uvm_sequence_base.svh`):
 - **Recording.** `begin_tr()` and `end_tr()` run only when `m_sequencer` is non-null, so a virtual sequence started with `start(null)` produces no transaction record of its own. Its children, which have real sequencers, are still recorded ([I-UVM-6](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) covers recording).
 - **Names.** `get_full_name()` prefixes the sequencer's path only when there is a sequencer and no parent, so the sequence is plain `vseq` and its children `vseq.c` and `vseq.d`. Messages and debug dumps are less self-locating; name your sequences well.
 - **`p_sequencer`.** The `` `uvm_declare_p_sequencer `` cast of a null `m_sequencer` succeeds (casting null is legal, IEEE 1800-2023 §8.16), so there is no `DCLPSQ` error; `p_sequencer.cfg_sqr` then fails at run time as a null-handle access reported by the simulator, not by UVM.
-- **Locks.** `lock()` and `grab()` with no argument act on `m_sequencer`; with `start(null)` that is null, and uvm-core stops with `UVM_FATAL [LOCKSEQR]` or `UVM_FATAL [GRAB]` (next item).
+- **Locks.** `lock()` and `grab()` with no argument act on `m_sequencer`; with `start(null)` that is null, which the standard requires to be fatal (§14.2.5.5, §14.2.5.6); uvm-core reports it as `UVM_FATAL [LOCKSEQR]` or `UVM_FATAL [GRAB]` (next item).
 - **Not the objection.** `set_automatic_phase_objection(1)` behaves the same in both styles: it needs `set_starting_phase()` (§14.2.4.1–§14.2.4.4). Only a default sequence started by the sequencer gets a starting phase automatically.
 
 ### Expert: locking an agent from a virtual sequence
 
 To keep other traffic off an agent while a multi-item scenario runs, the virtual sequence must name the agent sequencer: `lock(cfg_sqr)` … `unlock(cfg_sqr)` (§14.2.5.5, §14.2.5.7), or `grab(cfg_sqr)` … `ungrab(cfg_sqr)` (§14.2.5.6, §14.2.5.8).
-- **With no argument**, `lock()` targets the virtual sequence's own sequencer: a virtual sequencer, where it blocks nothing useful, or null after `start(null)`, where uvm-core stops with `UVM_FATAL [LOCKSEQR] Null m_sequencer reference`.
+- **With no argument**, `lock()` targets the virtual sequence's own sequencer: a virtual sequencer, where it blocks nothing useful, or null after `start(null)`, a fatal error required by §14.2.5.5 (uvm-core: `UVM_FATAL [LOCKSEQR] Null m_sequencer reference`).
 - **Children must be started with `this` as parent.** A sequencer blocks every request whose sequence is neither the lock holder nor one of its descendants (`is_blocked()` and `is_child()` in `uvm_sequencer_base.svh`). A child started without a parent is *not* a descendant, so it waits behind its own parent's lock while the parent waits in `c.start()`: a deadlock that ends only at `PH_TIMEOUT`.
 - When locks and grabs are granted relative to queued requests is taught, with the uvm-core details, in [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
 
 <SequenceDiagram
   title="A lock on cfg_sqr, with and without this as the child's parent"
-  caption="The same lock(cfg_sqr) helps or deadlocks depending on one argument. cfg_sqr blocks every request whose sequence is neither the lock holder nor one of its descendants (is_blocked() and is_child() in uvm-core 2020.3.1, uvm_sequencer_base.svh)."
+  caption="The same lock(cfg_sqr) helps or deadlocks depending on one argument. cfg_sqr blocks every request whose sequence is neither the lock holder nor one of its descendants (is_blocked() and is_child() in uvm-core 2020.3.1, uvm_sequencer_base.svh). In uvm-core 2020.3.1 lock() grants an unblocked lock at once (grant_queued_locks()); §14.2.5.5 words it as granted after earlier arbitrated requests complete, see Sequence Arbitration."
   participants={[
     { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
     { id: "c", label: "c", sublabel: "cfg_seq", kind: "sequence" },
@@ -831,7 +836,7 @@ To keep other traffic off an agent while a multi-item scenario runs, the virtual
   messages={[
     { kind: "divider", label: "c started with this as parent" },
     { from: "vseq", to: "sqr", label: "lock(cfg_sqr)" },
-    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at the next arbitration)" },
+    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at once in uvm-core 2020.3.1: no other lock is held)" },
     { from: "vseq", to: "c", label: "c.start(cfg_sqr, this)" },
     { from: "c", to: "sqr", label: "start_item(req)" },
     { kind: "note", from: "c", to: "sqr", label: "is_blocked(c) is 0: c is a descendant of the lock holder" },
@@ -840,7 +845,7 @@ To keep other traffic off an agent while a multi-item scenario runs, the virtual
     { from: "vseq", to: "sqr", label: "unlock(cfg_sqr)" },
     { kind: "divider", label: "c started with no parent" },
     { from: "vseq", to: "sqr", label: "lock(cfg_sqr)" },
-    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at the next arbitration)" },
+    { kind: "return", from: "sqr", to: "vseq", label: "lock granted (at once in uvm-core 2020.3.1: no other lock is held)" },
     { from: "vseq", to: "c", label: "c.start(cfg_sqr)" },
     { from: "c", to: "sqr", label: "start_item(req)", tone: "error" },
     { kind: "note", from: "c", to: "sqr", label: "is_blocked(c) is 1: c is neither the lock holder nor its descendant, so its request waits", tone: "error" },
@@ -880,18 +885,17 @@ Sequential `start()` calls order *handshakes*: `d.start()` begins after the conf
 
 - **The library's own guards.** uvm-core 2020.3.1 wraps every `start()` in a process guard. If the process that called `start()` is killed while the sequence still runs (for example by the end of the run phase, or by a `disable fork`), it reports `UVM_WARNING [SEQPRTZMB]` and calls `kill()`; if the sequence's `body()` process itself is killed, `start()` reports `UVM_WARNING [SEQBDYZMB]` (`uvm_sequence_base.svh`). These are uvm-core behaviour, not IEEE 1800.2, and the end-of-run case is read from the source, not confirmed in simulation: check what your simulator prints.
 - **Stop on purpose.** Call `bg.kill()` (§14.2.5.11) or, to clear a whole sequencer, `sqr.stop_sequences()` (§15.3.2.14) before `body()` returns and before the objection drops. A sequence that was started with `this` as parent is also killed when its parent is.
-- **Mid-item kills.** The two ways of stopping a sequence leave the driver in different states, so the driver's rule differs (uvm-core 2020.3.1, `uvm_sequencer_base.svh`, `uvm_sequencer.svh`):
-  - after `seq.kill()`, the item the driver holds stays in the sequencer's request FIFO and the sequencer still expects `item_done()`. The driver must finish or cut short the item and call `item_done()` as usual; any response it sends is dropped with a warning, because the sequence is gone. Skipping `item_done()` here makes the next `get_next_item()` report "Get_next_item called twice" and return the same stale item again.
-  - after `sqr.stop_sequences()`, the sequencer also empties its request FIFO, so the driver must abandon the item *without* calling `item_done()`; calling it fires `UVM_FATAL [SQRBADITMDN]`.
-  The handshake lesson's "killed and stopped sequences" item and the arbitration lesson's "locks, killed processes and cleanup" item cover the details.
+- **Mid-item kills.** The two ways of stopping a sequence leave the driver in different states (uvm-core 2020.3.1, `uvm_sequencer_base.svh`, `uvm_sequencer.svh`): after `seq.kill()`, still call `item_done()`; after `sqr.stop_sequences()`, do not (details in the table below).
 - **`disable fork` versus `kill()`.** `disable fork` ends processes (IEEE 1800-2023 §9.6.3); `kill()` ends a sequence and removes its requests and locks from the sequencer. Prefer `kill()` for sequences, and keep any `disable fork` inside an isolation wrapper.
 
 **Mid-item kills at one glance** (the two rules of the "Mid-item kills" bullet above):
 
 | Stopped with | The item the driver holds | The driver's rule | If the driver gets it wrong |
 |---|---|---|---|
-| `seq.kill()` | stays in the request FIFO; the sequencer still expects `item_done()` | finish or cut short the item, then call `item_done()`; any response is dropped with a warning | without `item_done()`, the next `get_next_item()` reports "Get_next_item called twice" and returns the same stale item |
-| `sqr.stop_sequences()` | gone: the sequencer empties its request FIFO | abandon the item without calling `item_done()` | calling `item_done()` fires `UVM_FATAL [SQRBADITMDN]` |
+| `seq.kill()` | stays in the request FIFO; the sequencer still expects `item_done()` | finish or cut short the item, then call `item_done()` as usual; any response it sends is dropped with a warning, because the sequence is gone | without `item_done()`, the next `get_next_item()` reports "Get_next_item called twice" and returns the same stale item again |
+| `sqr.stop_sequences()` | gone: the sequencer also empties its request FIFO | abandon the item without calling `item_done()` | calling `item_done()` fires `UVM_FATAL [SQRBADITMDN]` |
+
+The handshake lesson's "killed and stopped sequences" item and the arbitration lesson's "locks, killed processes and cleanup" item cover the details.
 
 ### Expert: virtual sequences at scale
 
@@ -1125,7 +1129,7 @@ In `soc_test::run_phase`, write `soc_vseq2 vseq = soc_vseq2::type_id::create("vs
 
 ### Hands-on next steps
 
-- **The dispatch explorer.** On the [next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer), keep the data handle wired and predict D1's start time and the end of the run for all three dispatch styles before you run each one. Compare your answers with the waveform on this page.
+- **The dispatch explorer.** On the [next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer), keep the data handle wired and predict D1's start time and the end of the run for all three dispatch styles before you run each one. Compare your answers with Patterns 1 to 3 in the waveforms on this page.
 - **The lab.** The [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) asks you to write a configure-before-data virtual sequence and prove the order with a self-check.
 
 <VisualRecap

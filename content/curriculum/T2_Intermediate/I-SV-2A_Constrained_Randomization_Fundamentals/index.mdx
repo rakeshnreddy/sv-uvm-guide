@@ -241,7 +241,7 @@ Read the class line by line:
 
 - **`rand`** marks a random variable. With no constraint, its values are uniformly distributed over its whole range: `opcode` is each of 0..15 with probability 1/16 (§18.4.1).
 - **`constraint c_len { … }`** is a **constraint block**: a named class member, like a method, whose names must be unique within the class (§18.5). All enabled blocks hold at the same time; for hard constraints, their order in the class does not matter (soft constraints are ranked by order, §18.5.13.1).
-- **`inside`** is the **set membership** operator (§11.4.13). `len inside {[1:16]}` is true when `len` is in the inclusive range 1 to 16. The set can mix single values and ranges, for example `{0, [4:7], 12}`. Inside a constraint, every member of the set is equally likely (§18.5.3). [F2A Operators](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions#set-membership-inside-and-case-inside) teaches `inside` outside constraints. Two traps: in `[lo:hi]` a `$` stands for the lowest or highest value of the type, and a reversed range such as `[16:8]` is **empty**, so `len inside {[16:8]}` can never hold and `randomize()` fails.
+- **`inside`** is the **set membership** operator (§11.4.13). `len inside {[1:16]}` is true when `len` is in the inclusive range 1 to 16. The set can mix single values and ranges, for example `{0, [4:7], 12}`. Inside a constraint, every member of the set is equally likely (§18.5.3). [F2A Operators](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions#set-membership-inside-and-case-inside) teaches `inside` outside constraints. Two traps: in `[lo:hi]` a `$` stands for the lowest or highest value of the type, and a reversed range such as `[16:8]` is **empty**.
 - **`randomize()`** is a built-in virtual function that returns an `int`: 1 when every random variable got a legal value, 0 otherwise (§18.6.1). The values stay in the object until the next *successful* call.
 
 **Picture the set.** Each row marks the values of `len` (a `bit [7:0]`, so 0 to 255) that one `inside` constraint allows.
@@ -313,8 +313,8 @@ Read the class line by line:
 
 **Predict:** what does `randomize()` return on every call with `len inside {[16:8]}`? And with `len inside {[16:8], 20}`, if that is the only constraint on `len`?
 
-<details className="my-4 rounded-xl border border-border/70 p-3">
-<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+<details>
+<summary>Check your prediction</summary>
 
 <figure>
 <svg viewBox="0 0 360 104" role="img" aria-labelledby="isv2a-inside2-title isv2a-inside2-desc" style={{ width: "100%", maxWidth: 440 }}>
@@ -435,6 +435,9 @@ randc bit [1:0] y;   // legal values 0..3
 
 **Predict:** calls 1 to 3 on object `a` returned 2, 0 and 3. What can call 4 return?
 
+<details>
+<summary>Check your prediction: call 4 on object a</summary>
+
 Here is one possible run, traced. Your simulator will pick other permutations; the rules that hold on every run are in bold below the table.
 
 | Call | `a.y` | Values left in `a`'s cycle | `b.y` | Values left in `b`'s cycle |
@@ -447,7 +450,11 @@ Here is one possible run, traced. Your simulator will pick other permutations; t
 | 6: `a.randomize() with { y != 0; }` | 3 | constraints on `y` changed: permutation recomputed over 1, 2, 3 | not called | 1, 2, 3 |
 | 7: plain `a.randomize()` | 0 | constraints changed back: recomputed again over 0..3 | 3 | 1, 2 |
 
-The answer to the prediction is **1**: it is the only value left in `a`'s cycle. What the table shows:
+The answer to the prediction is **1**: it is the only value left in `a`'s cycle.
+
+</details>
+
+What the table shows:
 
 - **Each object has its own cycle.** `b` does not continue `a`'s permutation, and the two orders are independent. The state is shared only when the variable is declared `static`; then every instance draws from one sequence (§18.4.2).
 - **A cycle guarantees no repeat inside it, not across cycles.** Calls 4 and 5 both return 1.
@@ -566,7 +573,7 @@ Pitfalls and limits:
 
 ### Constraint blocks, inside and common patterns
 
-Constraints describe **relations**, not assignments. `len == 8` does not set `len`; it removes every combination where `len` is not 8. A relation can involve several variables, `low < high` or `data.size() == len`, and then it constrains all of them at once. The table lists the patterns you will write most often. Each line is a constraint expression that goes inside a block, for example `constraint c_align { addr[1:0] == 2'b00; }`.
+Constraints describe **relations**, not assignments. `len == 8` does not set `len`; it removes every combination where `len` is not 8. A relation can involve several variables, `low < high` or `data.size() == len`, and then it constrains all of them at once. The table lists the patterns you will write most often. Each line except the enum row is a constraint expression that goes inside a block, for example `constraint c_align { addr[1:0] == 2'b00; }`.
 
 | Pattern | Constraint expression | What to know |
 |---|---|---|
@@ -673,12 +680,15 @@ Constraints written with `->` or `if…else` constrain both sides at once: the s
 
 `c_opcode` above does two jobs (§18.5.3). It **restricts** `opcode` to the listed values, and it **weights** them.
 
-- `:=` gives the weight to **every value** of a range. `[4'h1:4'h3] := 70` would weigh 3 × 70 = 210.
+- `:=` gives the weight to **every value** of a range, so a three-value range with `:= w` weighs 3w.
 - `:/` gives the weight to the **range as a whole**. `[4'h1:4'h3] :/ 70` weighs 70 in total, about 23.3 per value.
 - For a single value the two are the same. An item with no weight gets `:= 1`.
 - Weights are ratios. Divide by the total weight, here 10 + 70 + 20 = 100.
 
-**Predict:** with `c_opcode` as written, how often is `opcode` equal to `0`? To `2`? To `9`? To `5`? Commit to four numbers, then read on.
+**Predict:** with `c_opcode` as written, how often is `opcode` equal to `0`? To `2`? To `9`? To `5`? Commit to four numbers, then open the answer.
+
+<details>
+<summary>Check your prediction: where c_opcode sends opcode</summary>
 
 So `opcode` is `0` on 10% of calls, each of `1` to `3` on about 23.3%, and each of `8` to `F` on 2.5%. Values `4` to `7` are not listed, so they **never** occur: `dist` is also a membership constraint. A value whose total weight is 0 is excluded too. Nonzero weights never make `randomize()` fail, but the membership part can, for example `opcode dist {…}` together with `opcode == 4'h5`.
 
@@ -705,21 +715,13 @@ So `opcode` is `0` on 10% of calls, each of `1` to `3` on about 23.3%, and each 
   <text x="242.33" y="40" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"3"}</text>
   <text x="242.33" y="64" fontSize="9.5" textAnchor="middle" fill="currentColor">{"23.3%"}</text>
   <rect x="282" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="286.25" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"8"}</text>
   <rect x="290.5" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="294.75" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"9"}</text>
   <rect x="299" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="303.25" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"A"}</text>
   <rect x="307.5" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="311.75" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"B"}</text>
   <rect x="316" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="320.25" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"C"}</text>
   <rect x="324.5" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="328.75" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"D"}</text>
   <rect x="333" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="337.25" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"E"}</text>
   <rect x="341.5" y="22" width="8.5" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-violet-500/25" />
-  <text x="345.75" y="39" fontSize="7" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"F"}</text>
   <path d="M282.00,53 v4 h68.00 v-4" fill="none" stroke="currentColor" strokeOpacity="0.6" />
   <text x="350" y="64" fontSize="9.5" textAnchor="end" fill="currentColor">{"8 … F: 2.5% each"}</text>
   <rect x="10" y="88" width="50" height="18" rx="2" fill="url(#isv2a-dist-hatch)" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="3 2" />
@@ -729,10 +731,12 @@ So `opcode` is `0` on 10% of calls, each of `1` to `3` on about 23.3%, and each 
 <figcaption>**Where `c_opcode` sends `opcode`**, to scale. `:/` shares a range's weight across its values, and a value the list does not name has no slice at all.</figcaption>
 </figure>
 
-**Predict:** what changes if the range is written `[4'h1:4'h3] := 70` instead? Work out the new total weight first.
+</details>
 
-<details className="my-4 rounded-xl border border-border/70 p-3">
-<summary className="cursor-pointer font-semibold">Check your prediction: the same dist with := 70 on the range</summary>
+**Predict:** what are P(opcode == 0) and P(opcode == 9) if the range is written `[4'h1:4'h3] := 70` instead? Work out the new total weight first.
+
+<details>
+<summary>Check your prediction: the same dist with := 70 on the range</summary>
 
 <figure>
 <svg viewBox="0 0 360 140" role="img" aria-labelledby="isv2a-dist2-title isv2a-dist2-desc" style={{ width: "100%", maxWidth: 440 }}>
@@ -746,7 +750,7 @@ So `opcode` is `0` on 10% of calls, each of `1` to `3` on about 23.3%, and each 
   <text x="8" y="13" fontSize="9" fontFamily="monospace" fill="currentColor">{"opcode dist { 4'h0 := 10, [4'h1:4'h3] := 70, [4'h8:4'hF] :/ 20 }"}</text>
   <rect x="10" y="22" width="14.17" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-indigo-500/30" />
   <text x="17.08" y="40" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"0"}</text>
-  <text x="17.08" y="64" fontSize="9.5" fill="currentColor">{"4.2%"}</text>
+  <text x="17.08" y="64" fontSize="9.5" textAnchor="middle" fill="currentColor">{"4.2%"}</text>
   <rect x="24.17" y="22" width="99.17" height="28" stroke="currentColor" strokeOpacity="0.6" className="fill-cyan-500/30" />
   <text x="73.75" y="40" fontSize="10" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"1"}</text>
   <text x="73.75" y="64" fontSize="9.5" textAnchor="middle" fill="currentColor">{"29.2%"}</text>
@@ -973,27 +977,27 @@ The trap is **name resolution**. Inside the braces, an unqualified name is looke
   <text x="8" y="47" fontSize="10.5" fontWeight="600" fontFamily="monospace" fill="currentColor">{"len"}</text>
   <text x="86" y="47" fontSize="11" textAnchor="middle" fill="currentColor">{"→"}</text>
   <rect x="94" y="26" width="118" height="34" rx="6" strokeWidth="1.4" className="fill-cyan-500/15 stroke-cyan-700 dark:stroke-cyan-300" />
-  <text x="100" y="39" fontSize="8.5" fill="currentColor" fillOpacity="0.75">{"1st: bus_item class"}</text>
+  <text x="100" y="39" fontSize="9.5" fill="currentColor" fillOpacity="0.75">{"1st: bus_item class"}</text>
   <text x="100" y="53" fontSize="10" fontWeight="600" fill="currentColor">{"✓ t.len: found"}</text>
   <rect x="236" y="26" width="118" height="34" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="3 3" />
-  <text x="242" y="39" fontSize="8.5" fill="currentColor" fillOpacity="0.5">{"2nd: caller send_len"}</text>
+  <text x="242" y="39" fontSize="9.5" fill="currentColor" fillOpacity="0.5">{"2nd: caller send_len"}</text>
   <text x="242" y="53" fontSize="10" fill="currentColor" fillOpacity="0.6">{"not searched"}</text>
   <text x="8" y="95" fontSize="10.5" fontWeight="600" fontFamily="monospace" fill="currentColor">{"n"}</text>
   <text x="86" y="95" fontSize="11" textAnchor="middle" fill="currentColor">{"→"}</text>
   <rect x="94" y="74" width="118" height="34" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
-  <text x="100" y="87" fontSize="8.5" fill="currentColor" fillOpacity="0.75">{"1st: bus_item class"}</text>
+  <text x="100" y="87" fontSize="9.5" fill="currentColor" fillOpacity="0.75">{"1st: bus_item class"}</text>
   <text x="100" y="101" fontSize="10" fill="currentColor">{"✕ no n here"}</text>
   <rect x="236" y="74" width="118" height="34" rx="6" strokeWidth="1.4" className="fill-cyan-500/15 stroke-cyan-700 dark:stroke-cyan-300" />
-  <text x="242" y="87" fontSize="8.5" fill="currentColor" fillOpacity="0.75">{"2nd: caller send_len"}</text>
+  <text x="242" y="87" fontSize="9.5" fill="currentColor" fillOpacity="0.75">{"2nd: caller send_len"}</text>
   <text x="242" y="101" fontSize="10" fontWeight="600" fill="currentColor">{"✓ argument n"}</text>
   <text x="224" y="95" fontSize="11" textAnchor="middle" fill="currentColor">{"→"}</text>
   <text x="8" y="143" fontSize="10.5" fontWeight="600" fontFamily="monospace" fill="currentColor">{"local::len"}</text>
   <text x="86" y="143" fontSize="11" textAnchor="middle" fill="currentColor">{"→"}</text>
   <rect x="94" y="122" width="118" height="34" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="3 3" />
-  <text x="100" y="135" fontSize="8.5" fill="currentColor" fillOpacity="0.5">{"1st: bus_item class"}</text>
+  <text x="100" y="135" fontSize="9.5" fill="currentColor" fillOpacity="0.5">{"1st: bus_item class"}</text>
   <text x="100" y="149" fontSize="10" fill="currentColor" fillOpacity="0.6">{"skipped"}</text>
   <rect x="236" y="122" width="118" height="34" rx="6" strokeWidth="1.4" className="fill-cyan-500/15 stroke-cyan-700 dark:stroke-cyan-300" />
-  <text x="242" y="135" fontSize="8.5" fill="currentColor" fillOpacity="0.75">{"2nd: caller send_len"}</text>
+  <text x="242" y="135" fontSize="9.5" fill="currentColor" fillOpacity="0.75">{"2nd: caller send_len"}</text>
   <text x="242" y="149" fontSize="10" fontWeight="600" fill="currentColor">{"✓ argument len"}</text>
   <text x="224" y="143" fontSize="11" textAnchor="middle" fill="currentColor">{"→"}</text>
   <text x="8" y="176" fontSize="9.5" fill="currentColor">{"In len == len both names take row 1: t.len == t.len."}</text>
@@ -1040,7 +1044,7 @@ Then open the lab on its failure scenario. **Debug a failure.** Find the smalles
 
 <ConstraintSolverHeatmapVisualizer initialScenario="debug" scenarios={["debug"]} />
 
-So the only safe call is a **checked** call:
+Here is a **checked** call:
 
 ```systemverilog
 // snippet: plain SystemVerilog; in UVM use `uvm_fatal (see Make It Work)
@@ -1050,21 +1054,28 @@ if (!t.randomize() with { len == 16; })
 
 **Predict before you read on:** `void'(t.randomize());` and `assert(t.randomize());` both compile. When the constraints have no solution, does either one stop the test? In which one can `randomize()` end up never being called?
 
+<details>
+<summary>Check your prediction: void' and assert</summary>
+
 Two common forms are unsafe:
 
 - **`void'(t.randomize());`** discards the result on purpose. After a failure the test carries on with the *previous* values, so the same transaction is sent again and nothing reports it. Calling `t.randomize();` as a bare statement is the same mistake, plus a compiler warning (§13.4.1).
 - **`assert(t.randomize());`** puts the call inside an immediate assertion. Assertions can be switched off: `$assertoff`, `$assertcontrol` with the Off control, or a simulator option. Off means no new attempts start (§20.11), so the assertion is not evaluated and `randomize()` is **never called**. Even with assertions on, a failure is reported by the assertion's default `$error` (§16.3), which a UVM testbench does not count as a `UVM_ERROR`.
 
+So the only safe call is a **checked** one.
+
+</details>
+
 **Every call form on a failure, side by side.** The last row is explained in [Push Further](#expert-randomization-failures-inside-uvm-macros).
 
-| Call form | Does `randomize()` run? | What the object holds after a failure | Who reports it | Does the test stop? |
-|---|---|---|---|---|
-| `if (!t.randomize()) $fatal(1, …);` | Yes | its previous values (§18.6.3) | your `$fatal` | ✓ Yes |
-| `void'(t.randomize());` | Yes | its previous values | nobody | ✕ No: the old values are used again |
-| `t.randomize();` as a bare statement | Yes | its previous values | nobody at run time; only a compiler warning (§13.4.1) | ✕ No |
-| `assert(t.randomize());`, assertions on | Yes | its previous values | the assertion's default `$error` (§16.3), not a `UVM_ERROR` | ✕ No: `$error` does not stop the simulation |
-| `assert(t.randomize());`, assertions off (`$assertoff`, `$assertcontrol` Off or a tool switch) | **No**: the assertion is not evaluated (§20.11) | whatever it held: nothing was randomized | nobody | ✕ No |
-| `` `uvm_do `` or `` `uvm_rand_send `` | Yes | `` `uvm_do ``: a just-created item with its initial values; `` `uvm_rand_send ``: its previous values | `UVM_WARNING` with id `RNDFLD` (uvm-core 2020.3.1) | ✕ No: `finish_item` is still called |
+| Call form (does `randomize()` run?) | What the object holds after a failure | Who reports it | Does the test stop? |
+|---|---|---|---|
+| `if (!t.randomize()) $fatal(1, …);` (runs: yes) | its previous values (§18.6.3) | your `$fatal` | ✓ Yes |
+| `void'(t.randomize());` (runs: yes) | its previous values | nobody | ✕ No: the old values are used again |
+| `t.randomize();` as a bare statement (runs: yes) | its previous values | nobody at run time; only a compiler warning (§13.4.1) | ✕ No |
+| `assert(t.randomize());`, assertions on (runs: yes) | its previous values | the assertion's default `$error` (§16.3), not a `UVM_ERROR` | ✕ No: `$error` does not stop the simulation |
+| `assert(t.randomize());`, assertions off (`$assertoff`, `$assertcontrol` Off or a tool switch): **not run**, the assertion is not evaluated (§20.11) | whatever it held: nothing was randomized | nobody | ✕ No |
+| `` `uvm_do `` or `` `uvm_rand_send `` (runs: yes) | `` `uvm_do ``: a just-created item with its initial values; `` `uvm_rand_send ``: its previous values | `UVM_WARNING` with id `RNDFLD` (uvm-core 2020.3.1) | ✕ No: `finish_item` is still called |
 
 Why can a call fail when a legal combination exists? §18.3 promises a solution whenever one exists, but three rules impose an order on the solver: `randc` variables are solved first (§18.4.2), array sizes before the constraints on their elements (§18.5.7.1), and function arguments before the constraint that calls the function (§18.5.11). Each can leave the rest unsolvable. [I-SV-2B solver debug](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/solver-debug) teaches how to find the conflicting constraints and how these orders cause intermittent failures.
 
@@ -1075,7 +1086,7 @@ Why can a call fail when a legal combination exists? §18.3 promises a solution 
 | Expecting each variable to be uniform on its own | The solver picks one legal **combination**, uniformly (§18.5.9) | Count the combinations, or use the visuals |
 | Reading `soft` as "usually" | A kept soft constraint holds on every call (§18.5.13) | Scope it with `->`, or override it inline |
 | Adding `solve…before` to make dependent variables work | It changes only the odds (§18.5.9) | Use it only to reshape a distribution |
-| Leaving a size unbounded | `rand int n; data.size() == n;` allows enormous sizes; a signed type also adds negative values, which a tool may reject (tool-dependent, §18.4) | Use a narrow unsigned type and `inside` |
+| Leaving a size unbounded | `rand int n; data.size() == n;` allows enormous sizes; a signed type also allows negative values, and the standard sets no rule for a negative size (§18.4 covers resizing only), so tools differ (tool-dependent) | Use a narrow unsigned type and `inside` |
 | Ignoring the return value | Failure keeps the old values silently (§18.6.3) | `if (!obj.randomize()) $fatal(1, …);` |
 | `with { addr == addr; }` | Both names bind to the object (§18.7) | `addr == local::addr` |
 | `rand int len; len < 64;` | `int` is signed, so negative lengths are legal | `bit [7:0]`, or `len inside {[1:63]}` |
@@ -1167,6 +1178,9 @@ endmodule
 
 **Predict before you read the output:** write down what each of the six lines will print, then check each line against the table under it.
 
+<details>
+<summary>Check your prediction: the six output lines</summary>
+
 **Expected output** (illustrative, traced by hand from the rules on this page, not captured from a simulator run; the `op` counts vary with the seed and the simulator, and some simulators also print their own solver-failure message for the `EXPECTED_FAIL` call):
 
 ```text
@@ -1182,12 +1196,14 @@ Why each line looks the way it does:
 
 | Output line | Why it looks this way | Rule |
 |---|---|---|
-| `op READ=601 WRITE=298 ATOMIC=101` | The **`op` counts** come out near 600/300/100: `op` is coupled to no other constraint, so the 6:3:1 ratio of `c_mode` applies directly | §18.5.3 |
+| `op READ=601 WRITE=298 ATOMIC=101 of 1000` | The **`op` counts** come out near 600/300/100: `op` is coupled to no other constraint, so the 6:3:1 ratio of `c_mode` applies directly | §18.5.3 |
 | `len==4 on 1000 of 1000 calls` | **`len==4` on every call:** nothing contests the soft default `c_def` in a plain call | §18.5.13 |
 | `send_len(9): len=9` | **`len=9`:** the inline constraint is hard, so the soft default is discarded for that call, and `local::len` is the argument | §18.5.13.1, §18.7.1 |
 | `EXPECTED_FAIL randomize()=0, len kept 9 (was 9)` | **`len kept 9`:** the request for length 0 conflicts with `c_len`; the call returns 0 and the object keeps the values of the last successful call | §18.6.3 |
 | `randc tag: 16 distinct values in 16 calls` | **16 distinct tags:** a new object's first 16 calls are one complete permutation of the 16 values of `tag` | §18.4.2 |
 | `PASS=1001 FAIL=0` | **`PASS=1001`:** 1,000 checked calls plus `send_len`. The failed call is not checked, because there is nothing new to check | none: counting |
+
+</details>
 
 **Run it.** Save the code as `tb_top.sv` and compile it with any simulator that supports IEEE 1800-2023 Clause 18; `tb_top` is the top level. The compile and run commands are the same as for the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench. Support for `randc`, `dist`, `soft` and external constraint blocks in open-source simulators varies and was not verified for this example (tool-dependent).
 
@@ -1264,8 +1280,8 @@ The model below enumerates the rules exactly. In the **dist weights** tab, `8` i
 
 <ConstraintSolverExplorer initialMode="dist" />
 
-<details className="my-4 rounded-xl border border-border/70 p-3">
-<summary className="cursor-pointer font-semibold">Check your prediction: P(length == 8)</summary>
+<details>
+<summary>Check your prediction: P(length == 8)</summary>
 
 With `:/` the total weight is 80 + 20 = 100 and `8` collects 80 + 20/13, about 81.5%; with `:=` the range weighs 13 × 20 = 260, the total is 340, and `8` collects 80 + 20 = 100 of it, about 29.4%.
 
@@ -1311,7 +1327,7 @@ In uvm-core 2020.3.1, `` `uvm_rand_send(item, -1, {…}) `` (in `src/macros/uvm_
 <SequenceDiagram
   title="A failed randomize() inside `uvm_do or `uvm_rand_send (uvm-core 2020.3.1)"
   caption="The macro warns and carries on: finish_item() is still called, so the driver receives an item this call did not randomize. Source: src/macros/uvm_sequence_defines.svh, where `uvm_do is `uvm_create followed by `uvm_rand_send."
-  columnWidth={140}
+  columnWidth={130}
   participants={[
     { id: "seq", label: "sequence body()", kind: "sequence" },
     { id: "req", label: "req (item)", kind: "generic" },
@@ -1373,7 +1389,7 @@ This is tool-dependent, and no general figures apply. Habits that keep solve tim
 Further staff-level prompts to practise aloud:
 - "Two 3-bit fields satisfy `x + y < 8`. A colleague expects `x == 0` on 12.5% of calls. Correct the expectation, then make `x` uniform without changing the legal set."
 - "Why does `assert(item.randomize())` pass review in some teams and fail regressions in others?"
-- "A soft default never yields to a test's constraint. Give two causes." (The test's constraint is also soft with lower priority; or the test wrote `len == len`.)
+- "A soft default never yields to a test's constraint. Give two causes." (The test's constraint does not actually conflict with the default, for example `len < 10` against `soft len == 4`, so the default is kept; or the test wrote `len == len`, which binds both names to the item. A test's own soft constraint loses only if it ranks lower, which an inline or derived-class constraint never does.)
 
 ## Practice & Reinforce
 

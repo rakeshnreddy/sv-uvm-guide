@@ -150,12 +150,16 @@ The visual below runs this program on a tested model of the SystemVerilog schedu
 
 <MailboxSemaphoreGame mode="mailbox" />
 
+**Then try the sandbox** under the scripted run. Make **consumer 1** and then **consumer 2** call `get(v)` on the empty mailbox, then click `put(1)`: consumer 1, the first to wait, receives the message (§15.4.5). Repeat with `peek(v)`: the message is copied and stays in the mailbox. The sandbox shows a successful `try_` call returning 1; the standard promises only a positive value, so still test it with `> 0`.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary>Check your predictions</summary>
+
 **What the runs showed:**
 
 - With `new(2)`, messages 0 and 1 fill the mailbox at 0 ns and `put(2)` suspends the producer. The consumer's first `get()` at 10 ns frees a slot, and the producer resumes by itself in the same time slot: `sent 2` prints at 10 ns (§15.4.3).
 - With `new(1)`, every `put()` waits for the previous message to be taken: `sent 1` prints at 10 ns and `sent 2` at 20 ns.
 - With `new()`, `put()` never waits. All four `sent` lines print at 0 ns, and the messages pile up until the consumer drains them (§15.4.1).
-- Now use the sandbox under the scripted run. Make **consumer 1** and then **consumer 2** call `get(v)` on the empty mailbox, then click `put(1)`: consumer 1, the first to wait, receives the message (§15.4.5). Repeat with `peek(v)`: the message is copied and stays in the mailbox.
 
 **Expected output** for `new(2)` (illustrative: traced by hand from §15.4, not captured from a simulator run):
 
@@ -171,6 +175,8 @@ The visual below runs this program on a tested model of the SystemVerilog schedu
 ```
 
 At 10 ns and 20 ns two processes print in the same time slot. Which line comes first depends on which process the simulator runs first (§4.7). This listing assumes that the consumer keeps running until its next delay, as the visual's model does.
+
+</details>
 
 ### Every method, and exactly what it returns
 
@@ -189,11 +195,11 @@ A mailbox has eight methods, declared in Annex G.4 of the standard. The three ta
 
 Three rules follow from the table:
 
-- **Test a `try_` result with `> 0`.** The standard promises a positive integer on success, not the value 1, and a negative result is a failure that `if (m.try_get(v))` would take for success.
+- **Test a `try_` result with `> 0`.** The standard promises a positive integer on success, not the value 1, and the typeless section below shows what a bare `if` gets wrong.
 - **Nothing is ever overwritten.** No call replaces or drops a stored message. On a full mailbox, `put()` waits and `try_put()` returns 0.
 - **Inside a function, only the functions are available.** A function cannot call a task (§13.4), so function code can use `try_put()`, `try_get()`, `try_peek()` and `num()`, but not `put()`, `get()` or `peek()`. You will meet this in UVM, where an analysis `write()` method is a function.
 
-**Check yourself.** Cover the table above. `mailbox #(int) m = new(1);` already holds one message, so it is full. For each of the six calls `put(x)`, `try_put(x)`, `get(v)`, `try_get(v)`, `peek(v)` and `try_peek(v)`, decide whether it waits or completes at once, and what each function returns. Then do the same for an empty mailbox, and for one that holds a message but is not full.
+**Recall.** Cover the table above. `mailbox #(int) m = new(1);` already holds one message, so it is full. For each of the six calls `put(x)`, `try_put(x)`, `get(v)`, `try_get(v)`, `peek(v)` and `try_peek(v)`, decide whether it waits or completes at once, and what each function returns. Then do the same for an empty mailbox, and for a larger one, such as `new(3)`, that holds one message and so is not full.
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary>Check: the six calls in each state</summary>
@@ -383,7 +389,7 @@ Every message must be **singular**: one value or one handle (§15.4.3). An unpac
 - **One producer, one consumer:** messages come out in exactly the order they went in (§15.4.3).
 - **Several producers:** messages are stored in the order in which their `put()` calls complete. Two producers that put in the same time slot are ordered by the scheduler, which the standard leaves open (§4.7), so the order can differ between simulators. If the consumer needs the source or the order, carry it in the transaction, as an id or a timestamp, or give each producer its own mailbox.
 - **Several consumers waiting in `get()`:** the mailbox keeps waiting processes in the order they arrived, and the first to arrive receives the next message (§15.4.5). The standard does not say which of two `get()` calls in the same time slot arrives first. In the picture, `c1` has waited since 10 ns, so it is ahead of `c2`.
-- **Each message goes to exactly one `get()`:** several consumers share the work; they do not each receive a copy. For broadcast, give each consumer its own mailbox, or in UVM use an analysis port ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). Only `peek()` lets several processes see the same message, and for a class they all see the same handle.
+- **Each message goes to exactly one `get()`:** several consumers share the work; they do not each receive a copy. For broadcast, give each consumer its own mailbox, or in UVM use an analysis port ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). Only `peek()` and `try_peek()` let several processes see the same message, and for a class they all see the same handle.
 
 <SequenceDiagram
   title="Two consumers waiting in get() on one empty mailbox"
@@ -396,10 +402,10 @@ Every message must be **singular**: one value or one handle (§15.4.3). An unpac
     { id: "c2", label: "c2", sublabel: "consumer", kind: "generic" }
   ]}
   messages={[
-    { from: "c1", to: "mbx", label: "get(v) at 10 ns: empty, c1 waits" },
-    { from: "c2", to: "mbx", label: "get(v) at 12 ns: empty, c2 waits behind c1" },
+    { from: "c1", to: "mbx", label: "get() at 10 ns: c1 waits" },
+    { from: "c2", to: "mbx", label: "get() at 12 ns: waits behind c1" },
     { from: "prod", to: "mbx", label: "put(t5)" },
-    { kind: "return", from: "mbx", to: "c1", label: "c1's get() returns t5 (first to wait, §15.4.5)" },
+    { kind: "return", from: "mbx", to: "c1", label: "returns t5 (first to wait, §15.4.5)" },
     { from: "prod", to: "mbx", label: "put(t6)" },
     { kind: "return", from: "mbx", to: "c2", label: "c2's get() returns t6" },
     { kind: "divider", label: "What if c1 and c2 had called get() in the same time slot?" },
@@ -411,9 +417,9 @@ Never let a result depend on which of several equal waiters is served first. If 
 
 ### Mailbox or `uvm_tlm_fifo`?
 
-> **UVM preview.** You have not met UVM yet, so here are the four terms this section uses. A **port** is a component's outgoing connection point: the component calls `put()` or `get()` on it without knowing what is on the other end. An **export** is the matching incoming point that a port connects to, here on the FIFO. An **analysis port** broadcasts each item to any number of subscribers, and each subscriber receives it through a `write()` method, which is a function and so can never wait. [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches all four properly; this section only compares the channels.
+> **UVM preview.** You have not met UVM yet, so here are the five terms this section uses. **TLM** (transaction-level modeling) is UVM's set of standard method calls for passing transactions between components. A **port** is a component's outgoing connection point: the component calls `put()` or `get()` on it without knowing what is on the other end. An **export** is the matching incoming point that a port connects to, here on the FIFO. An **analysis port** broadcasts each item to any number of subscribers, and each subscriber receives it through a `write()` method, which is a function and so can never wait. [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches all five properly; this section only compares the channels.
 
-In UVM, components normally do not share mailbox handles. They talk through TLM ports, and the channel between a producer and a consumer is a `uvm_tlm_fifo`, a UVM component that wraps a mailbox. [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches the connections; this table shows how the two compare.
+In UVM, components normally do not share mailbox handles. They talk through TLM ports, and the channel between a producer and a consumer is a `uvm_tlm_fifo`, a UVM component that, in the Accellera reference implementation, wraps a mailbox. [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches the connections; this table shows how the two compare.
 
 | | SystemVerilog `mailbox #(T)` | UVM `uvm_tlm_fifo #(T)` |
 |---|---|---|
@@ -426,7 +432,7 @@ In UVM, components normally do not share mailbox handles. They talk through TLM 
 | Watching its traffic | not built in | the `put_ap` and `get_ap` analysis ports publish every put and get |
 | Monitor-side form | `new()` | `uvm_tlm_analysis_fifo #(T)`: unbounded, written through its `analysis_export` |
 
-Sources: IEEE 1800.2-2020 §12.2.8.2 and §12.2.8.3; uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh` and `src/tlm1/uvm_tlm_fifo_base.svh`.
+Sources: IEEE 1800.2-2020 §12.2.8.1 (`uvm_tlm_fifo_base`: `put_export`, `get_peek_export`, `put_ap`, `get_ap`), §12.2.8.2 and §12.2.8.3; uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh` and `src/tlm1/uvm_tlm_fifo_base.svh` (the internal mailbox is an implementation detail).
 
 Use mailboxes in a plain SystemVerilog testbench, like this module's examples and the layered bench of [I-SV-9](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index). Between UVM components, use a TLM FIFO with a port on each side, so that neither component needs a handle to the other. A mailbox is still a reasonable choice between two threads inside one component. The trap when porting: a `uvm_tlm_fifo` built with default arguments holds one item, whereas `new()` gave you an unbounded mailbox.
 
@@ -457,7 +463,7 @@ When every process is suspended and nothing else is scheduled, simulation simply
 
 <VisualRecap
   title="Two tubes: one that pushes back, one that never does"
-  rule="A mailbox is a FIFO of handles: put() waits only while a bounded mailbox is full, get() and peek() wait while it is empty, and the try_ functions never wait. They return a positive value on success and 0 when the mailbox is full (try_put) or empty (try_get, try_peek); try_get and try_peek return a negative value on a type mismatch in a typeless mailbox."
+  rule="put() waits only while a bounded mailbox is full, get() and peek() only while it is empty, and try_ calls never wait: they return >0, 0, or (typeless mismatch) <0."
   code={`mailbox #(txn) gen2drv = new(2); // bounded: backpressure
 mailbox #(txn) mon2scb = new();  // unbounded: never full
 t = new();                       // a new object per message
@@ -471,33 +477,33 @@ gen2drv.put(t);                  // waits while gen2drv is full`}
     <text x="32" y="46" textAnchor="middle" fontSize="11" fill="currentColor">gen</text>
     <line x1="56" y1="42" x2="92" y2="42" stroke="currentColor" strokeOpacity="0.7" />
     <path d="M92,38 L99,42 L92,46 Z" fill="currentColor" fillOpacity="0.7" />
-    <text x="76" y="35" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
+    <text x="76" y="35" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
     <rect x="100" y="28" width="100" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
     <rect x="101" y="29" width="48" height="26" className="fill-indigo-500/20" />
     <rect x="151" y="29" width="48" height="26" className="fill-indigo-500/20" />
     <line x1="150" y1="28" x2="150" y2="56" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="125" y="46" textAnchor="middle" fontSize="10" fill="currentColor">msg</text>
-    <text x="175" y="46" textAnchor="middle" fontSize="10" fill="currentColor">msg</text>
+    <text x="125" y="46" textAnchor="middle" fontSize="10.5" fill="currentColor">msg</text>
+    <text x="175" y="46" textAnchor="middle" fontSize="10.5" fill="currentColor">msg</text>
     <line x1="200" y1="42" x2="238" y2="42" stroke="currentColor" strokeOpacity="0.7" />
     <path d="M238,38 L245,42 L238,46 Z" fill="currentColor" fillOpacity="0.7" />
-    <text x="222" y="35" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
-    <rect x="246" y="28" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="222" y="35" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
+    <rect x="246" y="28" width="48" height="28" rx="8" fill="none" stroke="currentColor" />
     <text x="270" y="46" textAnchor="middle" fontSize="11" fill="currentColor">drv</text>
-    <text x="8" y="74" fontSize="10" fill="currentColor">Full: put() waits until a get() frees a slot.</text>
+    <text x="8" y="74" fontSize="10.5" fill="currentColor">Full: put() waits until a get() frees a slot.</text>
     <text x="8" y="98" fontSize="11" fontWeight="600" fill="currentColor">Observation path: mon2scb = new()</text>
-    <rect x="8" y="110" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <rect x="8" y="110" width="48" height="28" rx="8" fill="none" stroke="currentColor" />
     <text x="32" y="128" textAnchor="middle" fontSize="11" fill="currentColor">mon</text>
     <line x1="56" y1="124" x2="92" y2="124" stroke="currentColor" strokeOpacity="0.7" />
     <path d="M92,120 L99,124 L92,128 Z" fill="currentColor" fillOpacity="0.7" />
-    <text x="76" y="117" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
+    <text x="76" y="117" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">put()</text>
     <rect x="100" y="110" width="100" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="5 3" />
-    <text x="150" y="128" textAnchor="middle" fontSize="10" fill="currentColor">no limit</text>
+    <text x="150" y="128" textAnchor="middle" fontSize="10.5" fill="currentColor">no limit</text>
     <line x1="200" y1="124" x2="238" y2="124" stroke="currentColor" strokeOpacity="0.7" />
     <path d="M238,120 L245,124 L238,128 Z" fill="currentColor" fillOpacity="0.7" />
-    <text x="222" y="117" textAnchor="middle" fontSize="10" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
-    <rect x="246" y="110" width="48" height="28" rx="8" className="fill-amber-500/10 stroke-amber-500" />
+    <text x="222" y="117" textAnchor="middle" fontSize="10.5" fontFamily="ui-monospace, monospace" fill="currentColor">get()</text>
+    <rect x="246" y="110" width="48" height="28" rx="8" fill="none" stroke="currentColor" />
     <text x="270" y="128" textAnchor="middle" fontSize="11" fill="currentColor">scb</text>
-    <text x="8" y="156" fontSize="10" fill="currentColor">Never full: put() never waits, so no beat is missed.</text>
+    <text x="8" y="156" fontSize="10.5" fill="currentColor">Never full: put() never waits, so no beat is missed.</text>
   </svg>
 </VisualRecap>
 
@@ -741,9 +747,9 @@ endmodule
 
 <TimingDiagram
   title="Worked example on the bus"
-  caption="x-axis: rising clock edges 0 to 9; edge k is at 5 + 10k ns, so edge 0 is 5 ns and edge 9 is 95 ns. Each valid and data value is what mon_cb samples at that edge, the value from just before it (§14.13). ◆ marks an edge where drv writes an item through drv_cb; the write lands in Re-NBA after that edge (§14.16), so the monitor first samples it at the next edge, where ✓ marks the scoreboard's match. data keeps its last value while valid is 0. Not drawn: put id=3 completes at edge 1 (15 ns) and put id=4 at edge 3 (35 ns)."
+  caption="x-axis: rising clock edges 0 to 9; edge k is at 5 + 10k ns, so edge 0 is 5 ns and edge 9 is 95 ns. Each valid and data value is what mon_cb samples at that edge, the value from just before it (§14.13). ◆ marks an edge where drv writes an item through drv_cb; the write lands in Re-NBA after that edge (§14.16), so the monitor first samples it at the next edge, where ✓ marks the scoreboard's match. data keeps its last value while valid is 0. Not drawn: put id=3 completes at edge 1 (15 ns) and put id=4 at edge 3 (35 ns). Drives at 5, 25, 45, 65 and 85 ns carry ids 0 to 4; checks at 15, 35, 55, 75 and 95 ns."
   edges={10}
-  cycleWidth={28}
+  cycleWidth={25}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1] },
@@ -821,9 +827,9 @@ At 15 ns and 35 ns the scoreboard's error and the generator's line share a time 
 
 <TimingDiagram
   title="The shared-handle bug on the bus"
-  caption="Same frame as the clean run: x-axis is rising clock edges 0 to 9, edge k at 5 + 10k ns, and each valid and data value is what mon_cb samples at that edge. ◆ marks a drive, with the id the driver's handle holds at that moment. Below each check glyph is the value the scoreboard expected from its gen2scb snapshot: ✕ at edges 1, 3, 5 and 7 are the four mismatches, and the ✓ at edge 9 is the one accidental match."
+  caption="Same frame as the clean run: x-axis is rising clock edges 0 to 9, edge k at 5 + 10k ns, and each valid and data value is what mon_cb samples at that edge. ◆ marks a drive, with the id the driver's handle holds at that moment. Below each check glyph is the value the scoreboard expected from its gen2scb snapshot: ✕ at edges 1, 3, 5 and 7 are the four mismatches, and the ✓ at edge 9 is the one accidental match. Drives carry ids 3, 4, 4, 4, 4; checks expect a0 to a4. The first drive, at edge 0, already carries id3 and a3, because the generator rewrote the one shared object before the first clock edge."
   edges={10}
-  cycleWidth={28}
+  cycleWidth={25}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "valid", kind: "bit", values: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1] },
@@ -1073,7 +1079,7 @@ Answer each one before you open the feedback.
         { text: "Every consumer connected to the FIFO now receives its own copy of each item", correct: false, feedback: "That is broadcast, which analysis ports provide. A TLM FIFO hands each item to one get(), like a mailbox." },
         { text: "put() now copies each transaction, so the shared-handle bug can no longer happen", correct: false, feedback: "uvm_tlm_fifo stores the handle in the mailbox it wraps. Each item still needs its own object." }
       ],
-      explanation: "uvm_tlm_fifo is a uvm_component that wraps a mailbox #(T) and is reached through put_export and get_peek_export. Its size defaults to 1, unlike mailbox new(), and it stores handles, not copies (IEEE 1800.2-2020 §12.2.8.2).",
+      explanation: "uvm_tlm_fifo is a uvm_component that wraps a mailbox #(T) and is reached through put_export and get_peek_export. Its size defaults to 1, unlike mailbox new(), and it stores handles, not copies (size default: IEEE 1800.2-2020 §12.2.8.2; the internal mailbox #(T): uvm-core 2020.3.1 uvm_tlm_fifos.svh).",
       objective: 2
     }
   ]}
@@ -1255,7 +1261,7 @@ The flashcards for this lesson follow below, under "Reinforce the essentials".
 - §14.3 Clocking block declaration; §14.13 Input sampling; §14.16 Synchronous drives; §26.7 The std built-in package
 
 **UVM sources**
-- IEEE 1800.2-2020 §12.2.8.2 `uvm_tlm_fifo` and §12.2.8.3 `uvm_tlm_analysis_fifo`
+- IEEE 1800.2-2020 §12.2.8.1 `uvm_tlm_fifo_base`, §12.2.8.2 `uvm_tlm_fifo` and §12.2.8.3 `uvm_tlm_analysis_fifo`
 - uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh` and `src/tlm1/uvm_tlm_fifo_base.svh`
 
 **Prerequisites:** [Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events), the previous lesson; [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `fork … join_none` and the timeout idiom; [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for handles and `new`. Review [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) for the Re-NBA region and clocking-block sampling, and [F4B Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for the virtual interface and clocking blocks in Make It Work.

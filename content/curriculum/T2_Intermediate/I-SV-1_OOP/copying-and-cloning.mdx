@@ -134,11 +134,15 @@ Pick a scenario and step through it. **Predict before every highlighted line:** 
 
 <ObjectHandleVisualizer scenario="shallow-copy" scenarios={["aliasing", "shallow-copy", "deep-copy", "static-count"]} />
 
-**What the four scenarios showed:**
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">What the four scenarios showed (open after stepping through)</summary>
+
 - **`aliasing`:** `p2 = p1` copied an arrow. There was still one `packet` box, so a write through `p2` was visible through `p1`.
 - **`shallow-copy`:** `new p1` copied the box but not the inner arrow's target. `p2` got its own `id` and its own `data` queue, but its `hdr` arrow pointed at `p1`'s `header`, so `p2.hdr.len = 9` changed `p1.hdr.len` too.
 - **`deep-copy`:** only `copy()` left two `header` boxes, so a write through `p3` could not reach `p1`.
 - **`static-count`:** three `packet` boxes exist after `p3 = new p1`, but `packet::count` reads 2: a shallow copy runs no constructor (rule 2 below, §8.12), and `count` is one variable for the whole class, not a field in each box (§8.9).
+
+</details>
 
 ### Assignment copies the handle
 
@@ -177,7 +181,7 @@ p1.id=7
 4. **A class-handle property is copied as a handle.** The object it refers to is not duplicated, so both objects now share it. This applies to every object a class refers to: a nested transaction, a mailbox, a semaphore.
 5. **A queue or array of handles gets its own container, holding the same handles.** The container is a value, so it is copied; its elements are handles, so the objects behind them are shared. (The next subsection shows this.)
 
-Two syntax rules: `new p1` may appear only on the right of an assignment or in a declaration, and the expression after `new` must refer to an object (Syntax 8-2). A typed constructor call (`packet::new`, §8.8) cannot be used for a shallow copy (§8.12).
+Two syntax rules: `new p1` may appear only on the right of an assignment or in a declaration, and the expression after `new` must refer to an object (Syntax 8-2 and its footnote; A.2.4 variable_decl_assignment and A.6.2 blocking_assignment). A typed constructor call (`packet::new`, §8.8) cannot be used for a shallow copy (§8.12).
 
 ```systemverilog
 // compile
@@ -206,7 +210,7 @@ module tb_top;
 endmodule
 ```
 
-**Predict first.** Write down both lines before you open the output. In particular: what do `p1.data` and `p1.hdr.len` hold after the last two writes through `p2`? Rules 3 and 4 decide.
+**Predict first.** Write down both lines before you open the output. In particular: what do `p1.data` and `p1.hdr.len` hold after the last two writes through `p2`? Rules 3 and 4 decide. If you opened the debrief above, answer from those rules instead of from memory.
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the expected output</summary>
@@ -387,7 +391,7 @@ endfunction
 | A class handle (`header hdr`) | the same object | the handle is copied, so both packets share one `header` (§8.12) | `p2`'s own `header`, built by `p2 = new`; `hdr.copy(rhs.hdr)` copies its contents, and a `null` is mirrored |
 | A queue of handles (`header beats[$]`) | the same object | its own queue of the same handles, so the headers are shared (§7.6, §8.12) | rebuilt with a new `header` per element; a `null` element stays `null` (`burst::copy`) |
 | A static property (`static int count`) | one variable for the whole class (§8.9) | still one variable: nothing to copy | still one variable |
-| Constructor and declaration initializers | none run | none run (§8.12, step 1) | run once, for `p2 = new` (§8.7) |
+| Constructor and declaration initializers | none run | none run (rule 2 above; §8.12 step 1) | run once, for `p2 = new` (§8.7) |
 
 ### Comparing copies: `==` asks "the same object?"
 
@@ -395,7 +399,7 @@ Once you can make copies, you need to check them. `==` and `!=` on two class han
 
 To compare by value, write a `compare()` method next to `copy()`. It returns 1 when every property matches, comparing nested objects by their contents, and is null-safe. You will write one in [Make It Work](#make-it-work). Debugging hint: when printing two items that "should" match, print the handles' equality too (`exp == act`); a 1 means you are comparing an object with itself.
 
-**Predict first.** `t` is a `packet` with the virtual `clone()` below and the value `compare()` from Make It Work. What do the two `$display` lines print?
+**Predict first.** `t` is a `packet` with the virtual `clone()` below and the value `compare()` from Make It Work (`clone()` returns a new object holding `t`'s values; `compare()` returns 1 when every property matches). What do the two `$display` lines print?
 
 ```systemverilog
 // snippet: packet has the clone() and compare() written on this page
@@ -405,7 +409,10 @@ $display("%0d", exp == act);          // compares the handles (§11.4.5)
 $display("%0d", exp.compare(act));    // compares the values
 ```
 
-Commit to an answer, then check it against the second row of this table. The other rows are the three other cases a scoreboard meets:
+Commit to an answer, then open the table: the second row is this case, and the other rows are the three other cases a scoreboard meets.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer and the other three cases</summary>
 
 | Situation | `exp == act` | `exp.compare(act)` | What a scoreboard that uses `==` reports |
 |---|---|---|---|
@@ -413,6 +420,8 @@ Commit to an answer, then check it against the second row of this table. The oth
 | Two objects with equal contents (`exp = t.clone(); act = t;`) | 0 | 1 | A false mismatch |
 | Two objects that differ (as above, then `act.hdr.len = 8;`) | 0 | 0 | A mismatch: right here, but `==` reports one for equal contents too |
 | One reused object pushed twice (`exp = exp_q[0]; act = exp_q[1];`) | 1 | 1 | A match: both entries are one object holding the latest values. `compare()` agrees too, so the fix is a clone before storing, not a different check |
+
+</details>
 
 ### `clone()`: a copy that keeps the object's real class
 
@@ -488,13 +497,16 @@ module tb_top;
 endmodule
 ```
 
+**Predict first.** Before you open the output and the diagram: which `copy()` bodies run, in what order, how many `header` objects exist at the end, and what does the `$display` line print?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the expected output and the call sequence</summary>
+
 **Expected output** (traced by hand):
 
 ```text
 back: id=3 crc=5a hdr.len=7 same_hdr=0
 ```
-
-Before reading the diagram, predict: which `copy()` bodies run, in what order, and how many `header` objects exist at the end?
 
 <SequenceDiagram
   title="p.clone() through a packet handle that holds a crc_packet"
@@ -522,13 +534,18 @@ Before reading the diagram, predict: which `copy()` bodies run, in what order, a
   ]}
 />
 
+</details>
+
 **What goes wrong without each piece:**
 - **`clone()` not virtual:** `p.clone()` runs `packet::clone`, which builds a plain `packet`. The `crc` field is lost and `$cast(back, q)` returns 0. No error is reported unless you check that `$cast`.
 - **A subclass that does not override `clone()`:** it inherits `packet::clone`, so it is cloned as a plain `packet` even though `clone()` is virtual.
 - **A forgotten `super.copy(rhs)`:** the base part (`id`, `hdr`) keeps the new object's default values.
 - **An unchecked `$cast`:** if `rhs` is not a `crc_packet`, `r` stays `null` and `r.crc` is a null-handle access. Call `$cast` as a function inside `if (...)`. Called as a task, a failing `$cast` is a run-time error instead of a 0 (§6.24.2).
 
-For the example above (`orig` holds id 3, `crc` 5a and `hdr.len` 7), here is what each broken version leaves in `q`. Predict each row before you read it:
+For the example above (`orig` holds id 3, `crc` 5a and `hdr.len` 7), here is what each broken version leaves in `q`. Predict each row from the list above, then open the table:
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what each broken version leaves in q</summary>
 
 | Missing piece | `q = p.clone()` runs | `q` holds | `$cast(back, q)` | Error reported? |
 |---|---|---|---|---|
@@ -536,6 +553,8 @@ For the example above (`orig` holds id 3, `crc` 5a and `hdr.len` 7), here is wha
 | The `clone()` override in `crc_packet` | the inherited `packet::clone`, then `packet::copy` | the same plain `packet` | 0 | Only by a checked `$cast` |
 | `super.copy(rhs)` in `crc_packet::copy` | `crc_packet::clone`, then `crc_packet::copy` | a `crc_packet`: id 0, its own header with len 4 (from `hdr = new`), crc 5a | 1 | None |
 | The check on `$cast` in `crc_packet::copy` | `crc_packet::clone`, then `crc_packet::copy`; `rhs` is `this`, a `crc_packet`, so the cast succeeds | a correct copy | 1 | None here. The bug fires only when `rhs` holds a plain `packet`: `r` stays `null` and `r.crc` is a null-handle access |
+
+</details>
 
 The [polymorphism lesson](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) lets you try the virtual and non-virtual cases in its dispatch visual.
 
@@ -1001,7 +1020,7 @@ The same facts side by side, for a shallow copy and for a clone built with `new`
 
 - **Back-pointers.** If an item holds a handle to its parent (for example `burst parent` in each beat) and `copy()` deep-copies that handle too, the copy recurses: the parent copies the beat, which copies the parent, and so on. Copy back-pointers as handles, or set them to the new parent after copying the children.
 - **Shared sub-objects.** If two properties refer to one object (a beat in both `beats[$]` and `last_beat`), a naive deep copy makes two objects where there was one, and the copy no longer has the original's shape. Copy the shared object once, then point both properties at the copy.
-- **How UVM handles it.** uvm-core 2020.3.1's `uvm_copier::copy_object` records which pairs of objects it has started and finished copying, and refuses to copy an object whose recursion policy is `UVM_REFERENCE`, reporting `UVM_COPY_POLICY` (`uvm_copier.svh`). A field macro flagged `UVM_REFERENCE` copies only that handle, without following it (`uvm_object_defines.svh`).
+- **How UVM handles it.** uvm-core 2020.3.1's `uvm_copier::copy_object` records which pairs of objects it has started and finished copying, and refuses to copy when the copier's own recursion policy is `UVM_REFERENCE`, reporting `UVM_COPY_POLICY` (`uvm_copier.svh`). A field macro flagged `UVM_REFERENCE` copies only that handle, without following it (`uvm_object_defines.svh`).
 
 <ArchitectureDiagram
   title="A shared sub-object: the original, a naive deep copy and a correct one"
@@ -1077,8 +1096,8 @@ Answer each one before you open the feedback.
   title="Interview: what does new h copy?"
   question="A class has an int, a queue of int and a handle to a header object. Exactly what does p2 = new p1 copy, and what does it skip?"
   options={[
-    { text: "It copies the int and the queue's elements, copies the header handle so both packets share one header, and runs no constructor and no declaration initializer.", isCorrect: true, feedback: "Right (§8.12). The new object has p1's class; values and arrays of values are copied; class handles are copied as handles." },
     { text: "It copies everything recursively, including a new header, because the class declares header hdr = new.", isCorrect: false, feedback: "A shallow copy runs no declaration initializer, so no new header is built. That needs a deep copy." },
+    { text: "It copies the int and the queue's elements, copies the header handle so both packets share one header, and runs no constructor and no declaration initializer.", isCorrect: true, feedback: "Right (§8.12). The new object has p1's class; values and arrays of values are copied; class handles are copied as handles." },
     { text: "It copies the handle only; p1 and p2 name one packet.", isCorrect: false, feedback: "That is p2 = p1. new p1 allocates a second packet object." },
     { text: "It runs packet's constructor and then copies the properties.", isCorrect: false, feedback: "The allocation of a shallow copy calls no constructor (§8.12), so a counter kept in new() does not count copies." }
   ]}
@@ -1088,10 +1107,10 @@ Answer each one before you open the feedback.
   title="Interview: cloning through a base-class handle"
   question="Your generator holds a base_txn handle to a template that may be any subclass. How do you store a correct copy of it?"
   options={[
-    { text: "Call a virtual clone() that every subclass overrides to construct its own class and call a virtual copy(); check $cast in each subclass copy().", isCorrect: true, feedback: "Right. The virtual call reaches the object's own clone(), so the copy has the object's real class and all its fields." },
     { text: "Write c = new; c.copy(tmpl); with c declared as base_txn.", isCorrect: false, feedback: "new through a base_txn variable builds a base_txn, so the subclass fields have nowhere to go." },
     { text: "Use $cast(c, tmpl) to copy it.", isCorrect: false, feedback: "$cast assigns a handle; it never creates an object. c and tmpl would name the same object." },
-    { text: "Use c = new tmpl; it always copies deeply when the object is a subclass.", isCorrect: false, feedback: "new tmpl keeps the subclass (§8.12) but is shallow: nested objects stay shared with the template." }
+    { text: "Use c = new tmpl; it always copies deeply when the object is a subclass.", isCorrect: false, feedback: "new tmpl keeps the subclass (§8.12) but is shallow: nested objects stay shared with the template." },
+    { text: "Call a virtual clone() that every subclass overrides to construct its own class and call a virtual copy(); check $cast in each subclass copy().", isCorrect: true, feedback: "Right. The virtual call reaches the object's own clone(), so the copy has the object's real class and all its fields." }
   ]}
 />
 
@@ -1110,9 +1129,9 @@ Answer each one before you open the feedback.
   title="Interview: UVM copy and do_copy"
   question="In UVM, why does a class override do_copy() rather than copy() or clone()?"
   options={[
-    { text: "copy() is non-virtual and handles the null check and the copier policy; clone() is written once and calls create() then copy(); do_copy() is the virtual hook for the class's own fields.", isCorrect: true, feedback: "Right, as in uvm-core 2020.3.1 uvm_object.svh. The utils macro supplies create(), so clone() already builds your class." },
     { text: "copy() is deprecated in IEEE 1800.2-2020.", isCorrect: false, feedback: "copy() is a standard method (§5.3.8.1); it simply is not the one you override." },
     { text: "do_copy() is faster because it skips field macros.", isCorrect: false, feedback: "copy_object() runs field automation and then do_copy(); overriding do_copy() does not skip the macros." },
+    { text: "copy() is non-virtual and handles the null check and the copier policy; clone() is written once and calls create() then copy(); do_copy() is the virtual hook for the class's own fields.", isCorrect: true, feedback: "Right, as in uvm-core 2020.3.1 uvm_object.svh. The utils macro supplies create(), so clone() already builds your class." },
     { text: "clone() must be overridden too, or it returns a uvm_object with no fields.", isCorrect: false, feedback: "clone() calls the virtual create(), which the utils macro generates for your class, so it builds the right type without an override." }
   ]}
 />
@@ -1126,9 +1145,9 @@ Answer each one before you open the feedback.
     {
       question: "packet has int data[$] = {1, 2} and header hdr = new (header has int len = 4). After p1 = new; p2 = new p1; p2.data.push_back(3); p2.hdr.len = 9; what do p1.data and p1.hdr.len hold?",
       answers: [
-        { text: "'{1, 2} and 9", correct: true, feedback: "Right. The queue is a value, so p2 got its own copy (§7.6); the header handle was copied, so both packets share one header (§8.12)." },
         { text: "'{1, 2, 3} and 9", correct: false, feedback: "Only class handles are shared by a shallow copy. A queue of int is copied element by element, so p1's queue is untouched." },
         { text: "'{1, 2} and 4", correct: false, feedback: "That would need a second header. A shallow copy runs no declaration initializer, so hdr = new does not run again; the handle is copied instead." },
+        { text: "'{1, 2} and 9", correct: true, feedback: "Right. The queue is a value, so p2 got its own copy (§7.6); the header handle was copied, so both packets share one header (§8.12)." },
         { text: "Compile error: packet has no copy constructor", correct: false, feedback: "new p1 is the built-in shallow copy (§8.12). SystemVerilog has no user-written copy constructors." }
       ],
       explanation: "A shallow copy copies every property as a value, and a class handle's value is the handle. So data is duplicated and hdr is shared: p1.data stays '{1, 2} and p1.hdr.len reads 9.",
@@ -1137,8 +1156,8 @@ Answer each one before you open the feedback.
     {
       question: "class burst; header beats[$]; endclass. b1 holds two beats with len 4. After b2 = new b1; b2.beats[0].len = 9; what does b1.beats[0].len read?",
       answers: [
-        { text: "9", correct: true, feedback: "Right. b2 got its own queue, but its elements are copies of b1's handles, so beats[0] in both queues is the same header." },
         { text: "4, because the queue was copied, so its objects were copied too", correct: false, feedback: "Copying a queue copies its elements (§7.6). Here the elements are handles, so the objects behind them are shared." },
+        { text: "9", correct: true, feedback: "Right. b2 got its own queue, but its elements are copies of b1's handles, so beats[0] in both queues is the same header." },
         { text: "Null-access error, because a shallow copy leaves b2.beats empty", correct: false, feedback: "Every property is copied, queues included. The copy skips constructors and initializers, not properties." },
         { text: "Compile error: a queue of handles cannot be shallow copied", correct: false, feedback: "Any class can be shallow copied. Whether the result is what you wanted is another matter." }
       ],
@@ -1148,10 +1167,10 @@ Answer each one before you open the feedback.
     {
       question: "packet declares header hdr = new. Which code creates a second header object, so that p2 shares nothing with p1?",
       answers: [
-        { text: "p2 = new; p2.copy(p1); with a copy() that calls hdr.copy(rhs.hdr)", correct: true, feedback: "Right. p2 = new runs the initializer and builds p2's own header; copy() then copies p1's header contents into it." },
         { text: "p2 = new p1; because the declaration says hdr = new", correct: false, feedback: "A shallow copy runs no declaration initializer (§8.12). The header handle is copied, not the header." },
         { text: "p2 = p1;", correct: false, feedback: "Handle assignment creates no object at all: p1 and p2 name one packet." },
-        { text: "p2 = new; p2.hdr = p1.hdr;", correct: false, feedback: "This throws away p2's own header and points p2.hdr at p1's, so the two packets share one header again." }
+        { text: "p2 = new; p2.hdr = p1.hdr;", correct: false, feedback: "This throws away p2's own header and points p2.hdr at p1's, so the two packets share one header again." },
+        { text: "p2 = new; p2.copy(p1); with a copy() that calls hdr.copy(rhs.hdr)", correct: true, feedback: "Right. p2 = new runs the initializer and builds p2's own header; copy() then copies p1's header contents into it." }
       ],
       explanation: "Only a user-written deep copy duplicates nested objects. Here the new header comes from p2 = new running the initializer, and copy() fills it with p1's values.",
       objective: 2
@@ -1170,9 +1189,9 @@ Answer each one before you open the feedback.
     {
       question: "packet::clone() is NOT virtual; crc_packet overrides it. p is a packet handle holding a crc_packet, and q = p.clone(). What does $cast(back, q) return, where back is a crc_packet variable?",
       answers: [
-        { text: "0: packet::clone ran and built a plain packet", correct: true, feedback: "Right. Without virtual, the handle's declared class (packet) chooses the method, so the clone is a plain packet and the crc field is gone." },
         { text: "1: clone follows the object, so crc_packet::clone ran", correct: false, feedback: "Only a virtual method follows the object's class (§8.20). A non-virtual call is chosen from the handle's class." },
         { text: "Compile error: an override of a non-virtual method is illegal", correct: false, feedback: "A subclass may declare a method with the same name; it just does not override calls made through a base-class handle." },
+        { text: "0: packet::clone ran and built a plain packet", correct: true, feedback: "Right. Without virtual, the handle's declared class (packet) chooses the method, so the clone is a plain packet and the crc field is gone." },
         { text: "A run-time error inside clone()", correct: false, feedback: "Nothing fails at run time. That is why the bug is dangerous: only the $cast reveals it." }
       ],
       explanation: "clone() must be virtual, and every subclass must override it, so that a call through a base-class handle builds an object of the real class.",
@@ -1181,8 +1200,8 @@ Answer each one before you open the feedback.
     {
       question: "In uvm-core 2020.3.1, you add a field to a sequence item without field macros. Which method do you override so that clone() and copy() copy the new field?",
       answers: [
-        { text: "do_copy()", correct: true, feedback: "Right. copy() calls the copier, which calls your do_copy() after field automation. Call super.do_copy(rhs) first, then $cast." },
         { text: "copy()", correct: false, feedback: "copy() is not virtual in uvm_object. An override is not reached through a uvm_object handle, and it would skip the null check and the copier." },
+        { text: "do_copy()", correct: true, feedback: "Right. copy() calls the copier, which calls your do_copy() after field automation. Call super.do_copy(rhs) first, then $cast." },
         { text: "clone()", correct: false, feedback: "clone() is written once in uvm_object: create(get_name()) then copy(this). You do not override it." },
         { text: "create()", correct: false, feedback: "create() builds an object of your class, and the utils macro already generates it. It copies nothing." }
       ],
@@ -1192,10 +1211,10 @@ Answer each one before you open the feedback.
     {
       question: "A monitor writes t.id and t.hdr.len into ONE object t for every transaction, and the scoreboard does exp_q.push_back(X). Expected items still show the latest header values. What is the minimal correct X?",
       answers: [
-        { text: "t.clone(), with a deep copy() behind it", correct: true, feedback: "Right. Each stored item then owns its own header, so later writes to t cannot reach it." },
         { text: "c, after c = t;", correct: false, feedback: "That copies the handle only: every stored entry still names the one object t." },
         { text: "c, after c = new t;", correct: false, feedback: "This fixes id, but a shallow copy shares t's header, so every stored len still shows the latest value." },
-        { text: "t, after making exp_q a bounded queue", correct: false, feedback: "The bound limits how many handles the queue holds; the handles still all name one object." }
+        { text: "t, after making exp_q a bounded queue", correct: false, feedback: "The bound limits how many handles the queue holds; the handles still all name one object." },
+        { text: "t.clone(), with a deep copy() behind it", correct: true, feedback: "Right. Each stored item then owns its own header, so later writes to t cannot reach it." }
       ],
       explanation: "Copy before store, and copy deeply enough: a shallow copy is not enough when the item holds nested objects that the producer keeps changing. Building a new object per transaction in the monitor also fixes it.",
       objective: 4
@@ -1203,8 +1222,8 @@ Answer each one before you open the feedback.
     {
       question: "A scoreboard checks if (exp == act) and reports a mismatch for items whose printed fields are identical. Why?",
       answers: [
-        { text: "== on class handles asks whether they refer to the same object; exp and act are two objects", correct: true, feedback: "Right (§11.4.5). Compare by value with a compare() method." },
         { text: "== compares every property, but the header handles differ", correct: false, feedback: "== never looks inside the objects; it compares the two handles." },
+        { text: "== on class handles asks whether they refer to the same object; exp and act are two objects", correct: true, feedback: "Right (§11.4.5). Compare by value with a compare() method." },
         { text: "== compares properties but treats X bits as a mismatch", correct: false, feedback: "No property is compared at all; the result depends only on the handles." },
         { text: "Comparing two class handles is a compile error, so the line never ran", correct: false, feedback: "Comparing assignment-compatible handles with == is legal (§11.4.5)." }
       ],

@@ -28,12 +28,14 @@ This page assumes the I-SV-2A core: `rand`, constraint blocks, `inside`, checkin
 
 **How to read this page.** The core path is the first five sections: implication, `if`/`else`, `foreach` with sizes, reductions and `unique`. Each has a picture and a classic mistake. The next three sections (guards, functions, global constraints) are practitioner depth you need for real sequence items. The recap at the end lists every mistake in one table.
 
+Two terms from I-SV-2A come back on every line. The **constraint solver** is the simulator engine that finds values making every enabled constraint true. A **state variable** is any variable a constraint reads that is not being randomized in this call; the solver uses its current value as a constant (§18.5.8, step c).
+
 **The page at a glance.** Nine constraint forms in three groups, one box per form. Two boxes are marked FIRST: there the solver decides something before it looks at the rules that depend on it, and that is how a constraint that looks satisfiable can still fail on some calls.
 
 <ArchitectureDiagram
   title="The nine forms on this page, and the two the solver decides first"
-  caption="Conceptual illustration (◇): a map of the page, read top to bottom in each group. Every constraint these forms create joins one Boolean problem that the solver solves as a whole (§18.5.8, §18.5.9); a guard only decides whether a constraint is created (§18.5.12). The two boxes marked FIRST are settled before the rules that depend on them: array sizes (§18.5.7.1) and random function arguments (§18.5.11); randc from I-SV-2A is the third such order (§18.4.2). The standard promises a solution whenever one exists (§18.3), and these three orders are the exceptions it names, so they explain a call that fails only sometimes although a joint solution exists."
-  cellWidth={96}
+  caption="Conceptual illustration (◇): a map of the page, read top to bottom in each group (left column: Conditional, then Safe on real data; right column: Array). Every constraint these forms create joins one Boolean problem that the solver solves as a whole (§18.5.8, §18.5.9); a guard only decides whether a constraint is created (§18.5.12). The two boxes marked FIRST are settled before the rules that depend on them: array sizes (§18.5.7.1) and random function arguments (§18.5.11); randc from I-SV-2A is the third such order (§18.4.2). The standard promises a solution whenever one exists (§18.3), and §18.4.2, §18.5.7.1 and §18.5.11 each warn that their ordering can make a call fail, so they explain a call that fails only sometimes although a joint solution exists."
+  cellWidth={130}
   cellHeight={56}
   gapX={28}
   gapY={16}
@@ -47,14 +49,12 @@ This page assumes the I-SV-2A core: `rand`, constraint blocks, `inside`, checkin
     { id: "f_size", label: "size()", sublabel: "before elements", kind: "generic", col: 1, row: 1, badge: "first", state: "active" },
     { id: "f_sum", label: "sum() with", sublabel: "type sets width", kind: "generic", col: 1, row: 2 },
     { id: "f_uniq", label: "unique", sublabel: "differ in 1 call", kind: "generic", col: 1, row: 3 },
-    { id: "g_real", label: "Safe on real data", kind: "generic", col: 2, row: 0, rowSpan: 3, container: true },
-    { id: "f_guard", label: "guard", sublabel: "rule exists?", kind: "generic", col: 2, row: 0 },
-    { id: "f_func", label: "f(rand arg)", sublabel: "args solved first", kind: "generic", col: 2, row: 1, badge: "first", state: "active" },
-    { id: "f_hdl", label: "rand handle", sublabel: "one problem", kind: "generic", col: 2, row: 2 }
+    { id: "g_real", label: "Safe on real data", kind: "generic", col: 0, row: 2, rowSpan: 3, container: true },
+    { id: "f_guard", label: "guard", sublabel: "rule exists?", kind: "generic", col: 0, row: 2 },
+    { id: "f_func", label: "f(rand arg)", sublabel: "args solved first", kind: "generic", col: 0, row: 3, badge: "first", state: "active" },
+    { id: "f_hdl", label: "rand handle", sublabel: "one problem", kind: "generic", col: 0, row: 4 }
   ]}
 />
-
-Two terms from I-SV-2A come back on every line. The **constraint solver** is the simulator engine that finds values making every enabled constraint true. A **state variable** is any variable a constraint reads that is not being randomized in this call; the solver uses its current value as a constant (§18.5.8, step c).
 
 ### Implication is a Boolean rule, not an if-statement
 
@@ -132,10 +132,15 @@ Count the legal combinations. `is_write = 1` allows 16 values of `addr`, and `is
 
 <ConstraintSolverHeatmapVisualizer initialScenario="implication" scenarios={["implication"]} />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
 **What it showed.**
 1. **1/57.** `x = 0` keeps one pair, (0, 0); each of the other seven `x` values keeps all eight `y` values. That is 57 legal pairs, and only one has `x = 0`.
 2. **0.** `c_hi` removes `y = 0`, so `x = 0` has no partner left. A rule about `y` constrained `x` **backwards**, through the implication. An if-statement could never do that.
 3. **1/8.** With `solve x before y`, `x` is picked first, uniformly over its 8 legal values, and then `y`. The legal pairs are the same 57; only the odds moved.
+
+</details>
 
 **Mistakes to avoid:**
 - **"`A -> B` evaluates `A` first and only then forces `B`."** No: the solver may make `A` false to satisfy `B`, and a narrow `B` makes `A` rare (§18.5.5).
@@ -194,14 +199,14 @@ Read the table as a picture of the solution space: 10 legal `(a, b, x)` combinat
 
 That is 7 legal combinations, and 5 of them have `a = 1`. So `a` is 1 on about 5 calls in 7, the opposite of the dangling form.
 
-</details>
-
 The same two constraints, attached to different `if`s, give opposite odds. In both forms the condition that leads to the narrower branch becomes the rare one:
 
 | Form | The `else` belongs to | Legal `(a, b, x)` combinations | P(`a == 1`) |
 |---|---|---|---|
 | As written, dangling (§18.5.6) | `if (b)` | 10 | 2/10 = 1/5 |
 | With braces | `if (a)` | 7 | 5/7, about 71 % |
+
+</details>
 
 **When to choose which.** Use `->` for a single condition, and `if`/`else` when the cases are exclusive and you want the "otherwise" branch spelled out. Always use braces once the branches nest.
 
@@ -234,7 +239,7 @@ constraint c_forms {
 constraint c_inc { foreach (d[k]) (k < d.size() - 1) -> d[k + 1] > d[k]; }
 ```
 
-Here `k < d.size() - 1` uses only the loop variable and the array's size, so it acts as a **guard**: it decides whether a constraint is created at all, instead of being solved (§18.5.7.1, §18.5.12). Without it, `d[k + 1]` on the last element is out of bounds; expect an error and a failed call (the message wording is tool-dependent).
+Here `k < d.size() - 1` uses only the loop variable and the array's size, so it acts as a **guard**: it decides whether a constraint is created at all, instead of being solved (§18.5.7.1, §18.5.12).
 
 **Predict:** unroll `c_inc` for `d.size() == 4`. For which `k` is no constraint created, and what would the unguarded rule do there?
 
@@ -249,7 +254,7 @@ Here `k < d.size() - 1` uses only the loop variable and the array's size, so it 
 | 3 | FALSE | nothing: no constraint is created, and no error |
 | 3, without the guard | (no guard) | `d[4] > d[3]`: index 4 is out of bounds and is not removed for you (§18.5.7.1), so expect an error and a failed call (wording is tool-dependent) |
 
-The guard is evaluated before solving, because it reads only the loop variable and the size (§18.5.7.1, §18.5.12). Three constraints remain, and together they make `d[0]` to `d[3]` strictly increasing.
+The guard is evaluated before solving, because it reads only the loop variable and the size (§18.5.7.1, §18.5.12). Three constraints remain, and together they make `d[0]` to `d[3]` strictly increasing. Without the guard, `d[k + 1]` on the last element is out of bounds; expect an error and a failed call (the message wording is tool-dependent).
 
 </details>
 
@@ -263,7 +268,7 @@ The three rules as one call, with and without a size constraint:
 
 <SequenceDiagram
   title="Who decides the size: randomize() on a rand dynamic array"
-  caption="Top half: with a size constraint, the size is decided first, the array is resized, and inside the foreach d.size() is a state value (§18.5.7.1); which other variables join that first step is tool-dependent. Bottom half: with no size constraint the array 'shall not be resized' (§18.4), so the empty d of a new object stays empty whatever value len gets, the foreach creates no constraints, and the call still returns 1. This is the debug challenge at the end of the page."
+  caption="Top half: with a size constraint, the size is decided first, the array is resized, and inside the foreach d.size() is a state value (§18.5.7.1); which other variables join that first step is tool-dependent. Bottom half: with no size constraint the array 'shall not be resized' (§18.4), so the empty d of a new object stays empty whatever value len gets, the foreach creates no constraints, and the call still returns 1. You will need this in the debug challenge."
   participants={[
     { id: "tc", label: "test code", kind: "generic" },
     { id: "item", label: "item", kind: "generic" },
@@ -293,7 +298,12 @@ Rule 3 has two consequences. The first is good news; predict it before you look.
 
 <ConstraintSolverExplorer initialMode="size" />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
+
 **What it showed.** P(`length == 8`) is **1/8**. The size is chosen first, uniformly over its 8 legal values; the elements are filled afterwards, so their number of combinations never weights the length. The tempting answer, about 67 % (6,561 of the 9,840 joint combinations), would be right only if sizes and elements formed one joint problem, and the standard says they do not. You never need `solve…before` to keep lengths uniform.
+
+</details>
 
 The second consequence is a failure mode. Because the size is chosen without looking at the element rules, an element rule that cannot hold for some legal size makes those calls fail. The LRM warns: "this implicit ordering can cause the solver to fail in some situations" (§18.5.7.1). Trace this item:
 
@@ -308,7 +318,10 @@ class ramp_item;
 endclass
 ```
 
-**Predict:** which values of `len` make `randomize()` fail, and on about what fraction of calls? Commit, then read the table.
+**Predict:** which values of `len` make `randomize()` fail, and on about what fraction of calls? Commit, then open the trace.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Check your prediction</summary>
 
 | Step | What the solver does | `len` = 1 … 9 | `len` = 10 |
 |---|---|---|---|
@@ -317,6 +330,8 @@ endclass
 | Result | | returns 1 | returns 0 |
 
 So about one call in ten fails, although lengths 1 to 9 always work. (The comparison `d[i] == i * 30` is done in 32 bits, because `i` and `30` are 32-bit, so 270 does not wrap to 14; [width rules](#expert-width-and-sign-inside-constraints) are below.) The fix is to put the limit where the size is solved: `len inside {[1:9]}`.
+
+</details>
 
 ### Array reductions: sum(), product(), and(), or(), xor()
 
@@ -434,7 +449,7 @@ The picture for `unique {x, y}` is the 3-bit grid again, with the diagonal remov
     <text x="8" y="136" fontSize="10" fill="currentColor">{"combination exists, so every randomize() call fails."}</text>
     <text x="8" y="154" fontSize="10" fontWeight="600" fill="currentColor">{"Same count: 16 tags fill bit [3:0]; no room for a 17th."}</text>
   </svg>
-  <figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration (◇) of the pigeonhole count. Which member takes which value does not matter: five members need five different values, and a 2-bit type has four. <code>unique</code> is not a soft constraint, so nothing relaxes it, and every call fails (§18.5.4). Before you put a configurable group in <code>unique</code>, compare its member count with the number of values each member can take.</figcaption>
+  <figcaption className="mt-2 text-sm text-muted-foreground">Conceptual illustration (◇) of the pigeonhole count. Which member takes which value does not matter: five members need five different values, and a 2-bit type has four. <code>unique</code> is not a soft constraint, so nothing relaxes it (§18.5.13), and every call fails (§18.5.4). Before you put a configurable group in <code>unique</code>, compare its member count with the number of values each member can take.</figcaption>
 </figure>
 
 **`unique` versus `randc`.** A `randc` variable cycles through its values *across calls* on one object ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#randc-one-permutation-per-object)). `unique` makes several members differ *within one call*. To give each beat of a burst a different tag, you need `unique`.
@@ -614,8 +629,6 @@ endmodule
 randomize() succeeded on 57 of 1000 calls
 ```
 
-</details>
-
 <SequenceDiagram
   title="One randomize() call with a random function argument"
   caption="v is solved in a first step without seeing c_len, then count_ones(v) becomes a constant. Only the 56 of 1,024 values of v with 8 to 10 one bits leave a legal length, so about 94 % of calls fail."
@@ -639,6 +652,8 @@ randomize() succeeded on 57 of 1000 calls
 />
 
 Exactly 56 of the 1,024 values of `v` have 8, 9 or 10 one bits (45 + 10 + 1), so only about 5.5 % of calls succeed. The constraint looks satisfiable, and it is, but the function call splits it into two steps and the first step cannot see the second. Write the rule as an expression instead and the solver weighs both variables together: the LRM's unrolled sum of shifted bits, or, with the bits stored as `rand bit v[10]`, `length == v.sum() with (int'(item))`. Either form never fails.
+
+</details>
 
 **Rule of thumb.** Call a function on random arguments only when every legal argument value leaves a solution, as in the Make It Work example below. Within each step, `randc` variables are still solved first, and a circular dependency through function arguments is an error (§18.5.11).
 
@@ -681,8 +696,7 @@ The third fact as a picture: the same list after `n1.next.rand_mode(0);`. Compar
   gapX={96}
   nodes={[
     { id: "tc", label: "test code", sublabel: "n1.next.rand_mode(0)", kind: "generic", col: 0, row: 0 },
-    { id: "prob", label: "one solver problem", kind: "generic", col: 0, row: 1, container: true },
-    { id: "n1", label: "n1 (node)", sublabel: "n1.v < n2.v", kind: "generic", col: 0, row: 1, state: "active" },
+    { id: "n1", label: "n1 (node)", sublabel: "whole problem: n1.v < n2.v", kind: "generic", col: 0, row: 1, state: "active" },
     { id: "n2", label: "n2 (node)", sublabel: "v is state: frozen", kind: "generic", col: 1, row: 1, state: "dim" },
     { id: "n3", label: "n3 (node)", sublabel: "not reached", kind: "generic", col: 1, row: 2, state: "dim" }
   ]}
@@ -704,10 +718,10 @@ Constraints are one Boolean formula over all active random variables, solved tog
 | `a -> b` | Equals `(!a or b)`; both sides constrain each other (§18.5.5) | "`a` is evaluated first" | Count legal combinations; `solve…before` to reshape odds |
 | `if`/`else` | Equals implications; `else` binds to the nearest `if` (§18.5.6) | Trusting indentation | Braces around nested branches |
 | `foreach` | Index guards are not automatic (§18.5.7.1) | `d[i + 1]` on the last element | `(i < d.size() - 1) -> …` |
-| `size()` | Solved before elements; no size constraint means no resize (§18.4) | Element rules that fail for some sizes | Bound the size where it is solved |
+| `size()` | Solved before elements; no size constraint means no resize (§18.5.7.1, §18.4) | Element rules that fail for some sizes | Bound the size where it is solved |
 | `sum()` | Result has the element type (§18.5.7.2) | An 8-bit total that wraps | `sum() with (int'(item))` |
 | `unique` | Members differ within one call (§18.5.4) | More members than values | Check the pigeonhole count |
-| Guard | Constants, state, handle comparisons, loop indices (§18.5.12) | Reading through a null handle | `if (h != null)` first |
+| Guard | Constants, state, handle comparisons; inside `foreach`, loop variables and the array's size (§18.5.12) | Reading through a null handle | `if (h != null)` first |
 | Function | Random arguments are solved first (§18.5.11) | A rule that splits into an infeasible second step | Write the rule as an expression |
 | `rand` handle | All reachable active objects form one problem (§18.5.8) | Expecting `randomize()` to allocate | Build objects in `new()` |
 
@@ -738,7 +752,7 @@ endclass`}
 >
   <svg viewBox="0 0 300 286" role="img" aria-labelledby="ac-recap-title ac-recap-desc" style={{ width: "100%", maxWidth: 360 }}>
     <title id="ac-recap-title">{"One randomize() call: gather, settle a few things first, then solve the rest together"}</title>
-    <desc id="ac-recap-desc">{"Three boxes from top to bottom, joined by arrows. Box 1, gather the problem: this object plus every object behind an active rand handle. Box 2, dashed, settled before the joint solve: guards, where FALSE drops a rule and ERROR fails the call; random function arguments, solved first and then used as state; array sizes, solved first and then state inside foreach; randc variables, first within each step. A cross marks that a dead end here makes randomize() fail. The standard does not fix the order of the items in box 2. Box 3, one joint Boolean problem: both directions, each legal combination equally likely. Two outcomes below: a tick for returns 1, a cross for no solution, returns 0."}</desc>
+    <desc id="ac-recap-desc">{"Three boxes from top to bottom, joined by arrows. Box 1, gather the problem: this object plus every object behind an active rand handle. Box 2, dashed, settled before the joint solve: guards, where FALSE drops a rule and ERROR fails the call; random function arguments, solved first and then used as state; array sizes, solved first and then state inside foreach; randc variables, first within each step. A cross marks that a dead end here makes randomize() fail. The standard does not fix the order of the items in box 2. Box 3, one joint Boolean problem: both directions, and each legal combination equally likely unless a dist or solve…before reshapes the odds. Two outcomes below: a tick for returns 1, a cross for no solution, returns 0."}</desc>
     <defs>
       <marker id="ac-recap-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
@@ -758,7 +772,7 @@ endclass`}
     <line x1="150" y1="162" x2="150" y2="176" strokeWidth="1.2" stroke="currentColor" markerEnd="url(#ac-recap-head)" />
     <rect x="4" y="178" width="292" height="42" rx="6" strokeWidth="1.2" className="fill-violet-500/10 stroke-violet-600 dark:stroke-violet-400" />
     <text x="12" y="194" fontSize="10.5" fontWeight="600" fill="currentColor">{"③ One joint Boolean problem"}</text>
-    <text x="12" y="210" fontSize="9.5" fill="currentColor">{"both directions; each legal combination equally likely"}</text>
+    <text x="12" y="210" fontSize="9.5" fill="currentColor">{"both directions; uniform unless dist or solve…before"}</text>
     <rect x="4" y="230" width="140" height="28" rx="6" strokeWidth="1.2" className="fill-emerald-500/10 stroke-emerald-600 dark:stroke-emerald-400" />
     <text x="74" y="248" fontSize="10" textAnchor="middle" fill="currentColor">{"✓ returns 1"}</text>
     <rect x="156" y="230" width="140" height="28" rx="6" strokeWidth="1.2" className="fill-rose-500/10 stroke-rose-600 dark:stroke-rose-400" />
@@ -791,7 +805,6 @@ module tb_top;
     rand dma_desc   next;      // next descriptor in the chain, or null
 
     // Called from a constraint, so width is solved first and alone (§18.5.11).
-    // Safe here: every width leaves legal chunk sizes.
     function int unsigned unit_bytes(bit [1:0] w);
       return 32'd1 << w;
     endfunction
@@ -812,7 +825,7 @@ module tb_top;
       }
     }
     constraint c_total { chunk.sum() with (int'(item)) == total; }  // 32-bit sum
-    constraint c_chan  { unique {chan}; }             // 6 chunks, 8 channels: fits
+    constraint c_chan  { unique {chan}; }             // distinct channels
     constraint c_chain { if (next != null) next.src > src; }       // null guard
   endclass
 
@@ -881,7 +894,7 @@ PASS=1000 FAIL=0
 
 What to notice in the output:
 - **`width` is one third each.** It is a function argument, so it is solved first and alone (§18.5.11), with only `c_width` in play. Written as an expression instead of a function call, `width` would be weighed together with the chunk sizes, and the split could differ.
-- **No call fails.** The standard does not say exactly which other variables join the size step (§18.5.7.1), so the bench is written to be safe under any split. Every combination of `n_chunks`, `mode` and `width` allowed by `c_count`, `c_width` and the mode rules of `c_mode` leaves legal chunks and channels: a COPY needs a chunk sum of 64 to 256, and one chunk of 64 bytes, or six of 40, always meets it. The COPY byte rule is written on the chunk sum, not on `total`, so `total` appears only in `c_total`, next to the elements, and is solved with them. Had `c_mode` said `total inside {[64:256]}`, a solver that also solved `total` in the size step could pick `n_chunks = 1` with `total = 200` (no single chunk of at most 64 bytes adds up to 200) and stop the run with `$fatal`.
+- **No call fails.** The standard does not say exactly which other variables join the size step (§18.5.7.1), so the bench is written to be safe under any split. Every combination of `n_chunks`, `mode` and `width` allowed by `c_count`, `c_width` and the mode rules of `c_mode` leaves legal chunks and channels: every width leaves legal chunk sizes (64 is a multiple of 1, 2 and 4), at most 6 chunks need distinct channels and a 3-bit channel has 8 values, and a COPY needs a chunk sum of 64 to 256, and one chunk of 64 bytes, or six of 40, always meets it. The COPY byte rule is written on the chunk sum, not on `total`, so `total` appears only in `c_total`, next to the elements, and is solved with them. Had `c_mode` said `total inside {[64:256]}`, a solver that also solved `total` in the size step could pick `n_chunks = 1` with `total = 200` (no single chunk of at most 64 bytes adds up to 200) and stop the run with `$fatal`.
 - **`d2` was randomized too**, because `d1.next` is a `rand` handle. `d2`'s own `c_chain` guard saw `next == null` and created nothing.
 
 The steps of one `d1.randomize()` as a picture, with the variant the bench avoids:
@@ -894,8 +907,8 @@ The steps of one `d1.randomize()` as a picture, with the variant the bench avoid
   spreadAnchors
   nodes={[
     { id: "w", label: "width", sublabel: "function argument", kind: "generic", col: 0, row: 0, badge: "first", state: "active" },
-    { id: "sz", label: "n_chunks + sizes", sublabel: "who joins: tool-dependent", kind: "generic", col: 1, row: 0, badge: "first", state: "active" },
-    { id: "el", label: "chunk[], chan[], total, src", sublabel: "element step: every other rule, solved jointly", kind: "generic", col: 0, row: 1, colSpan: 2 },
+    { id: "sz", label: "n_chunks + sizes", sublabel: "mode may join: tool-dependent", kind: "generic", col: 1, row: 0, badge: "first", state: "active" },
+    { id: "el", label: "mode, chunk[], chan[], total, src", sublabel: "element step: every other rule, solved jointly", kind: "generic", col: 0, row: 1, colSpan: 2 },
     { id: "bad", label: "variant: total inside {[64:256]}", sublabel: "size step could pick n_chunks = 1, total = 200: no chunk fits", kind: "generic", col: 0, row: 2, colSpan: 2, state: "error" }
   ]}
   edges={[
@@ -958,7 +971,7 @@ Steps 2 and 5 as a lookup table. Find the specification's wording on the left:
 
 ### Expert: Where the LRM imposes a solve order
 
-IEEE 1800-2023 promises a solution whenever one exists (§18.3), and then names three exceptions in which the solver must settle some variables before seeing the rest:
+IEEE 1800-2023 promises a solution whenever one exists (§18.3), yet three clauses impose an order, in which the solver must settle some variables before seeing the rest, and warn that it can make `randomize()` fail:
 
 - **`randc` variables** are solved before `rand` variables, "and this can sometimes cause randomize() to fail" (§18.4.2).
 - **Array sizes** are solved before `foreach` and reduction constraints: "this implicit ordering can cause the solver to fail in some situations" (§18.5.7.1, §18.5.7.2).
@@ -1044,8 +1057,8 @@ Answer each question yourself before you open the options' feedback.
   title="Interview: seventeen outstanding IDs"
   question="Each item carries rand bit [3:0] id[] with unique {id} and id.size() == n_outstanding. The test raises n_outstanding to 17. What happens, and what is the fix?"
   options={[
-    { text: "The solver relaxes unique and allows one duplicate.", isCorrect: false, feedback: "Only soft constraints are dropped when they conflict; unique is not soft (§18.5.4)." },
-    { text: "Every randomize() call fails: 17 members need 17 different values, and a 4-bit ID has only 16. Widen the ID or cap n_outstanding at 16.", isCorrect: true, feedback: "Right: the pigeonhole principle. unique is a hard constraint, so the solver has no legal solution (§18.5.4). Check the call, and assert the configuration limit where it is set." },
+    { text: "The solver relaxes unique and allows one duplicate.", isCorrect: false, feedback: "Only soft constraints are dropped when they conflict (§18.5.13); unique is not soft." },
+    { text: "Every randomize() call fails: 17 members need 17 different values, and a 4-bit ID has only 16. Widen the ID or cap n_outstanding at 16.", isCorrect: true, feedback: "Right: the pigeonhole principle. unique is a hard constraint (§18.5.13), so the solver has no legal solution (§18.5.4). Check the call, and assert the configuration limit where it is set." },
     { text: "The solver truncates the id array to 16 elements, so every remaining ID can still be distinct.", isCorrect: false, feedback: "The size constraint holds or the call fails; nothing is truncated." },
     { text: "It works, but each call is slow because the solver backtracks through many ID combinations first.", isCorrect: false, feedback: "No legal solution exists at all, so no amount of search finds one." }
   ]}
@@ -1137,8 +1150,8 @@ Answer each question yourself before you open the options' feedback.
     question: "rand bit [1:0] v[5]; constraint c { unique {v}; } What happens when you call randomize()?",
     objective: 3,
     answers: [
-      { text: "Every call fails: five elements need five different values, but 2 bits give only four", correct: true, feedback: "Right: the pigeonhole principle. unique is a hard constraint (§18.5.4)." },
-      { text: "unique is relaxed when it cannot hold, like a soft constraint", correct: false, feedback: "Only soft constraints are discarded on conflict; unique is hard." },
+      { text: "Every call fails: five elements need five different values, but 2 bits give only four", correct: true, feedback: "Right: the pigeonhole principle (§18.5.4). unique is a hard constraint (§18.5.13)." },
+      { text: "unique is relaxed when it cannot hold, like a soft constraint", correct: false, feedback: "Only soft constraints are discarded on conflict (§18.5.13); unique is hard." },
       { text: "One repeated value is allowed", correct: false, feedback: "No two members of the group may be equal." },
       { text: "Compile error: unique does not accept arrays", correct: false, feedback: "Unpacked arrays are allowed; all their leaf elements join the group (§18.5.4)." }
     ],
@@ -1271,10 +1284,10 @@ PASS=1000 FAIL=0
 **The predictions.**
 - **R6 needs the index guard**: `data[i + 1]` does not exist for the last beat.
 - **R8 is the silent one.** Written as `data.sum() <= 1000`, the total has the 8-bit element type and can never exceed 255, so the rule is always true and limits nothing, while the real total can reach 16 × 255 = 4,080 (§18.5.7.2). R5 is safe as written because every operand is 32 bits wide.
-- **WRAP is the rarest kind.** No `solve…before` is present, so the solver favours kinds that own more legal combinations. INCR allows 16 lengths at any address; FIXED allows 4 lengths; WRAP allows 4 lengths and only aligned addresses. If every legal `(kind, len, bsize, addr)` combination were equally likely, the split would be about 71 % INCR, 19 % FIXED and 11 % WRAP. Because `len` also sets the size of `data`, the standard solves it in the size step first (§18.5.7.1), and tools may partition that step differently, so treat the exact split as illustrative. If the specification wants the kinds equally often, add `solve kind before len, addr;`.
+- **WRAP is the rarest kind.** No `solve…before` is present, so the solver favours kinds that own more legal combinations. INCR allows 16 lengths at any address that keeps the burst in its page (R5); FIXED allows 4 lengths; WRAP allows 4 lengths, only aligned addresses, and its longer bursts fit fewer page offsets. If every legal `(kind, len, bsize, addr)` combination were equally likely, the split would be about 71 % INCR, 19 % FIXED and 11 % WRAP. Because `len` also sets the size of `data`, the standard solves it in the size step first (§18.5.7.1), and tools may partition that step differently, so treat the exact split as illustrative. If the specification wants the kinds equally often, add `solve kind before len, addr;`.
 
 <figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
-  <svg viewBox="0 0 360 114" role="img" aria-labelledby="ac-kata-title ac-kata-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <svg viewBox="0 0 360 129" role="img" aria-labelledby="ac-kata-title ac-kata-desc" style={{ width: "100%", maxWidth: 520 }}>
     <title id="ac-kata-title">{"Each kind's share of the legal burst_item combinations"}</title>
     <desc id="ac-kata-desc">{"A stacked bar drawn to scale. INCR takes 70.7 percent, FIXED 18.7 percent and WRAP 10.6 percent of the legal (kind, len, bsize, addr) combinations, counted as if each combination were equally likely. WRAP is rarest because it allows only aligned addresses, and its longer bursts (2 to 16 beats) fit fewer offsets inside the 256-byte page of rule R5. The split is illustrative: len is also an array size, so tools may solve it first and split differently."}</desc>
     <text x="8" y="14" fontSize="10.5" fontWeight="600" fill="currentColor">{"Share of legal (kind, len, bsize, addr) combinations"}</text>
@@ -1288,7 +1301,8 @@ PASS=1000 FAIL=0
     <text x="333.77" y="50" fontSize="9" textAnchor="middle" fill="currentColor">{"10.6 %"}</text>
     <text x="8" y="74" fontSize="10" fill="currentColor">{"WRAP is rarest: aligned addresses only, and its longer"}</text>
     <text x="8" y="89" fontSize="10" fill="currentColor">{"bursts fit fewer offsets inside the 256-byte page (R5)."}</text>
-    <text x="8" y="106" fontSize="10" fill="currentColor">{"Illustrative: len is also a size, so tools may split differently."}</text>
+    <text x="8" y="106" fontSize="10" fill="currentColor">{"Illustrative: len is also a size,"}</text>
+    <text x="8" y="121" fontSize="10" fill="currentColor">{"so tools may split differently."}</text>
   </svg>
   <figcaption className="mt-2 text-sm text-muted-foreground">Drawn to scale from an enumeration of every legal <code>(kind, len, bsize, addr)</code> combination under R2 to R5, counted as if each were equally likely. Kinds that own more legal combinations win. Because <code>len</code> also sets the size of <code>data</code>, the standard solves it in the size step first (§18.5.7.1), so treat the exact split as illustrative.</figcaption>
 </figure>
@@ -1334,12 +1348,24 @@ With 2 to 16 strictly ascending bytes, a solution always exists, so the correcte
 ### Predict with the visuals
 
 Return to the visuals on this page and commit to an answer before each reveal:
-- the implication bar: P(`is_write == 1`) for `is_write -> addr < 16` (16/272, about 5.9 %);
-- the `if`/`else` comparison: P(`a == 1`) for the dangling form and for the braced form (1/5, 5/7);
-- the guard ladder: `next != null || next.v > 3` on the last node (FALSE || ERROR = ERROR, so `randomize()` fails);
-- the heatmap's implication scenario: P(`x == 0`) with `c_imp` only, then with `c_hi`, then with `c_order` (1/57, 0, 1/8);
-- the explorer's Array size tab: P(`length == 8`) (1/8);
-- the signedness visualizer's lost carry: 8-bit `s = a8 + b8` with 200 and 100 (44).
+1. the implication bar: P(`is_write == 1`) for `is_write -> addr < 16`;
+2. the `if`/`else` comparison: P(`a == 1`) for the dangling form and for the braced form;
+3. the guard ladder: `next != null || next.v > 3` on the last node;
+4. the heatmap's implication scenario: P(`x == 0`) with `c_imp` only, then with `c_hi`, then with `c_order`;
+5. the explorer's Array size tab: P(`length == 8`);
+6. the signedness visualizer's lost carry: 8-bit `s = a8 + b8` with 200 and 100.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Answers</summary>
+
+1. 16/272, about 5.9 %.
+2. 1/5, 5/7.
+3. FALSE || ERROR = ERROR, so `randomize()` fails.
+4. 1/57, 0, 1/8.
+5. 1/8.
+6. 44.
+
+</details>
 
 The flashcards for this page follow below, under "Reinforce the essentials".
 

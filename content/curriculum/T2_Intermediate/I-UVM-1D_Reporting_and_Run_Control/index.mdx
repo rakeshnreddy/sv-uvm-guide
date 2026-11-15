@@ -88,7 +88,7 @@ What each severity means, and what UVM does with it by default (§6.3, Annex F.2
 | `UVM_ERROR` | A real problem: a check failed; the run continues | print it and add 1 to the quit counter |
 | `UVM_FATAL` | Cannot continue | print it and end the simulation |
 
-An **action** is what UVM does with a report; the next sections explain each one. Notice what the table says about pass and fail: a `UVM_ERROR` does not stop the run. The run continues so you see every failure, and the verdict comes at the end from the counts.
+An **action** is what UVM does with a report; the next sections explain each one. The **quit counter** is a separate tally of errors that can end the run early when it reaches a limit you set; it is off by default (Ending a run, below). Notice what the table says about pass and fail: a `UVM_ERROR` does not stop the run. The run continues so you see every failure, and the verdict comes at the end from the counts.
 
 **Read one log line.** Every UVM message has the same layout (uvm-core 2020.3.1 `uvm_report_server.svh`, `compose_report_message`):
 
@@ -104,7 +104,7 @@ This is run B's error from Make It Work; line 28 is where the macro call starts.
 
 ### Verbosity: which information messages print
 
-Each report object has a **maximum verbosity**, `UVM_MEDIUM` by default. An `` `uvm_info `` prints only if its verbosity is **less than or equal to** that maximum (§6.3.3.2 `uvm_report_enabled`, §6.3.4.3). Here is a traced example with the four messages above, at three settings:
+Each report object has a **maximum verbosity**, `UVM_MEDIUM` by default. An `` `uvm_info `` prints only if its verbosity is **less than or equal to** that maximum (§6.3.3.2 `uvm_report_enabled`, §6.3.4.3). (B.1.1.1's description of `` `uvm_info `` says "lower than", but §6.3.3.2, F.2.2.4 and the uvm-core macro all treat equal as printed.) Here is a traced example with the four messages above, at three settings:
 
 | Message | `UVM_LOW` setting | `UVM_MEDIUM` (default) | `UVM_HIGH` setting |
 |---|---|---|---|
@@ -186,7 +186,7 @@ Four classes make up the machinery (§6.1–§6.5):
   ]}
 />
 
-Now follow one `` `uvm_error `` from `chk` all the way to the summary. **Predict first:** if a component's verbosity is `UVM_LOW`, at which step could this error be dropped? Then read the diagram.
+Now follow one `` `uvm_error `` from `chk` all the way to the summary. **Check yourself:** if a component's verbosity is `UVM_LOW`, at which step could this error be dropped? Then read the diagram.
 
 <SequenceDiagram
   title="The life of one `uvm_error, from macro to summary"
@@ -202,7 +202,7 @@ Now follow one `` `uvm_error `` from `chk` all the way to the summary. **Predict
     { from: "chk", to: "rh", label: "process_report_message(msg)" },
     { kind: "self", from: "rh", label: "apply severity override; set action and file for (severity, ID)" },
     { from: "rh", to: "srv", label: "process_report_message(msg)" },
-    { kind: "self", from: "srv", label: "run report catchers (E-DBG-1); drop if CAUGHT or UVM_NO_ACTION" },
+    { kind: "self", from: "srv", label: "run hooks (UVM_CALL_HOOK) and catchers (E-DBG-1); drop if a hook returned 0, CAUGHT, or UVM_NO_ACTION" },
     { kind: "self", from: "srv", label: "execute_report_message: count severity and ID" },
     { kind: "self", from: "srv", label: "DISPLAY, LOG; COUNT feeds the quit counter; EXIT calls die()" },
     { kind: "divider", from: "chk", to: "root", label: "time passes: run_phase, extract, check, report and final phases end" },
@@ -211,11 +211,16 @@ Now follow one `` `uvm_error `` from `chk` all the way to the summary. **Predict
   ]}
 />
 
-**Debrief.** The answer to the prediction is "nowhere": the error passes the verbosity check because the macro issues it at `UVM_NONE`. Only two things after that step can remove an error from the counts: an action of `UVM_NO_ACTION`, and a **report catcher**, a callback object that can inspect, change or swallow a report inside the server before it is counted (§6.6). Catchers are a powerful debugging and error-injection tool; you will write one in [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index). For now, remember that they exist and that a catcher in a TB can change what the summary says.
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the answer</summary>
+
+**Debrief.** The answer to the prediction is "nowhere": the error passes the verbosity check because the macro issues it at `UVM_NONE`. Only two things after that step can remove an error from the counts: an action of `UVM_NO_ACTION`, and a **report catcher** (in uvm-core, a 1.1d-compatibility report_hook can also drop a report; see the two-counters figure), a callback object that can inspect, change or swallow a report inside the server before it is counted (§6.6). Catchers are a powerful debugging and error-injection tool; you will write one in [E-DBG-1](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index). For now, remember that they exist and that a catcher in a TB can change what the summary says.
+
+</details>
 
 ### Reading the summary and deciding pass or fail
 
-When all phases have finished, `run_test` calls `report_summarize()` on the report server and then `$finish` (Annex F.7.3.1 steps k–m). The summary looks like this (layout from uvm-core 2020.3.1 `uvm_report_server.svh`):
+When all phases have finished, `run_test` calls `report_summarize()` on the report server and then `$finish` (by default) (Annex F.7.3.1 steps k–m). The summary looks like this (layout from uvm-core 2020.3.1 `uvm_report_server.svh`):
 
 ```text
 UVM_INFO @ 40: reporter [UVM/REPORT/SERVER]
@@ -329,12 +334,17 @@ Two facts about counting surprise almost everyone, and both come straight from u
 
 <TelemetryEventBusVisualizer />
 
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the debrief</summary>
+
 **Debrief.**
 1. Three: the two `CRC` errors and the `SCB` mismatch. The `$error` is printed by the simulator but never counted (see "Messages UVM never sees" below).
 2. No. `UVM_LOW` hides the `UVM_MEDIUM` and `UVM_HIGH` information lines only; the count stays 3.
 3. No, still 3. Without `UVM_COUNT` the quit counter never moves, so the run is not stopped either.
 4. The real bug. The second `CRC` error reaches the limit at 150 ns, the server adds `UVM_EXIT`, and the run ends before packet 5: the test fails, but for the wrong reason, and the real bug is invisible in this log.
 5. "Passed", with `UVM_ERROR :    0`, and it is false: every error was dropped before counting, the real bug included. The `$error` fired too, and the summary cannot show it.
+
+</details>
 
 **File logging.** `UVM_LOG` writes a report to a file, but only to a file you open and attach yourself: the default file handle is 0, which means "no file", even when `UVM_LOG` is set (§6.3 item d, §6.3.6.2). A common use is a separate errors file:
 
@@ -439,9 +449,9 @@ The last line pauses the simulator at the first mismatch, so you can inspect sig
 | `+UVM_TESTNAME` on the command line | `run_test` argument | What `run_test` does (uvm-core 2020.3.1 messages) |
 |---|---|---|
 | names a registered test, e.g. `sum_bug_test` | ignored | creates it as `uvm_test_top`; `[RNTST] Running test sum_bug_test...` |
-| names no registered class | ignored | `UVM_FATAL … [INVTST] Requested test from command line +UVM_TESTNAME=… not found.` |
+| names no registered class | ignored | `UVM_FATAL … [INVTST] Requested test from command line +UVM_TESTNAME=… not found.` (after a `[BDTYP]` warning from the factory) |
 | not given | names a registered test, e.g. `"sum_test"` | creates it as `uvm_test_top`; `[RNTST] Running test sum_test...` |
-| not given | names no registered class | `UVM_FATAL … [INVTST] Requested test from call to run_test(…) not found.` |
+| not given | names no registered class | `UVM_FATAL … [INVTST] Requested test from call to run_test(…) not found.` (after a `[BDTYP]` warning from the factory) |
 | not given | empty, and no component exists | `UVM_FATAL … [NOCOMP] No components instantiated. …` |
 
 **A severity override changes what a report *is*.** `+uvm_set_severity` (or `set_report_severity_id_override`) changes the severity in the handler, before the action is chosen, so a warning demoted to `UVM_INFO` is printed, counted and acted on as an info message (uvm-core `uvm_report_handler.svh`). Use it for a *known, reviewed* warning, by ID, never for a whole severity. There is no `_hier` form of the severity override (Annex D.2.2 lists none): in code you call it on each component, or you use the plusarg with a wildcard.
@@ -461,7 +471,7 @@ if (clp.get_arg_value("+NUM_ITEMS=", value) > 0) num_items = value.atoi();
 
 Apart from a crash, a simulator kill or a SystemVerilog `$fatal`, a UVM run ends in one of two ways (Annex F.7.3):
 
-- **Normally.** All phases finish; `run_test` calls `report_summarize()` and then `$finish`. `check_phase` and `report_phase` ran, so checker and verdict lines are in the log.
+- **Normally.** All phases finish; `run_test` calls `report_summarize()` and then, by default, `$finish`. `check_phase` and `report_phase` ran, so checker and verdict lines are in the log.
 - **Through `die()`.** A report with the `UVM_EXIT` action (every `UVM_FATAL` by default, or the error that reaches the quit limit) calls `uvm_root::die()`, which calls `pre_abort()` on every component, prints the summary and calls `$finish` (F.7.3.2). **No further phases run**: no `check_phase`, no `report_phase`, no verdict line.
 
 Three knobs bound a run so that a broken test cannot run forever or bury the first failure:
@@ -516,7 +526,7 @@ The report server counts only reports that go through UVM. Everything else is in
 
 - **`$display`** prints a line. It has no severity, so there is nothing to count.
 - **`$error`, `$warning`, `$fatal`** are SystemVerilog severity tasks (IEEE 1800-2023 §20.10). The **simulator** prints them, in its own format; they never enter the UVM report server. A `$error` inside a component does not change `UVM_ERROR`. (`$fatal` ends the simulation with `$finish` immediately, also without a UVM summary.)
-- **Assertions.** An `assert` statement with no `else` clause calls `$error` when it fails (IEEE 1800-2023 §16.3, §20.10). So a SystemVerilog Assertion (SVA) in an interface can fail a thousand times while the UVM summary says `UVM_ERROR :    0`.
+- **Assertions.** An `assert` statement with no `else` clause calls `$error` when it fails (IEEE 1800-2023 §16.3 for immediate and §16.14.1 for concurrent assertions; §20.10). So a SystemVerilog Assertion (SVA) in an interface can fail a thousand times while the UVM summary says `UVM_ERROR :    0`.
 
 <ArchitectureDiagram
   title="Two output channels: UVM's report server and the simulator's own output"
@@ -563,7 +573,7 @@ The message shows `reporter` as its source, so put the interface's identity in t
 - Four macros, one ID each; only `` `uvm_info `` has a verbosity, and verbosity never hides warnings, errors or fatals.
 - Report object (settings and calls) → its handler (override, action, file) → one server (catchers, count, display, log, quit, exit) → one summary at the end.
 - Pass = summary present, `UVM_ERROR` and `UVM_FATAL` both 0, a positive check count, and no simulator-format errors.
-- The server counts every report it executes; only `UVM_NO_ACTION` and catchers remove a report from the counts.
+- The server counts every report it executes; only `UVM_NO_ACTION` and catchers remove a report from the counts (plus, in uvm-core, a 1.1d-compatibility report hook).
 - `+UVM_TESTNAME` beats `run_test("…")`; `+uvm_set_*` targets components and IDs; `INVLCMDARGS` means a setting did nothing.
 - A fatal, a timeout or a reached quit count ends the run through `die()`: no `check_phase`, no `report_phase`.
 - `$display`, `$error` and default assertion failures are invisible to UVM; route them with the macros.
@@ -709,7 +719,7 @@ module tb_top;
 endmodule
 ```
 
-**Expected output** (illustrative: worked out from the uvm-core 2020.3.1 source, not captured from a simulator. The release-notes banner is shortened in run A; runs B and C also leave out that line and the summary's header line. File names and line numbers are omitted, and times are shown in ns; your simulator prints `%t` in its own units, by default the smallest time precision, IEEE 1800-2023 §20.4.3.)
+**Expected output** (illustrative: worked out from the uvm-core 2020.3.1 source, not captured from a simulator. The release-notes banner is shortened to its first line in run A; runs B and C also leave out that line and the summary's header line. File names and line numbers are omitted, and times are shown in ns; your simulator prints `%t` in its own units, by default the smallest time precision, IEEE 1800-2023 §20.4.3.)
 
 **Run A**, no plusargs:
 
@@ -719,7 +729,7 @@ endmodule
 <summary className="cursor-pointer font-semibold">Show run A's log</summary>
 
 ```text
-UVM_INFO @ 0: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0: reporter [UVM/RELNOTES]
 UVM_INFO @ 0: reporter [RNTST] Running test sum_test...
 UVM_WARNING @ 0: uvm_test_top [CFG_DEFAULT] +NUM_ITEMS not set, using 4
 UVM_INFO @ 40: uvm_test_top.chk [CHK_DONE] checks=4
@@ -756,6 +766,7 @@ UVM_ERROR @ 30: uvm_test_top.chk [MISMATCH] check 3: expected 33, got 34
 UVM_INFO @ 40: uvm_test_top.chk [CHK_DONE] checks=4
 UVM_INFO @ 40: uvm_test_top [VERDICT] TEST FAILED: 1 error(s)
 --- UVM Report Summary ---
+
 ** Report counts by severity
 UVM_INFO :    4
 UVM_WARNING :    1
@@ -785,6 +796,7 @@ UVM_ERROR @ 0: uvm_test_top.chk [NO_CHECKS] no result was compared
 UVM_INFO @ 0: uvm_test_top.chk [CHK_DONE] checks=0
 UVM_INFO @ 0: uvm_test_top [VERDICT] TEST FAILED: 1 error(s)
 --- UVM Report Summary ---
+
 ** Report counts by severity
 UVM_INFO :    4
 UVM_WARNING :    0
@@ -832,14 +844,26 @@ Full UVM support in open-source simulators is limited, and this example has not 
 
 Make one change at a time, predict the summary, then run it:
 
+- Run B with `+UVM_VERBOSITY=UVM_LOW`
+- Run B with `+UVM_VERBOSITY=UVM_HIGH`
+- Run B with `+UVM_MAX_QUIT_COUNT=1`
+- Run B with `'+uvm_set_action=uvm_test_top.chk,MISMATCH,UVM_ERROR,UVM_NO_ACTION'`
+- Run B with `+UVM_TESTNAME=sum_bugtest` (typo)
+- Run A, with this edit: in `run_phase`, add `$error("bad sum")` after `chk.check_sum(...)`
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show what you should see</summary>
+
 | Change | What you should see |
 |---|---|
 | Run B with `+UVM_VERBOSITY=UVM_LOW` | The same `MISMATCH` error and `UVM_ERROR :    1`. Verbosity never hides errors. |
 | Run B with `+UVM_VERBOSITY=UVM_HIGH` | Four extra `[CHK]` lines (`check 1: 1 + 10 = 11` …), `UVM_INFO :    8`. |
 | Run B with `+UVM_MAX_QUIT_COUNT=1` | An extra `[MAXQUITSET]` info at 0 ns; the run ends at 30 ns after `MISMATCH`, with `Quit count reached!` and `Quit count :     1 of     1` in the summary. No `CHK_DONE` and no `VERDICT` lines: `report_phase` never ran. |
 | Run B with `'+uvm_set_action=uvm_test_top.chk,MISMATCH,UVM_ERROR,UVM_NO_ACTION'` | No `MISMATCH` line, `UVM_ERROR :    0`, `TEST PASSED`: a false pass created on the command line. |
-| Run B with `+UVM_TESTNAME=sum_bugtest` (typo) | `UVM_FATAL @ 0: reporter [INVTST] Requested test from command line +UVM_TESTNAME=sum_bugtest not found.`, then the summary with `UVM_FATAL :    1`. |
-| In `run_phase`, add `$error("bad sum")` after `chk.check_sum(...)` | The simulator prints four errors in its own format, yet the summary says `UVM_ERROR :    0` and the verdict says `TEST PASSED`. |
+| Run B with `+UVM_TESTNAME=sum_bugtest` (typo) | `UVM_WARNING @ 0: reporter [BDTYP] Cannot create a component of type 'sum_bugtest' because it is not registered with the factory.`, then `UVM_FATAL @ 0: reporter [INVTST] Requested test from command line +UVM_TESTNAME=sum_bugtest not found.`, then the summary with `UVM_WARNING :    1` and `UVM_FATAL :    1`. |
+| Run A, with this edit: in `run_phase`, add `$error("bad sum")` after `chk.check_sum(...)` | The simulator prints four errors in its own format, yet the summary says `UVM_ERROR :    0` and the verdict says `TEST PASSED`. |
+
+</details>
 
 ### How to make a UVM run judgeable
 
@@ -864,7 +888,7 @@ Make one change at a time, predict the summary, then run it:
 
 The standard describes `UVM_COUNT` as incrementing the quit counter (Annex F.2.2.2) and `get_severity_count` as "the count of already passed messages" (§6.5.1.2.6). uvm-core 2020.3.1 makes the split exact (`uvm_report_server.svh`):
 
-- `process_report_message` runs the catchers, returns early on `CAUGHT`, then returns early if the action is `UVM_NO_ACTION`. Those reports are never counted.
+- `process_report_message` runs the catchers (after any 1.1d-compatibility report hooks, when `UVM_CALL_HOOK` is in the action; a hook that returns 0 drops the report), returns early on `CAUGHT`, then returns early if the action is `UVM_NO_ACTION`. Those reports are never counted.
 - `execute_report_message` first increments the severity count and the ID count for **every** report it receives, and only then looks at the action flags. `UVM_COUNT` increments the quit counter only when the maximum quit count is non-zero, and adds `UVM_EXIT` when the count is reached.
 - The macros also check the action before building the message (`` `uvm_report_begin ``): a report whose action is `UVM_NO_ACTION` is not even formatted.
 
@@ -877,7 +901,7 @@ The standard defines what each plusarg means (Annex G.2) but not exactly when it
 - `+UVM_VERBOSITY` is read during UVM's initialization, before the test exists, and applied to `uvm_root` and everything below it (`uvm_root::m_check_verbosity`, which calls `set_report_verbosity_level_hier`). Each new component copies its parent's verbosity in its constructor.
 - `+uvm_set_verbosity` (phase `build`), `+uvm_set_action` and `+uvm_set_severity` are applied **in each component's constructor** (`uvm_component::new` calls `m_set_cl_msg_args`). So a `set_report_*` call in that component's `build_phase` or later, in code, **replaces** the command-line setting. If a plusarg seems ignored, look for code that sets the same thing.
 - A `+uvm_set_verbosity` with another phase name is applied when that phase starts in that component; the `time` form is applied by a thread in `uvm_root`.
-- `+UVM_TIMEOUT` and `+UVM_MAX_QUIT_COUNT` are applied in `uvm_root::build_phase`, which runs before the test's `build_phase` (top-down). With `YES` or no second field the test can still change them; with `NO` the test's `set_timeout` or `set_max_quit_count` is ignored with an info message (`NOTIMOUTOVR`, `NOMAXQUITOVR`).
+- `+UVM_TIMEOUT` and `+UVM_MAX_QUIT_COUNT` are applied in `uvm_root::build_phase`, which runs before the test's `build_phase` (top-down). With `YES` or no second field the test can still change them; with `NO` the test's `set_timeout` or `set_max_quit_count` is ignored with an info message (`NOTIMOUTOVR`, `NOMAXQUITOVR`). (G.2.6 asks for a warning in the quit-count case; uvm-core issues an info message, so it does not add to `UVM_WARNING`.)
 - Unused `+uvm_set_action` and `+uvm_set_severity` settings are reported as `INVLCMDARGS` warnings when `run_phase` starts; unused `+uvm_set_verbosity` settings at the end of `run_test`. Both are `UVM_WARNING`s, so they show in the counts.
 - `+UVM_DUMP_REPORT_ARGS` prints a table of every reporting plusarg and which components it reached (uvm-core only).
 
@@ -906,7 +930,7 @@ The standard defines what each plusarg means (Annex G.2) but not exactly when it
 
 ### Expert: the exit status is not the verdict
 
-Tool-dependent. UVM ends every run, passing or failing, with `$finish`: after the summary in `run_test` (F.7.3.1 step m) and in `die()` (F.7.3.2 step f). A `UVM_FATAL` is a UVM report, not a call to `$fatal`. IEEE 1800-2023 §20.2 defines `$finish`'s argument only as a diagnostics level and says nothing about the process exit status. So whether a simulator returns a non-zero status for a run with `UVM_ERROR :    3` depends on the tool and its options. Regression flows therefore parse the log. A robust parser:
+Tool-dependent. UVM ends every run, passing or failing, with `$finish`: after the summary in `run_test` (F.7.3.1 step m, unless `set_finish_on_completion(0)` was called, F.7.3.4) and in `die()` (F.7.3.2 step f). A `UVM_FATAL` is a UVM report, not a call to `$fatal`. IEEE 1800-2023 §20.2 defines `$finish`'s argument only as a diagnostics level and says nothing about the process exit status. So whether a simulator returns a non-zero status for a run with `UVM_ERROR :    3` depends on the tool and its options. Regression flows therefore parse the log. A robust parser:
 
 - requires the `--- UVM Report Summary ---` block (a missing summary means a crash, a kill or a `$fatal`);
 - extracts `UVM_ERROR` and `UVM_FATAL` with anchored patterns such as `^UVM_ERROR :\s+(\d+)$`, not a bare search for "UVM_ERROR", which also matches message lines;
@@ -934,7 +958,7 @@ if (uvm_report_enabled(UVM_FULL, UVM_INFO, "PKT_DUMP")) begin
 end
 ```
 
-Scale rules that experienced teams follow: regressions run at `UVM_LOW` (or `UVM_NONE`), debug reruns raise one component and one ID, nothing per-transaction is `UVM_LOW` or below, and per-cycle messages are `UVM_FULL` or `UVM_DEBUG`. The ID counts in the summary are your profiler: an ID with a count of 2 million is a performance bug. [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) measures this.
+Experienced teams follow four scale rules (table below). The ID counts in the summary are your profiler: an ID with a count of 2 million is a performance bug. [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) measures this.
 
 | Message or run | Verbosity rule of thumb |
 |---|---|
@@ -954,9 +978,9 @@ The report server is replaceable. `uvm_report_server::set_server(new_server)` in
   question="A block's regression has been 100% green for months. A DUT bug then escapes to silicon, and the test that should have caught it is in the regression. The scoreboard's compare code is correct. What do you check first in the logs and the run scripts?"
   options={[
     { text: "Raise +UVM_VERBOSITY to UVM_FULL and rerun; the error must have been filtered.", isCorrect: false, feedback: "Verbosity never filters errors: the macros issue them at UVM_NONE. A higher verbosity only adds information lines." },
-    { text: "Whether the scoreboard compared anything (its count line, and a zero-activity guard), whether any +uvm_set_action ... UVM_NO_ACTION, catcher or severity override hides errors, and whether assertion or $error failures appear in the simulator's own format outside the UVM counts.", isCorrect: true, feedback: "Right. Those are the three ways a UVM run passes while a check fails or never runs: zero activity, errors removed before counting, and failures UVM never saw. Then make the script require a positive check count and scan for simulator-format errors." },
     { text: "Check the simulator's exit status in the regression script.", isCorrect: false, feedback: "UVM ends passing and failing runs alike with $finish; the exit status is tool-dependent and is not a UVM verdict." },
-    { text: "Increase +UVM_MAX_QUIT_COUNT so more errors are reported.", isCorrect: false, feedback: "The quit count only stops a run early; with the default 0 nothing stops it. It cannot make a hidden error visible." }
+    { text: "Increase +UVM_MAX_QUIT_COUNT so more errors are reported.", isCorrect: false, feedback: "The quit count only stops a run early; with the default 0 nothing stops it. It cannot make a hidden error visible." },
+    { text: "Whether checks ran, whether errors were removed before counting (UVM_NO_ACTION, a catcher, a severity override), and whether failures appear only in the simulator's own format.", isCorrect: true, feedback: "Right: whether the scoreboard compared anything (its count line, and a zero-activity guard), whether any +uvm_set_action ... UVM_NO_ACTION, catcher or severity override hides errors, and whether assertion or $error failures appear in the simulator's own format outside the UVM counts. Those are the three ways a UVM run passes while a check fails or never runs: zero activity, errors removed before counting, and failures UVM never saw. Then make the script require a positive check count and scan for simulator-format errors." }
   ]}
 />
 
@@ -965,8 +989,8 @@ The report server is replaceable. `uvm_report_server::set_server(new_server)` in
   question="A colleague recompiles the TB for every test because tb_top contains run_test('smoke_test'). How do you run the other tests, and what can go wrong?"
   options={[
     { text: "Change the run_test argument per test; the argument always wins.", isCorrect: false, feedback: "The opposite: when +UVM_TESTNAME is given, run_test ignores its argument (F.7.3.1)." },
-    { text: "Compile once and pass +UVM_TESTNAME=<test>; the plusarg wins over the argument. If the name is misspelled or the class is not registered with `uvm_component_utils, the run ends with UVM_FATAL [INVTST] and the summary shows UVM_FATAL : 1.", isCorrect: true, feedback: "Right. One compiled image, any registered test. Parameterized test classes registered with the *_param_utils forms have no type name, so +UVM_TESTNAME cannot find them either." },
     { text: "Use +uvm_set_type_override to replace smoke_test with the other test.", isCorrect: false, feedback: "That works in principle, and RNTST then says 'via factory override', but it is an indirect way to do what +UVM_TESTNAME does directly." },
+    { text: "Compile once and pass +UVM_TESTNAME=<test>; the plusarg wins over the argument. A wrong name ends the run with UVM_FATAL [INVTST].", isCorrect: true, feedback: "Right. If the name is misspelled or the class is not registered with `uvm_component_utils, the run ends with UVM_FATAL [INVTST] and the summary shows UVM_FATAL : 1. One compiled image, any registered test. Parameterized test classes registered with the *_param_utils forms have no type name, so +UVM_TESTNAME cannot find them either." },
     { text: "Write one tb_top module per test.", isCorrect: false, feedback: "That multiplies compile time and top-level code for no benefit; +UVM_TESTNAME exists to avoid it." }
   ]}
 />
@@ -1022,8 +1046,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 1,
     answers: [
       { text: "Only D", correct: false, feedback: "Verbosity never filters warnings or errors: the macros issue them at UVM_NONE (B.1.1)." },
-      { text: "B, C and D", correct: true, feedback: "Right. A (200) is above the setting (100), so it is hidden and not counted; D (100) is equal, so it prints; B and C always print." },
       { text: "A, B, C and D", correct: false, feedback: "A has verbosity UVM_MEDIUM (200), which is higher than the UVM_LOW (100) setting, so it is filtered." },
+      { text: "B, C and D", correct: true, feedback: "Right. A (200) is above the setting (100), so it is hidden and not counted; D (100) is equal, so it prints; B and C always print." },
       { text: "C and D", correct: false, feedback: "Warnings are not filtered by verbosity either; only UVM_INFO is." }
     ],
     explanation: "An info message prints when its verbosity is less than or equal to the configured maximum (§6.3.3.2). Warnings, errors and fatals are issued at UVM_NONE, and §6.3.3.3 says verbosity is ignored for them. So verbosity can make a log quieter but never hides a failure."
@@ -1033,9 +1057,9 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 3,
     answers: [
       { text: "+UVM_VERBOSITY=UVM_HIGH", correct: false, feedback: "That raises every component and every ID, which is exactly the noisy log you wanted to avoid." },
-      { text: "+uvm_set_verbosity=uvm_test_top.chk,CHK,UVM_HIGH,build", correct: true, feedback: "Right: one component, one ID, applied as chk is constructed (G.2.3)." },
       { text: "+uvm_set_verbosity=uvm_test_top.chk.*,CHK,UVM_HIGH,build", correct: false, feedback: "uvm_test_top.chk.* matches components below chk, not chk itself. In Make It Work chk has no children, so UVM warns INVLCMDARGS ... never took effect at the end of the run." },
-      { text: "+uvm_set_action=uvm_test_top.chk,CHK,UVM_INFO,UVM_DISPLAY", correct: false, feedback: "The action is already UVM_DISPLAY. A filtered message never reaches the action step; you must change the verbosity." }
+      { text: "+uvm_set_action=uvm_test_top.chk,CHK,UVM_INFO,UVM_DISPLAY", correct: false, feedback: "The action is already UVM_DISPLAY. A filtered message never reaches the action step; you must change the verbosity." },
+      { text: "+uvm_set_verbosity=uvm_test_top.chk,CHK,UVM_HIGH,build", correct: true, feedback: "Right: one component, one ID, applied as chk is constructed (G.2.3)." }
     ],
     explanation: "+uvm_set_verbosity=<comp>,<id>,<verbosity>,<phase> sets a per-ID verbosity on matching components (equivalent to set_report_id_verbosity). A per-ID verbosity wins over the component's maximum (§6.4.3.1), so CHK at UVM_HIGH prints while everything else stays at UVM_LOW."
   },
@@ -1044,7 +1068,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 2,
     answers: [
       { text: "Pass: UVM_ERROR and UVM_FATAL are both 0.", correct: false, feedback: "Zero errors proves only that no check failed. matched=0 says no check ran." },
-      { text: "Fail: a zero-activity run. The scoreboard compared nothing, so the zero error count proves nothing; find out why no transaction reached it.", correct: true, feedback: "Right. Condition 3 of the rule needs positive evidence. The scoreboard should also raise a `uvm_error in check_phase when it compared nothing." },
+      { text: "Fail: a zero-activity run; the scoreboard compared nothing.", correct: true, feedback: "Right: the zero error count proves nothing; find out why no transaction reached it. Condition 3 of the rule needs positive evidence. The scoreboard should also raise a `uvm_error in check_phase when it compared nothing." },
       { text: "Pass with a warning, because there are no warnings or errors.", correct: false, feedback: "There is nothing to warn about in the counts; the problem is the missing activity." },
       { text: "Cannot tell without opening the waveform.", correct: false, feedback: "The log already tells you: matched=0. A log should be enough to decide, which is why checkers print count lines." }
     ],
@@ -1054,8 +1078,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     question: "Run B of Make It Work is repeated with +UVM_MAX_QUIT_COUNT=1. A script marks a run as failed only if the log contains 'TEST FAILED'. What happens?",
     objective: 4,
     answers: [
+      { text: "The script passes the run: die() ends it at 30 ns before report_phase, so no 'TEST FAILED' line is printed.", correct: true, feedback: "Right, although the summary shows Quit count reached! and UVM_ERROR : 1. A run that ends through die() has no check_phase or report_phase output. Scripts must judge the summary, not a verdict line." },
       { text: "The script fails the run: the MISMATCH error is counted and the verdict says TEST FAILED.", correct: false, feedback: "The error reaches the quit limit, gets UVM_EXIT, and die() ends the run at 30 ns. report_phase never runs, so there is no VERDICT line." },
-      { text: "The script passes the run: die() ends it at 30 ns before report_phase, so no 'TEST FAILED' line is printed, although the summary shows Quit count reached! and UVM_ERROR : 1.", correct: true, feedback: "Right. A run that ends through die() has no check_phase or report_phase output. Scripts must judge the summary, not a verdict line." },
       { text: "The run continues to 40 ns because the quit count only applies to UVM_FATAL.", correct: false, feedback: "The quit counter is fed by the UVM_COUNT action, which UVM_ERROR has by default." },
       { text: "The run hangs until the 1 us timeout.", correct: false, feedback: "Reaching the quit count adds UVM_EXIT, which ends the run immediately through die()." }
     ],
@@ -1066,8 +1090,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 3,
     answers: [
       { text: "sum_test, because the argument in the code wins over the command line.", correct: false, feedback: "The opposite: the plusarg wins (F.7.3.1 steps d and e). The argument is used only when no +UVM_TESTNAME is given." },
-      { text: "sum_bug_test; RNTST reports 'Running test sum_bug_test...'.", correct: true, feedback: "Right. That is why one compiled image can run every registered test." },
       { text: "Both, one after the other.", correct: false, feedback: "run_test creates one test, named uvm_test_top. Calling run_test twice is a fatal error (TTINST in uvm-core)." },
+      { text: "sum_bug_test; RNTST reports 'Running test sum_bug_test...'.", correct: true, feedback: "Right. That is why one compiled image can run every registered test." },
       { text: "Neither: UVM reports a fatal because the two names disagree.", correct: false, feedback: "There is no conflict check; the plusarg simply takes precedence." }
     ],
     explanation: "run_test reads +UVM_TESTNAME first. If it is present, the factory creates that test as uvm_test_top; otherwise it uses run_test's argument. If neither gives a test and no component exists, UVM reports NOCOMP; a name that matches no registered class gives INVTST."
@@ -1088,8 +1112,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 4,
     answers: [
       { text: "UVM_ERROR : 0, because the errors were not displayed.", correct: false, feedback: "The server counts every report it executes, whatever its action. Only UVM_NO_ACTION or a catcher removes a report before counting." },
-      { text: "UVM_ERROR : 2. The errors are counted and written to the file; they are only missing from the screen, and they no longer feed the quit counter.", correct: true, feedback: "Right. Counting happens before the action flags are applied (uvm-core execute_report_message); UVM_COUNT only drives the quit counter." },
       { text: "UVM_ERROR : 2, and the run stops at the second error.", correct: false, feedback: "Without UVM_COUNT the quit counter never moves, so a quit limit cannot stop the run." },
+      { text: "UVM_ERROR : 2. The errors are counted and written to the file, only missing from the screen.", correct: true, feedback: "Right. They also no longer feed the quit counter. Counting happens before the action flags are applied (uvm-core execute_report_message); UVM_COUNT only drives the quit counter." },
       { text: "Nothing: UVM_LOG without UVM_DISPLAY is an illegal action.", correct: false, feedback: "Any combination of action flags is legal (§6.4.4.2)." }
     ],
     explanation: "Severity counts and quit counts are different things. Every executed report is counted by severity and ID; UVM_COUNT adds to the quit counter only. So hiding or logging an error still fails the run, but it also stops +UVM_MAX_QUIT_COUNT from seeing it."
@@ -1099,9 +1123,9 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     objective: 5,
     answers: [
       { text: "UVM_ERROR : 3, because $error inside a uvm_component is routed to the report server.", correct: false, feedback: "$error is a SystemVerilog severity task (IEEE 1800-2023 §20.10). The simulator prints it; UVM never sees it, wherever it is called." },
-      { text: "UVM_ERROR : 0. The simulator prints three errors in its own format, but they never reach the UVM report server; replace them with `uvm_error.", correct: true, feedback: "Right. A script that reads only the UVM summary passes this run." },
       { text: "UVM_FATAL : 3, because $error ends the simulation.", correct: false, feedback: "$error does not end the simulation; $fatal does, and it bypasses UVM too." },
-      { text: "UVM_WARNING : 3, because UVM demotes foreign messages.", correct: false, feedback: "UVM does not see the messages at all, so it cannot demote them." }
+      { text: "UVM_WARNING : 3, because UVM demotes foreign messages.", correct: false, feedback: "UVM does not see the messages at all, so it cannot demote them." },
+      { text: "UVM_ERROR : 0. The $error calls never reach the UVM report server.", correct: true, feedback: "Right. The simulator prints three errors in its own format, but they never reach the UVM report server; replace them with `uvm_error. A script that reads only the UVM summary passes this run." }
     ],
     explanation: "Only reports issued through UVM (the macros or uvm_report_* calls) are counted. $display, $error, $warning, $fatal and default assertion failures go straight to the simulator's output. Inside UVM code, use the macros."
   },
@@ -1109,8 +1133,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     question: "An interface contains `a_hold: assert property (@(posedge clk) valid && !ready |=> valid);` with no else clause. It fails 40 times in a run. What do you change so the regression sees the failures?",
     objective: 5,
     answers: [
-      { text: "Nothing: assertion failures are always counted as UVM_ERROR.", correct: false, feedback: "With no else clause the fail action is a call to $error (IEEE 1800-2023 §20.10), which UVM never sees." },
       { text: "Add `else `uvm_error(\"MY_IF_SVA\", \"valid dropped before ready\")`, with `include \"uvm_macros.svh\" and import uvm_pkg::* for the interface.", correct: true, feedback: "Right. Outside a class the macro reports through uvm_root (F.3.2.1), so the server counts it. Also keep a scan for simulator-format errors in the regression script." },
+      { text: "Nothing: assertion failures are always counted as UVM_ERROR.", correct: false, feedback: "With no else clause the fail action is a call to $error (IEEE 1800-2023 §20.10), which UVM never sees." },
       { text: "Raise +UVM_VERBOSITY to UVM_FULL so assertion messages are included.", correct: false, feedback: "Verbosity only filters UVM info messages; it cannot bring $error into UVM." },
       { text: "Add +UVM_MAX_QUIT_COUNT=1 so the first failure stops the run.", correct: false, feedback: "The quit counter counts UVM reports with UVM_COUNT. The $error never reaches it." }
     ],
@@ -1120,8 +1144,8 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     question: "A test calls uvm_root::get().set_timeout(1us, 1) in build_phase, but a driver's objection is never dropped. What does the end of the log look like?",
     objective: 4,
     answers: [
-      { text: "The run ends at 1 us with UVM_FATAL ... [PH_TIMEOUT] Explicit timeout of ... hit, then the summary with UVM_FATAL : 1; no check_phase or report_phase output.", correct: true, feedback: "Right. The timeout is a UVM_FATAL, whose default action includes UVM_EXIT, so die() prints the summary and calls $finish." },
       { text: "The run ends at 1 us with TEST PASSED, because the timeout is a normal end of test.", correct: false, feedback: "A timeout is always a fatal error: it signals a hang. report_phase never runs, so no verdict line is printed." },
+      { text: "The run ends at 1 us with UVM_FATAL ... [PH_TIMEOUT], then the summary with UVM_FATAL : 1.", correct: true, feedback: "Right. The message reads Explicit timeout of ... hit, and there is no check_phase or report_phase output. The timeout is a UVM_FATAL, whose default action includes UVM_EXIT, so die() prints the summary and calls $finish." },
       { text: "The run continues to the 9200 s default because set_timeout only applies to run-time phases.", correct: false, feedback: "set_timeout applies in uvm_run_phase (F.7.3.3) and was set before run_phase started." },
       { text: "The simulator kills the run at 1 us without a UVM summary.", correct: false, feedback: "UVM itself ends the run, through die(), which prints the summary first." }
     ],
@@ -1140,6 +1164,7 @@ UVM_INFO @ 0: reporter [RNTST] Running test burst_test...
 UVM_WARNING @ 0: uvm_test_top.env.agt.drv [CFG] timeout_cycles not set, using 100
 UVM_FATAL @ 1000000: reporter [PH_TIMEOUT] Explicit timeout of 1000000 hit, indicating a probable testbench issue
 --- UVM Report Summary ---
+
 ** Report counts by severity
 UVM_INFO :    2
 UVM_WARNING :    1
@@ -1159,6 +1184,7 @@ UVM_INFO @ 0: reporter [RNTST] Running test smoke_test...
 UVM_INFO @ 0: uvm_test_top.env.scb [SCB_DONE] matched=0
 UVM_INFO @ 0: uvm_test_top [VERDICT] TEST PASSED
 --- UVM Report Summary ---
+
 ** Report counts by severity
 UVM_INFO :    4
 UVM_WARNING :    0
@@ -1180,6 +1206,7 @@ UVM_WARNING @ 2410000: uvm_test_top.env.scb [SLOW_RSP] response 17 took 43 cycle
 UVM_INFO @ 9870000: uvm_test_top.env.scb [SCB_DONE] matched=120
 UVM_INFO @ 9870000: uvm_test_top [VERDICT] TEST PASSED
 --- UVM Report Summary ---
+
 ** Report counts by severity
 UVM_INFO :    4
 UVM_WARNING :    2
@@ -1236,7 +1263,7 @@ The deck for this lesson covers the four macros and IDs, the verbosity rule, the
   - Annex B.1 (report macros: B.1.1.1–B.1.1.4), Annex D.2.2 (hierarchical reporting interface), Annex F.2.2.1–4 (severity, action and verbosity types), F.3.2.1 (global `uvm_get_report_object`), F.7.3.1 (`run_test`), F.7.3.2 (`die`), F.7.3.3 (`set_timeout`);
   - Annex G.1 (`uvm_cmdline_processor`: G.1.2 `get_inst`, G.1.3.4 `get_arg_matches`, G.1.4.1–2 `get_arg_value`, `get_arg_values`), G.2.1 `+UVM_TESTNAME`, G.2.2 `+UVM_VERBOSITY`, G.2.3 `+uvm_set_verbosity`, G.2.4 `+uvm_set_action`, G.2.5 `+uvm_set_severity`, G.2.6 `+UVM_MAX_QUIT_COUNT`, G.2.7–G.2.9 (overrides, configuration and default-sequence plusargs).
 - uvm-core 2020.3.1 (behaviour labelled "uvm-core" on this page): `src/base/uvm_report_server.svh` (counting before actions, quit count, summary layout), `uvm_report_handler.svh` (defaults, override then action), `uvm_report_object.svh`, `src/macros/uvm_message_defines.svh` (`` `uvm_report_begin ``), `uvm_root.svh` (`run_test`, `RNTST`, `INVTST`, `+UVM_TIMEOUT`, `+UVM_MAX_QUIT_COUNT`, `m_check_verbosity`, `reporter`), `uvm_component.svh` (`m_set_cl_msg_args`), `uvm_cmdline_report.svh` (`+uvm_set_*` parsing, `INVLCMDARGS`), `uvm_phase_hopper.svh` (`PH_TIMEOUT`), `src/macros/uvm_global_defines.svh` (`` `UVM_DEFAULT_TIMEOUT `` = 9200 s).
-- IEEE 1800-2023: §16.3 (immediate assertion with no `else` calls `$error`), §20.2 (`$finish`, `$stop`), §20.4.3 (`$timeformat` defaults), §20.10 (severity tasks; default fail action of assertions), §21.6 (`$value$plusargs`).
+- IEEE 1800-2023: §16.3 (immediate assertion with no `else` calls `$error`), §16.14.1 (concurrent assert with no else calls $error), §20.2 (`$finish`, `$stop`), §20.4.3 (`$timeformat` defaults), §20.10 (severity tasks; default fail action of assertions), §21.6 (`$value$plusargs`).
 
 **Prerequisites:** [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) (components are report objects) and [I-UVM-1C: UVM Phasing and Synchronization](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, `check_phase`, `report_phase`, timeouts).
 

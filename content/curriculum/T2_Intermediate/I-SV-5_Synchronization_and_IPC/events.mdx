@@ -50,7 +50,7 @@ event empty = null;      // a name that refers to no object at all
 
 <ArchitectureDiagram
   title="Anatomy of an event: names, objects and null"
-  caption="Solid arrows: the variable refers to that synchronization object. done and done_too are two names for one object, which holds a waiting queue (empty so far) and a triggered state (0 so far). empty is null and names no object. In the Quick Take's doorbell analogy, the object is the bell, the triggered state is its light, and each variable is a name for a bell (§6.17, §15.5, §15.5.5)."
+  caption="Solid arrows: the variable refers to that synchronization object. done and done_too are two names for one object, which holds a waiting queue (no waiters so far) and a triggered state (0 so far). empty is null and names no object. In the Quick Take's doorbell analogy, the object is the bell, the triggered state is its light, and each variable is a name for a bell (§6.17, §15.5, §15.5.5)."
   legend={false}
   gapX={100}
   spreadAnchors={true}
@@ -58,7 +58,7 @@ event empty = null;      // a name that refers to no object at all
     { id: "done", label: "done", sublabel: "event variable", col: 0, row: 0 },
     { id: "done_too", label: "done_too", sublabel: "event variable", col: 0, row: 1 },
     { id: "empty", label: "empty", sublabel: "event variable", col: 0, row: 2 },
-    { id: "obj", label: "one object", sublabel: "queue: empty · triggered: 0", col: 1, row: 0, rowSpan: 2, state: "active" },
+    { id: "obj", label: "one object", sublabel: "queue: no waiters · triggered: 0", col: 1, row: 0, rowSpan: 2, state: "active" },
     { id: "none", label: "no object", sublabel: "the value null", col: 1, row: 2, state: "dim" }
   ]}
   edges={[
@@ -141,12 +141,15 @@ Order 1 is what the first example forced by design. Order 2 is the **lost trigge
 
 ### Predict, then run every order
 
-The visualizer below runs this exact pair of processes on a tested model of the standard. For each of its four variants:
+The visualizer below runs this exact pair of processes on a tested model of the standard. One variant uses `->> done;`, the **nonblocking trigger**: it does not trigger at once, but schedules the trigger for the NBA region of the same time slot, which runs after every Active-region process (§15.5.1). A later section covers it in full. For each of the four variants:
 
 1. read the generated code and answer the question *before* you reveal the run;
 2. flip the scheduler order ("When processes are ready together, this simulator runs…") and check whether the outcome changes.
 
 <ForkJoinVisualizer scenario="event-race" scenarios={["event-race"]} />
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Debrief: what the four variants showed</summary>
 
 **What the four variants showed:**
 
@@ -154,6 +157,8 @@ The visualizer below runs this exact pair of processes on a tested model of the 
 - **`->` with `wait (done.triggered)`** wakes in every order, because the triggered state is still 1 when a late waiter arrives (§15.5.3).
 - **`->>` with `@(done)`** wakes in every order, because the trigger moves to the NBA region, after the consumer is already waiting (§15.5.1).
 - **`forever wait (done.triggered)`** wakes and then never stops: the wait passes again and again at t = 10 ns, and time never advances.
+
+</details>
 
 The next two sections explain the two fixes and the trap in the fourth variant.
 
@@ -179,11 +184,11 @@ Waiters 1 and 3 proceed; waiters 2 and 4 stay blocked until the next trigger. `@
     <rect x="254" y="6" width="80" height="108" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
     <text x="14" y="22" fontSize="11" fill="currentColor">{"t = 10 ns"}</text>
     <text x="262" y="22" fontSize="11" fill="currentColor">{"t = 11 ns"}</text>
-    <line x1="120" y1="28" x2="120" y2="110" stroke="rgb(6,182,212)" strokeWidth="1.5" strokeDasharray="3 3" />
+    <line x1="120" y1="28" x2="120" y2="110" stroke="rgb(8,145,178)" strokeWidth="1.5" strokeDasharray="3 3" />
     <text x="126" y="38" fontSize="10" fill="currentColor">{"-> done fires"}</text>
     <text x="14" y="52" fontSize="10" fill="currentColor">{"done.triggered"}</text>
-    <path d="M12 76 H120 V62 H240 V76" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
-    <path d="M260 76 H328" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    <path d="M12 76 H120 V62 H240 V76" fill="none" stroke="rgb(8,145,178)" strokeWidth="2" />
+    <path d="M260 76 H328" fill="none" stroke="rgb(8,145,178)" strokeWidth="2" />
     <text x="60" y="72" fontSize="10" fill="currentColor">{"0"}</text>
     <text x="176" y="58" fontSize="10" fill="currentColor">{"1"}</text>
     <text x="290" y="72" fontSize="10" fill="currentColor">{"0"}</text>
@@ -254,14 +259,6 @@ Which fix to choose:
 
 ### Choosing a wait
 
-| You need to… | Use | Why |
-|---|---|---|
-| wake on every trigger, inside a loop | `@(ev)` | it waits for the next trigger each time; a trigger that fires while the loop body is still running is missed |
-| wait once, when the trigger may already have fired at this time | `wait (ev.triggered)` | the triggered state lasts until time advances (§15.5.3) |
-| make your trigger safe for waiters that arm before the NBA region | `->> ev` | it fires in the NBA region (§15.5.1) |
-| know that something happened at an earlier time | a flag, a counter or a mailbox | an event forgets as soon as time advances |
-| check that several events happen in a given order | `wait_order` | covered below (§15.5.4) |
-
 <ArchitectureDiagram
   title="Choosing a wait: two questions"
   caption="Dotted arrows: answer the questions top to bottom. If the waiter can arrive in a later time slot, no event form remembers the trigger, so keep the news in state. Inside a loop, wait with @(ev), and trigger with ->> if the trigger can fire earlier in the same time slot. For a one-shot wait, use wait (ev.triggered), or ->> at the trigger (§15.5.1, §15.5.2, §15.5.3)."
@@ -270,7 +267,7 @@ Which fix to choose:
     { id: "q1", label: "later time slot?", sublabel: "can the waiter arrive then?", col: 0, row: 0 },
     { id: "state", label: "flag/counter/mailbox", sublabel: "keep the news in state", col: 1, row: 0, state: "active" },
     { id: "q2", label: "inside a loop?", sublabel: "is the wait repeated?", col: 0, row: 1 },
-    { id: "loop", label: "@(ev) in the loop", sublabel: "->> if the slot is shared", col: 1, row: 1, state: "active" },
+    { id: "loop", label: "@(ev) in the loop", sublabel: "->> if it can fire earlier", col: 1, row: 1, state: "active" },
     { id: "once", label: "wait (ev.triggered)", sublabel: "or ->> at the trigger", col: 0, row: 2, state: "active" }
   ]}
   edges={[
@@ -280,6 +277,14 @@ Which fix to choose:
     { from: "q2", to: "once", style: "control", label: "no" }
   ]}
 />
+
+| You need to… | Use | Why |
+|---|---|---|
+| wake on every trigger, inside a loop | `@(ev)` | it waits for the next trigger each time; a trigger that fires while the loop body is still running is missed |
+| wait once, when the trigger may already have fired at this time | `wait (ev.triggered)` | the triggered state lasts until time advances (§15.5.3) |
+| make your trigger safe for waiters that arm before the NBA region | `->> ev` | it fires in the NBA region (§15.5.1) |
+| know that something happened at an earlier time | a flag, a counter or a mailbox | an event forgets as soon as time advances |
+| check that several events happen in a given order | `wait_order` | covered below (§15.5.4) |
 
 ### Event variables are handles: assignment, merging and `null`
 
@@ -436,12 +441,12 @@ Picture the construct as a cursor that moves along the list:
   caption="Dashed arrows: what moves the cursor. Each trigger of the awaited event moves it one step down. A trigger of an event that is still awaited, before its turn, fails the construct. Events already passed may trigger again. Only a, the first event, can be satisfied by its triggered state, and there is no timeout: the cursor can wait forever (§15.5.4)."
   legend={false}
   cellWidth={140}
-  gapX={120}
+  gapX={100}
   spreadAnchors={true}
   nodes={[
-    { id: "wa", label: "awaiting a", sublabel: "a's triggered state counts", col: 0, row: 0 },
-    { id: "wb", label: "awaiting b", sublabel: "a may trigger again", col: 0, row: 1 },
-    { id: "wc", label: "awaiting c", sublabel: "a and b may trigger again", col: 0, row: 2 },
+    { id: "wa", label: "awaiting a", sublabel: "triggered state counts", col: 0, row: 0 },
+    { id: "wb", label: "awaiting b", sublabel: "a may repeat", col: 0, row: 1 },
+    { id: "wc", label: "awaiting c", sublabel: "a, b may repeat", col: 0, row: 2 },
     { id: "ok", label: "succeeds", sublabel: "the process continues", col: 0, row: 3, state: "ok" },
     { id: "fail", label: "fails", sublabel: "else branch, or $error", col: 1, row: 0, rowSpan: 2, state: "error" }
   ]}
@@ -530,10 +535,10 @@ wait (done.triggered);  // also passes if done fired earlier at this time`}
   inTestbench="Reset-done and end-of-stimulus milestones, request and acknowledge handshakes between TB threads, and covergroup sampling events. uvm_event follows the same rules (I-UVM-1C)."
 >
   <svg viewBox="0 0 320 214" role="img" aria-label="One time slot, read top to bottom. Active region: -> done fires and wakes every process already waiting in @(done). Later in the Active region: a process that reaches @(done) misses the trigger, while wait (done.triggered) passes at once. NBA region: a ->> done trigger would fire here instead, after the Active region has emptied, so it wakes every process that started waiting before the NBA region. When time advances, done.triggered is 0 again." style={{ width: "100%", maxWidth: 360 }}>
-    <rect x="6" y="6" width="308" height="44" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <rect x="6" y="6" width="308" height="44" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(8,145,178)" />
     <text x="14" y="24" fontSize="11" fill="currentColor">{"Active region: -> done fires"}</text>
     <text x="14" y="42" fontSize="11" fill="currentColor">{"✓ every process already in @(done) wakes"}</text>
-    <rect x="6" y="56" width="308" height="62" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <rect x="6" y="56" width="308" height="62" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(8,145,178)" />
     <text x="14" y="74" fontSize="11" fill="currentColor">{"Later in Active, after the trigger:"}</text>
     <text x="14" y="92" fontSize="11" fill="currentColor">{"✕ @(done) waits for the next trigger"}</text>
     <text x="14" y="110" fontSize="11" fill="currentColor">{"✓ wait (done.triggered) passes at once"}</text>
@@ -726,7 +731,7 @@ PASS=3 FAIL=1
     { kind: "note", from: "responder", label: "back in @(req), 10 ns early" },
     { kind: "divider", label: "Second run only · t = 28 ns" },
     { kind: "note", from: "requester", to: "responder", label: "in #10 and in @(req): neither waits on ack" },
-    { kind: "note", from: "check", label: "bug_injector: -> ack with no req", tone: "error" },
+    { kind: "note", from: "check", label: "ack fires (from bug_injector); req never came", tone: "error" },
     { kind: "self", from: "check", label: "wait_order fails: out_of_order++, $error", tone: "error" }
   ]}
 />
@@ -777,9 +782,9 @@ The full syntax is `->> [delay_or_event_control] ev;` (§15.5.1, Syntax 15-1). T
     { name: "clk", kind: "clock" }
   ]}
   markers={[
-    { edge: 0, tone: "info", label: "after this edge: both ->> statements run, the process moves on" },
-    { edge: 1, tone: "drive", label: "sampled fires (NBA region)" },
-    { edge: 2, tone: "drive", label: "done fires (NBA region)" }
+    { edge: 0, tone: "info", label: "after this edge: both ->> statements run, the process moves on", short: "->> x2" },
+    { edge: 1, tone: "drive", label: "sampled fires (NBA region)", short: "sampled" },
+    { edge: 2, tone: "drive", label: "done fires (NBA region)", short: "done" }
   ]}
 />
 
@@ -834,7 +839,7 @@ Interleaving also means `data = 42; -> data_ready;` is not atomic: other process
 
 [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) teaches `uvm_event`. Here is how it maps onto this page (IEEE 1800.2-2020 §10.1; uvm-core 2020.3.1 `src/base/uvm_event.svh`):
 
-- `uvm_event_base` wraps a SystemVerilog `event` and adds a persistent **on** bit. `trigger()` sets it (§10.1.2.2.4) and `reset()` clears it (§10.1.1.2.8).
+- `uvm_event_base` wraps a SystemVerilog `event` and adds a persistent **on** bit, which `reset()` clears (§10.1.1.2.8). `uvm_event#(T)::trigger()` sets it (§10.1.2.2.4).
 - `wait_trigger()` (§10.1.1.2.4) is `@` on the wrapped event, so it has the same race when the trigger and the wait share a time slot. The comment in the uvm-core source says so.
 - `wait_ptrigger()` (§10.1.1.2.5) checks the triggered state first: it is the `wait (ev.triggered)` form.
 - `wait_on()` (§10.1.1.2.2) returns at once while the event is on, which lasts across time until `reset()`.
@@ -843,11 +848,11 @@ Interleaving also means `data = 42; -> data_ready;` is not atomic: other process
 
 The three waits side by side, for a waiter that arrives after the trigger:
 
-| Form on this page | `uvm_event` wait | Trigger earlier in the same time slot | Trigger at an earlier time | IEEE 1800.2-2020 |
-|---|---|---|---|---|
-| `@(ev)` | `wait_trigger()` | missed: the same race | missed | §10.1.1.2.4 |
-| `wait (ev.triggered)` | `wait_ptrigger()` | caught | missed | §10.1.1.2.5 |
-| no event form: a flag that stays set | `wait_on()` | caught | caught, until `reset()` | §10.1.1.2.2 |
+| Form on this page | `uvm_event` wait (IEEE 1800.2-2020) | Earlier, same slot | Earlier time |
+|---|---|---|---|
+| `@(ev)` | `wait_trigger()` (§10.1.1.2.4) | missed: the same race | missed |
+| `wait (ev.triggered)` | `wait_ptrigger()` (§10.1.1.2.5) | caught | missed |
+| no event form: a flag that stays set | `wait_on()` (§10.1.1.2.2) | caught | caught, until `reset()` |
 
 So replacing `@(ev)` with `wait_trigger()` does not fix a race. `wait_ptrigger()` fixes it within a time slot, and `wait_on()` across time. UVM components can also look events up by name in a `uvm_event_pool` (§10.4.1) instead of sharing handles directly.
 
@@ -858,7 +863,7 @@ So replacing `@(ev)` with `wait_trigger()` does not fix a race. `wait_ptrigger()
   question="Two threads start at time 0. Thread A runs -> done; and thread B runs @(done);. In some runs thread B never wakes. What is the root cause?"
   options={[
     { text: "Thread B should have used wait (done.triggered).", isCorrect: false, feedback: "That is a fix, not the cause. It works because it would also see a trigger that already happened in this time slot." },
-    { text: "Events are local to the thread that triggers them.", isCorrect: false, feedback: "An event declared in the module is visible to both threads, and both refer to the same synchronization object." },
+    { text: "Events are local to the thread that triggers them, so thread B waits on a private copy that thread A never triggers.", isCorrect: false, feedback: "An event declared in the module is visible to both threads, and both refer to the same synchronization object." },
     { text: "A same-time-slot race: thread A's trigger ran before thread B started waiting, and @ catches only later triggers.", isCorrect: true, feedback: "Right. Both threads are ready at time 0 in either order (§4.7). If A runs first, the trigger finds an empty queue and is gone (§15.5.2). Fix B with wait (done.triggered), or A with ->> done." },
     { text: "Events cannot be triggered at time 0.", isCorrect: false, feedback: "They can. Time 0 is an ordinary time slot, and the same race can happen at any time." }
   ]}
@@ -869,7 +874,7 @@ So replacing `@(ev)` with `wait_trigger()` does not fix a race. `wait_ptrigger()
   question="To cure an intermittent hang, a team replaced @(ev) with a uvm_event and wait_trigger(). The hang is still there. Why?"
   options={[
     { text: "wait_trigger() is @ on the wrapped event, so the same-time-slot race remains; use wait_ptrigger(), or wait_on() if the waiter can be late by more than a time slot.", isCorrect: true, feedback: "Right. uvm-core documents the race on wait_trigger() (IEEE 1800.2-2020 §10.1.1.2.4). wait_ptrigger() checks the triggered state, and wait_on() stays satisfied until reset()." },
-    { text: "uvm_event counts triggers, so the hang must be somewhere else.", isCorrect: false, feedback: "uvm_event keeps a persistent on bit, but it counts nothing, and its plain wait still races." },
+    { text: "uvm_event counts and queues every trigger, so a waiter can never miss one, and the hang must come from some other part of the testbench.", isCorrect: false, feedback: "uvm_event keeps a persistent on bit, but it counts nothing, and its plain wait still races." },
     { text: "The uvm_event must be created through the factory before it can be triggered.", isCorrect: false, feedback: "How the object was created has nothing to do with when its waiters were armed." },
     { text: "wait_trigger() works only inside run_phase.", isCorrect: false, feedback: "It is an ordinary task that any process can call." }
   ]}
@@ -881,8 +886,8 @@ So replacing `@(ev)` with `wait_trigger()` does not fix a race. `wait_ptrigger()
   options={[
     { text: "A simulator bug: file a ticket with the vendor.", isCorrect: false, feedback: "Both orders of same-time processes are legal (§4.7). Prove the design is order-independent before you blame the tool." },
     { text: "A same-time-slot trigger and wait race: print $time and a tag before each trigger and wait, and see the order flip between the two runs.", isCorrect: true, feedback: "Right. Then remove the dependence on order: arm the wait earlier, wait on ev.triggered, or trigger with ->>." },
-    { text: "The watchdog is too short: double it.", isCorrect: false, feedback: "A lost trigger never comes back, so more time only delays the failure." },
-    { text: "Add #0 before the wait.", isCorrect: false, feedback: "#0 moves the wait to the Inactive region, after every Active process has run (§4.4.2.3). A trigger fired in the Active region at this time is then missed every time: the intermittent hang becomes a certain one." }
+    { text: "The watchdog is too short for the slower simulator: double its timeout so that the event has time to arrive before the run is killed.", isCorrect: false, feedback: "A lost trigger never comes back, so more time only delays the failure." },
+    { text: "Add #0 before the wait.", isCorrect: false, feedback: "#0 resumes the wait only after every process already in the Active region has run (§4.4.2.3). A trigger from such a process is then missed every time: the intermittent hang becomes a certain one." }
   ]}
 />
 
@@ -898,7 +903,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     answers: [
       { text: "C always wakes, because both statements run at t = 10 ns", correct: false, feedback: "The same time is not enough. @ catches only triggers that happen after it started waiting (§15.5.2), and the simulator may run P first (§4.7)." },
       { text: "It depends on which process the simulator runs first: if P runs first, C misses the trigger and stays blocked", correct: true, feedback: "Right. Both orders are legal (§4.7). With P first, the trigger finds an empty queue and is not stored (§15.5.2)." },
-      { text: "C never wakes, because a trigger always runs before a wait at the same time", correct: false, feedback: "The standard fixes no such order. If C runs first, it is waiting and wakes at the trigger." },
+      { text: "C never wakes, because a trigger always runs before a wait at the same time, so the wait arrives too late in every order", correct: false, feedback: "The standard fixes no such order. If C runs first, it is waiting and wakes at the trigger." },
       { text: "The code does not compile, because a trigger and a wait cannot share a time slot", correct: false, feedback: "It compiles. The problem is a run-time race, not a syntax rule." }
     ],
     explanation: "This is the classic same-time-slot race. Either order is legal, and only the order with C first wakes C. Fix it with wait (done.triggered) in C or ->> done in P.",
@@ -920,7 +925,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     answers: [
       { text: "wait (done);", correct: false, feedback: "Without .triggered this tests the handle, which is 1 for any event that refers to an object (§15.5.5.3). It returns at once, trigger or not." },
       { text: "@(done);", correct: false, feedback: "@ waits for the next trigger, so it misses one that already happened at this time (§15.5.2)." },
-      { text: "#0 @(done);", correct: false, feedback: "#0 moves the wait to the Inactive region, after the Active region has run (§4.4.2.3). A trigger from the Active region at this time is then missed in every order." },
+      { text: "#0 @(done);", correct: false, feedback: "#0 suspends the process until the Inactive events move back to the Active region (§4.4.2.3), so a trigger that runs in the current Active pass, such as one from a process that became ready at the same time, is missed in every order." },
       { text: "wait (done.triggered);", correct: true, feedback: "Right. The triggered state stays 1 until time advances, so a late waiter still sees it (§15.5.3)." }
     ],
     explanation: "Only the triggered state is level-sensitive within the time slot. wait (done) tests the handle, @ must be armed first, and #0 makes the miss certain.",
@@ -929,7 +934,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
   {
     question: "A checker runs forever begin wait (done.triggered); count++; end. After done fires at t = 50 ns, simulation time stops at 50 ns and count keeps growing. What is wrong?",
     answers: [
-      { text: "The wait misses triggers, so a #0 is needed before it", correct: false, feedback: "The wait misses nothing here; it passes too often. #0 does not advance time either, so the loop still spins." },
+      { text: "The wait misses triggers that fire before it is reached, so a #0 is needed before it to let the trigger run first", correct: false, feedback: "The wait misses nothing here; it passes too often. #0 does not advance time either, so the loop still spins." },
       { text: "done.triggered stays 1 for the rest of the time slot, so the wait passes again at once and the loop never lets time advance", correct: true, feedback: "Right: a zero-delay loop. Use @(done) inside loops, or advance time in every iteration (§15.5.3)." },
       { text: "count overflowed and corrupted the event", correct: false, feedback: "An int counter cannot affect an event. The loop simply never blocks." },
       { text: "triggered cannot be used inside wait, so the simulator ignores the statement", correct: false, feedback: "wait (ev.triggered) is the intended use of the method (§15.5.3). The problem is the loop around it." }
@@ -941,7 +946,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     question: "Two initial blocks start at time 0. The producer runs data = 42; -> data_ready;. The consumer runs @(data_ready); and then displays data. On one simulator the run prints 42. On another it ends at time 0 with no output and no error. What explains the silent run?",
     answers: [
       { text: "The producer ran first, so the trigger found nobody waiting; the consumer stayed blocked, nothing else was scheduled, and the simulation ended", correct: true, feedback: "Right. The trigger is lost (§15.5.2), and a simulation with no further activity ends by itself (§9.6.1), usually with no error." },
-      { text: "Events cannot be triggered at time 0", correct: false, feedback: "Time 0 is an ordinary time slot. The same race can happen at any time." },
+      { text: "Events cannot be triggered at time 0, because the simulator has not finished initializing the event objects yet, so the trigger is dropped silently", correct: false, feedback: "Time 0 is an ordinary time slot. The same race can happen at any time." },
       { text: "The consumer must write @data_ready without parentheses", correct: false, feedback: "@data_ready and @(data_ready) are both legal and mean the same thing." },
       { text: "The display ran before data was written, so it printed an empty line", correct: false, feedback: "Even then a line would appear. The consumer never reached its display." }
     ],
@@ -975,7 +980,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
     answers: [
       { text: "The assignment runs the wrong way: it re-points the argument, a local copy, and leaves the property with its own private object; write this.req = req;", correct: true, feedback: "Right. Each object starts with a new synchronization object for req (§8.7; §6.8 Table 6-7). Only this.req = req merges it with the caller's." },
       { text: "Events cannot be class properties", correct: false, feedback: "They can, and every object then gets its own event." },
-      { text: "Event arguments are copies, so a constructor can never share the caller's event without ref", correct: false, feedback: "The copy is a copy of the handle, which is enough: assigning it to the property shares the caller's object." },
+      { text: "Event arguments are passed by value as copies, so a constructor can never share the caller's event unless the argument is declared with ref", correct: false, feedback: "The copy is a copy of the handle, which is enough: assigning it to the property shares the caller's object." },
       { text: "The responder should use wait (req.triggered) instead of @(req)", correct: false, feedback: "The responder waits on a different object from the one being triggered, and no kind of wait can fix that." }
     ],
     explanation: "Passing an event copies its handle, so sharing works as long as the class property is the variable you assign. Compare the handles (rq.req == req) to prove a merge.",
@@ -984,7 +989,7 @@ Start with the quiz, which covers all five objectives. Then do the two katas: th
   {
     question: "A process waits in wait_order (a, b, c); with no else clause. The events then trigger in the order a, c, b, each at a different time. What happens?",
     answers: [
-      { text: "It keeps waiting, then succeeds when b and c arrive", correct: false, feedback: "An awaited event that fires out of order fails the construct at once." },
+      { text: "It keeps waiting, ignores the early c, and then succeeds when b and the next c arrive", correct: false, feedback: "An awaited event that fires out of order fails the construct at once." },
       { text: "It succeeds once all three have fired, in any order", correct: false, feedback: "Order is the point of wait_order: the events must first fire left to right." },
       { text: "It fails when c triggers, and reports a run-time error through $error", correct: true, feedback: "Right. c fired while b was still awaited, and without an else clause a failure calls $error (§15.5.4)." },
       { text: "It fails silently and the process continues", correct: false, feedback: "Without an else clause, a failure generates a default run-time error. Only an else clause can replace it." }

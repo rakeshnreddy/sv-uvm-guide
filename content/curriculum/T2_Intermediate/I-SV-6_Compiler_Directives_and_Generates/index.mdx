@@ -232,12 +232,12 @@ The UVM reporting macros are the macros you will use most, and they show good ma
   messages={[
     { from: "caller", to: "info", label: '`uvm_info("ID", "msg", UVM_LOW)' },
     { kind: "self", from: "info", label: "args pasted" },
-    { from: "info", to: "inner", label: '`uvm_report_begin( uvm_pkg::UVM_INFO, "ID", UVM_LOW)' },
+    { from: "info", to: "inner", label: '`uvm_report_begin(uvm_pkg::UVM_INFO, "ID", UVM_LOW)' },
     { kind: "note", from: "info", to: "inner", label: "RO is not given, so its default text uvm_get_report_object() is pasted and resolved in the caller's scope" },
     { kind: "return", from: "inner", to: "info", label: "begin, declare _local_report_object_ then if (...) begin" },
+    { kind: "note", from: "info", to: "inner", label: 'Inside the if goes the payload: uvm_report_info("ID", "msg", UVM_LOW, `uvm_file, `uvm_line, "", 1);' },
     { from: "info", to: "inner", label: "`uvm_file and `uvm_line" },
     { kind: "return", from: "inner", to: "info", label: "the caller's file and line: `__FILE__, `__LINE__" },
-    { kind: "note", from: "info", to: "inner", label: 'Inside the if goes the payload: uvm_report_info("ID", "msg", UVM_LOW, `uvm_file, `uvm_line, "", 1);' },
     { from: "info", to: "inner", label: "`uvm_report_end" },
     { kind: "return", from: "inner", to: "info", label: "end end" },
     { kind: "return", from: "info", to: "caller", label: "one begin … end block: write no ; after it", tone: "active" }
@@ -426,14 +426,14 @@ module tb_top;
   logic       clk;
   logic [7:0] data_bus [NUM_CH];
 
-  // Generate construct 1 in tb_top: one block per channel, gen_chk[0..NUM_CH-1]
+  // Generate construct 1 in tb_top: one block per channel
   for (genvar i = 0; i < NUM_CH; i++) begin : gen_chk
     protocol_checker chk_inst (.clk(clk), .data(data_bus[i]));
   end
 endmodule
 ```
 
-**Predict first.** Write down the full hierarchical path of the checker for channel 1. Then, in the visual, change `NUM_CH`, untick the loop label, and put an `if (EN_COV)` generate block before the loop. Predict the path of the last checker each time before you reveal the elaborated hierarchy. Switch to the runtime-loop view to compare a procedural `for (int …)` loop.
+**Predict first.** Write down the full hierarchical path of the checker for channel 1. Then, in the visual, change `NUM_CH` and predict the path of the last checker before you reveal the elaborated hierarchy. Next, untick the loop label and read the construct comment on the loop line: explain why the name is `genblk1`, and why it becomes `genblk2` once you put an `if (EN_COV)` generate block before the loop. Switch to the runtime-loop view to compare a procedural `for (int …)` loop.
 
 <GenerateElaborationVisualizer />
 
@@ -832,8 +832,6 @@ module tb_top;
 endmodule
 ```
 
-This is the hierarchy that elaboration builds. Work out the paths yourself before you look at the expected output.
-
 <ArchitectureDiagram
   title="Elaborated hierarchy of the worked example"
   caption="bind inserts u_chks at the very end of every router instance (§23.11), so the checkers live under tb_top.u_router.u_chks. Inside port_checkers, the if (N < 1) construct builds nothing because N is 3, and the loop label gen_chk and the genvar value name each block. These are the paths that %m, error messages and waveform viewers show."
@@ -849,13 +847,18 @@ This is the hierarchy that elaboration builds. Work out the paths yourself befor
     { id: "g0", label: "gen_chk[0]", col: 0, row: 3, container: true },
     { id: "c0", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 3 },
     { id: "g1", label: "gen_chk[1]", col: 0, row: 4, container: true },
-    { id: "c1", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 4, state: "error", badge: "fails at 45 ns" },
+    { id: "c1", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 4 },
     { id: "g2", label: "gen_chk[2]", col: 0, row: 5, container: true },
     { id: "c2", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 5 }
   ]}
 />
 
+This is the hierarchy that elaboration builds. Use it to write down the path of each checker, and check each path against the code.
+
 **Predict before you run.** With `+INJECT_BUG`, which checker fails, at which clock edge, and why only once? Work it out from the stimulus, then check the waveform. A zero-skew clocking-block drive made at an edge lands in the Re-NBA region of that time slot (§14.16), after the assertion has sampled its inputs in the Preponed region (§16.5.1), so each driven value first appears at the **next** edge.
+
+<details>
+<summary>Check your prediction: the waveform and the expected output</summary>
 
 <TimingDiagram
   title="Port 1 stalls and its data changes"
@@ -899,6 +902,8 @@ The two knobs you flip without editing code, at a glance (every run ends at 75 n
 |---|---|---|
 | **Compiled with `TB_DEBUG`** | three "alive" lines, the injection line, and the `a_hold` error on `gen_chk[1]` at 45 ns | three "alive" lines, no error |
 | **Compiled without `TB_DEBUG`** | only the `a_hold` error at 45 ns: `TB_LOG` expands to nothing | no output from the bench |
+
+</details>
 
 **Run it** (tool-neutral):
 
@@ -1002,7 +1007,7 @@ A `let` still substitutes its actual arguments into its body (§11.12), so it re
 - **Precedence (§3.14.2.3).** A design element without its own `timeunit` takes its unit from, in order: (a) the enclosing module or interface, if it is nested; (b) the last `` `timescale `` earlier in the compilation unit; (c) a `timeunit` declared in the compilation-unit scope; (d) the tool's default. Precision follows the same rules. A `timeunit` inside the element beats all four.
 - **The error.** It is an error if some design elements have a time unit and precision and others do not (§3.14.2.3). Many tools report it only as a warning, which is tool-dependent, so mixed benches often "work" with silently wrong delays.
 - **After `` `resetall ``** the `` `timescale `` reverts to the tool's default (§22.7).
-- **Debugging.** `$printtimescale(tb_top.u_router)` prints the unit and precision of a design element, and `$timeunit` and `$timeprecision` return them (§20.4.1, §20.4.2).
+- **Debugging.** `$printtimescale(tb_top.u_router)` prints the unit and precision of a design element (§20.4.2), and `$timeunit` and `$timeprecision` return them (§20.4.1).
 - **Performance.** The simulation time step is the finest precision used anywhere in the design (§3.14.3). One file with a 1 fs precision can slow the whole simulation; how much is tool-dependent.
 
 ### Expert: Generate at scale: recursion, sparse arrays and defparam
@@ -1059,9 +1064,9 @@ Answer each one before you open the options.
   title="Interview angle: the path that moved"
   question="A colleague added a coverage block, if (EN_COV) begin : gen_cov ... end, at the top of a module. Nothing else changed, but a waveform script and a coverage-exclusion file can no longer find the module's protocol checkers. What happened?"
   options={[
-    { text: "The checkers sit in an unlabelled loop generate. Its block was genblk1 and is now genblk2, because every generate construct in the scope is counted, labelled or not.", correct: true, feedback: "Right (§27.6). The fix is a label on every generate block, so that its path does not depend on what comes before it." },
     { text: "The new block changed the elaboration order, so the checkers now elaborate after the test starts.", correct: false, feedback: "The whole hierarchy is built before time 0; elaboration order does not move instances." },
     { text: "gen_cov now shadows the checkers' names, so they must be reached through gen_cov.", correct: false, feedback: "The two constructs are siblings. Nothing is nested inside gen_cov." },
+    { text: "The checkers sit in an unlabelled loop generate. Its block was genblk1 and is now genblk2, because every generate construct in the scope is counted, labelled or not.", correct: true, feedback: "Right (§27.6). The fix is a label on every generate block, so that its path does not depend on what comes before it." },
     { text: "Coverage and waveform tools cannot see instances inside generate blocks.", correct: false, feedback: "They can, given the right path. The path is what changed." }
   ]}
 />
@@ -1070,8 +1075,8 @@ Answer each one before you open the options.
   title="Interview angle: the file that changed the timing"
   question="Adding one new file to the compile list changed the delays of a module in a different, untouched file. How can that happen, and how do you make the bench immune to it?"
   options={[
-    { text: "The new file has a `timescale, which applies to every later design element in the compilation unit that has no timeunit of its own. Declare timeunit and timeprecision in every design element.", correct: true, feedback: "Right (§22.2, §3.14.2.3). The same mechanism lets `default_nettype none from one file break the next." },
     { text: "The simulator recompiled the untouched file with different optimizations.", correct: false, feedback: "Optimizations must not change delays. The order-dependent directive is the cause." },
+    { text: "The new file has a `timescale, which applies to every later design element in the compilation unit that has no timeunit of its own. Declare timeunit and timeprecision in every design element.", correct: true, feedback: "Right (§22.2, §3.14.2.3). The same mechanism lets `default_nettype none from one file break the next." },
     { text: "Directives are per file, so the change must be inside the untouched file.", correct: false, feedback: "Directives persist across files of one compilation unit (§22.2)." },
     { text: "A `define in the new file renamed the module's delay parameter.", correct: false, feedback: "Possible in theory only if the module used that macro; it does not explain a pure timing change." }
   ]}
@@ -1081,10 +1086,10 @@ Answer each one before you open the options.
   title="Interview angle: macro or language feature?"
   question="A teammate wants every helper in the testbench written as a macro, 'for speed'. Which use is a good reason to choose a macro over a let, a function or a parameter?"
   options={[
-    { text: "Wrapping a check so that each failure reports the caller's file and line, and the stringified condition.", correct: true, feedback: "Right: only text substitution can stamp `__FILE__/`__LINE__ at the use site and turn an argument into a string with `\"." },
     { text: "A bus width that differs between two instances of the same module.", correct: false, feedback: "A macro has one definition at a time in the whole compilation unit. Use a parameter." },
     { text: "Computing the maximum of two function results.", correct: false, feedback: "A macro would evaluate a result twice. Use a function." },
-    { text: "Making simulation faster, because macros skip type checking.", correct: false, feedback: "The expanded text is compiled like any other code; a macro is not faster than a function at run time." }
+    { text: "Making simulation faster, because macros skip type checking.", correct: false, feedback: "The expanded text is compiled like any other code; a macro is not faster than a function at run time." },
+    { text: "Wrapping a check so that each failure reports the caller's file and line, and the stringified condition.", correct: true, feedback: "Right: only text substitution can stamp `__FILE__/`__LINE__ at the use site and turn an argument into a string with `\"." }
   ]}
 />
 
@@ -1099,8 +1104,8 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "`define MAX(a,b) ((a) > (b) ? (a) : (b)). The function bump() does cnt++ and returns cnt, and cnt starts at 0. After x = `MAX(bump(), 0); what are x and cnt?",
     answers: [
       { text: "x = 1, cnt = 1", correct: false, feedback: "That is how a function call behaves: each argument is evaluated once. The macro pastes the text bump() into both places where a appears." },
-      { text: "x = 2, cnt = 2", correct: true, feedback: "The expansion is ((bump()) > (0) ? (bump()) : (0)). The condition calls bump(), which returns 1; 1 > 0 selects the first branch, which calls bump() again and returns 2." },
       { text: "x = 1, cnt = 2", correct: false, feedback: "The value 1 came from the condition's call. The selected branch is a second, separate call, and x gets its result, 2." },
+      { text: "x = 2, cnt = 2", correct: true, feedback: "The expansion is ((bump()) > (0) ? (bump()) : (0)). The condition calls bump(), which returns 1; 1 > 0 selects the first branch, which calls bump() again and returns 2." },
       { text: "Compile error: a macro argument cannot contain a function call", correct: false, feedback: "Any text with balanced parentheses can be an actual argument (§22.5.1). The problem is the meaning, not the syntax." }
     ],
     explanation: "Macro arguments are substituted as text (§22.5.1), and the conditional operator evaluates only the branch it selects (§11.4.11). Here the condition and the selected branch both contain bump(), so it runs twice. With cnt starting at 10, `MAX(bump(), 20) would call it once and give 20. Use a function when an argument has a side effect.",
@@ -1121,9 +1126,9 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "`define LOG(m) begin $display(m); end. What happens with: if (err) `LOG(\"bad\"); else ok_count++;",
     answers: [
       { text: "It prints bad when err is 1, and otherwise increments ok_count", correct: false, feedback: "That would be true without the semicolon. After expansion, the ; sits between end and else." },
-      { text: "Compile error at else: the ; after end is a separate null statement, so the else no longer follows the if", correct: true, feedback: "Expanded: if (err) begin $display(\"bad\"); end ; else ok_count++; The if statement is complete before the ;, so the else has no if." },
       { text: "It always prints bad, because a begin-end block runs unconditionally", correct: false, feedback: "The begin-end block is the if's body, so it runs only when err is 1. In any case the code does not compile." },
-      { text: "It compiles, with a run-time warning about an empty statement", correct: false, feedback: "A null statement is legal on its own, but here it separates the if from the else, which is a syntax error." }
+      { text: "It compiles, with a run-time warning about an empty statement", correct: false, feedback: "A null statement is legal on its own, but here it separates the if from the else, which is a syntax error." },
+      { text: "Compile error at else: the ; after end is a separate null statement, so the else no longer follows the if", correct: true, feedback: "Expanded: if (err) begin $display(\"bad\"); end ; else ok_count++; The if statement is complete before the ;, so the else has no if." }
     ],
     explanation: "A macro whose text is a begin-end block must be used without a trailing semicolon. In uvm-core, `uvm_info expands to exactly this shape, which is why if (c) `uvm_info(...); else ... does not compile and the UVM macros are written without a semicolon.",
     objective: 1
@@ -1132,8 +1137,8 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "Both TB_COVERAGE and TB_ASSERTIONS are defined on the command line. Which code is compiled? `ifdef TB_COVERAGE (coverage code) `elsif TB_ASSERTIONS (assertion code) `else (nothing) `endif",
     answers: [
       { text: "Both the coverage code and the assertion code", correct: false, feedback: "`elsif branches are not independent: the chain keeps only the first branch that succeeds (§22.6)." },
-      { text: "Only the coverage code", correct: true, feedback: "TB_COVERAGE is defined, so its block is kept and every later `elsif and `else in the chain is skipped." },
       { text: "Only the assertion code, because the last macro defined wins", correct: false, feedback: "The order of the definitions does not matter. The chain is evaluated from the top." },
+      { text: "Only the coverage code", correct: true, feedback: "TB_COVERAGE is defined, so its block is kept and every later `elsif and `else in the chain is skipped." },
       { text: "Compile error: two flags of one chain are defined", correct: false, feedback: "Any number of macros may be defined; the chain simply keeps one branch." }
     ],
     explanation: "Use independent `ifdef blocks for independent features. Keep a chain for choices that really are mutually exclusive.",
@@ -1142,8 +1147,8 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
   {
     question: "A header contains `define TB_COVERAGE 0, meant as 'coverage off'. Is the code inside `ifdef TB_COVERAGE ... `endif compiled?",
     answers: [
-      { text: "No, because the macro's value is 0", correct: false, feedback: "`ifdef never looks at a macro's text." },
       { text: "Yes, because TB_COVERAGE is defined", correct: true, feedback: "`ifdef succeeds when the name is currently defined as a text macro, whatever its text (§22.6)." },
+      { text: "No, because the macro's value is 0", correct: false, feedback: "`ifdef never looks at a macro's text." },
       { text: "Compile error: a feature flag must have no text", correct: false, feedback: "A flag may have text; `ifdef ignores it." },
       { text: "Only if the tool is also started with +define+TB_COVERAGE=1", correct: false, feedback: "Any definition, with any text, makes `ifdef succeed." }
     ],
@@ -1165,9 +1170,9 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "In tb_top, a labelled if (EN_COV) begin : gen_cov ... end comes first. Then an unlabelled loop, for (genvar i = 0; i < 4; i++) begin protocol_checker chk_inst (...); end. What is the full path of the checker for i = 2?",
     answers: [
       { text: "tb_top.genblk1[2].chk_inst", correct: false, feedback: "The numbering counts every generate construct, labelled or not. The loop is construct 2." },
-      { text: "tb_top.genblk2[2].chk_inst", correct: true, feedback: "The loop's blocks are unnamed, so they are called genblk followed by 2, the loop's position among the generate constructs of tb_top (§27.6)." },
       { text: "tb_top.chk_inst[2]", correct: false, feedback: "The index belongs to the generate block, not to the instance: each block holds one chk_inst." },
-      { text: "tb_top.gen_cov.chk_inst[2]", correct: false, feedback: "The checker is not inside gen_cov. The two constructs are siblings." }
+      { text: "tb_top.gen_cov.chk_inst[2]", correct: false, feedback: "The checker is not inside gen_cov. The two constructs are siblings." },
+      { text: "tb_top.genblk2[2].chk_inst", correct: true, feedback: "The loop's blocks are unnamed, so they are called genblk followed by 2, the loop's position among the generate constructs of tb_top (§27.6)." }
     ],
     explanation: "Label every generate block, as in begin : gen_chk, so that its path cannot change when someone adds a construct above it. The visual in Build Your Mental Model shows the same renumbering.",
     objective: 3
@@ -1176,9 +1181,9 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "q and d are unpacked arrays of N logic values. Inside for (genvar i = 0; i < N; i++) begin : g, one line reads always_ff @(posedge clk) q[i] <= d[i]; Is this legal, and what does it build?",
     answers: [
       { text: "Illegal: a genvar cannot appear inside an always block", correct: false, feedback: "Inside each generated block, i is an implicit localparam, a constant, which procedural code may read (§27.4)." },
-      { text: "Legal: N separate always_ff processes, each copying one element", correct: true, feedback: "Each block g[k] holds its own process, with i fixed at k." },
       { text: "Legal, but every process uses i = N, because the loop has finished when simulation starts", correct: false, feedback: "Generate loops are unrolled at elaboration, and each block keeps the value i had when that block was created." },
-      { text: "Legal only if i is declared int instead of genvar", correct: false, feedback: "An int loop variable would make this a procedural loop, which cannot appear outside a procedure." }
+      { text: "Legal only if i is declared int instead of genvar", correct: false, feedback: "An int loop variable would make this a procedural loop, which cannot appear outside a procedure." },
+      { text: "Legal: N separate always_ff processes, each copying one element", correct: true, feedback: "Each block g[k] holds its own process, with i fixed at k." }
     ],
     explanation: "The illegal case is the opposite one: using a genvar as the loop variable of a procedural for loop. Write for (int j = 0; ...) there.",
     objective: 3
@@ -1187,8 +1192,8 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
     question: "A test contains for (int k = 0; k < 4; k++) $display(\"%0d\", tb_top.gen_chk[k].u_chk.err_count); and it does not compile. Why?",
     answers: [
       { text: "gen_chk must first be declared as an array", correct: false, feedback: "A labelled loop generate already declares the array of blocks gen_chk[0] to gen_chk[3]." },
-      { text: "An index into a generate block name in a hierarchical path must be a constant expression, and k is a run-time variable", correct: true, feedback: "§23.6 calls this an instance select, and requires a constant expression." },
       { text: "err_count is private to port_checker", correct: false, feedback: "Module variables can be read by hierarchical reference. The index is the problem." },
+      { text: "An index into a generate block name in a hierarchical path must be a constant expression, and k is a run-time variable", correct: true, feedback: "§23.6 calls this an instance select, and requires a constant expression." },
       { text: "The code compiles; the error must be somewhere else", correct: false, feedback: "The standard requires a constant here, so a compliant tool reports an error." }
     ],
     explanation: "Reach each instance from code with a constant index: put the display inside the generate loop, or copy handles or values into an array at time 0 and index that array at run time.",
@@ -1219,8 +1224,8 @@ Start with the quiz: each question maps to one of the five objectives. Then do t
   {
     question: "The first file of a compilation unit contains `define TB_DEBUG. A later file starts with `resetall. Is the code inside `ifdef TB_DEBUG in that later file compiled?",
     answers: [
-      { text: "No: `resetall resets every directive, macros included", correct: false, feedback: "`resetall resets only directives that have default values. Text macros have none and are not affected (§22.3, §22.5)." },
       { text: "Yes: macros survive `resetall, so use `undef to remove one", correct: true, feedback: "`resetall restores defaults such as `timescale and `default_nettype, and leaves macros defined." },
+      { text: "No: `resetall resets every directive, macros included", correct: false, feedback: "`resetall resets only directives that have default values. Text macros have none and are not affected (§22.3, §22.5)." },
       { text: "Only if the later file includes the header again", correct: false, feedback: "The macro is still defined in this compilation unit, so no include is needed." },
       { text: "Compile error: `resetall cannot come before an `ifdef", correct: false, feedback: "`resetall is legal anywhere outside a design element." }
     ],
@@ -1256,7 +1261,7 @@ endmodule
 5. **Before running, write down every path you expect.** Then run and compare.
 6. Remove the label `gen_lane`, keeping the `if` first, and predict the new paths. Then set `u_link_a` to `LANES = 0` and predict what happens.
 
-**Acceptance:** six printed paths match your prediction; without the label, the paths use `genblk2`; with `LANES = 0`, elaboration stops with your message and nothing is simulated.
+**Acceptance:** the six printed paths match your prediction from step 5, and the unlabelled paths and the `LANES = 0` behaviour match your predictions from step 6.
 
 <details>
 <summary>Worked solution</summary>

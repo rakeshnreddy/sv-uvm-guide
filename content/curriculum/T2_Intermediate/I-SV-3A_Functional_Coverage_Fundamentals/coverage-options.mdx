@@ -61,6 +61,12 @@ A **clocking block** ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/inde
 
 The trap is *when you read the clockvar*. The clocking block updates its clockvars at the clock edge and then triggers its own **clocking block event**, `@(mon_cb)`, in the Observed region (§14.10). A process that waits on `@(mon_cb)` is guaranteed to read the updated values. A process that waits on `@(posedge clk)` and then reads `mon_cb.addr` races with that update: §14.13 says it "may display the old or the newly updated sampled value". So a covergroup clocked on `@(posedge clk)` whose coverpoints read clockvars can count values one clock stale, with no message.
 
+The visualizer below, from F4C, runs the same reads on a waveform. Keep the DUT on *flop &lt;= at the edge*, predict the value `x = cb.dout;` reads after `@(cb)`, then reveal the answer and its table. Notice which of the three reading styles the table marks as a race, and which one is safe only for some DUTs.
+
+<ClockingBlockSkewVisualizer />
+
+What you just saw: `@(cb)` followed by `cb.dout` always reads the clocking block's sample of that edge. `@(posedge clk)` followed by `cb.dout` is marked as a race (old or new), and reading the raw signal after `@(posedge clk)` is safe only while nothing writes it with a blocking assignment at the edge. Coverage inherits the same rules.
+
 The same time slot as a picture. Covergroup A is clocked on `@(posedge clk)` and covergroup B on `@(mon_cb)`; both read the clockvar `mon_cb.addr`.
 
 <SequenceDiagram
@@ -87,12 +93,6 @@ The same time slot as a picture. Covergroup A is clocked on `@(posedge clk)` and
     { kind: "divider", label: "Postponed region: strobe samples land here" }
   ]}
 />
-
-The visualizer below, from F4C, compares three ways of reading a clocked signal. Predict which reading style returns the same value on every simulator, then reveal the table.
-
-<ClockingBlockSkewVisualizer />
-
-What you just saw: `@(cb)` followed by `cb.dout` always reads the clocking block's sample of that edge. `@(posedge clk)` followed by `cb.dout` is marked as a race (old or new), and reading the raw signal after `@(posedge clk)` is safe only while nothing writes it with a blocking assignment at the edge. Coverage inherits the same rules.
 
 There are two race-free ways to sample a bus through a clocking block, and both read the clockvars:
 
@@ -130,7 +130,7 @@ Two more pitfalls belong here. A covergroup clocked on `@(mon_cb)` that reads th
 
 | The covergroup samples on… | …and reads raw `addr` | …and reads clockvar `mon_cb.addr` |
 | --- | --- | --- |
-| `@(posedge clk)` (Active) | the pre-edge value, safe only while nothing writes `addr` with a blocking assignment at the edge | **race:** the previous edge's sample or this edge's (§14.13) |
+| `@(posedge clk)` (Active) | the pre-edge value, safe only while nothing writes `addr` with a blocking assignment at the edge (§4.4.2: nonblocking updates follow the Active region; §4.7: Active-region order is unspecified) | **race:** the previous edge's sample or this edge's (§14.13) |
 | `@(mon_cb)` (Observed) | the **post-edge** value | this edge's sample: **the safe pair** (§14.10, §14.13) |
 | `@(posedge clk)` with `type_option.strobe = 1` (Postponed) | the **post-edge** value | this edge's sample (§19.3, §14.13) |
 
@@ -213,11 +213,11 @@ endgroup
 | `type_option.distribute_first` | 0 | covergroup | no | yes, through `::` | Distribute values to bins before a bin's `with` filter is applied |
 | `type_option.real_interval` | 1.0 | covergroup, coverpoint | **yes** (the only type option that is) | no: definition only | Interval width for real-valued bins |
 
-Read the fourth column carefully. **Except for `weight`, `goal`, `comment` and `per_instance`, an option set at covergroup level is the default for every coverpoint and cross**, which can override it (§19.7). So `option.at_least = 2` at covergroup level raises the threshold of every coverpoint and every cross; `option.goal = 90` at covergroup level changes only the covergroup's own goal. Type options set at covergroup level are never defaults for lower levels, except `real_interval` (§19.7.1).
+Read the fourth column carefully. **Except for `weight`, `goal`, `comment` and `per_instance`, an option set at covergroup level is the default for every coverpoint and cross**, which can override it (§19.7). Table 19-2 narrows this to the levels where each option exists: `auto_bin_max` and `detect_overlap` become defaults for coverpoints only, `cross_num_print_missing` and `cross_retain_auto_bins` for crosses only, and `name` and `get_inst_coverage` exist only at covergroup level, so they have nothing to pass down. So `option.at_least = 2` at covergroup level raises the threshold of every coverpoint and every cross; `option.goal = 90` at covergroup level changes only the covergroup's own goal. Type options set at covergroup level are never defaults for lower levels, except `real_interval` (§19.7.1).
 
 <ArchitectureDiagram
   title="Which covergroup-level options reach the items below"
-  caption="A covergroup sets option.at_least = 2, option.goal = 90 and option.weight = 2. Only at_least travels down the dotted configuration arrows as a default (§19.7): cp_kind and the cross inherit at_least 2 and keep goal 100 and weight 1. cp_len writes its own option.at_least = 3, and its own value wins over the default. goal, weight, comment and per_instance never leave the covergroup box."
+  caption="A covergroup sets option.at_least = 2, option.goal = 90 and option.weight = 2. Only at_least travels down the dotted control arrows (used here to mean 'is the default for') as a default (§19.7): cp_kind and the cross inherit at_least 2 and keep goal 100 and weight 1. cp_len writes its own option.at_least = 3, and its own value wins over the default. goal, weight, comment and per_instance never leave the covergroup box."
   cellWidth={150}
   gapX={40}
   gapY={64}
@@ -237,16 +237,16 @@ Read the fourth column carefully. **Except for `weight`, `goal`, `comment` and `
   spreadAnchors
 />
 
-Three more rules from §19.7: option assignments in the definition are evaluated when the instance is built with `new`, so a covergroup argument can set an option (`option.at_least = arg;`); setting the same option twice in one definition is an error; and `auto_bin_max`, `detect_overlap` and `cross_retain_auto_bins` cannot be assigned procedurally. The options that can be assigned after `new` use the instance's hierarchy, as in `cov.option.comment = "agent 0";` or `cov.cp_len.option.weight = 3;`.
+Two more rules from §19.7: option assignments in the definition are evaluated when the instance is built with `new`, so a covergroup argument can set an option (`option.at_least = arg;`), and setting the same option twice in one definition is an error. The options that can be assigned after `new` use the instance's hierarchy, as in `cov.option.goal = 80;` or `cov.cp_kind.option.at_least = 2;`.
 
-**Legal or not?** Each statement runs after `cov = new();`, where `cov` is an instance of covergroup type `cg_bus`, which has a coverpoint `cp_len`. Use the last column of the table to decide which statements compile, then open the answers.
+**Legal or not?** Each statement runs after `cov = new();`, where `cov` is an instance of covergroup type `cg_pkt` (the packet covergroup above, with coverpoint `cp_len`). Use the table's *Can be assigned after `new`?* column to decide which statements compile, then open the answers.
 
 1. `cov.option.comment = "agent 0";`
 2. `cov.cp_len.option.weight = 3;`
 3. `cov.option.per_instance = 1;`
 4. `cov.option.auto_bin_max = 16;`
-5. `cg_bus::type_option.merge_instances = 1;`
-6. `cg_bus::type_option.strobe = 1;`
+5. `cg_pkt::type_option.merge_instances = 1;`
+6. `cg_pkt::type_option.strobe = 1;`
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Show the answers</summary>
@@ -255,10 +255,12 @@ Three more rules from §19.7: option assignments in the definition are evaluated
 | --- | --- | --- |
 | 1 | yes | `comment` can be assigned through the instance |
 | 2 | yes | a coverpoint's `option.weight` is reached through the instance hierarchy |
-| 3 | **no** | `per_instance` is definition only |
+| 3 | **no** | `per_instance` is definition only (§19.7) |
 | 4 | **no** | `auto_bin_max` is definition only (§19.7) |
 | 5 | yes | type options are assigned through the type with `::` (§19.7.1) |
-| 6 | **no** | `strobe` is a definition-only type option |
+| 6 | **no** | `strobe` is a definition-only type option (§19.7.1) |
+
+§19.7 makes `auto_bin_max`, `detect_overlap` and `cross_retain_auto_bins` definition-only too: none of them can be assigned procedurally after `new`.
 
 </details>
 
@@ -287,13 +289,13 @@ Three more rules from §19.7: option assignments in the definition are evaluated
   ]}
 />
 
-Two consequences follow. First, `option.per_instance` defaults to 0: unless you set it to 1, a tool is not required to save each instance's numbers, and only the type number is guaranteed in the database (Table 19-1). Second, two instances can never hold different `type_option` values, which is why the standard makes type options constant expressions. How the type number is computed from the instances, with and without `merge_instances`, and how to query both numbers while the test runs, is [I-SV-3B Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis)' topic. In one line: by default the type number is the weighted average of the instances (§19.11.3).
+Two consequences follow. First, `option.per_instance` defaults to 0: unless you set it to 1, a tool is not required to save each instance's numbers, and only the type number is guaranteed in the database (Table 19-1). Second, two instances can never hold different `type_option` values: type options are initialized only by constant expressions, so a covergroup argument cannot set them (§19.7.1). How the type number is computed from the instances, with and without `merge_instances`, and how to query both numbers while the test runs, is [I-SV-3B Coverage APIs](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/coverage-apis)' topic. In one line: by default the type number is the weighted average of the instances (§19.11.3).
 
 ### Recap: from one sample to a percentage
 
 <VisualRecap
   title="The event decides when, guards decide whether, options decide how it counts"
-  rule="A covergroup samples only on its coverage event or a sample() call; each iff guard then decides whether its coverpoint, bin or cross uses that sample; a bin is covered once its hits reach at_least, and the covergroup's percentage is the option.weight average of its coverpoints and crosses. Set options at the lowest level that needs them, because a covergroup-level option other than weight, goal, comment and per_instance becomes every item's default."
+  rule="A covergroup samples only on its coverage event or a sample() call; each iff guard then decides whether its coverpoint, bin or cross uses that sample; a bin is covered once its hits reach at_least, and the covergroup's percentage is the option.weight average of its coverpoints and crosses."
   code={`covergroup cg_pkt with function sample(pkt_t pkt);
   option.per_instance = 1;            // definition only
   cp_len: coverpoint pkt.length iff (pkt.valid) {
@@ -301,7 +303,7 @@ Two consequences follow. First, `option.per_instance` defaults to 0: unless you 
     bins len_small = {[0:63]};
   }
 endgroup`}
-  mistake="A clocked covergroup with no iff counts idle edges, and option.at_least set at covergroup level for one coverpoint's sake raises the threshold of every coverpoint and cross."
+  mistake="A clocked covergroup with no iff counts idle edges, and option.at_least set at covergroup level for one coverpoint's sake raises the threshold of every coverpoint and cross. Set options at the lowest level that needs them, because a covergroup-level option other than weight, goal, comment and per_instance becomes the default for the coverpoints and crosses where that option exists."
   inTestbench="A monitor or coverage collector calls cov.sample(t) once per observed transaction; an interface-level covergroup samples on @(cb) with an iff on the clockvar valid."
 >
   <ArchitectureDiagram
@@ -546,13 +548,6 @@ Interview angle: "Your clocked covergroup and your monitor disagree by exactly o
 
 ### Expert: weights, zero denominators and counting only the cross
 
-From §19.7, §19.7.1 and §19.11:
-- **A covergroup's number is the weighted average** of its coverpoints and crosses, using each item's `option.weight`. `option.weight = 0` on coverpoints that exist only to feed a cross makes the cross the only number that counts (the explorer's "Count only the cross" toggle on the [module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) does exactly this).
-- **The type number weighs differently.** With the default `merge_instances = 0`, type coverage is the instances' average weighted by `option.weight`. With `type_option.merge_instances = 1`, items are weighted by `type_option.weight`, so set `type_option.weight = 0` too if the cross alone should count there (§19.11.3; details in I-SV-3B).
-- **Zero denominators:** an item or covergroup whose denominator is zero (every bin empty, every weight zero, or no items) contributes nothing; it reports 0.0 if its own weight is nonzero and 100.0 if its weight is zero (§19.11, §19.11.1, §19.11.2).
-- **Option arguments:** because options are evaluated at `new`, `covergroup cg (int w) …; option.weight = w;` gives each instance its own weight, but `type_option.weight = w` is a syntax error: type options take constant expressions only (§19.7.1).
-- **Merged `at_least`:** when instances are merged, a bin counts as covered only if its total hits reach the largest `at_least` of all instances (§19.11.1).
-
 **Predict: count only the cross.** A covergroup has two coverpoints at 50% each and their cross at 25%. Its covergroup percentage is the average of the three items weighted by each item's `option.weight`. What does it report with every weight at 1, and with `option.weight = 0` on both coverpoints?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
@@ -564,6 +559,13 @@ From §19.7, §19.7.1 and §19.11:
 | 0, 0, 1 | (0 × 50 + 0 × 50 + 1 × 25) ÷ (0 + 0 + 1) | 25%: only the cross counts |
 
 </details>
+
+From §19.7, §19.7.1 and §19.11:
+- **A covergroup's number is the weighted average** of its coverpoints and crosses, using each item's `option.weight`. `option.weight = 0` on coverpoints that exist only to feed a cross makes the cross the only number that counts (the explorer's "Count only the cross" toggle on the [module page](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index) does exactly this).
+- **The type number weighs differently.** With the default `merge_instances = 0`, type coverage is the instances' average weighted by `option.weight`. With `type_option.merge_instances = 1`, items are weighted by `type_option.weight`, so set `type_option.weight = 0` too if the cross alone should count there (§19.11.3; details in I-SV-3B).
+- **Zero denominators:** a coverpoint none of whose bins has any value or transition left (for example, after `ignore_bins`), a cross with no countable bins, or a covergroup whose items are all excluded, whose weights are all zero or that has no items, has a zero denominator. It contributes nothing to the level above it, and it reports 0.0 if its own weight is nonzero and 100.0 if its weight is zero (§19.11, §19.11.1, §19.11.2). A coverpoint whose bins simply have no hits is not this case: it reports 0% and still counts.
+- **Option arguments:** because options are evaluated at `new`, `covergroup cg (int w) …; option.weight = w;` gives each instance its own weight, but `type_option.weight = w` is a syntax error: type options take constant expressions only (§19.7.1).
+- **Merged `at_least`:** in the cumulative (type) computation, where the instances' hits for a bin are accumulated, a bin counts as covered only if its total hits reach the largest `at_least` of all instances (§19.11.1).
 
 ### Expert: interview angles
 
@@ -644,7 +646,7 @@ From §19.7, §19.7.1 and §19.11:
       { text: "goal 90 and at_least 2: everything propagates", correct: false, feedback: "goal is one of the four options that never act as defaults for coverpoints and crosses." },
       { text: "goal 100 and at_least 2", correct: true, feedback: "Right. at_least propagates as a default; goal, weight, comment and per_instance do not (§19.7)." },
       { text: "goal 90 and at_least 1", correct: false, feedback: "That is the reverse of the rule." },
-      { text: "goal 100 and at_least 1: nothing propagates", correct: false, feedback: "Most options do propagate as defaults; only four do not." }
+      { text: "goal 100 and at_least 1: nothing propagates", correct: false, feedback: "Most options do propagate as defaults; only weight, goal, comment and per_instance are excluded by rule (§19.7)." }
     ],
     explanation: "Except for weight, goal, comment and per_instance, options set at covergroup level are defaults for coverpoints and crosses. cp_len keeps the default goal of 100 and inherits at_least = 2.",
     objective: 2

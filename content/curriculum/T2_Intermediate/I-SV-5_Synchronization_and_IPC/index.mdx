@@ -22,8 +22,8 @@ The workshop at a glance, with the point where each picture stops being true:
 | In the workshop | SystemVerilog tool | Where the picture breaks |
 |---|---|---|
 | A bell that says a job is ready | Named event: `-> ev`, waited for with `@ev` | A bell rung while nobody listens is simply lost: a trigger with no waiter is gone (§15.5.2). SystemVerilog only adds a light that stays on until simulation time moves: `ev.triggered` (§15.5.3) |
-| An in-tray with a fixed number of slots | Bounded `mailbox #(T)`: the sender waits while it is full | When T is a class, it stores the handle, not a copy, so put a new object every time |
-| A key cabinet for the one lathe | `semaphore` with one key | The keys carry no names: any thread may return a key it never took (§15.3.2) |
+| An in-tray with a fixed number of slots | Bounded `mailbox #(T)`: the sender waits while it is full (§15.4.1, §15.4.3) | When T is a class, it stores the handle, not a copy (§15.4.3), so put a new object every time |
+| A key cabinet for the one lathe | `semaphore` with one key | The keys carry no names: the standard gives a semaphore no owner, so any thread may return a key it never took (§15.3.1–§15.3.2: `put()` returns keys from any caller, and the count can grow past `new()`'s keyCount) |
 | The foreman's staff list | `process` handle (§9.7) | A worker sent home with a key in their pocket keeps it forever: `kill()` returns nothing, so a killed thread's keys stay taken |
 
 **You will be able to:**
@@ -107,15 +107,15 @@ Before you commit, check two properties, because they decide which bugs you can 
 |---|---|---|---|
 | Named event: `-> ev`, `@ev`, `wait (ev.triggered)` | Almost nothing: a `->` with no waiter is gone (§15.5.2), and `ev.triggered` lasts only until time advances (§15.5.3) | `@ev`: until the next trigger | The trigger runs before the wait in the same time slot, and the waiter sleeps forever |
 | `mailbox #(T)` | Every message, in order, until someone takes it (§15.4.3) | `get()`: the mailbox is empty (§15.4.5). `put()`: a bounded mailbox is full (§15.4.3) | One transaction object reused for every `put()`, so all queued handles point to one object |
-| `semaphore` | The key count. `new()` with no argument starts with **0** keys (§15.3.1) | `get(n)`: fewer than n keys are free (§15.3.3) | A path out of the critical section skips `put()`, and the key is gone |
+| `semaphore` | The key count. `new()` with no argument starts with **0** keys (§15.3.1) | `get(n)`: fewer than n keys are free (§15.3.3) | A path out of the critical section (the code between `get()` and `put()`) skips `put()`, and the key is gone |
 | `process` handle | The thread's state: `FINISHED`, `RUNNING`, `WAITING`, `SUSPENDED` or `KILLED` (§9.7) | `await()`: until that thread ends | Using the handle before the child has run, while it is still `null` |
-| `uvm_tlm_fifo #(T)` (UVM) | Like the `mailbox #(T)` it contains | `get()`: empty. `put()`: full, and the default depth is 1 | Expecting a deep queue: at depth 1 the putter waits for every get |
+| `uvm_tlm_fifo #(T)` (UVM) | Like a mailbox: every item, in order (in the Accellera reference implementation, uvm-core, it is a `mailbox #(T)`) | `get()`: empty. `put()`: full, and the default depth is 1 | Expecting a deep queue: at depth 1 the putter waits for every get |
 
 Three rules of thumb follow from that table:
 
 - **If the waiter might arrive late, the tool must remember.** Use a mailbox, a semaphore created with 0 keys (each `put(1)` is banked until a `get(1)` takes it, §15.3.1–§15.3.3), or a flag you `wait` on. A bare event cannot do it.
 - **If data moves, the data is the signal.** A mailbox `get()` returns exactly when the item arrives, so you do not need a separate event.
-- **Between UVM components, connect TLM ports** instead of passing mailbox or event handles around. A `uvm_tlm_fifo` is a component that holds a `mailbox #(T)` behind exports such as `put_export` and `get_peek_export`. A `uvm_tlm_analysis_fifo` is unbounded, so the analysis `write()` that feeds it never blocks (IEEE 1800.2-2020 §12.2.8.2–§12.2.8.3). [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches them.
+- **Between UVM components, connect TLM ports** instead of passing mailbox or event handles around. A `uvm_tlm_fifo` is a component that stores transactions, in the order they arrived, behind exports such as `put_export` and `get_peek_export` (in the Accellera reference implementation, a `local mailbox #(T)`). A `uvm_tlm_analysis_fifo` is unbounded, so the analysis `write()` that feeds it never blocks (IEEE 1800.2-2020 §12.2.8.2–§12.2.8.3). [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches them.
 
 ### Three patterns you will build again and again
 
@@ -184,7 +184,7 @@ bus.put(1);                         // the one exit point of the critical sectio
 ```
 
 - Blocked callers are served first-in first-out, in the order they arrived (§15.3.3). Two callers that arrive in the same time slot can still arrive in either order (§4.7).
-- **Credits** use the same tool with more keys. `semaphore credits = new(4);` lets four requests be outstanding: each request takes `credits.get(1)`, and whichever thread handles the reply returns it with `credits.put(1)`. Any thread may return a key (§15.3.2).
+- **Credits** use the same tool with more keys. `semaphore credits = new(4);` lets four requests be outstanding: each request takes `credits.get(1)`, and whichever thread handles the reply returns it with `credits.put(1)`. Any thread may return a key: nothing in §15.3 records an owner.
 - Keys carry no owner, so nothing checks that the right thread returns them. Make every path out of the critical section call `put()`, and record the owner yourself when you debug. The [Semaphores](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/semaphores) page covers multi-key requests and leaks.
 
 ### Process handles: one thread under remote control
@@ -206,7 +206,7 @@ The five values that `status()` returns are the states of one process. The calls
 
 <ArchitectureDiagram
   title="The states status() reports, and what moves a process between them"
-  caption="Dashed arrows are transitions, labelled with what causes them (§9.7). While a process is alive it is RUNNING when it is not in a blocking statement and WAITING when it is. suspend() stops it until resume(): a process suspended while RUNNING is scheduled to continue in the current time step, and one suspended while WAITING is resensitized to what it waits for, continuing in the current time step if its wait condition is already true or its delay has passed. It ends FINISHED when its statements run out. kill() or disable ends it KILLED from any live state, suspended included. kill() on a process that is already FINISHED or KILLED leaves its state alone but still kills its live descendants."
+  caption="Dashed arrows are transitions, labelled with what causes them (§9.7). While a process is alive it is RUNNING when it is not in a blocking statement and WAITING when it is. suspend() stops it until resume(). On resume(), a process that was suspended while RUNNING is scheduled to continue in the current time step, and one that was suspended while WAITING is resensitized to what it waits for, continuing in the current time step if its wait condition is already true or its delay has passed. It ends FINISHED when its statements run out. kill() or disable ends it KILLED from any live state, suspended included. kill() on a process that is already FINISHED or KILLED leaves its state alone but still kills its live descendants."
   legend={false}
   cellWidth={135}
   gapX={84}
@@ -248,31 +248,7 @@ initial begin
 end
 ```
 
-The picture follows requester 0 through the broken version of the Make It Work bench, where it gets stuck. `main` waits for the handle, then blocks in `await()`. At 100 ns the watchdog reads the status and kills the stuck thread, which releases `main`.
-
-<SequenceDiagram
-  title="Publishing, awaiting and killing requester 0 in the broken run"
-  caption="main waits for the handle before it uses it, then blocks in await(). The watchdog reads WAITING, kills the stuck thread, and main's await() returns. The bus key that requester 0 held is not given back."
-  participants={[
-    { id: "main", label: "main", kind: "generic" },
-    { id: "r0", label: "requester 0", sublabel: "worker[0]", kind: "generic" },
-    { id: "wd", label: "watchdog", kind: "generic" }
-  ]}
-  messages={[
-    { kind: "divider", label: "t = 0 ns" },
-    { kind: "async", from: "main", to: "r0", label: "fork requester(0, 1) … join_none" },
-    { kind: "self", from: "main", label: "wait (worker[0] != null) blocks, so the children start" },
-    { kind: "self", from: "r0", label: "worker[0] = process::self()" },
-    { from: "main", to: "r0", label: "worker[0].await(): blocks" },
-    { kind: "divider", label: "t = 5 ns" },
-    { kind: "note", from: "r0", label: "blocked in rsp_mbx[0].get while it holds the bus key" },
-    { kind: "divider", label: "t = 100 ns" },
-    { from: "wd", to: "r0", label: "worker[0].status()" },
-    { kind: "return", from: "r0", to: "wd", label: "WAITING" },
-    { from: "wd", to: "r0", label: "worker[0].kill()", tone: "error" },
-    { kind: "return", from: "r0", to: "main", label: "await() returns: requester 0 is KILLED" }
-  ]}
-/>
+Make It Work uses this exact pattern: `main` publishes and awaits each requester's handle, and a watchdog reads `status()` and kills the stuck ones. After you predict its Break-it run, a sequence diagram traces those calls.
 
 **Pitfalls.**
 
@@ -371,7 +347,7 @@ Now read the graph's **shape**. Each shape names a different bug and points to a
 |---|---|---|---|
 | The arrows close into a loop | **Deadlock** | Each thread on the loop holds what the next one needs | One global acquisition order; never hold a key while you wait for another thread |
 | An arrow ends at a thread that has finished, has been killed, or has already done what you wait for | **Lost wake-up** or **leaked key** | The release was skipped, or it happened before the wait began | One exit point that always releases; restore keys after a kill; wait on something that remembers |
-| No loop, and the releaser is alive and running, but the waiter keeps losing | **Starvation** | An unfair policy passes the waiter over again and again | Round-robin or aging; block instead of polling |
+| No loop, and the releaser is alive and running, but the waiter keeps losing | **Starvation** | An unfair policy passes the waiter over again and again | Round-robin, or aging (raising a waiter's priority the longer it waits); block instead of polling |
 | Threads keep running, but nothing completes | **Livelock**, or a zero-delay loop | Threads retry or spin forever | Randomized back-off; make every loop iteration wait for something |
 
 **Why deadlock happens.** Four conditions must all hold at once (Coffman, Elphick and Shoshani, 1971):
@@ -385,7 +361,7 @@ Break any one of them and deadlock is impossible. In a bench you usually break o
 
 - **A lock order breaks circular wait.** Rank every shared resource, and make every thread acquire in rising rank. Here, both threads take `s1` first, then `s2`.
 - **Releasing before you wait breaks hold and wait.** Return a key before you wait for a reply, an event or anything else another thread must produce. When the resources are interchangeable, take them all at once with `get(n)` on one counting semaphore, which waits until n keys are free together (§15.3.3).
-- **Release and retry** gives up instead of waiting. `try_get()` the second key, and if it returns 0, put back the first key, wait a random delay and try again. If both threads back off by the same delay, they can collide forever (livelock), so randomize the delay.
+- **Release and retry** also breaks hold and wait: the thread gives up its first key instead of waiting while it holds it. `try_get()` the second key, and if it returns 0, put back the first key, wait a random delay and try again. If both threads back off by the same delay, they can collide forever (livelock), so randomize the delay.
 
 **A timeout detects a hang; it does not cure it.** It turns a silent hang into a reported failure:
 
@@ -499,7 +475,7 @@ rsp_mbx[id].get(rsp);`}
     gapY={44}
     nodes={[
       { id: "q0", label: "Any thread blocked?", sublabel: "in get(), put() or @", col: 0, row: 0 },
-      { id: "a0", label: "livelock or poller", sublabel: "spin loop, or a starving poller", col: 1, row: 0, state: "error" },
+      { id: "a0", label: "no thread blocked", sublabel: "livelock, or a starving poller", col: 1, row: 0, state: "error" },
       { id: "q1", label: "Arrows form a loop?", sublabel: "waits for, released by", col: 0, row: 1 },
       { id: "a1", label: "deadlock", sublabel: "lock order; release first", col: 1, row: 1, state: "error" },
       { id: "q2", label: "Releaser gone?", sublabel: "ended, killed, acted early", col: 0, row: 2 },
@@ -716,6 +692,32 @@ The status of each thread over time, as `status()` would report it:
 | 9 ns | `WAITING` in `rsp_mbx[0].get` | `WAITING` in `bus.get` | `WAITING` in `bus.get` | held by requester 0 | Requester 1 queues for the key |
 | 100 ns | `KILLED` | `KILLED` | `KILLED` | still taken: `kill()` did not return it | The watchdog reports, then kills all three; `main`'s `await()` calls return |
 
+The same run seen through the handles, following requester 0, where it gets stuck: `main` waits for the handle `worker[0]`, then blocks in `await()`. At 100 ns the watchdog reads the status and its `kill()` ends the stuck thread, which releases `main`.
+
+<SequenceDiagram
+  title="Publishing, awaiting and killing requester 0 in the broken run"
+  caption="main waits for the handle before it uses it, then blocks in await(). The watchdog reads WAITING, kills the stuck thread, and main's await() returns. The bus key that requester 0 held is not given back."
+  participants={[
+    { id: "main", label: "main", kind: "generic" },
+    { id: "r0", label: "requester 0", sublabel: "worker[0]", kind: "generic" },
+    { id: "wd", label: "watchdog", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns" },
+    { kind: "async", from: "main", to: "r0", label: "fork requester(0, 1) … join_none" },
+    { kind: "self", from: "main", label: "wait (worker[0] != null) blocks, so the children start" },
+    { kind: "self", from: "r0", label: "worker[0] = process::self()" },
+    { from: "main", to: "r0", label: "worker[0].await(): blocks" },
+    { kind: "divider", label: "t = 5 ns" },
+    { kind: "note", from: "r0", label: "blocked in rsp_mbx[0].get while it holds the bus key" },
+    { kind: "divider", label: "t = 100 ns" },
+    { from: "wd", to: "r0", label: "worker[0].status()" },
+    { kind: "return", from: "r0", to: "wd", label: "WAITING" },
+    { from: "wd", to: "r0", label: "worker[0].kill()", tone: "error" },
+    { kind: "return", from: "r0", to: "main", label: "await() returns: requester 0 is KILLED" }
+  ]}
+/>
+
 </details>
 
 The fix is the original order: return the key before you wait for the reply. That breaks **hold and wait**, so the loop cannot form. Note what the watchdog's `kill()` did not do: the bus key that requester 0 held is still taken. That is harmless here because the test is over, but a bench that keeps running after a timeout must put the key back.
@@ -883,8 +885,8 @@ Answer each one yourself before you open the options' feedback.
   title="Interview: one seed in 500 hangs"
   question="One seed in 500 hangs at the end of the test, with no error in the log. How do you find which thread holds the bus key, and why it never gave it back?"
   options={[
+    { text: "Raise the simulation time limit: the test is probably just slow, and a longer run will let the last transaction finish and print its PASS line.", isCorrect: false, feedback: "A blocked thread never finishes, however long you wait. Without a clock, the run would already have ended on its own (§9.6.1)." },
     { text: "Rerun that seed with a watchdog that prints each thread's process status and what it is blocked on, plus a variable that records who took each key, then draw the wait-for graph.", isCorrect: true, feedback: "Right. The seed makes the hang reproducible, and the status and owner records turn it into a graph. An owner that has returned or been killed means a leaked key; a loop means a deadlock." },
-    { text: "Raise the simulation time limit: the test is probably just slow.", isCorrect: false, feedback: "A blocked thread never finishes, however long you wait. Without a clock, the run would already have ended on its own (§9.6.1)." },
     { text: "Replace every get() with try_get() so that nothing can block.", isCorrect: false, feedback: "That removes mutual exclusion. Threads would drive the bus together, and the hang would turn into corrupted data." },
     { text: "Run 500 more seeds and waive the failure if they pass.", isCorrect: false, feedback: "A seed-dependent hang is a real ordering bug or leak. More passing seeds only show that it is rare." }
   ]}
@@ -894,9 +896,9 @@ Answer each one yourself before you open the options' feedback.
   title="Interview: a timeout in a reusable driver"
   question="Your driver task, which several threads may call at once, needs a per-transaction timeout. How do you stop the losing branch: disable fork, disable by name, or kill()?"
   options={[
-    { text: "Wrap the race in fork begin … end join and call disable fork inside it, or kill() a captured handle of the helper thread; never disable by name.", isCorrect: true, feedback: "Right. The wrapper limits disable fork to this race (§9.6.3), kill() ends exactly one subtree (§9.7), and disable by name would end every call's activation of the block (§9.6.2)." },
-    { text: "Call disable fork right after join_any, without a wrapper.", isCorrect: false, feedback: "That kills every descendant of the calling thread, including monitors or helpers it forked earlier (§9.6.3)." },
+    { text: "Call disable fork right after join_any, without a wrapper: the timer and the blocked transfer are the only threads still running at that point.", isCorrect: false, feedback: "That kills every descendant of the calling thread, including monitors or helpers it forked earlier (§9.6.3)." },
     { text: "Disable the driver task by name, because that affects only the current call.", isCorrect: false, feedback: "Disable by name ends every process executing that block, including other threads' calls of the task (§9.6.2)." },
+    { text: "Wrap the race in fork begin … end join and call disable fork inside it, or kill() a captured handle of the helper thread; never disable by name.", isCorrect: true, feedback: "Right. The wrapper limits disable fork to this race (§9.6.3), kill() ends exactly one subtree (§9.7), and disable by name would end every call's activation of the block (§9.6.2)." },
     { text: "Let the timer branch call $finish.", isCorrect: false, feedback: "That ends the whole simulation at the first slow transaction instead of reporting it and moving on." }
   ]}
 />
@@ -912,7 +914,7 @@ Answer each one yourself before you open the options' feedback.
     answers: [
       { text: "A named event, triggered once per transaction", correct: false, feedback: "An event carries no data, and a trigger with no waiter is lost (§15.5.2), so the scoreboard would miss transactions." },
       { text: "A semaphore created with one key", correct: false, feedback: "A semaphore counts permissions to use a resource; it carries no transactions." },
-      { text: "An unbounded mailbox #(T): it keeps every transaction in order, and put() never blocks", correct: true, feedback: "Right. A mailbox carries data in FIFO order (§15.4.3), and an unbounded one never blocks the putter (§15.4.1), so the monitor keeps sampling." },
+      { text: "An unbounded mailbox #(T)", correct: true, feedback: "Right. It keeps every transaction in order, and put() never blocks. A mailbox carries data in FIFO order (§15.4.3), and an unbounded one never blocks the putter (§15.4.1), so the monitor keeps sampling." },
       { text: "A mailbox created with new(1), so that the monitor feels back-pressure", correct: false, feedback: "Back-pressure suits a generator that feeds a driver. Here it would stall the monitor whenever the scoreboard is busy, and the monitor would miss bus activity." }
     ],
     explanation: "Ask what must pass: data, in order, so a mailbox. Then ask when it may block: never, for a monitor, so make it unbounded (or use try_put() and report an error when it returns 0). Between UVM components, an analysis port feeding a uvm_tlm_analysis_fifo does the same job."
@@ -924,7 +926,7 @@ Answer each one yourself before you open the options' feedback.
       { text: "-> rst_done in the reset thread, and @rst_done in the driver", correct: false, feedback: "@ sees only triggers that happen after it starts to wait. If the trigger runs first, even earlier in the same time slot, the driver waits forever (§15.5.2)." },
       { text: "-> rst_done in the reset thread, and wait (rst_done.triggered) in the driver", correct: false, feedback: "That fixes the same-time-slot race only. The triggered state ends when simulation time advances (§15.5.3), so a driver that arrives in a later time slot waits forever." },
       { text: "->> rst_done in the reset thread, and @rst_done in the driver", correct: false, feedback: "->> only moves the trigger to the NBA region of the same time slot (§15.5.1). It does not make the event persistent, so a driver that starts waiting later still misses it." },
-      { text: "A bit reset_done that the driver waits on with wait (reset_done), or a new(0) semaphore that the reset thread puts one key into", correct: true, feedback: "Right. A level stays set, and wait (reset_done) returns at once if it is already 1 (§9.4.3). A key put into the semaphore stays there until a get() takes it (§15.3.1–§15.3.3)." }
+      { text: "A bit reset_done, or a new(0) semaphore given one key", correct: true, feedback: "Right. The driver waits on the bit with wait (reset_done), or the reset thread puts one key into the new(0) semaphore. A level stays set, and wait (reset_done) returns at once if it is already 1 (§9.4.3). A key put into the semaphore stays there until a get() takes it (§15.3.1–§15.3.3)." }
     ],
     explanation: "Choose by what the tool remembers. An event remembers nothing, or with .triggered only until time advances, so it suits a waiter that is certain to be waiting already. When the waiter might arrive late, use a tool that keeps the fact: a level, a semaphore key or a mailbox entry."
   },
@@ -966,7 +968,7 @@ Answer each one yourself before you open the options' feedback.
     objective: 3,
     answers: [
       { text: "A process object must be created with new() before it is used", correct: false, feedback: "Calling new on process is an error (§9.7). The simulator creates the object when it spawns the process." },
-      { text: "The child has not run yet: forked processes start only when the parent blocks, so p is still null. Add wait (p != null) first", correct: true, feedback: "Right. The children of fork … join_none start once the parent blocks or ends (§9.3.2)." },
+      { text: "The child has not run yet, so p is still null", correct: true, feedback: "Right. The children of fork … join_none start only once the parent blocks or ends (§9.3.2), so p is still null. Add wait (p != null) first." },
       { text: "kill() can only be called from inside the process it kills", correct: false, feedback: "Any process may kill another through its handle (§9.7)." },
       { text: "Children of join_none cannot be killed", correct: false, feedback: "They can. The problem is that this child has not started, so it has not published its handle yet." }
     ],
@@ -979,7 +981,7 @@ Answer each one yourself before you open the options' feedback.
       { text: "kill() returns every key the thread held", correct: false, feedback: "SystemVerilog has no automatic cleanup: nothing returns keys for you." },
       { text: "The semaphore notices that its holder died and frees the key", correct: false, feedback: "A semaphore records only a key count, not who holds a key, so it cannot notice." },
       { text: "The next get() reports an error", correct: false, feedback: "Nothing reports a blocked get(); the bench just stops or hangs." },
-      { text: "It stays taken: kill() returns nothing the thread held, so the next bus.get(1) blocks unless the timeout path calls bus.put(1)", correct: true, feedback: "Right. kill() ends the thread and its descendants (§9.7), but it undoes none of their effects." }
+      { text: "It stays taken until some thread calls bus.put(1)", correct: true, feedback: "Right. kill() ends the thread and its descendants (§9.7), but it undoes none of their effects: it returns nothing the thread held, so the next bus.get(1) blocks unless the timeout path calls bus.put(1)." }
     ],
     explanation: "A timeout or reset handler that kills a thread must also restore the keys and other state that the thread owned."
   },
@@ -1009,8 +1011,8 @@ Answer each one yourself before you open the options' feedback.
     question: "A bench has no clock and no watchdog. At 5 ns all three of its threads become blocked forever in get() calls. What does the run show?",
     objective: 4,
     answers: [
-      { text: "The simulator reports a deadlock error", correct: false, feedback: "Nothing in the standard reports blocked processes. The run just ends." },
-      { text: "Simulation ends at 5 ns with no error message and no PASS line", correct: true, feedback: "Right. Simulation ends by itself when no activity is left (§9.6.1)." },
+      { text: "The simulator reports a deadlock error that names the blocked get() calls", correct: false, feedback: "Nothing in the standard reports blocked processes. The run just ends." },
+      { text: "It ends at 5 ns, silently, with no PASS line", correct: true, feedback: "Right. Simulation ends by itself when no activity is left (§9.6.1), with no error message and no PASS line." },
       { text: "The run hangs until you stop it", correct: false, feedback: "Only something that keeps scheduling events, such as a clock or a timer, makes a blocked bench hang." },
       { text: "The simulator stops with an iteration-limit error", correct: false, feedback: "Iteration limits concern zero-delay loops, and they are tool-specific. Blocked threads do not loop." }
     ],
@@ -1023,7 +1025,7 @@ Answer each one yourself before you open the options' feedback.
       { text: "It deadlocks, because the responder waits for lo_mbx", correct: false, feedback: "There is no loop, and the responder is busy serving hi_mbx, not waiting." },
       { text: "It is served next, because mailboxes are first-in first-out", correct: false, feedback: "FIFO order holds inside one mailbox, not across two mailboxes that your code checks in a fixed order." },
       { text: "Its put() blocks and reports an error", correct: false, feedback: "Nothing blocks the producer of lo_mbx unless that mailbox is bounded and full, and nothing reports an error either way." },
-      { text: "It waits for as long as hi_mbx stays busy: starvation. Serve the two mailboxes round-robin, or age the waiting request", correct: true, feedback: "Right. Everyone else makes progress, and there is no loop: the responder is busy, not blocked." }
+      { text: "It waits for as long as hi_mbx stays busy: starvation", correct: true, feedback: "Right. Everyone else makes progress, and there is no loop: the responder is busy, not blocked. Serve the two mailboxes round-robin, or age the waiting request." }
     ],
     explanation: "Starvation is progress for everyone except one waiter. The fix is a fairer policy, not a lock order."
   }

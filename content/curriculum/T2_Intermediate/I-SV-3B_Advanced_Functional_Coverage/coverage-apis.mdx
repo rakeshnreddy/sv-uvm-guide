@@ -22,7 +22,7 @@ sources:
 
 | In the shop chain | In the covergroup | Read it with |
 |---|---|---|
-| the stock-count form | the covergroup type | its definition: the `option` and `type_option` settings |
+| the stock-count form | the covergroup type | set in its definition (`option`, `type_option`); no number to read |
 | one shop's filled-in copy | an instance | `get_inst_coverage()` |
 | one line on the form | an item: a coverpoint or a cross | the item's own `get_inst_coverage()` |
 | one shelf to tick | a bin | counted in the item's `(covered, total)` |
@@ -45,7 +45,7 @@ sources:
 
 ## Build Your Mental Model
 
-**How to read this lesson.** The core path is the first two sections: what an instance number and a type number are, and how the two ways of computing the type number differ. Practitioner depth follows: every method and where you may call it, the bin counts, goals and weights, pausing collection, ending stimulus at a goal, and the system tasks. Make It Work runs one small bench that prints every number on this page, and Push Further holds the corner cases.
+**How to read this lesson.** The core path is the first two sections: what an instance number and a type number are, and how the two ways of computing the type number differ. Practitioner depth follows: every method and where you may call it, the bin counts, goals and weights, pausing collection, ending stimulus at a goal, and the system tasks. Make It Work runs one small bench that prints the instance, type and design numbers used on this page, with changes that reproduce the merge results, and Push Further holds the corner cases.
 
 One running example serves the whole lesson. It is a trimmed version of the ALU collector used throughout this module: a class `alu_cov` whose embedded covergroup `cg` has three **coverage items** (an item is a coverpoint or a cross):
 
@@ -71,14 +71,14 @@ Suppose a bench has two ALU **lanes** (two copies of the ALU, each with its own 
 
 <ArchitectureDiagram
   title="Three levels of coverage numbers for two instances of one covergroup type"
-  caption="Each instance keeps its own bin counts. get_inst_coverage() reads one instance; get_coverage() reads the type, here the average of the two instances; $get_coverage() reads every type in the design, and this design has only one."
+  caption="Each instance keeps its own bin counts. get_inst_coverage() reads one instance; get_coverage() reads the type; $get_coverage() reads every type in the design, and this design has only one."
   cellWidth={160}
   legend={false}
   nodes={[
-    { id: "design", label: "design · $get_coverage() = 59.52", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 4, container: true },
-    { id: "type", label: "type of alu_cov::cg · get_coverage() = 59.52", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
-    { id: "i0", label: "tb_top.lane0 · 66.67", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
-    { id: "i1", label: "tb_top.lane1 · 52.38", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "design", label: "design · $get_coverage()", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 4, container: true },
+    { id: "type", label: "type of alu_cov::cg · get_coverage()", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "i0", label: "tb_top.lane0 · get_inst_coverage()", kind: "generic", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "i1", label: "tb_top.lane1 · get_inst_coverage()", kind: "generic", col: 1, row: 0, rowSpan: 3, container: true },
     { id: "i0op", label: "cp_op", sublabel: "5 of 7 bins", kind: "generic", col: 0, row: 0 },
     { id: "i0a", label: "cp_a", sublabel: "2 of 2 bins", kind: "generic", col: 0, row: 1 },
     { id: "i0x", label: "x_op_a", sublabel: "4 of 14 bins", kind: "generic", col: 0, row: 2 },
@@ -89,7 +89,7 @@ Suppose a bench has two ALU **lanes** (two copies of the ALU, each with its own 
   ]}
 />
 
-**Predict before you read on.** Using only the bin counts in the diagram and weight 1 everywhere, work out lane0's instance number, then the type number.
+**Predict before you read on.** Using only the bin counts in the diagram and weight 1 everywhere, work out lane0's and lane1's instance numbers, then the type number. By default the type number is the average of the instance numbers.
 
 <details>
 <summary>Check your prediction</summary>
@@ -99,6 +99,8 @@ Suppose a bench has two ALU **lanes** (two copies of the ALU, each with its own 
 | lane0 | 5/7 = 71.43 % | 2/2 = 100 % | 4/14 = 28.57 % | (71.43 + 100 + 28.57) / 3 = **66.67** |
 | lane1 | 3/7 = 42.86 % | 2/2 = 100 % | 2/14 = 14.29 % | (42.86 + 100 + 14.29) / 3 = **52.38** |
 | type | | | | (66.67 + 52.38) / 2 = **59.52**, from either instance |
+
+This design has only one covergroup type, so `$get_coverage()` is also 59.52.
 
 The type number is the **weighted average of the instance numbers**, each weighted by its covergroup-level `option.weight` (§19.11.3). It is not the worst instance and not the best one.
 
@@ -210,7 +212,7 @@ The two kinds of declaration compared:
 | Instances | one per `alu_cov` object: `lane0.cg`, `lane1.cg` | one per `new()`: `u0`, `u1` |
 | Type number | `lane0.cg.get_coverage()`, the same from `lane1.cg` | `op_cg::get_coverage()`, or `u0.get_coverage()` |
 | Instance number | `lane0.cg.get_inst_coverage()` | `u0.get_inst_coverage()` |
-| Type options set procedurally | impossible: set them in the definition | `op_cg::type_option.merge_instances = 1;` (§19.7.1) |
+| Type options set procedurally | no type name to assign through (§19.4): set them in the definition (whether a static `type_option` can be assigned through an instance handle is not stated by the LRM and is tool-dependent) | `op_cg::type_option.merge_instances = 1;` (§19.7.1) |
 
 `set_inst_name()` gives the instance a readable, stable name, such as its place in the testbench hierarchy. Without it the tool generates a unique name (Table 19-1, `option.name`). Nothing requires a generated name to be the same in every test, so rows from different tests may not line up when their databases are merged (tool-dependent). Assigning `option.name` procedurally does the same job; `set_inst_name()` is the method form.
 
@@ -270,8 +272,9 @@ Typical uses are a reset window, an initialization sequence and an error-injecti
 
 <TimingDiagram
   title="lane0's eight writes, with collection paused for two of them"
-  caption="The x axis is transaction index, not simulation time, numbered from edge 0: each rising edge of the write(t) row is one call to lane0.write(t), and every value shown is the state right after that call. The a row is the operand in hex; the cp_op bins and cross bins rows count lane0's covered bins of cp_op and x_op_a. stop() runs before edge 3 and start() before edge 5, so DIV and AND at edges 3 and 4 (the 4th and 5th writes) are sampled but not collected, and both counts stay flat. The later DIV covers its bins; the repeated ADD adds none; XOR with a = 8'h42 covers its cp_op bin but no cross bin. ● marks where stop() and start() were called; ▼ marks the XOR write whose a is in no cp_a bin; the shaded band is the stopped window."
+  caption="The x axis is transaction index, not simulation time, numbered from edge 0: each rising edge of the write(t) row is one call to lane0.write(t), and every value shown is the state right after that call. The a row is the operand in hex; the cp_op bins and cross bins rows count lane0's covered bins of cp_op and x_op_a. stop() runs before edge 3 and start() before edge 5, so DIV and AND at edges 3 and 4 (the 4th and 5th writes) are sampled but not collected, and both counts stay flat. ● marks where stop() and start() were called; ▼ marks the XOR write whose a is in no cp_a bin; the shaded band is the stopped window."
   edges={8}
+  cycleWidth={36}
   signals={[
     { name: "write(t)", kind: "clock" },
     { name: "op", kind: "bus", values: ["ADD", "SUB", "MUL", "DIV", "AND", "DIV", "ADD", "XOR"] },
@@ -290,7 +293,9 @@ Typical uses are a reset window, an initialization sequence and an error-injecti
   ]}
 />
 
-Without the `stop()`/`start()` pair, `AND` would also count, and lane0 would read 76.19 instead of 66.67 (you will check this in Make It Work).
+After the window, the later DIV covers its bins; the repeated ADD adds none; XOR with a = 8'h42 covers its `cp_op` bin but no cross bin.
+
+Without the `stop()`/`start()` pair, the `DIV` and `AND` writes in the window would count too; Make It Work asks you to work out what lane0 would then read.
 
 There are three ways to keep samples out of the coverage, and each fits a different owner:
 
@@ -560,7 +565,7 @@ The tool's own `$finish` message follows. Read the log the way you would debug a
 3. **`pair = 11/23` beside 66.67** is the covergroup-level sum (§19.8). Do not divide it.
 4. **Both type lines read 59.52**: `get_coverage()` is the type's number, whichever instance you call it through.
 
-**Change it and predict first.** Each change below edits one or two lines; write down your prediction before you rerun.
+**Change it and predict first.** Each change below edits one or two lines. Change 1 is new; changes 2 and 3 check that you can apply the merge table above to the printed log. Write down your prediction before you rerun.
 
 1. Delete the `stop()` and `start()` lines. What do lane0's `cp_op`, `x_op_a` and `get_inst_coverage()` lines print now?
 2. Restore them and add `type_option.merge_instances = 1;` to the covergroup. What do the type line and the two `get_inst_coverage()` lines print?
@@ -577,6 +582,8 @@ The tool's own `$finish` message follows. Read the log the way you would debug a
 <summary>Check change 2</summary>
 
 The type line becomes the union, (100 + 100 + 42.86) / 3 = **80.95**, and so do both `get_inst_coverage()` lines (Table 19-1).
+
+"type via lane1" and "design $get_coverage()" also read 80.95, and "type cp_op" reads 100.00, because all seven operations are in the union. What its pair prints under merging is not specified. §19.8 says only that the pair from `get_coverage()` holds bins "aggregated" from the coverpoint in all instances, and that such a pair need not match the percentage, so a tool may report the per-instance sum (8/14) or the merged bins (7/7). Either way, read the percentage, not the pair.
 
 </details>
 
@@ -661,6 +668,8 @@ The practical rules: a closure check must also require at least one sample (or o
 
 ### Expert: Sampling coverage from assertions
 
+This section uses SVA from [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and the local variables of [I-SV-4B](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/local-variables); come back after those modules if the property syntax is new. `##1` waits one clock, and `[*0:7]` repeats the preceding term 0 to 7 times.
+
 An overridden `sample()` can be called from a sequence match item inside a property, with the assertion's local variables as arguments (§19.8.1, §16.10, §16.11). The arguments carry values computed from the assertion's sampled values (concurrent assertions sample in the Preponed region), which makes this the way to cover quantities that only the assertion knows, such as a measured latency:
 
 ```systemverilog
@@ -679,13 +688,13 @@ c_req_ack: cover property (p_req_ack);  // n = cycles from req to ack
 
 <TimingDiagram
   title="One p_req_ack attempt: ack three cycles after req"
-  caption="The x axis is rising edges of clk. Each value is the sampled value the assertion sees at that edge (Preponed). The n row is the attempt's local variable after the edge, not a signal. req is 1 at edge 0, so an attempt starts with n = 1; ack is 0 at edges 1 and 2, so n++ runs twice; ack is 1 at edge 3, so the match calls lat_cov.sample(3), which lands in bin slow ({[3:8]}). At edge 4 the attempt has already matched and ended, so its n row reads done: the local variable no longer exists."
+  caption="The x axis is rising edges of clk. Each value is the sampled value the assertion sees at that edge (Preponed). The n row is the attempt's local variable after the edge, not a signal. req is 1 at edge 0, so an attempt starts with n = 1; ack is 0 at edges 1 and 2, so n++ runs twice; ack is 1 at edge 3, so the match calls lat_cov.sample(3), which lands in bin slow ({[3:8]}). At edge 4 the attempt has already matched and ended, so its n row shows a dash: the local variable no longer exists."
   edges={5}
   signals={[
     { name: "clk", kind: "clock" },
     { name: "req", kind: "bit", values: [1, 0, 0, 0, 0] },
     { name: "ack", kind: "bit", values: [0, 0, 0, 1, 0] },
-    { name: "n (local)", kind: "bus", values: [1, 2, 3, 3, "done"] }
+    { name: "n (local)", kind: "bus", values: [1, 2, 3, 3, "-"] }
   ]}
   highlights={[
     { from: 0, to: 3, tone: "attempt", label: "one attempt" }
@@ -696,7 +705,7 @@ c_req_ack: cover property (p_req_ack);  // n = cycles from req to ack
   ]}
 />
 
-**Predict.** Suppose ack had been sampled 1 at edge 1 instead, one cycle after req. Which value would `lat_cov.sample()` receive, and which bin of `cp_lat` would it land in?
+**Predict.** Suppose ack had been sampled 1 at edge 1 instead, one cycle after req. Which value would `lat_cov.sample()` receive, and which bin of `cp_lat` would it land in? Remember that `[*0:7]` allows zero repetitions.
 
 <details>
 <summary>Check your prediction</summary>
@@ -729,9 +738,9 @@ Answer each one before you open the feedback.
   question="Four SPI ports each have a collector with one instance of the same covergroup. The covergroup definition sets type_option.merge_instances = 1 for the type report. The test must end its stimulus only when every port has individually reached 100 %. What should it check, and where?"
   options={[
     { text: "Any one collector checks cg.get_coverage() >= 100 and calls $finish.", isCorrect: false, feedback: "With merging, get_coverage() is the union: it can reach 100 while a port is missing states that another port hit. And $finish from a collector cuts off the checks (IEEE 1800-2023 §20.2)." },
-    { text: "The test polls all four instances' get_inst_coverage(), with option.get_inst_coverage = 1 set in the covergroup definition, and ends the stimulus (drops its objection) when all four are at the goal.", isCorrect: true, feedback: "Correct. Under merging, get_inst_coverage() returns the merged number unless option.get_inst_coverage = 1 is set in the definition (Table 19-1). Only a component that sees all four instances, such as the test or the env, can decide for all four." },
     { text: "Each collector checks its own get_inst_coverage() with option.per_instance = 1 and calls $finish when it reaches 100.", isCorrect: false, feedback: "per_instance controls what is saved and reported, not what get_inst_coverage() returns under merging; and the first port to finish would end the whole run, checks included." },
-    { text: "The test checks $get_coverage() == 100.0.", isCorrect: false, feedback: "That is every covergroup type in the design, here a union for this type; it also returns 100.0 before any instance exists (§19.11). And == on a real is fragile." }
+    { text: "The test checks $get_coverage() == 100.0.", isCorrect: false, feedback: "That is every covergroup type in the design, here a union for this type; it also returns 100.0 before any instance exists (§19.11). And == on a real is fragile." },
+    { text: "The test polls all four instances' get_inst_coverage(), with option.get_inst_coverage = 1 in the definition, and drops its objection when all four reach the goal.", isCorrect: true, feedback: "Correct. Under merging, get_inst_coverage() returns the merged number unless option.get_inst_coverage = 1 is set in the definition (Table 19-1). Only a component that sees all four instances, such as the test or the env, can decide for all four." }
   ]}
 />
 
@@ -751,8 +760,8 @@ Answer each one before you open the feedback.
   question="During error-injection windows, a sequence corrupts packets on purpose, and the plan says those packets must not count toward functional coverage. The collector cannot tell an injected packet from a normal one. What do you use?"
   options={[
     { text: "An iff guard on every coverpoint.", isCorrect: false, feedback: "iff needs a condition the covergroup can see when it samples. Here the collector cannot tell the packets apart, so there is nothing to put in the guard." },
-    { text: "The error-injection sequence (or the test) calls the collector's cg.stop() before the window and cg.start() after it, on every path out of the window.", isCorrect: true, feedback: "Correct. stop() and start() let the code that owns the window control collection (Table 19-5). The risk is a missing start(), so put both calls in one task and log them." },
     { text: "Set the covergroup's option.weight to 0 during the window.", isCorrect: false, feedback: "Weight changes how the number is averaged; samples are still collected into the bins. It hides the instance from the average, which is a different and worse effect." },
+    { text: "The error-injection sequence (or the test) calls the collector's cg.stop() before the window and cg.start() after it, on every path out of the window.", isCorrect: true, feedback: "Correct. stop() and start() let the code that owns the window control collection (Table 19-5). The risk is a missing start(), so put both calls in one task and log them." },
     { text: "Delete the window's transactions from the database afterwards.", isCorrect: false, feedback: "There is no API to remove counts (Table 19-5 has no such method), and editing databases by hand breaks traceability." }
   ]}
 />
@@ -984,7 +993,7 @@ The flashcards for this lesson follow below, under "Reinforce the essentials". T
 
 - §19.4 using covergroups in classes (the anonymous type of an embedded covergroup; constructed only in the class's `new()`).
 - §19.5 and §19.5.6 bins and illegal bins; §19.6 cross coverage.
-- §19.7 coverage options: Table 19-1 instance options (`name`, `weight`, `goal`, `comment`, `at_least`, `cross_num_print_missing`, `per_instance`, `get_inst_coverage`), Table 19-2 options per level, definition-only options; §19.7.1 type options (Table 19-3: `weight`, `goal`, `comment`, `strobe`, `merge_instances`), Table 19-4.
+- §19.7 coverage options: Table 19-1 instance options (`name`, `weight`, `goal`, `comment`, `at_least`, `cross_num_print_missing`, `per_instance`, `get_inst_coverage`), Table 19-2 options per level, definition-only options; §19.7.1 type options (Table 19-3: `weight`, `goal`, `comment`, `strobe`, `merge_instances`, `distribute_first`, `real_interval`; `strobe` and `real_interval` only in the definition), Table 19-4.
 - §19.8 predefined coverage methods (Table 19-5) and the `(covered, total)` rules; §19.8.1 overriding `sample()`.
 - §19.9 coverage system tasks and system function: `$set_coverage_db_name`, `$load_coverage_db`, `$get_coverage`.
 - §19.10 the `option` and `type_option` structures.

@@ -41,8 +41,7 @@ Who checks what, side by side:
 |---|---|---|
 | Defined by | Clause 35 | Annex H, with the header `svdpi.h` in Annex I |
 | What you write | `import "DPI-C"` and `export "DPI-C"` declarations and ordinary calls, in `.sv` files | C function definitions and their prototypes, in `.c` files |
-| Checked by | the SystemVerilog compiler, against your declaration | the C compiler, against your C prototype and `svdpi.h` |
-| Compared with the other layer | never (§35.2, §35.6.1.1) | never |
+| Checked by | the SystemVerilog compiler, against your declaration (never against the other layer, §35.2, §35.6.1.1) | the C compiler, against your C prototype and `svdpi.h` (never against the other layer) |
 
 Two more rules shape everything on this page:
 
@@ -109,7 +108,7 @@ An import declaration defines a SystemVerilog function whose body lives in C (§
 
 **The two mistakes everyone makes:**
 1. **The C prototype does not match the import.** The SystemVerilog compiler cannot see your C code and the C compiler cannot see your import, so both accept a mismatch. If the import says `input logic [31:0] v` and the C code says `int v`, C reads a pointer as if it were a number. Check every parameter against the type table, or let your tool generate the prototypes (Push Further).
-2. **C calls back into SystemVerilog from an import that is not `context`.** It compiles, then behaves unpredictably or crashes (§35.5.1.3). Any import whose C body calls an export, or a VPI routine, must be declared `context`.
+2. **C calls back into SystemVerilog from an import that is not `context`.** It compiles, then behaves unpredictably or crashes (§35.5.1.3). Any import whose C body calls an export, or a VPI routine (VPI is the simulator's other C interface, for finding and reading design objects by name; see DPI, VPI or the old PLI? below), must be declared `context`.
 
 ### Types across the boundary
 
@@ -205,7 +204,7 @@ The rules for exports (§35.7, §35.8, H.8.2, H.9):
 - Declare the export in the scope that defines the subroutine, once per subroutine. The export declaration and the definition may come in either order (§35.7).
 - **Class methods cannot be exported** (§35.7). Export a subroutine of a module, interface, program or package instead.
 - Exports follow the import type rules, but they cannot take open arrays (§35.5.6.1, H.8.2), and dynamic-array formals are erroneous (§35.5.6).
-- Every exported function is a context function (§35.7). C may call an export only from inside a `context` import's call chain. From a call chain without the context property its behaviour is undefined (H.9). From code outside any import call chain, such as a VPI callback, it is simulator-defined and beyond the DPI specification (§35.5.3).
+- Every exported function is a context function (§35.7). An **import call chain** is everything that runs from the moment SystemVerilog calls an import until that call returns, including any exports the C code calls along the way. Each import call in the chain has the **context property** only if the import it calls is declared `context`; the property is not passed on to later import calls in the same chain (§35.5.3). H.9 calls the C code that runs from a `context` import, until it calls back into SystemVerilog, a **context call chain**. C may call an export only from inside a `context` import's call chain. From a call chain without the context property its behaviour is undefined (H.9). From code outside any import call chain, such as a VPI callback, it is simulator-defined and beyond the DPI specification (§35.5.3).
 - An **exported task** may consume time. Its C prototype returns `int`: 1 if it returns because a disable stopped the import's thread, otherwise 0 (§35.8, §35.9). Only an imported **task** declared `context` may call an exported task. An imported function never may, just as a SystemVerilog function cannot enable a task (§35.8).
 
 Imports and exports side by side:
@@ -614,7 +613,7 @@ Compare a **sized** formal. If the same `w` went to a hypothetical import with t
 The rules for open arrays:
 
 - Dimension 0 is the packed part; dimensions 1 and up are the unpacked ones (H.12.2).
-- Pointer access (`svGetArrElemPtr1`, `svGetArrayPtr`) works only when the elements are laid out as in C. For scalar or packed elements, such as `bit [7:0] b []`, the layout is implementation dependent and the pointer functions may return `NULL` (H.12.4). Copy each element in canonical form instead, with `svGetBitArrElem1VecVal` or `svGetLogicArrElem1VecVal`, and write back with the matching `svPut` function (H.12.5).
+- `svGetArrayPtr` returns NULL when the array as a whole is not in C layout. `svGetArrElemPtr1` always works, except when an element is stored differently from a single value of its type (H.12.4). For scalar or packed elements, such as `bit [7:0] b []`, the layout is implementation dependent and the pointer functions may return `NULL` (H.12.4). Copy each element in canonical form instead, with `svGetBitArrElem1VecVal` or `svGetLogicArrElem1VecVal`, and write back with the matching `svPut` function (H.12.5).
 - For an `output` or `inout` open array, C may write only as many elements as the actual argument holds; writing more is undefined (H.12). Use `svSize`.
 - A dynamic array can be passed to an open-array formal under the same rules as for a native subroutine (§35.6.1.1, §7.7).
 - Exports cannot take open arrays (§35.5.6.1).
@@ -746,11 +745,11 @@ disable fork;   // kills c_send_words if it is still waiting inside sv_send_word
   ]}
 />
 
-What the bus does meanwhile, if this fork replaces the `c_send_words(2)` call in the worked example's `tb_top` and nothing drives `valid` after the disable:
+What the bus does meanwhile, if this fork replaces the `c_send_words(2)` call in the worked example's `tb_top` and nothing drives `valid` after the disable. In the worked `tb_top` the parent goes on after `disable fork`, waits two `@(cb)` and calls `$finish` at 55 ns, which races with the DUT's `always_ff` at that edge:
 
 <TimingDiagram
   title="The pins after the timeout: valid is never driven back to 0"
-  caption="Edge k is the rising edge at t = 5 + 10k ns, and each value is the one sampled at that edge. The timeout and disable fork happen at 40 ns, between edges 3 and 4. The second sv_send_word had already driven valid 1 and DEADBEEF at 35 ns, and its last line, cb.valid <= 1'b0, never runs. At 55 ns valid is still 1, so the DUT accepts DEADBEEF again, if the run continues past 55 ns: in the worked tb_top the parent goes on after disable fork, waits two @(cb) and calls $finish at 55 ns, which races with the DUT's always_ff at that edge."
+  caption="Edge k is the rising edge at t = 5 + 10k ns, and each value is the one sampled at that edge. The timeout and disable fork happen at 40 ns, between edges 3 and 4. The second sv_send_word had already driven valid 1 and DEADBEEF at 35 ns, and its last line, cb.valid <= 1'b0, never runs. At 55 ns valid is still 1, so the DUT accepts DEADBEEF again if the run continues past 55 ns."
   edges={6}
   cycleWidth={60}
   signals={[
@@ -1133,7 +1132,7 @@ PASS=0 FAIL=2
 
 ### Expert: Context call chains and per-instance C state
 
-A **DPI import call chain** starts when SystemVerilog calls an import and lasts until that call returns, including any exports C calls in between (§35.5.3). Its context follows strict rules:
+Recall that a DPI import call chain starts when SystemVerilog calls an import and lasts until that call returns, including any exports C calls in between (§35.5.3). Its context follows strict rules:
 
 - A call to a `context` import starts the chain's context at the import's instance scope. `svSetScope` changes it. When an export returns into C, the context reverts to its value when the export was called.
 - Each import call takes the context property of the import it calls, and the property is never promoted: a non-`context` import called further down the chain, for example from an exported SystemVerilog function, is still non-`context`. The context characteristic adheres to the call chain, not to the C code, so the same C function can run in both context and non-context chains.
@@ -1259,7 +1258,7 @@ extern "C" unsigned int crc32_step(unsigned int crc, unsigned int word) {
 
 <SequenceDiagram
   title="A register backdoor read in uvm-core, down to VPI"
-  caption="In the Accellera uvm-core 2020.3.1 reference implementation, for a plain Verilog signal path (src/reg/uvm_reg.svh, src/dpi/uvm_hdl.svh, src/dpi/uvm_hdl_questa.c). The C side calls VPI routines, which is why uvm_hdl_read is a context import. If vpi_handle_by_name finds nothing, the C code reports the error UVM/DPI/HDL_GET and returns 0."
+  caption="In the Accellera uvm-core 2020.3.1 reference implementation, for a plain Verilog signal path (src/reg/uvm_reg.svh, src/dpi/uvm_hdl.svh, src/dpi/uvm_hdl_questa.c). The C side calls VPI routines, which is why uvm_hdl_read is a context import. If vpi_handle_by_name finds nothing, the C code reports the error UVM/DPI/HDL_GET and returns 0. A signal wider than UVM_HDL_MAX_WIDTH also returns 0; the reference code reports that case as UVM/DPI/HDL_SET, even on a read."
   columnWidth={130}
   participants={[
     { id: "reg", label: "uvm_reg", sublabel: "backdoor_read_func", kind: "reg" },
@@ -1337,6 +1336,8 @@ Answer each question before you look at the feedback.
   ]}
 />
 
+For more practice, try [the DPI-C basics question](/interview-prep#q-sv-dpi-c-basics) and [the staff-level DPI reference-model question](/interview-prep#q-sv-staff-dpi-reference-model) in the interview bank; each has a model answer and a rubric.
+
 ## Practice & Reinforce
 
 ### One-glance summary
@@ -1352,6 +1353,8 @@ Recall each row before you start the quiz; every question below draws on one of 
 | Disable | An import enters the disabled state only when an export it called returns, for a task with the value 1. It then calls no more exports; an import task returns 1, and an import function calls `svAckDisabledState()` before it returns. Its outputs and result are undefined. | §35.9 |
 
 ### Quiz
+
+**Warm-up with the explorer:** scroll back to part 2 of the DPI boundary explorer and predict all nine scenarios in a row without revealing any. Aim for nine out of nine.
 
 <Quiz
   questions={[
@@ -1385,7 +1388,7 @@ Recall each row before you start the quiz; every question below draws on one of 
         { text: "for i from svLow(h, 1) to svHigh(h, 1), read *(unsigned int*)svGetArrElemPtr1(h, i) after checking it is not NULL", correct: true, feedback: "Right: the query functions return the actual argument's own range, 1 to 2, and the accessor takes SystemVerilog indices (H.12.2, H.12.4)." },
         { text: "Cast h to unsigned int* and index it from 0", correct: false, feedback: "A handle is not a pointer to the data. Read it through the svdpi.h functions (H.8.6)." }
       ],
-      explanation: "An open array arrives as a handle. svLow and svHigh return the actual argument's range, here 1 and 2, and svGetArrElemPtr1 takes those SystemVerilog indices. It returns NULL for an index outside the range, or when the elements are not laid out as in C (H.12.4).",
+      explanation: "An open array arrives as a handle. svLow and svHigh return the actual argument's range, here 1 and 2, and svGetArrElemPtr1 takes those SystemVerilog indices. It returns NULL for an index outside the range, or when its elements are stored differently from single values of their type, as scalar or packed elements may be (H.12.4).",
       objective: 1
     },
     {
@@ -1467,8 +1470,6 @@ Recall each row before you start the quiz; every question below draws on one of 
     }
   ]}
 />
-
-**Warm-up with the explorer:** scroll back to part 2 of the DPI boundary explorer and predict all nine scenarios in a row without revealing any. Aim for nine out of nine.
 
 ### Kata P7: a firmware poll with a timeout
 
@@ -1613,9 +1614,9 @@ For each pair, write down the symptom you expect and the fix before you open the
 
 **Primary sources**
 - IEEE 1800-2023 Clause 35: §35.2.1 (tasks and functions across the boundary), §35.3 (two layers), §35.4 (global name space), §35.5.1.1 to §35.5.1.6 (zero time, arguments, `pure` and `context`, memory, reentrancy, C++ exceptions), §35.5.2 (pure functions), §35.5.3 (context and scope), §35.5.4 (import declarations), §35.5.5 (function results), §35.5.6 and §35.5.6.1 (argument types, open arrays), §35.6.1, §35.6.1.1 and §35.6.2 (argument passing), §35.7 (exported functions), §35.8 (exported tasks), §35.9 (disable protocol).
-- IEEE 1800-2023 Annex H (DPI C layer): H.4 (binary portability), H.5 (`svdpi.h`), H.7.3 to H.7.8 (data representation, Table H.1, canonical packed arrays), H.8.2 to H.8.10 (argument passing, strings), H.9 to H.9.5 (context, scope functions, DPI and VPI), H.11.5 (canonical helpers), H.12 to H.12.5 (open arrays), H.13 (time).
+- IEEE 1800-2023 Annex H (DPI C layer): H.4 (binary portability), H.5 (`svdpi.h`), H.7.3 to H.7.8 (data representation, Table H.1, canonical packed arrays), H.8.2 to H.8.10 (argument passing, strings), H.9 to H.9.5 (context, scope functions, DPI and VPI), H.11.5 (canonical helpers), H.6.5 (context and noncontext tasks and functions), H.11.4 (direct access to unpacked arrays), H.12 to H.12.5 and H.12.9 (open arrays), H.13 (time).
 - IEEE 1800-2023 Annex I (`svdpi.h`) and Annex J (inclusion of foreign language code: J.2 to J.4.1, `-sv_lib`, `-sv_root`, `-sv_liblist`).
-- IEEE 1800-2023 §36.2 (PLI generations and VPI), Clauses 37 and 38 (§38.15 `vpi_get_value`, §38.21 `vpi_handle_by_name`, §38.34 `vpi_put_value`, §38.36 `vpi_register_cb`), Annex C.2.1 (deprecated TF and ACC routines); §9.6.2 and §9.6.3 (`disable` and `disable fork`), §14.16 (synchronous drives) and §20.10 (severity tasks) for the disable protocol and the worked example.
+- IEEE 1800-2023 §36.2 (PLI generations and VPI), Clauses 37 and 38 (§38.15 `vpi_get_value`, §38.21 `vpi_handle_by_name`, §38.34 `vpi_put_value`, §38.36 `vpi_register_cb`), Annex C.2.1 (deprecated TF and ACC routines); §9.6.2 and §9.6.3 (`disable` and `disable fork`), §14.16 (synchronous drives) and §20.10 (severity tasks) for the disable protocol and the worked example; §7.6 and §7.7 (array assignment and passing arrays to subroutines), Table 36-9 in §36.11 (`vpi_printf`).
 - uvm-core 2020.3.1: `src/dpi/uvm_hdl.svh`, `src/dpi/uvm_dpi.svh`, `src/dpi/uvm_hdl_questa.c`, `src/reg/uvm_reg.svh` (uvm-core impl.).
 
 **Related**

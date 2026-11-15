@@ -3,7 +3,7 @@ title: "Interrupt-Driven Stimulus"
 description: "Turn DUT interrupts into recovery stimulus that pre-empts background traffic with grab() and then lets it resume, without losing, duplicating or hanging on an interrupt."
 flashcards: "I-UVM-3B_Interrupt_Handling"
 sources:
-  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§10.1.1.2.4–§10.1.1.2.5, §10.1.2, §12.2.8.2–§12.2.8.3, §13.5, §13.9, §14.2.3.1, §14.2.5.3–§14.2.5.8, §14.2.5.11, §15.3.2.11–§15.3.2.16, Annex F.7.3.3)"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§10.1.1.2.4–§10.1.1.2.5, §10.1.2, §12.2.8.2–§12.2.8.3, §13.5, §13.9, §14.2.3.1, §14.2.5.3–§14.2.5.8, §14.2.5.11, §15.3.2.11–§15.3.2.16, §15.3.2.19, Annex F.7.3.3)"
     type: "standard"
     identifier: "IEEE 1800.2-2020"
   - title: "IEEE Standard for SystemVerilog: Unified Hardware Design, Specification, and Verification Language (§9.4.2, §9.4.2.3, §9.4.3, §9.6.3, §13.4, §14.13, §15.4.4–§15.4.5)"
@@ -29,7 +29,7 @@ sources:
 | the crew | the interrupt service sequence | it runs for the whole test, reading the book one alarm at a time; while it holds the corridor, right of way is exclusive to it and its own children |
 | taking the corridor | `grab()` | *Breaks:* the crew cannot push past the item already on the bus, or past a held `lock()` |
 | resetting the alarm | the clear write | it is ordinary bus stimulus, sent as the crew's child inside the grab |
-| handing the corridor back | `ungrab()` | call it on every path, or the corridor stays closed to everyone |
+| handing the corridor back | `ungrab()` | call it on every path, or the corridor stays closed to everyone while the crew is still running |
 | foot traffic, paused but not sent home | background traffic | it needs no code to resume: its waiting request keeps its place in the queue |
 
 **You will be able to:**
@@ -127,7 +127,7 @@ endinterface
 The tempting first monitor waits for "a clock edge where `irq` is 1":
 
 ```systemverilog
-// snippet: WRONG for a level interrupt: one transaction per clock while irq is high
+// snippet: the tempting first monitor
 forever begin
   @(vif.mon_cb iff vif.mon_cb.irq);
   tr = irq_tr::type_id::create("tr");
@@ -138,8 +138,11 @@ end
 
 **Predict before you look at the waveform.** The DUT raises `irq` before edge 1, and the clear write takes effect before edge 5. How many transactions does this loop publish for that one interrupt?
 
+<details>
+<summary>Check your prediction</summary>
+
 <TimingDiagram
-  title="One level interrupt: the iff loop publishes at every edge, the edge detector once"
+  title="One level interrupt: when each monitor calls ap.write()"
   caption="irq is sampled by mon_cb at each rising edge. The rows iff_wr and edge_wr are not wires: a 1 marks an edge at which that monitor calls ap.write(). The iff loop publishes at edges 1, 2, 3 and 4 because irq is still 1 there; the edge detector publishes only at edge 1, where irq is 1 and was 0 at the previous edge."
   edges={7}
   signals={[
@@ -157,7 +160,9 @@ end
   ]}
 />
 
-**Debrief.** Four. An `@(event iff condition)` control waits for the *event* (here, every `mon_cb` clock edge) and lets it through only if the condition is true at that moment (IEEE 1800-2023 §9.4.2.3). It does not wait for the condition to *change*. While a level interrupt stays high, every edge passes, so one interrupt becomes four transactions and, downstream, four recoveries. For a pulse interrupt (one clock high) the same loop is correct, which is why this bug survives code review.
+**Debrief.** Four. An `@(event iff condition)` control waits for the *event* (here, every `mon_cb` clock edge) and lets it through only if the condition is true at that moment (IEEE 1800-2023 §9.4.2.3). It does not wait for the condition to *change*. While a level interrupt stays high, every edge passes, so one interrupt becomes four transactions and, downstream, four recoveries. For a pulse interrupt (one clock high) the same loop is correct, which is why this bug survives code review. So the loop is WRONG for a level interrupt: one transaction per clock while `irq` is high (the iff loop publishes at every edge, the edge detector below publishes once).
+
+</details>
 
 The fix is to publish on the **rising edge** of the sampled value: remember the previous sample and publish only when `irq` goes from 0 to 1.
 
@@ -195,14 +200,14 @@ endclass
 
 Two rules make this monitor safe:
 - **A new object for every interrupt.** The FIFO in step 2 stores the handle you pass to `write()`; it does not copy it. Reusing one `irq_tr` would make every queued entry point at the same object, which the next interrupt overwrites.
-- **Know your interrupt's kind.** Ask the DUT specification whether `irq` is a level or a pulse, and whether several sources share one line. Detect edges for a level, and check that a pulse is at least one clock wide, or the clocking block can miss it entirely.
+- **Know your interrupt's kind.** Ask the DUT specification whether `irq` is a level or a pulse, and whether several sources share one line. Detect edges for a level, and check that a pulse is exactly one clock wide (wider: edge-detect it like a level), or the clocking block can miss it or count it twice.
 
 The three kinds of line side by side (the third is explained just below):
 
 | Kind of `irq` line | What the monitor must detect | The classic bug | The check to add |
 |---|---|---|---|
 | Level, one source | The rising edge of the sampled value (`irq && !prev_irq`) | The `iff` loop publishes once per clock while `irq` is high | `irq` falls after the clear write |
-| Pulse | Each edge at which `irq` is sampled 1 (one clock wide: the `iff` loop is correct here) | A pulse narrower than a clock can fall between two edges and be missed | The pulse is exactly one clock wide, as the spec defines it (wider: edge-detect it like a level) |
+| Pulse | Each edge at which `irq` is sampled 1 (one clock wide: the `iff` loop is correct here) | A pulse narrower than a clock can fall between two edges and be missed | The pulse is exactly one clock wide, as the DUT specification defines it (wider: edge-detect it like a level) |
 | Level, several sources OR'd onto one line | The rising edge (the service routine then re-reads the status register after each clear) | A second source fires while the line is high: no new edge, so it is lost | Re-read the status register until nothing is pending; `irq` falls within N clocks of the clear write |
 
 **The limit of edge detection: shared lines.** Many DUTs OR several sources onto one level `irq`. If source 5 fires while source 3 still holds the line high, there is no new rising edge, and the edge detector publishes nothing for source 5. Duplicates are gone, but now an interrupt can be lost. Two fixes, often used together:
@@ -251,7 +256,7 @@ function void connect_phase(uvm_phase phase);
 endfunction
 ```
 
-A sequence holding a handle to `irq_fifo` takes entries with the blocking task `irq_fifo.get(tr)`, or polls with the function `irq_fifo.try_get(tr)`, which returns 0 when the FIFO is empty (§12.2.8.2).
+A sequence holding a handle to `irq_fifo` takes entries with the blocking task `irq_fifo.get(tr)`, or polls with the function `irq_fifo.try_get(tr)`, which returns 0 when the FIFO is empty (IEEE 1800.2-2020 §12.2.8.1.4 and §12.2.2, through `get_peek_export`; uvm-core 2020.3.1 also gives the FIFO class its own `get()` and `try_get()`, which the code here calls directly).
 
 <SequenceDiagram
   title="The zero-time path from the monitor to the service sequence"
@@ -301,6 +306,9 @@ A `uvm_event` looks like a natural fit: the monitor calls `irq_ev.trigger(tr)` a
 
 **Predict.** Two interrupts arrive 50 ns apart, and each recovery takes 200 ns. How many recoveries does an event-based handler run, and how many does a FIFO-based handler run?
 
+<details>
+<summary>Check your prediction</summary>
+
 <TimingDiagram
   title="Two interrupts 50 ns apart, 200 ns per recovery: event versus FIFO"
   caption="Each column is a 50 ns step (column 1 = 50 ns), not a clock. irq_tr shows when the monitor publishes. ev_hdlr waits with wait_trigger_data(); q_hdlr waits with irq_fifo.get(). q_used is the number of entries waiting in the FIFO."
@@ -319,6 +327,8 @@ A `uvm_event` looks like a natural fit: the monitor calls `irq_ev.trigger(tr)` a
 />
 
 **Debrief.** The event-based handler runs one recovery and then waits forever, with no error. The FIFO-based handler runs two. Use a queue whenever every interrupt needs its own service. An event is fine for a one-off notification ("reset is done"), or when the handler reads the DUT's status register and services *everything* pending each time it wakes (Push Further).
+
+</details>
 
 | Need | Queue (`uvm_tlm_analysis_fifo`, mailbox) | `uvm_event` |
 |---|---|---|
@@ -412,7 +422,10 @@ Form A is the simplest. Form B, which Make It Work uses, keeps the sequencer for
 | What one grab covers | one recovery on one sequencer | several recovery steps, or several queued interrupts, back to back |
 | Traps | none specific to this form; still `ungrab()` on every path | bare `grab()` after `start(null)`: `UVM_FATAL [GRAB] Null m_sequencer reference`; child started without `this`: both wait forever |
 
-**Predict.** `bg` (background) sends one 10 ns write after another from 0 ns. An interrupt is queued at 25 ns and `svc` grabs `cfg_sqr` at once. A second interrupt is queued at 27 ns. Which write does the driver receive at 30 ns, and when does `bg`'s fourth write (B4) go out?
+**Predict.** `bg` (background) sends one 10 ns write after another from 0 ns, and every write, including a clear, takes 10 ns on the bus. An interrupt is queued at 25 ns and `svc` grabs `cfg_sqr` at once. A second interrupt is queued at 27 ns. Which write does the driver receive at 30 ns, and when does `bg`'s fourth write (B4) go out?
+
+<details>
+<summary>Check your prediction</summary>
 
 <SequenceDiagram
   title="Interrupt to recovery with grab(), and background traffic resuming"
@@ -451,11 +464,18 @@ Form A is the simplest. Form B, which Make It Work uses, keeps the sequencer for
 
 **Debrief.** At 30 ns the driver gets the clear write, not B4: B3 was not interrupted, but every later `bg` request is blocked until `ungrab()`. The second interrupt never waits behind background traffic because `svc` still holds the grab when it takes it from the FIFO. B4 goes out at 50 ns.
 
+</details>
+
 **Try it in the sandbox.** The arbitration sandbox runs the same rules on a model of uvm-core's sequencer. Load the **FIFO** scenario, then edit it: A with 4 items from 0 ns and nothing before them; B with 3 items from 1 ns and nothing before them; C with 2 items from 4 ns, **grab()** before its items, and "calls ungrab() at the end" ticked. Predict the item driven at 10 ns and the order after C's `ungrab()`, then run it.
 
 <SequencerArbitrationSandbox />
 
+<details>
+<summary>Check your prediction</summary>
+
 **Debrief.** C1 at 10 ns and C2 at 20 ns: C's grab was granted at 4 ns while A1 was on the bus. Then B1 at 30 ns, before A2: under the default FIFO mode the oldest waiting request wins, and B has waited since 1 ns, A2 only since 10 ns. The full order is A1, C1, C2, B1, A2, B2, A3, B3, A4. Background traffic resumes exactly where the queue left it.
+
+</details>
 
 ### Step 5: Resume the interrupted traffic cleanly
 
@@ -779,6 +799,11 @@ module tb_top;
 endmodule
 ```
 
+**Predict the log first:** when do the two clears go out, and when does B4?
+
+<details>
+<summary>Expected output and the reason for each line</summary>
+
 **Expected output** (illustrative: traced by hand through `m_lock_req()`, `grant_queued_locks()`, `is_blocked()` and `m_choose_next_request()` in uvm-core 2020.3.1, and checked against the sequencer model behind the arbitration sandbox; not captured from a simulator. File names and line numbers are omitted, and your simulator may print times in another unit, such as 25000 for 25 ns):
 
 ```text
@@ -838,6 +863,8 @@ Why each line, in short:
 | 50 | asks | B4 | B4 | `ungrab(cfg_sqr)` at 50 ns unblocks bg |
 | 60–90 | asks | bg | B5–B8 | normal traffic |
 | 100 | idle | none | — | `bg` ends; `svc.busy` is 0; `svc.kill()`; the objection drops |
+
+</details>
 
 ### How to build one yourself
 
@@ -1061,9 +1088,9 @@ Answer each one before you open the feedback.
   title="Interview: one interrupt, three recoveries"
   question="The log shows three identical IRQ_CLEAR writes, 10 ns apart, for one interrupt. The clock period is 10 ns. Where is the bug most likely to be?"
   options={[
-    { text: "In the monitor: it waits with @(cb iff cb.irq), so it publishes at every clock while the level interrupt is high.", isCorrect: true, feedback: "Right. iff gates each clock event; it does not wait for a change (IEEE 1800-2023 §9.4.2.3). Edge-detect the sampled irq, and re-read the status register for shared lines." },
-    { text: "In the service sequence: grab() was retried three times because the sequencer was busy.", isCorrect: false, feedback: "grab() is a task that returns once, when it is granted. It is never retried, and it sends no items." },
+    { text: "In the service sequence: grab() was retried three times because the sequencer was busy, so the clear was re-sent each time.", isCorrect: false, feedback: "grab() is a task that returns once, when it is granted. It is never retried, and it sends no items." },
     { text: "In the analysis FIFO: it duplicates entries when the reader is slow.", isCorrect: false, feedback: "uvm_tlm_analysis_fifo stores exactly one entry per write() call. Three entries mean three write() calls." },
+    { text: "In the monitor: it waits with @(cb iff cb.irq), so it publishes at every clock while the level interrupt is high.", isCorrect: true, feedback: "Right. iff gates each clock event; it does not wait for a change (IEEE 1800-2023 §9.4.2.3). Edge-detect the sampled irq, and re-read the status register for shared lines." },
     { text: "In the driver: it calls item_done() three times.", isCorrect: false, feedback: "An extra item_done() with no item outstanding stops the run with UVM_FATAL [SQRBADITMDN] in uvm-core; it does not produce three logged writes." }
   ]}
 />
@@ -1072,8 +1099,8 @@ Answer each one before you open the feedback.
   title="Interview: bounded interrupt latency"
   question="Three interrupt priorities share one register agent with heavy background traffic. What gives bounded service latency and no lost interrupts?"
   options={[
+    { text: "Three service sequences, one per priority, each calling grab() on the register sequencer; the urgent one interrupts the others whenever its interrupt arrives.", isCorrect: false, feedback: "A grab never takes the sequencer from a holder, and in uvm-core several waiting grabs are served last-in, first-out. Priority between grabbers is not guaranteed." },
     { text: "One service sequence that waits on prioritized queues and services under one grab(), with the latency bound being the item on the bus plus the current recovery, plus any lock() burst already held.", isCorrect: true, feedback: "Right. One decision-maker sees every pending interrupt, chooses by priority at each service boundary, and grab() keeps background requests out. Nothing is lost because each priority has a queue." },
-    { text: "Three service sequences, one per priority, each calling grab(); the urgent one interrupts the others.", isCorrect: false, feedback: "A grab never takes the sequencer from a holder, and in uvm-core several waiting grabs are served last-in, first-out. Priority between grabbers is not guaranteed." },
     { text: "Raise the urgent sequence's priority to 1000 under UVM_SEQ_ARB_WEIGHTED.", isCorrect: false, feedback: "WEIGHTED is random by weight, so the urgent sequence only usually wins, and priority gives no exclusivity in any mode." },
     { text: "Trigger a uvm_event per priority level and wait on all three.", isCorrect: false, feedback: "An event does not count triggers, so interrupts that fire while the handler is busy are lost." }
   ]}
@@ -1083,10 +1110,10 @@ Answer each one before you open the feedback.
   title="Interview: the ISR hangs inside a register read"
   question="An interrupt service sequence grabs the register sequencer and then calls regmodel.irq_status.read(status, value). The test hangs at that read with no error. Why?"
   options={[
-    { text: "The read has no .parent(this), so uvm-core starts its bus item from a proxy sequence that the ISR's own grab blocks.", isCorrect: true, feedback: "Right (uvm-core 2020.3.1 uvm_reg_map.svh, default_parent_seq). Pass .parent(this) so the item comes from the grabbing sequence, or release the grab before the access." },
     { text: "Register reads cannot be used inside a grab() window.", isCorrect: false, feedback: "They can, if the bus items come from the grabbing sequence or one of its children. .parent(this) does that." },
-    { text: "Register accesses run at a lower priority than the grab holder, so the read waits until ungrab().", isCorrect: false, feedback: "Priority is not involved. The proxy sequence is blocked outright by the grab, whatever its priority, and the ISR cannot reach ungrab() while it waits for the read: a deadlock." },
-    { text: "The driver does not support reads.", isCorrect: false, feedback: "Then the read would reach the driver and fail there. Here the bus item never reaches the driver at all." }
+    { text: "Register accesses run at a lower priority than the grab holder, so the read waits in the arbitration queue until ungrab().", isCorrect: false, feedback: "Priority is not involved. The proxy sequence is blocked outright by the grab, whatever its priority, and the ISR cannot reach ungrab() while it waits for the read: a deadlock." },
+    { text: "The driver does not support reads.", isCorrect: false, feedback: "Then the read would reach the driver and fail there. Here the bus item never reaches the driver at all." },
+    { text: "The read has no .parent(this), so uvm-core starts its bus item from a proxy sequence that the ISR's own grab blocks.", isCorrect: true, feedback: "Right (uvm-core 2020.3.1 uvm_reg_map.svh, default_parent_seq). Pass .parent(this) so the item comes from the grabbing sequence, or release the grab before the access." }
   ]}
 />
 

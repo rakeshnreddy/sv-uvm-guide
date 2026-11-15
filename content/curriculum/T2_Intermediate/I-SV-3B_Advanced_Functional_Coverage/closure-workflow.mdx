@@ -23,7 +23,7 @@ The analogy, sticker by sticker. Keep these five names in mind; the next section
 |---|---|---|
 | You got it but never stuck it in | **unobserved**: the scenario happened, coverage did not record it | No: fix how coverage records it |
 | A fake that must never appear | **forbidden** by the spec | No: it must stay empty |
-| Not part of your edition | **unreachable here**: legal, but this design or configuration cannot produce it | No |
+| Not part of your edition | **unreachable here**: legal, but this design or configuration cannot produce it | No: a scoped exclusion with a reviewed waiver |
 | Never printed in your packs | **never generated**: a constraint gives it probability 0 | No: change the stimulus |
 | Printed, but rare | **rare**: probability above 0 but small | Yes, if the budget is large enough; otherwise steer the odds |
 
@@ -48,10 +48,12 @@ The examples use the module's running example: an 8-bit ALU as the design under 
 |---|---|---|
 | ALU-1 | every operation | `cp_op` |
 | ALU-2 | `a` at 0 and `8'hFF` | `cp_a` |
-| ALU-3 | `b` at its edges | `cp_b` |
+| ALU-3 | `b` at its edges | `cp_b`, bins `zero` and `max` |
 | ALU-4 | every operation with each edge of `a` | the cross `x_op_a`, 7 × 2 = 14 cells |
-| ALU-5 | DIV with `b == 0` is forbidden by the spec | (a scenario that must never happen) |
+| ALU-5 | every operation with each edge of `b`; DIV with `b == 0` is forbidden by the spec | the cross `x_op_b` (`cp_op` × `cp_b`): 13 cells that count, plus the illegal bin `div_by_zero` for the forbidden cell (a scenario that must never happen) |
 | ALU-6 | every result matches the reference model `alu_model` | (a check, not a coverage item) |
+
+This page's worked example uses only `cp_op`, `cp_a` and `x_op_a`; `cp_b` and `x_op_b` appear in the katas and the lab.
 
 A **cell** is one bin of a cross, such as `<ADD, a = 8'h00>`.
 
@@ -138,9 +140,9 @@ In text: a hole first asks "did it happen?"; yes means unobserved. Otherwise "do
 
 **Forbidden and unreachable are different.** A forbidden scenario is one the spec rules out, so if it ever happens something is broken, and you want an error. An unreachable scenario is perfectly legal; this particular design or configuration just cannot produce it, so there is nothing to check and nothing to report, only a decision to record. Mixing them up either turns legal traffic into errors (`illegal_bins` on an unreachable cell that a later configuration can reach) or lets forbidden traffic pass silently (`ignore_bins` on a forbidden cell).
 
-**How to tell "never generated" from "rare".** A probability is the chance that one random transaction lands in the bin. You compute it from the constraints: the solver picks uniformly among all legal value combinations unless `dist` says otherwise (§18.5.9), so with `op` uniform over 7 operations and `a` uniform over 256 values, the cell `<ADD, a = 8'h00>` has p = 1/7 × 1/256 = 1/1792. A constraint such as `op inside {ADD, SUB, MUL, AND, OR, XOR}` gives the two DIV cells p = 0. In a report, the signature of p = 0 is a cell that stays empty on *every* seed while its neighbours in the same row fill.
+**How to tell "never generated" from "rare".** A probability is the chance that one random transaction lands in the bin. You compute it from the constraints: the solver picks uniformly among all legal value combinations unless `dist` says otherwise (§18.5.9), so with `op` uniform over 7 operations and `a` uniform over 256 values, the cell `<ADD, a = 8'h00>` has p = 1/7 × 1/256 = 1/1792. A constraint such as `op inside {ADD, SUB, MUL, AND, OR, XOR}` gives the two DIV cells p = 0. In a report, the signature of p = 0 is a cell (or a whole row, as when DIV is left out) that stays empty on *every* seed while comparably likely cells elsewhere come and go.
 
-**Try it before you read on.** The challenge below is a model of the same decision, on a small address × operation cross. The stimulus has a constraint that never sends BURST to the high address region, so one cell has probability 0 and the regression is stuck. **Predict first:** for Spec A (BURST to the high region is forbidden) and for Spec B (it is legal), which of the four fixes closes coverage *and* matches the spec? Then choose a spec and try each fix.
+**Try it before you read on.** The challenge below is a model of the same decision, on a small address × operation cross. The stimulus has a constraint that never sends BURST to the high address region (the widget's register region, addr 48..63), so one cell has probability 0 and the regression is stuck. **Predict first:** for Spec A (BURST to the high region is forbidden) and for Spec B (it is legal), which of the four fixes closes coverage *and* matches the spec? Then choose a spec and try each fix.
 
 <CoverageCrossExplorerVisualizer mode="closure" />
 
@@ -194,7 +196,7 @@ author  (engineer)      reviewer  (designer)      date  (review date)
 revisit when HAS_MUL, the spec section or the coverage model changes
 ```
 
-**`illegal_bins` is not a checker.** It reports a forbidden value only when its covergroup instance exists, collects coverage and samples that value. In a regression that runs with coverage switched off for speed, or after `stop()`, what happens is tool-dependent. A forbidden scenario therefore always gets a real check as well, in the scoreboard or in an assertion, and the constraint that keeps the stimulus legal ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows the ALU-5 row with all three).
+**`illegal_bins` is not a checker.** It reports a forbidden value only when its covergroup instance exists, collects coverage and samples that value. In a regression that runs with coverage switched off for speed, or after `stop()`, what happens is tool-dependent. A forbidden scenario therefore always gets a real check as well, in the scoreboard or in an assertion, and the constraint that keeps the stimulus legal (constraint `c_spec`: `op == DIV -> b != 8'h00`) ([Linking Coverage to the Plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage) shows the ALU-5 row with all three).
 
 <ArchitectureDiagram
   title="Three guards for the forbidden scenario ALU-5"
@@ -209,7 +211,7 @@ revisit when HAS_MUL, the spec section or the coverage model changes
     { id: "dut", label: "ALU (DUT)", sublabel: "op, a, b in; y out", kind: "dut", col: 1, row: 0 },
     { id: "cov", label: "collector", sublabel: "guard 2: illegal_bins", kind: "subscriber", col: 0, row: 1 },
     { id: "chk", label: "input check", sublabel: "guard 3: flags DIV, b == 0", kind: "scoreboard", col: 1, row: 1 },
-    { id: "gate", label: "regression gate", sublabel: "reads UVM and simulator errors", kind: "generic", col: 0, row: 2, colSpan: 2 }
+    { id: "gate", label: "regression gate", sublabel: "reads testbench and simulator errors", kind: "generic", col: 0, row: 2, colSpan: 2 }
   ]}
   edges={[
     { from: "gen", to: "dut", style: "data" },
@@ -234,7 +236,7 @@ revisit when HAS_MUL, the spec section or the coverage model changes
 3. **Switch a mode at run time.** A mode knob or `constraint_mode()` ([I-SV-2B Controlling Randomization](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/controlling-randomization)) keeps the broad uniform stimulus most of the time and turns on the corner weights when coverage stops growing. The [module overview's Make It Work](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/index) builds this feedback loop.
 4. **Write a directed test or sequence.** A cell that needs a precise setup (fill a FIFO, then reset, then read) is cheaper to reach by construction than by chance.
 
-The steering table for `x_op_a` under a budget of 3 seeds × 500 transactions, merged (1,500 samples), shows why the order matters. All numbers are exact probabilities for that budget, starting from the generator that leaves out DIV:
+The steering table for `x_op_a` under a budget of 3 seeds × 500 transactions, merged (1,500 samples), shows why the order matters. All numbers are exact for that budget, taking `op` as uniform over the allowed operations (`c_spec` makes the non-DIV cells 1/1791 and the DIV cells slightly rarer, which changes none of the figures shown), starting from the generator that leaves out DIV:
 
 | Change | p for each `x_op_a` cell | P(all 14 cells closed within 1,500) |
 |---|---|---|
@@ -271,6 +273,7 @@ For p = 10⁻⁴ (a bin hit once in 10,000 transactions):
   <svg viewBox="0 0 340 208" role="img" aria-label="Chart of the chance of hitting one bin against N times p. The curve rises steeply, then flattens: 63.2 percent at N equal to 1 over p, 86.5 percent at 2 over p, 95 percent at about 3 over p and 99 percent at about 4.6 over p. A bin with p equal to 0 stays flat at 0 percent for every N." style={{ width: "100%", maxWidth: 400 }}>
     <line x1="44" y1="30" x2="44" y2="170" stroke="currentColor" strokeOpacity="0.6" />
     <line x1="44" y1="170" x2="318" y2="170" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="44" y="18" fontSize="10" textAnchor="middle" fill="currentColor">P(hit)</text>
     <text x="40" y="33" fontSize="10" textAnchor="end" fill="currentColor">100%</text>
     <text x="40" y="103" fontSize="10" textAnchor="end" fill="currentColor">50%</text>
     <text x="40" y="173" fontSize="10" textAnchor="end" fill="currentColor">0%</text>
@@ -291,10 +294,11 @@ For p = 10⁻⁴ (a bin hit once in 10,000 transactions):
     <line x1="44" y1="170" x2="318" y2="170" stroke="currentColor" strokeWidth="3" />
     <text x="249" y="148" fontSize="10" textAnchor="middle" fill="currentColor">p = 0:</text>
     <text x="249" y="161" fontSize="10" textAnchor="middle" fill="currentColor">stays at 0%</text>
+    <line x1="249" y1="164" x2="249" y2="169" stroke="currentColor" />
     <text x="44" y="184" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
     <text x="98" y="184" fontSize="10" textAnchor="middle" fill="currentColor">1/p</text>
     <text x="152" y="184" fontSize="10" textAnchor="middle" fill="currentColor">2/p</text>
-    <text x="205.8" y="184" fontSize="10" textAnchor="middle" fill="currentColor">3.0/p</text>
+    <text x="205.8" y="184" fontSize="10" textAnchor="middle" fill="currentColor">3/p</text>
     <text x="292.7" y="184" fontSize="10" textAnchor="middle" fill="currentColor">4.6/p</text>
     <text x="181" y="202" fontSize="10" textAnchor="middle" fill="currentColor">N, the number of transactions, in units of 1/p</text>
   </svg>
@@ -303,7 +307,7 @@ For p = 10⁻⁴ (a bin hit once in 10,000 transactions):
 
 A probability-0 bin has P = 0 for every N.
 
-**Many bins.** A cross closes only when *all* its cells are hit, so the rarest cells dominate. For k cells of probability p, a safe estimate is N ≈ ln(k / δ) / p for a chance 1 − δ of closing them all. For `x_op_a` (k = 14, p = 1/1792, δ = 0.05) that gives about 10,100; the exact answer is 10,053:
+**Many bins.** A cross closes only when *all* its cells are hit, so the rarest cells dominate. For k cells of probability p, a safe estimate is N ≈ ln(k / δ) / p for a chance 1 − δ of closing them all. For `x_op_a` (k = 14, p = 1/1792, δ = 0.05) that gives about 10,100; the exact answer is 10,053. The exact values in the tables come from inclusion–exclusion over the 14 cells; the product (1 − (1 − p)^N)^14 is a close hand approximation when p is small:
 
 | N | P(all 14 closed), p = 1/1792 (DIV fixed, `a` uniform) | P(all 14 closed), p = 1/28 (both edges weighted) |
 |---|---|---|
@@ -371,7 +375,7 @@ The **Unified Coverage Interoperability Standard (UCIS)**, Accellera 1.0 (2012),
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| One cell stays empty on every seed while the other cells in its row fill | Probability 0: a constraint excludes it, or a setup sequence is missing | Classify it: forbidden → `illegal_bins` with a check; legal → fix the constraint or write a directed test |
+| One cell or row stays empty on every seed while cells of similar probability fill on some seeds | Probability 0: a constraint excludes it, or a setup sequence is missing | Classify it: forbidden → `illegal_bins` with a check; legal → fix the constraint or write a directed test |
 | The transaction log shows the scenario, but its bin is empty | Unobserved: the collector is not fed on that path, samples a stale or wrong field, has a false `iff` guard, was stopped and not restarted, or `at_least` is higher than the hits | Fix the collector, then rerun the *same* seed and confirm the bin fills |
 | The merged report has two rows for one lane, such as `cov` and `cov_1` | Instance names depend on construction order | Name every instance from the hierarchy with `set_inst_name()` |
 | Each seed is far from the goal, but the merged number reaches it | The rare cells close only across seeds | Fine if the plan signs off on merged coverage; if it requires per-seed closure, steer |
@@ -385,13 +389,13 @@ Simulator message text for illegal bins, exclusions and merges is tool-dependent
 ### In a real testbench
 
 - **Who does what.** After every nightly regression, the engineer who owns the vplan reads the merged report row by row and classifies each new hole. Designers join the coverage review for anything classified forbidden or unreachable, because only they can confirm the spec and the configuration. Waivers live in a version-controlled file next to the plan.
-- **In UVM.** The collector is a `uvm_subscriber` fed by the monitor's analysis port ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)); steering is a test knob passed through the configuration database or a virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)); stopping at the goal means dropping the objection, never `$finish` from a component.
+- **In UVM.** Preview (taught in I-UVM-1D to I-UVM-3B): the collector is a `uvm_subscriber` fed by the monitor's analysis port ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)); steering is a test knob passed through the configuration database or a virtual sequence ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index)); stopping at the goal means dropping the objection, never `$finish` from a component.
 - **When not to chase a hole.** A bin that no plan row asks for is an orphan: fix the coverage model (give it a row or remove it) instead of spending budget on it.
 - **The interview angle.** "We have been stuck at 96% for two weeks" is the classic staff-level prompt. The expected answer is this page in order: classify each hole from evidence, fix the unobserved and never-generated ones, waive only with evidence, budget the rare ones, and steer when the budget says more seeds will not do it.
 
 <ArchitectureDiagram
   title="Where the closure pieces sit in a UVM testbench"
-  caption="The monitor broadcasts each transaction to the collector, a uvm_subscriber that holds the covergroup. The test sets the steering knob through the configuration database (or hands it to a virtual sequence), and the sequence reads it. When the goal is met, the test drops its objection so the run phase can end; no component calls $finish. Solid arrows carry transactions, dotted arrows carry configuration, the dashed arrow is the order of events."
+  caption="The monitor broadcasts each transaction to the collector, a uvm_subscriber that holds the covergroup. The test sets the steering knob through the configuration database (or hands it to a virtual sequence), and the sequence reads it. The test (or a component it owns) reads the collector's coverage with get_coverage(); the collector notifies no one. When the goal is met, the test drops its objection so the run phase can end; no component calls $finish. Solid arrows carry transactions; dotted arrows carry configuration and the coverage query."
   legend={false}
   cellWidth={150}
   gapX={88}
@@ -405,7 +409,7 @@ Simulator message text for illegal bins, exclusions and merges is tool-dependent
   edges={[
     { from: "test", to: "seq", style: "control", label: "knob" },
     { from: "mon", to: "cov", style: "data", label: "write(t)" },
-    { from: "cov", to: "test", style: "causal", label: "at goal" }
+    { from: "test", to: "cov", style: "control", label: "get_coverage()" }
   ]}
 />
 
@@ -444,8 +448,8 @@ illegal_bins div_by_zero = binsof(cp_op) intersect {DIV} &&
     <text x="16" y="78" fontSize="10" fill="currentColor">2 forbidden → illegal_bins + constraint + check</text>
     <text x="16" y="96" fontSize="10" fill="currentColor">3 unreachable here → exclusion + waiver</text>
     <text x="16" y="114" fontSize="10" fill="currentColor">4 under-stimulated → fix p = 0, or budget + steer</text>
-    <path d="M275,36 L275,138 L55,138 L55,38" fill="none" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#cw-open-arrow)" />
-    <text x="165" y="156" fontSize="10" textAnchor="middle" fill="currentColor">apply the action, then rerun and measure</text>
+    <path d="M310,36 L310,128 L4,128 L4,23 L7,23" fill="none" stroke="currentColor" strokeDasharray="4 3" markerEnd="url(#cw-open-arrow)" />
+    <text x="165" y="146" fontSize="10" textAnchor="middle" fill="currentColor">apply the action, then rerun and measure</text>
   </svg>
 </VisualRecap>
 
@@ -634,7 +638,7 @@ module tb_top;
 endmodule
 ```
 
-**Predict before you read the logs.** Use the probabilities from earlier on this page: with DIV allowed and `a` uniform, each `x_op_a` cell has p = 1/1792; `+BUGGY` gives the two DIV cells p = 0; `+STEER` gives every cell p = 1/28. Each policy runs 3 seeds of 500 transactions. For each policy, predict: does `cp_op` reach 7/7 on every seed, and does the merged `x_op_a` reach 14/14?
+**Predict before you read the logs.** Use the probabilities from earlier on this page: with DIV allowed and `a` uniform, each `x_op_a` cell has p = 1/1792; each operation has p = 1/7 (DIV 0 under `+BUGGY`); `+BUGGY` gives the two DIV cells p = 0; `+STEER` gives every cell p = 1/28. Each policy runs 3 seeds of 500 transactions. For each policy, predict: does `cp_op` reach 7/7 on every seed, and does the merged `x_op_a` reach 14/14?
 
 <details className="my-4 rounded-xl border border-border/70 p-3">
 <summary className="cursor-pointer font-semibold">Check your prediction</summary>
@@ -695,7 +699,7 @@ PASS=1500 FAIL=0
 **Read the three logs like a coverage review.**
 
 <figure className="my-6">
-  <svg viewBox="0 0 340 232" role="img" aria-label="Three x_op_a grids filled from the expected logs, rows ADD to XOR, columns a equal to 00 and FF. No plusarg: 8 of 14 cells hit; empty are ADD 00, MUL FF, DIV 00, AND FF, OR 00 and XOR 00; per-seed x_op_a 4, 3 and 3. Plus BUGGY: 7 of 14 hit; empty are SUB 00, MUL 00, DIV 00, DIV FF, AND FF, OR FF and XOR 00, so the whole DIV row is empty; per-seed 3, 4 and 2. Plus STEER: all 14 hit, and 14 of 14 on every seed." style={{ width: "100%", maxWidth: 400 }}>
+  <svg viewBox="0 0 340 244" role="img" aria-label="Three x_op_a grids filled from the expected logs, rows ADD to XOR, columns a equal to 00 and FF. No plusarg: 8 of 14 cells hit; empty are ADD 00, MUL FF, DIV 00, AND FF, OR 00 and XOR 00; per-seed x_op_a 4, 3 and 3 of 14 cells. Plus BUGGY: 7 of 14 hit; empty are SUB 00, MUL 00, DIV 00, DIV FF, AND FF, OR FF and XOR 00, so the whole DIV row is empty; per-seed 3, 4 and 2. Plus STEER: all 14 hit, and 14 of 14 on every seed." style={{ width: "100%", maxWidth: 400 }}>
     <text x="40" y="60" fontSize="10" textAnchor="end" fill="currentColor">ADD</text>
     <text x="40" y="78" fontSize="10" textAnchor="end" fill="currentColor">SUB</text>
     <text x="40" y="96" fontSize="10" textAnchor="end" fill="currentColor">MUL</text>
@@ -735,7 +739,9 @@ PASS=1500 FAIL=0
     <rect x="84" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
     <text x="100" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
     <text x="82" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 8/14</text>
-    <text x="82" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 4, 3, 3</text>
+    <text x="82" y="200" fontSize="10" textAnchor="middle" fill="currentColor">per seed:</text>
+    <text x="82" y="213" fontSize="10" textAnchor="middle" fill="currentColor">4, 3, 3 of 14</text>
+    <text x="144" y="114" fontSize="10" textAnchor="end" fill="currentColor">DIV</text>
     <text x="182" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">+BUGGY</text>
     <text x="164" y="34" fontSize="10" textAnchor="middle" fill="currentColor">00</text>
     <text x="200" y="34" fontSize="10" textAnchor="middle" fill="currentColor">FF</text>
@@ -768,7 +774,8 @@ PASS=1500 FAIL=0
     <rect x="184" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
     <text x="200" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
     <text x="182" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 7/14</text>
-    <text x="182" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 3, 4, 2</text>
+    <text x="182" y="200" fontSize="10" textAnchor="middle" fill="currentColor">per seed:</text>
+    <text x="182" y="213" fontSize="10" textAnchor="middle" fill="currentColor">3, 4, 2 of 14</text>
     <text x="282" y="16" fontSize="10" textAnchor="middle" fill="currentColor" fontWeight="600">+STEER</text>
     <text x="264" y="34" fontSize="10" textAnchor="middle" fill="currentColor">00</text>
     <text x="300" y="34" fontSize="10" textAnchor="middle" fill="currentColor">FF</text>
@@ -801,8 +808,9 @@ PASS=1500 FAIL=0
     <rect x="284" y="154" width="32" height="16" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeOpacity="0.6" />
     <text x="300" y="166" fontSize="10" textAnchor="middle" fill="currentColor">✓</text>
     <text x="282" y="186" fontSize="10" textAnchor="middle" fill="currentColor">merged 14/14</text>
-    <text x="282" y="200" fontSize="10" textAnchor="middle" fill="currentColor">seeds 14, 14, 14</text>
-    <text x="170" y="222" fontSize="10" textAnchor="middle" fill="currentColor">✓ hit in the merge; – empty, listed as NEVER GENERATED</text>
+    <text x="282" y="200" fontSize="10" textAnchor="middle" fill="currentColor">per seed:</text>
+    <text x="282" y="213" fontSize="10" textAnchor="middle" fill="currentColor">14, 14, 14 of 14</text>
+    <text x="170" y="234" fontSize="10" textAnchor="middle" fill="currentColor">✓ hit in the merge; – empty, listed as NEVER GENERATED</text>
   </svg>
   <figcaption className="text-sm text-muted-foreground">The merged <code>x_op_a</code> grid of each run, drawn from the illustrative logs above (not a simulator capture). Under <code>+BUGGY</code> the whole DIV row is empty: the probability-0 signature. Under the uniform policy the empty cells are scattered, and each seed alone reached at most 4 of the 14 cells.</figcaption>
 </figure>
@@ -896,8 +904,8 @@ Try each question before you open the answers.
   question="A cross cell shows as covered in the merged regression report, but each individual seed's report shows it empty. The covergroup sets option.at_least = 2. How is that possible?"
   options={[
     { text: "It is a tool bug: a merged bin can never be covered if no run covered it.", isCorrect: false, feedback: "The merged count is the sum over runs. With at_least = 2, two runs that each hit the cell once sum to 2 and cover it (IEEE 1800-2023 §19.11.1, §19.11.3 for the in-simulation merge; tool merges behave analogously)." },
-    { text: "Each seed hit the cell once, below at_least; the merge adds the counts, and 1 + 1 reaches 2.", isCorrect: true, feedback: "Right. A merged bin is covered when its summed count reaches the largest at_least of the merged instances. If your plan needs at_least hits within one run, sign off on per-seed coverage." },
     { text: "get_coverage() returns the seed's own coverage, so the merged report is wrong.", isCorrect: false, feedback: "get_coverage() returns the type (cumulative) number over all instances; get_inst_coverage() is the per-instance number (§19.8)." },
+    { text: "Each seed hit the cell once, below at_least; the merge adds the counts, and 1 + 1 reaches 2.", isCorrect: true, feedback: "Right. A merged bin is covered when its summed count reaches the largest at_least of the merged instances. If your plan needs at_least hits within one run, sign off on per-seed coverage." },
     { text: "The merge ignores at_least and counts any hit.", isCorrect: false, feedback: "It does not ignore it: the merged cell needs the largest at_least of the instances. Here two hits in total were enough." }
   ]}
 />
@@ -917,9 +925,9 @@ Take the quiz first; it covers all five objectives. Then do the two katas: the f
     question: "The merged report shows the x_op_b cell DIV with b == 0 empty. The spec says divide by zero is forbidden, and the generator has the constraint op == DIV -> b != 0. What is the right action?",
     answers: [
       { text: "Add ignore_bins for the cell so it leaves the denominator", correct: false, feedback: "The number closes, but if a DIV with b == 0 is ever generated it passes silently. Excluding a bin is not the same as covering it, and for a forbidden cell you want an error." },
-      { text: "Add illegal_bins for the cell, keep the constraint, and keep a check that flags a forbidden input", correct: true, feedback: "Right. illegal_bins removes the cell from the computation and raises a run-time error if it is sampled (IEEE 1800-2023 §19.6.3); the constraint keeps the stimulus legal; the check catches a violation even when coverage is not being collected." },
       { text: "Write a directed test that sends DIV with b == 0 to fill the cell", correct: false, feedback: "That deliberately sends traffic the spec forbids. A forbidden cell is never a target." },
-      { text: "Run more seeds until the cell fills", correct: false, feedback: "The constraint gives the cell probability 0, and it must stay that way. No number of seeds should ever fill it." }
+      { text: "Run more seeds until the cell fills", correct: false, feedback: "The constraint gives the cell probability 0, and it must stay that way. No number of seeds should ever fill it." },
+      { text: "Add illegal_bins for the cell, keep the constraint, and keep a check that flags a forbidden input", correct: true, feedback: "Right. illegal_bins removes the cell from the computation and raises a run-time error if it is sampled (IEEE 1800-2023 §19.6.3); the constraint keeps the stimulus legal; the check catches a violation even when coverage is not being collected." },
     ],
     explanation: "A forbidden scenario gets three things: illegal_bins in the model, the constraint in the generator and an independent check. ignore_bins hides it, a directed test violates the spec, and more seeds cannot and should not reach it.",
     objective: 1
@@ -928,7 +936,7 @@ Take the quiz first; it covers all five objectives. Then do the two katas: the f
     question: "The cell for DIV with a == 0 in x_op_a is empty, but the transaction log shows 41 DIV transactions with a == 0. The collector is fed by a monitor that drops transactions whose result y is 0, to keep idle cycles out of the log. Which class is the hole, and what is the fix?",
     answers: [
       { text: "Under-stimulated: weight a == 0 higher with dist", correct: false, feedback: "The log shows 41 such transactions, so the stimulus already produced the scenario. More of it will be dropped in exactly the same way." },
-      { text: "Unobserved: the collector never sees these transactions, because 0 / b is 0 and the monitor filters them out; feed the collector from every transaction", correct: true, feedback: "Right. The scenario happened, so the fix is in the collector's feed. Rerun the same seed and confirm the cell fills." },
+      { text: "Unobserved: 0 / b is 0, so the monitor's filter drops these transactions; feed the collector every transaction", correct: true, feedback: "Right. The scenario happened, so the fix is in the collector's feed. Rerun the same seed and confirm the cell fills." },
       { text: "Unreachable here: waive the cell", correct: false, feedback: "The log proves it is reachable: it happened 41 times. A waiver here would hide a collector bug that may also hide other cells." },
       { text: "A generator bug: fix the constraint on op", correct: false, feedback: "DIV was generated. Nothing is wrong with the constraint." }
     ],
@@ -938,8 +946,8 @@ Take the quiz first; it covers all five objectives. Then do the two katas: the f
   {
     question: "Across 20 seeds, cp_op shows the DIV bin empty every time while every other operation fills within the first few hundred transactions. The constraint is op inside {ADD, SUB, MUL, AND, OR, XOR}, and the spec lists DIV as a legal operation. What is the hole?",
     answers: [
-      { text: "Rare: run 100 seeds", correct: false, feedback: "A rare bin fills on some seeds and not others. An empty bin on every seed while its neighbours fill quickly is the signature of probability 0." },
       { text: "Never generated: a generator bug, so add DIV to the constraint", correct: true, feedback: "Right. The constraint gives DIV probability 0, and the spec allows it, so the constraint is wrong." },
+      { text: "Rare: run 100 seeds", correct: false, feedback: "A rare bin fills on some seeds and not others. An empty bin on every seed while its neighbours fill quickly is the signature of probability 0." },
       { text: "Forbidden: add illegal_bins for DIV", correct: false, feedback: "The spec lists DIV as legal. Calling it illegal would turn legal traffic into errors and hide the generator bug." },
       { text: "Unreachable here: waive DIV for this product", correct: false, feedback: "Nothing in the design or configuration prevents DIV; only the testbench's constraint does." }
     ],
@@ -983,9 +991,9 @@ Take the quiz first; it covers all five objectives. Then do the two katas: the f
     question: "To steer x_op_a you write a dist {8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] := 2}. Predict the probability that a == 8'h00.",
     answers: [
       { text: "1/4", correct: false, feedback: "That would be true with :/ 2 on the range. With := every one of the 254 values in the range gets weight 2." },
-      { text: "1/510", correct: true, feedback: "Right: the weights are 1, 1 and 254 × 2 = 508, so a == 0 gets 1/510, rarer than uniform (1/256) (IEEE 1800-2023 §18.5.3)." },
       { text: "1/256, because dist cannot change a uniform variable", correct: false, feedback: "dist does change the distribution; here it changes it in the wrong direction." },
-      { text: "1/3", correct: false, feedback: "There are three items in the list, but the range's weight is per value, not per item." }
+      { text: "1/3", correct: false, feedback: "There are three items in the list, but the range's weight is per value, not per item." },
+      { text: "1/510", correct: true, feedback: "Right: the weights are 1, 1 and 254 × 2 = 508, so a == 0 gets 1/510, rarer than uniform (1/256) (IEEE 1800-2023 §18.5.3)." },
     ],
     explanation: ":= gives each value of a range the weight and :/ gives the whole range the weight (§18.5.3). With := the edge values become rarer, and the cross gets harder to close. Measure every steering change.",
     objective: 3
@@ -1016,22 +1024,22 @@ Take the quiz first; it covers all five objectives. Then do the two katas: the f
     question: "Merged coverage jumped from 91% to 100% overnight. The stimulus did not change, and no new tests were added. What do you check first?",
     answers: [
       { text: "Nothing: closure is reached, sign off", correct: false, feedback: "A jump with no stimulus change means the measurement changed, not the testing. That has to be explained before anyone signs off." },
-      { text: "The coverage-model diff and the waiver file: new ignore_bins, an item weight set to 0, coarser bins or a new tool exclusion", correct: true, feedback: "Right. Each of those raises the number without exercising anything. Every new exclusion needs a waiver with evidence." },
       { text: "The simulator version, because coverage numbers are random", correct: false, feedback: "Coverage computation is defined by the standard (§19.11). A sudden jump usually has a source in the repository." },
+      { text: "The coverage-model diff and the waiver file: new ignore_bins, an item weight set to 0, coarser bins or a new tool exclusion", correct: true, feedback: "Right. Each of those raises the number without exercising anything. Every new exclusion needs a waiver with evidence." },
       { text: "Whether the regression ran more seeds", correct: false, feedback: "The question says nothing was added. And more seeds rarely close 9% of a plateau overnight." }
     ],
     explanation: "A coverage number moves either because the stimulus reached new bins or because the model changed what counts. Review model diffs and exclusions like code.",
     objective: 5
   },
   {
-    question: "A UVM regression passed with UVM_ERROR : 0, but one test's log contains the simulator's run-time error for the illegal bin div_by_zero. Why did the regression pass, and what is the fix?",
+    question: "The regression passed with an error count of 0 from the testbench's own reports, but one test's log contains the simulator's run-time error for the illegal bin div_by_zero. Why did the regression pass, and what is the fix?",
     answers: [
       { text: "An illegal bin hit is only a warning, so passing is correct", correct: false, feedback: "The standard says a run-time error is issued (IEEE 1800-2023 §19.5.6, §19.6.3). A forbidden input reached the design." },
-      { text: "The gate counts only UVM reports, and the illegal-bin error comes from the simulator; gate on simulator errors too, or mirror the forbidden condition in a check that reports through UVM", correct: true, feedback: "Right. The message format and exit status are tool-dependent, so the regression gate has to read them explicitly, or a check must raise the error itself." },
       { text: "The illegal bin removed the cell from coverage, so nothing was wrong", correct: false, feedback: "Removing the cell from the denominator is half of illegal_bins; the error is the other half, and it fired." },
-      { text: "The constraint should be removed, because it hides the illegal bin", correct: false, feedback: "The constraint keeps the stimulus legal. The error says something produced a forbidden input anyway: debug the generator or the DUT." }
+      { text: "The constraint should be removed, because it hides the illegal bin", correct: false, feedback: "The constraint keeps the stimulus legal. The error says something produced a forbidden input anyway: debug the generator or the DUT." },
+      { text: "The gate reads only the testbench's error count, not the simulator's; gate on both, or mirror the condition in a check that reports through the testbench's error count", correct: true, feedback: "Right. The illegal-bin error comes from the simulator, not from the testbench's reports (in UVM, not a UVM report). The message format and exit status are tool-dependent, so the regression gate has to read them explicitly, or a check must raise the error itself." },
     ],
-    explanation: "illegal_bins raises a simulator run-time error, not a UVM report. Make sure the pass/fail gate sees it, and keep an independent check for every forbidden scenario.",
+    explanation: "illegal_bins raises a simulator run-time error, not one of the testbench's own reports (in UVM, not a UVM report). Make sure the pass/fail gate sees it, and keep an independent check for every forbidden scenario.",
     objective: 5
   }
 ]} />
@@ -1065,7 +1073,7 @@ The ALU plan's merged report after 3 seeds × 500 transactions, with notes from 
 
 ### Kata 2 (minimum change): close `x_op_a` within the budget
 
-The plan rows are ALU-1, ALU-2 and ALU-4 (`cp_op`, `cp_a`, `x_op_a`). The generator is the `+BUGGY` one from Make It Work with `a` uniform. The budget is 3 seeds × 500 transactions, merged, and the plan asks for at least a 99% chance of closing all three items within it. Which candidate is the smallest change that meets the target? Compute P(closure) for each before you open the solution.
+The plan rows are ALU-1, ALU-2 and ALU-4 (`cp_op`, `cp_a`, `x_op_a`). The generator is the `+BUGGY` one from Make It Work with `a` uniform. The budget is 3 seeds × 500 transactions, merged, and the plan asks for at least a 99% chance of closing all three items within it. Which candidate is the smallest change that meets the target? For each candidate, estimate the samples needed for a 99% chance with N ≈ ln(k / δ) / p (using the rarest cell's p), and compare with 1,500. Then open the solution for the exact P(closure).
 
 1. Run 6 seeds instead of 3.
 2. Add DIV to the allowed operations.

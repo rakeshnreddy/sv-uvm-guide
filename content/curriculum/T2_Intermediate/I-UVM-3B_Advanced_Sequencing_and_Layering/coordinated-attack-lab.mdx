@@ -15,13 +15,13 @@ sources:
 
 - **What it is:** The capstone exercise of I-UVM-3B. A design under test (DUT) has a slow configuration port and a fast data port. You write the one **virtual sequence** (a sequence that sends no items itself and starts other sequences on several agents' sequencers) that drives a whole scenario: configure the DUT, send messages through a **translation layer**, keep background traffic running, and service the interrupt the DUT raises halfway through. A self-checking bench tells you whether you got it right, and five broken versions (**mutants**) show you what each mistake looks like in a log.
 - **Why it matters:** Each sub-lesson of this module taught one tool on its own. Real tests use them together, and most of the bugs live where they meet: data that overtakes configuration, an interrupt service that is interleaved with other traffic, a test that ends while stimulus is still running, or one that never ends. None of these prints an error unless the bench checks for it. This lab is the guided pre-lab for milestone M5 (a multi-agent environment with virtual sequences).
-- **The Analogy:** A stage manager calling a show from a script. The stage manager (the virtual sequence) tells the lighting desk (the configuration agent) and the sound desk (the data agent) what to do, strictly in script order: house lights up before the music starts. An assistant (the translation sequence) turns each line of the script into the individual sound cues. When the fire alarm goes off (the interrupt), the duty electrician takes over the lighting desk for two cues in a row (`grab()`), and the show waits until the alarm is reset. *Where it breaks:* a stage manager watches a clock, but a virtual sequence orders things only by waiting for one step to *finish* before starting the next. A desk operator in UVM (the driver) takes the next cue only when it asks for one. And taking over the desk never interrupts a cue that is already running.
+- **The Analogy:** A stage manager calling a show from a script, strictly in script order: house lights up before the music starts. The table maps each role and says where the picture breaks.
 
 | In the show | In this lab | Where the picture breaks |
 | --- | --- | --- |
 | the stage manager, calling from the script | the virtual sequence | it watches no clock: it starts the next step only when the previous one has *finished* |
-| the lighting desk | the configuration agent | its operator (the driver) also takes the next cue only when it asks for one: the limit covers both desks |
-| the sound desk | the data agent | its operator (the driver) takes the next cue only when it asks for one |
+| the lighting desk | the configuration agent | the picture holds |
+| the sound desk | the data agent | either desk's operator (the driver) takes the next cue only when it asks for one |
 | the assistant who turns each line into cues | the translation sequence | the picture holds |
 | the fire alarm | the DUT's interrupt | the picture holds |
 | the duty electrician taking over the lighting desk for two cues in a row | `grab()` of the configuration sequencer by the interrupt service | taking over never interrupts a cue that is already running |
@@ -40,7 +40,7 @@ This lab combines five sub-lessons. If one of them is new to you, read it first:
 
 ## Build Your Mental Model
 
-**How to read this page.** The core path is the first seven subsections: the words, the scenario, the bench, and the four ideas the solution rests on. Then you trace the whole run, and the practitioner subsection shows how to read a failing log. Make It Work is the lab itself, and Push Further holds the expert layer. Try not to read the worked solution before you have written your own.
+**How to read this page.** The core path is the first eight subsections: the words, the scenario, the bench, and the five core ideas the solution rests on. Then you trace the whole run, and the practitioner subsection shows how to read a failing log. Make It Work is the lab itself, and Push Further holds the expert layer. Try not to read the worked solution before you have written your own.
 
 ### Words this lab uses
 
@@ -51,7 +51,7 @@ Every term below is taught in full elsewhere; here is each one in a sentence.
 - `finish_item()` returns when the driver calls `item_done()` for that item. When several sequences wait on one sequencer, the sequencer chooses which goes next: that choice is **arbitration**, and the default mode grants requests in arrival order ([Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
 - A **virtual sequencer** is a sequencer with no driver that only holds handles to the agents' sequencers. A sequence declares a typed handle to it, `p_sequencer`, with the `` `uvm_declare_p_sequencer `` macro (Annex B.3.3) ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)).
 - A **translation sequence** (or **layer**) runs on a lower agent's sequencer, pulls upper-layer items from a sequencer that has no driver, and sends each one as lower-layer items ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences)).
-- `grab()` asks a sequencer for exclusive use, ahead of every waiting request; `ungrab()` gives it back. While a sequence holds a grab, only that sequence and its children are granted (§14.2.5.6, §14.2.5.8).
+- `grab()` asks a sequencer for exclusive use, ahead of every waiting request; `ungrab()` gives it back. While a sequence holds a grab, only that sequence and its children are granted (§14.2.5.6, §14.2.5.8; the exemption for children is uvm-core's `is_blocked()`, which uses `is_child()`, §15.3.2.2).
 - An **interrupt** is a signal the DUT raises to ask for attention; the **interrupt service** is the stimulus that answers it. Here the DUT's interrupt line is a `uvm_event` called `irq`: `trigger()` turns it on, `reset()` turns it off, `wait_on()` waits until it is on and `wait_off()` until it is off (§10.1.1.2; `trigger()` itself is §10.1.2.2.4).
 - A **write-1-to-clear** (W1C) register bit is cleared by writing 1 to it.
 - An **objection** keeps the **run phase** (the part of the test in which simulation time passes) alive; the run phase ends when every raised objection is dropped, and UVM then kills every process still running in it ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
@@ -79,7 +79,7 @@ One more DUT behaviour ties the ports together. The second message goes to desti
 
 ### The bench at a glance
 
-Before you look at the diagram, predict: which component decides that configuration happens before data? Which one decides that the interrupt service goes ahead of the poll?
+As you read the diagram, look for two answers: which component decides that configuration happens before data, and which one decides that the interrupt service goes ahead of the poll?
 
 <ArchitectureDiagram
   title="The Coordinated Attack bench"
@@ -289,6 +289,7 @@ Each row is a moment when the configuration driver asks for its next item. A req
 
 <SequenceDiagram
   title="The interrupt service grabs the configuration sequencer"
+  columnWidth={130}
   caption="Times are from the traced run under Predict, then trace the whole run. The grab is granted at 26 ns because no other sequence holds a lock or grab, but it cannot stop poll's read that is already on the port: the service's first item goes at 30 ns. From then until ungrab() at 50 ns, poll's request waits, and the service's read and clear reach the driver back to back."
   participants={[
     { id: "ddrv", label: "data_agt.drv", kind: "driver" },
@@ -362,13 +363,14 @@ None of the five stops the access already on the port: the service's read still 
 
 ### Predict, then trace the whole run
 
-Write down your answers before you read the table. In the working solution:
+Questions 1 and 2 check what you have already seen; write them from memory. Questions 3 and 4 are new predictions; write them before you open the table. In the working solution:
 1. When does the first data beat complete?
 2. When is `STATUS` cleared, and what was on the configuration port just before the clear?
 3. When does `msgs.start()` return, and when does the test end?
+4. When does poll's third STATS read complete, and when does message 2's header complete?
 
 <details>
-<summary>The traced run and its debrief (write your three answers first)</summary>
+<summary>The traced run and its debrief (write your four answers first)</summary>
 
 This is a hand trace of the working solution against the uvm-core 2020.3.1 source (illustrative: no simulator run). Each row is a time at which a driver finishes an access.
 
@@ -391,7 +393,7 @@ This is a hand trace of the working solution against the uvm-core 2020.3.1 sourc
 | 70 | RD STATS (poll 4) | | |
 | 80 | RD STATS (poll 5) | | `poll.start()` returns; the `join` completes; `xlate.kill()`; `body()` returns; the test drops its objection and the run phase ends |
 
-**Debrief.** (1) 14 ns: the data path starts at 10 ns because `ctrl.start()` returned then. (2) At 50 ns, right after the STATUS read at 40 ns; the poll read that "should" have come next waited. (3) `msgs.start()` returns at 66 ns, but the test ends at 80 ns: the `join` waits for the slowest branch, the poll. Counts: 1 + 5 + 2 = 8 configuration accesses, 3 + 2 + 3 = 8 beats, 1 clear, so `COUNT` is silent.
+**Debrief.** (1) 14 ns: the data path starts at 10 ns because `ctrl.start()` returned then. (2) At 50 ns, right after the STATUS read at 40 ns; the poll read that "should" have come next waited. (3) `msgs.start()` returns at 66 ns, but the test ends at 80 ns: the `join` waits for the slowest branch, the poll. (4) The third poll read completes at 60 ns, because it is granted at 50 ns when `ungrab()` unblocks it. Message 2's header completes at 58 ns, one beat after message 1's payload at 54 ns. Counts: 1 + 5 + 2 = 8 configuration accesses, 3 + 2 + 3 = 8 beats, 1 clear, so `COUNT` is silent.
 
 </details>
 
@@ -403,8 +405,8 @@ Read a failing log in this order: first *which check fired*, then *at what time*
 |---|---|---|
 | `UVM_ERROR [ORDER]` at 4 ns or soon after | Configuration was started inside the same `fork` as the traffic, or with `fork…join_none` | Make `ctrl.start()` a plain statement before the `fork` |
 | `UVM_ERROR [ATOMIC]` naming a `RD addr=0x08` access | The service sequence does not grab, or grabs a different sequencer than the one it runs on | `grab()` and `ungrab()` around the two accesses, on `cfg_agt.sqr` |
-| The run ends at 10 ns; `UVM_ERROR [COUNT]` with almost nothing seen | `body()` returned early: `fork…join_none`, or a forgotten `fork` in the test | End the three-branch `fork` with `join` |
-| `UVM_ERROR [COUNT] … cfg=0/8 beats=0/8` at 0 ns | The test never started the virtual sequence, or never raised an objection | Start it in `run_phase` between `raise_objection()` and `drop_objection()` |
+| The run ends at 10 ns; `UVM_ERROR [COUNT]` with almost nothing seen | `body()` returned early: the three-branch `fork` ends in `join_none` (mutant M3) | End the three-branch `fork` with `join` |
+| `UVM_ERROR [COUNT] … cfg=0/8 beats=0/8` at 0 ns | The test never started the virtual sequence, never raised an objection, or started it inside `fork…join_none` | Start it in `run_phase` between `raise_objection()` and `drop_objection()` |
 | Data stops after the bad header, the poll finishes, then `UVM_FATAL [PH_TIMEOUT]` | Nobody services the interrupt, so the data port stays stalled and `msgs` never returns | Add the interrupt branch to the `fork` |
 | `UVM_FATAL [PH_TIMEOUT]` with no data beats at all, and no `UVM_FATAL [SEQ]` | A sequencer handle is null and the child was started with `this` as parent, so it fell back to `vsqr`, which has no driver (uvm-core impl.) | Assign every `vsqr` handle in `connect_phase` |
 | `UVM_ERROR [SEQFINERR]` at 50 ns, timeline otherwise correct | `isr` returned without `ungrab()` | Call `ungrab()` before `body()` ends |
@@ -753,7 +755,7 @@ module tb_top;
 endmodule
 ```
 
-**Expected output** of the starter as given (illustrative: traced by hand against the uvm-core 2020.3.1 source, not from a simulator run; the file and line part of each prefix and the other `UVM_INFO` lines are trimmed):
+**Expected output** of the starter as given (illustrative: traced by hand against the uvm-core 2020.3.1 source, not from a simulator run; the file and line part of each prefix and the other `UVM_INFO` lines are trimmed, and so are the summary's `UVM_INFO` count and its "Report counts by id" section):
 
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test atk_test...
@@ -839,7 +841,7 @@ virtual task run_phase(uvm_phase phase);
 endtask
 ```
 
-**Expected output** with the solution (illustrative, traced as above; it matches the trace table in [the traced run under Predict, then trace the whole run](#predict-then-trace-the-whole-run) row for row):
+**Expected output** with the solution (illustrative, traced and trimmed as above; it matches the trace table in [the traced run under Predict, then trace the whole run](#predict-then-trace-the-whole-run) row for row):
 
 ```text
 UVM_INFO @ 0: reporter [RNTST] Running test atk_test...
@@ -908,7 +910,7 @@ Replace `grab()` and `ungrab()` with `lock()` and `unlock()` and this bench beha
 
 The arbitration sandbox on [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) has a "grab vs lock" scenario that shows the difference.
 
-**Try it here.** In the sandbox below, pick the **grab vs lock** preset: A holds a lock, B asks for a lock and C asks for a grab while they wait. Predict who is granted when A unlocks, then check. The **Forgot unlock()** preset shows, with a lock, the same failure as the forgotten `ungrab()` in the Core idea 4 pitfall: the other sequences starve until the owner's `body()` returns, and then `SEQFINERR` is reported.
+**Try it here.** In the sandbox below, pick the **grab vs lock** preset: A holds a lock, B asks for a lock and C asks for a grab while they wait. Predict who is granted when A unlocks, then check. Then load the **Forgot unlock()** preset, the lock version of the forgotten `ungrab()` from the Core idea 4 pitfall, and predict when C is first granted before you check.
 
 <SequencerArbitrationSandbox />
 
@@ -919,7 +921,7 @@ Three ways to stop `xlate`, and what each costs:
 - **The layering environment owns the layer** and kills it from `phase_ready_to_end()` (§13.1.4.3.2), as [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) does. Better for reusable VIP: tests never see the layer.
 - **Let the end of the run phase kill it.** Reading the uvm-core 2020.3.1 source (not confirmed by a simulator run), the process guard that `start()` creates should then report `UVM_WARNING [SEQPRTZMB]` and kill the sequence (`uvm_sequence_base.svh`, `process_guard_triggered()`). That is uvm-core behaviour, not IEEE 1800.2; avoid relying on it either way.
 
-Never use `wait fork` to wait for the other branches while the layer runs: it waits for every immediate child process (IEEE 1800-2023 §9.6.1), the layer included. If you need `join_none` for several finite jobs, wrap them as `fork begin … end join` so that only they are waited for.
+Never use `wait fork` to wait for the other branches while the layer runs: it waits for every immediate child process (IEEE 1800-2023 §9.6.1), the layer included. If you need `join_none` for several finite jobs, wrap them, together with the wait, as `fork begin fork job1; job2; join_none wait fork; end join`, so that `wait fork` sees only those jobs as its children.
 
 ### Expert: interrupt delivery: a level event versus a queue
 
@@ -979,7 +981,7 @@ Answer each question before you look at the feedback.
     { text: "That the virtual sequencer is created before the agents.", correct: false, feedback: "Creation order decides nothing about traffic order. The virtual sequencer only holds handles." },
     { text: "That configuration and data are started in separate fork branches, so they cannot interfere.", correct: false, feedback: "Separate branches of one fork start together. That is exactly the bug." },
     { text: "A checker that fires when data arrives before the configuration has completed on the port, a count check that fails a run cut short, and a mutant run that shows the checker firing.", correct: true, feedback: "Right. A passing test proves nothing until you have seen the checks fail on a broken sequence, and the order must be observed on completed transfers." },
-    { text: "That the data sequence has a lower priority than the configuration sequence.", correct: false, feedback: "Priority works inside one sequencer. Configuration and data run on different sequencers, so priority cannot order them." }
+    { text: "That the data sequence has a lower priority than the configuration sequence, so the configuration sequence always wins arbitration before any data beat is sent.", correct: false, feedback: "Priority works inside one sequencer. Configuration and data run on different sequencers, so priority cannot order them." }
   ]}
 />
 
@@ -990,7 +992,7 @@ Answer each question before you look at the feedback.
     { text: "Give the service sequence priority 1000; the read and the clear then always go next.", correct: false, feedback: "The default FIFO mode ignores priority, and WEIGHTED only makes the service likely to win. Neither keeps the two accesses together." },
     { text: "grab() before the read and ungrab() after the clear. Worst case: the access already on the port must finish first, because a grab never aborts it.", correct: true, feedback: "Right. The grab makes the pair atomic and puts the service ahead of every waiting request; latency is bounded by one in-flight access (plus any lock another sequence already holds)." },
     { text: "Let the interrupt monitor send the read and the clear itself, bypassing the sequencer.", correct: false, feedback: "A monitor only observes, and a passive agent has no driver to send through. Bypassing the sequencer also feeds the driver from two places with no arbitration at all." },
-    { text: "Put the read and the clear in one sequence; one sequence's items are never interleaved with another's.", correct: false, feedback: "They are. Each item is arbitrated on its own; without a lock or grab another sequence can win between them." }
+    { text: "Put the read and the clear in one sequence; one sequence's items are never interleaved with another sequence's items, because the sequencer finishes one sequence before it grants the next.", correct: false, feedback: "They are. Each item is arbitrated on its own; without a lock or grab another sequence can win between them." }
   ]}
 />
 
@@ -998,7 +1000,7 @@ Answer each question before you look at the feedback.
   title="Interview angle: a regression that sometimes fails"
   question="A test fails with two ORDER errors on one simulator and four on another, with the same seed. The virtual sequence starts ctrl, poll and the message traffic as branches of one fork. What is going on?"
   options={[
-    { text: "One simulator has a bug in its arbitration.", correct: false, feedback: "Both simulators are legal. The standard does not fix which of two processes started by the same fork runs first." },
+    { text: "One simulator has a bug in its arbitration: with the same seed and the same code, every compliant simulator must queue ctrl and poll in the same order, so CTRL would complete at the same time on both.", correct: false, feedback: "Both simulators are legal. The standard does not fix which of two processes started by the same fork runs first." },
     { text: "ctrl and poll request the configuration sequencer at the same time; which one is queued first, and so whether CTRL completes at 10 ns or 20 ns, depends on process order, which the language leaves open. The real bug is that configuration is not ordered before the traffic.", correct: true, feedback: "Right (IEEE 1800-2023 §4.7, §9.3.2). Do not 'fix' it with a delay; make ctrl.start() a statement before the fork." },
     { text: "The random seed is ignored by one of the simulators.", correct: false, feedback: "Nothing here is random. The difference is process ordering inside one time slot." },
     { text: "The data driver is faster on one simulator.", correct: false, feedback: "Delays are part of the code; both simulators use 4 ns per beat." }
@@ -1106,7 +1108,7 @@ xlate.kill();`}
     objective: 2,
     answers: [
       { text: "At 26 ns, when the header has been driven.", correct: false, feedback: "xlate calls msg_sqr.item_done() only after the last beat of the message, and the payload beat still has to go." },
-      { text: "At 30 ns: the payload beat follows the header 4 ns later.", correct: false, feedback: "The DUT stalls the data port while irq is on, so the payload beat cannot start at 26 ns." },
+      { text: "At 30 ns: the payload beat follows the header 4 ns later, because xlate sends it as soon as finish_item(HDR) returns at 26 ns.", correct: false, feedback: "The DUT stalls the data port while irq is on, so the payload beat cannot start at 26 ns." },
       { text: "At 54 ns: the payload beat waits until the clear at 50 ns, takes 4 ns, and then xlate calls msg_sqr.item_done().", correct: true, feedback: "Right. The upper finish_item() means 'every beat of this message was driven', including the stall." },
       { text: "Never: the data port stays stalled.", correct: false, feedback: "The interrupt branch clears STATUS at 50 ns, which turns irq off and lets the data port resume." }
     ],
@@ -1162,7 +1164,7 @@ xlate.kill();`}
     answers: [
       { text: "The test never raised an objection.", correct: false, feedback: "Without an objection the run would end at 0 ns with a COUNT error, not run until the timeout." },
       { text: "The translation sequence was never started.", correct: false, feedback: "Then there would be no data beats at all, not four beats up to 26 ns." },
-      { text: "The data driver forgets item_done() after each beat.", correct: false, feedback: "Then the first beat at 14 ns would be the last one." },
+      { text: "The data driver forgets item_done() after each beat, so xlate's finish_item() never returns, the data sequencer grants no further beat and msgs waits until the timeout.", correct: false, feedback: "Then the first beat at 14 ns would be the last one." },
       { text: "The interrupt branch is missing, so nobody clears STATUS; the data port stays stalled, msgs never returns and the join never completes.", correct: true, feedback: "Right. The stall after the bad header and the poll finishing normally point straight at the missing service." }
     ],
     explanation: "Read which port stopped and when: the data port stopped right after the bad-destination header, which is where the DUT stalls until STATUS is cleared. The poll is unaffected, so only the interrupt service is missing."
@@ -1174,7 +1176,7 @@ xlate.kill();`}
       { text: "The three-branch fork ends in join_none, so body() returned at 10 ns and the run phase killed the branches before they completed anything.", correct: true, feedback: "Right. join_none does not keep the test alive: only the objection does, and it was dropped when body() returned." },
       { text: "vsqr.cfg_sqr was never assigned, so UVM_FATAL [SEQ] stopped the run.", correct: false, feedback: "A null handle with this as parent falls back to vsqr and hangs until PH_TIMEOUT (uvm-core impl.); and CTRL did complete here." },
       { text: "The ORDER check stopped the simulation after CTRL.", correct: false, feedback: "uvm_error does not stop a run, and ORDER did not fire." },
-      { text: "The poll sequence held a lock that blocked everything else.", correct: false, feedback: "poll takes no lock, and a starved run would end at the timeout, not at 10 ns." }
+      { text: "The poll sequence held a lock that blocked everything else, so neither the layer nor the interrupt service was ever granted the sequencer it needed.", correct: false, feedback: "poll takes no lock, and a starved run would end at the timeout, not at 10 ns." }
     ],
     explanation: "One configuration access (CTRL) and nothing else means body() got past ctrl.start() and returned at once. That is the join_none mutant; the COUNT check is the only rule that catches it."
   }
