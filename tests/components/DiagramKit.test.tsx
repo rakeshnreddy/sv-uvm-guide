@@ -1,10 +1,12 @@
+import fs from 'node:fs';
+
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { ArchitectureDiagram, SequenceDiagram, TimingDiagram } from '@/components/mdx/DiagramKit';
 import { BlockDiagram, legendEntries, legendItems } from '@/components/visual-system/BlockDiagram';
 import { StepWaveform } from '@/components/visual-system/StepWaveform';
-import { layoutGridDiagram, readableMinWidth } from '@/components/visual-system/diagram-layout';
+import { layoutGridDiagram, layoutSequence, readableMinWidth } from '@/components/visual-system/diagram-layout';
 import { mdxComponents } from '@/generated/mdx-component-registry';
 
 describe('MDX diagram kit', () => {
@@ -316,5 +318,161 @@ describe('diagram frames are quiet liquid glass (DESIGN.md section 12)', () => {
     expect(frame).not.toBeNull();
     expect(frame).toContainElement(container.querySelector('svg'));
     expect(container.innerHTML).not.toContain('bg-background/40');
+  });
+});
+
+describe('text-free colour roles (DESIGN.md section 13, "Assigning roles in lessons")', () => {
+  const gridNodes = [
+    { id: 'm', label: 'Master', sublabel: 'HADDR out', kind: 'generic' as const, col: 0, row: 0 },
+    { id: 'dec', label: 'Decoder', col: 1, row: 0 },
+    { id: 'bus', label: 'AHB bus', kind: 'generic' as const, col: 0, row: 1, colSpan: 2 },
+    { id: 'top', label: 'SoC', col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+  ];
+  const gridEdges = [
+    { from: 'm', to: 'dec', style: 'control' as const, label: 'HSEL' },
+    { from: 'm', to: 'bus', style: 'data' as const, label: 'HADDR' },
+  ];
+  const withRoles = [
+    { ...gridNodes[0], role: 'testbench' as const },
+    { ...gridNodes[1], role: 'design' as const },
+    gridNodes[2],
+    { ...gridNodes[3], role: 'design' as const },
+  ];
+
+  /** Every <text> with its position and content, and every shape's geometry, in document order. */
+  const geometry = (root: Element) => ({
+    text: [...root.querySelectorAll('text')].map((t) => [t.getAttribute('x'), t.getAttribute('y'), t.textContent, t.getAttribute('text-anchor')]),
+    rects: [...root.querySelectorAll('svg rect')].map((r) => ['x', 'y', 'width', 'height'].map((a) => r.getAttribute(a))),
+    lines: [...root.querySelectorAll('polyline, line, path')].map((p) => p.getAttribute('points') ?? p.getAttribute('d') ?? ['x1', 'y1', 'x2', 'y2'].map((a) => p.getAttribute(a)).join(',')),
+    viewBox: root.querySelector('svg')!.getAttribute('viewBox'),
+  });
+
+  it('keeps the layout identical with and without roles', () => {
+    const plain = layoutGridDiagram({ nodes: gridNodes, edges: gridEdges });
+    const roled = layoutGridDiagram({ nodes: withRoles, edges: gridEdges });
+    const strip = (l: typeof plain) => ({ ...l, nodes: l.nodes.map(({ role: _role, ...n }) => n) });
+    expect(strip(roled)).toEqual(strip(plain));
+    expect(roled.problems).toEqual([]);
+    expect(roled.nodes.map((n) => n.role)).toEqual(['testbench', 'design', undefined, 'design']);
+  });
+
+  it('draws the role colour and corner shape with no tag chip and the same text positions', () => {
+    const a = render(<ArchitectureDiagram title="Plain" caption="c" nodes={gridNodes} edges={gridEdges} />);
+    const plain = geometry(a.container);
+    a.unmount();
+    const { container } = render(<ArchitectureDiagram title="Plain" caption="c" nodes={withRoles} edges={gridEdges} />);
+    const roled = geometry(container);
+    // Same words in the same places, the same shapes and routes: only colour and corner radius change.
+    expect(roled).toEqual(plain);
+    expect([...container.querySelectorAll('svg text')].map((t) => t.textContent)).not.toEqual(expect.arrayContaining(['DUT', 'TB', 'IF']));
+    const groups = [...container.querySelectorAll('[data-fig-role]')];
+    expect(groups.map((g) => g.getAttribute('data-fig-role'))).toEqual(['design', 'testbench', 'design', 'generic']);
+    const boxOf = (label: string) => [...container.querySelectorAll('g[data-fig-role]')].find((g) => g.textContent?.includes(label))!.querySelector('rect')!;
+    expect(boxOf('Master').getAttribute('class')).toContain('stroke-fig-amber');
+    expect(boxOf('Master').getAttribute('rx')).toBe('14');
+    expect(boxOf('Decoder').getAttribute('class')).toContain('fill-fig-violet-fill');
+    expect(boxOf('Decoder').getAttribute('rx')).toBe('3');
+    expect(boxOf('AHB bus').getAttribute('class')).toContain('stroke-fig-generic');
+    // The container keeps its dashed border, now in the role colour, and still has no tag.
+    expect(container.querySelector('rect[stroke-dasharray="6 4"]')!.getAttribute('class')).toContain('stroke-fig-violet');
+    // A control line that touches the testbench node takes the testbench amber.
+    expect(container.querySelector('polyline')!.getAttribute('class')).toContain('stroke-fig-amber');
+  });
+
+  it('adds no legend term for a text-free role, and says each role in words in the description', () => {
+    const a = render(<ArchitectureDiagram title="Roles" caption="c" nodes={gridNodes} edges={gridEdges} />);
+    const plainLegend = within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent);
+    a.unmount();
+    render(<ArchitectureDiagram title="Roles" caption="c" nodes={withRoles} edges={gridEdges} />);
+    // The legend's words are the same with and without roles: a role adds no words to the figure.
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(plainLegend);
+    expect(plainLegend).toEqual(['data flow', 'control']);
+    const asLegend = (ns: { id: string; kind?: 'generic'; role?: 'design' | 'testbench' }[]) => ns.map((n) => ({ id: n.id, kind: n.kind ?? ('generic' as const), role: n.role }));
+    expect(legendItems([], gridEdges, asLegend(withRoles))).toEqual(legendItems([], gridEdges, asLegend(gridNodes)));
+    expect(legendItems([], [], [{ kind: 'generic', role: 'design' }, { kind: 'generic', role: 'testbench' }, { kind: 'generic' }])).toEqual([]);
+    // A tagged kind still lists its role.
+    expect(legendItems([], [], [{ kind: 'dut' }, { kind: 'generic', role: 'testbench' }])).toEqual(['design (DUT)']);
+    expect(screen.getByRole('img', { name: 'Roles' })).toHaveAccessibleDescription(
+      'Components: Master (testbench side; HADDR out), Decoder (design side), AHB bus. SoC (design side) contains Master, Decoder, AHB bus. Connections: Master to Decoder (HSEL); Master to AHB bus (HADDR).',
+    );
+  });
+
+  it('names a selectable node by its role in words', () => {
+    render(
+      <BlockDiagram
+        title="Pick"
+        width={300}
+        height={80}
+        onSelect={() => {}}
+        nodes={[
+          { id: 'a', label: 'arbiter', kind: 'generic', role: 'design', x: 10, y: 10, w: 120, h: 40 },
+          { id: 'b', label: 'drv', kind: 'driver', x: 160, y: 10, w: 120, h: 40 },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'arbiter, design side' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'DRV drv' })).toBeInTheDocument();
+  });
+
+  it('reports a wrong role value, and a role that contradicts the kind, as data errors', () => {
+    const bad = layoutGridDiagram({
+      nodes: [
+        { id: 'a', label: 'a', col: 0, row: 0, role: 'dut' as never },
+        { id: 'b', label: 'b', kind: 'driver', col: 1, row: 0, role: 'design' },
+        { id: 'c', label: 'c', kind: 'dut', col: 2, row: 0, role: 'design' },
+      ],
+    });
+    expect(bad.problems).toEqual([
+      'Node "a" has role "dut"; use one of "design", "testbench".',
+      'Node "b" has kind "driver" (testbench) but role "design"; drop the role or make them agree.',
+    ]);
+    expect(layoutSequence({ participants: [{ id: 'p', label: 'p', role: 'bench' as never }], messages: [] }).problems).toEqual([
+      'Participant "p" has role "bench"; use one of "design", "testbench".',
+    ]);
+    // Interface and register keep their tags: without one their shape matches a neutral box.
+    expect(layoutSequence({ participants: [{ id: 'q', label: 'q', role: 'interface' as never }], messages: [] }).problems).toEqual([
+      'Participant "q" has role "interface"; use one of "design", "testbench".',
+    ]);
+    expect(layoutGridDiagram({ nodes: [{ id: 'r', label: 'r', col: 0, row: 0, role: 'register' as never }] }).problems).toEqual([
+      'Node "r" has role "register"; use one of "design", "testbench".',
+    ]);
+    render(<ArchitectureDiagram title="Bad" caption="c" nodes={[{ id: 'a', label: 'a', col: 0, row: 0, role: 'red' as never }]} />);
+    expect(screen.getByTestId('diagram-data-error')).toHaveTextContent('Node "a" has role "red"');
+  });
+
+  it('SequenceDiagram: a participant role colours its header and lifeline, adds no tag, and is said in the description', () => {
+    const participants = [
+      { id: 'seq', label: 'seq' },
+      { id: 'dut', label: 'dut' },
+      { id: 'drv', label: 'drv', kind: 'driver' as const },
+    ];
+    const messages = [
+      { from: 'seq', to: 'dut', label: 'start' },
+      { from: 'dut', to: 'drv', label: 'done', kind: 'return' as const },
+    ];
+    const a = render(<SequenceDiagram title="Seq" caption="c" participants={participants} messages={messages} />);
+    const plain = geometry(a.container);
+    a.unmount();
+    const roled = participants.map((p) => (p.id === 'seq' ? { ...p, role: 'testbench' as const } : p.id === 'dut' ? { ...p, role: 'design' as const } : p));
+    const { container } = render(<SequenceDiagram title="Seq" caption="c" participants={roled} messages={messages} />);
+    expect(geometry(container)).toEqual(plain);
+    const heads = [...container.querySelectorAll('[data-fig-role]')];
+    expect(heads.map((g) => g.getAttribute('data-fig-role'))).toEqual(['testbench', 'design', 'testbench']);
+    expect(heads[1].querySelector('line')!.getAttribute('class')).toBe('stroke-fig-violet/50');
+    expect(heads[1].querySelectorAll('rect')[1].getAttribute('rx')).toBe('3');
+    expect(screen.getByRole('img', { name: 'Seq' })).toHaveAccessibleDescription('Roles: seq (testbench side); dut (design side).');
+  });
+
+  it('keeps the CSS roles, the guard and the docs on one list', () => {
+    const css = fs.readFileSync('src/app/globals.css', 'utf8');
+    const guard = fs.readFileSync('docs/curriculum-quality/workflows/figure-guard.py', 'utf8');
+    const cssRoles = [...new Set([...css.matchAll(/\[data-fig~="([a-z-]+)"\]:not\(text, tspan\) \{ color/g)].map((m) => m[1]))];
+    const guardRoles = [.../FIG_ROLES = \(([\s\S]*?)\)/.exec(guard)![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    expect(cssRoles.sort()).toEqual([...guardRoles].sort());
+    expect(cssRoles).toEqual(expect.arrayContaining(['bit-low', 'bit-high', 'active', 'x', 'mismatch', 'z', 'testbench', 'design', 'bus', 'interface', 'expected', 'register', 'match']));
+    const kitRoles = [.../KIT_ROLES = \(([^)]*)\)/.exec(guard)![1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    expect(kitRoles).toEqual(['design', 'testbench']);
+    // Marked parts never keep their role colour in forced colours.
+    expect(css).toMatch(/@media \(forced-colors: active\) \{\s*\[data-lesson-article\] svg :is\(text, tspan\):is\(\[data-fig\], \[data-fig\] \*\) \{ fill: CanvasText !important; \}/);
   });
 });

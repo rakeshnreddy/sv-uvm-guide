@@ -281,7 +281,7 @@ The light strokes replace values that were below 3:1 on the light page (cyan-500
 | Testbench (`test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence`) | amber, rounded (radius 14, the most the tag chip allows), its tag on the chip |
 | Interface (`interface`) | indigo, radius 8, `IF` chip: the pins it carries are multi-bit values |
 | Register model (`reg`) | teal, radius 8, `REG` chip: the testbench's expected copy of the registers (the mirror) |
-| No role (`generic`) | a neutral tint of the lesson's tier: the tier colour mixed 20% into the secondary colour as the stroke, the tier at 4.5% as the fill, no chip. It carries no meaning, so it stays near-neutral and never reads as a role or state |
+| No role (`generic` with no `role`) | a neutral tint of the lesson's tier: the tier colour mixed 20% into the secondary colour as the stroke, the tier at 4.5% as the fill, no chip. It carries no meaning, so it stays near-neutral and never reads as a role or state |
 | State | active cyan, error rose, ok emerald, dim at half opacity: the state wins over the role (fill, stroke and chip); active and error strokes are 2.2 px. Ok and error also carry a shape: a ✓ or ✕ in the card colour on a 6.5 px disc of the state colour at the node's top-right corner (kept inside the drawing), because emerald and rose are close under deuteranopia |
 | Container | the role colour as a faint tint (4 to 5%) and a dashed 1.5 px border; its tag on a chip before the name. A container inside another container has no fill, only the dashed role border and chip, so nested tints (TEST, ENV, AGT) do not stack into one wash |
 | Badge (top right) | amber text, as before ("the amber badges" in E-SOC-1) |
@@ -314,41 +314,7 @@ The light strokes replace values that were below 3:1 on the light page (cyan-500
 
 The lessons' own SVG figures give colours as literal attributes. Without editing a lesson, `globals.css` maps each literal to the figure token of the same hue, scoped to `[data-lesson-article] svg` (CSS beats presentation attributes): strokes and filled marks take the stroke value, text takes the text value, and sky takes `--info`. Translucent `rgba()` tints (78 distinct values, 348 figure uses) are left as they are: a tint composites over either mode and carries no contrast duty. 144 of the 313 figures carry at least one remapped literal; the other 92 use Tailwind colour classes or translucent tints, which already adapt.
 
-**Not covered: 77 monochrome figures.** 77 hand-drawn figures in 33 lessons draw only in `currentColor` (no literal, no colour class). CSS cannot tell what such a line means, so they stay black and white after this change; they need a lesson pass. To make that pass a matter of marking parts rather than choosing colours, `globals.css` has opt-in roles: `data-fig="<role>"` on a shape gives it the role's stroke, on text the role's text colour, and with `tint` added (`data-fig="design tint"`) a shape also takes the role's soft fill; `data-fig="tint"` alone is the neutral tier tint for a node with no role. Roles: `bit-low` (slate), `bit-high` and `active` (cyan), `x`, `error` and `mismatch` (rose), `z` and `testbench` (amber), `design` (violet), `bus` and `data` (indigo), `expected` (teal), `match` and `ok` (emerald). A one-bit trace drawn by hand should mark its low segments `bit-low` and its high segments `bit-high`, so it matches the kit's timing diagrams. The figures still to mark (count per lesson, under `content/curriculum/`):
-
-- `T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx`: 8
-- `T1_Foundational/F1B_The_Verification_Mindset/index.mdx`: 2
-- `T1_Foundational/F1C_Why_SystemVerilog/index.mdx`: 1
-- `T1_Foundational/F2A_Core_Data_Types/index.mdx`: 1
-- `T1_Foundational/F2A_Core_Data_Types/operators-and-expressions.mdx`: 2
-- `T1_Foundational/F2A_Core_Data_Types/structs-unions-enums.mdx`: 7
-- `T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control.mdx`: 2
-- `T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index.mdx`: 3
-- `T1_Foundational/F2D_Reusable_Code_and_Parallelism/index.mdx`: 1
-- `T1_Foundational/F2E_First_Self_Checking_Testbench/index.mdx`: 3
-- `T1_Foundational/F3A_Simulation_Semantics/index.mdx`: 1
-- `T1_Foundational/F3B_Scheduling_Regions/index.mdx`: 1
-- `T1_Foundational/F4C_Clocking_Blocks/index.mdx`: 1
-- `T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints.mdx`: 1
-- `T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow.mdx`: 4
-- `T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage.mdx`: 2
-- `T2_Intermediate/I-SV-4A_SVA_Fundamentals/index.mdx`: 1
-- `T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking.mdx`: 10
-- `T2_Intermediate/I-SV-9_Why_UVM/index.mdx`: 1
-- `T2_Intermediate/I-UVM-1A_Components/index.mdx`: 3
-- `T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx`: 1
-- `T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer.mdx`: 1
-- `T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences.mdx`: 1
-- `T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index.mdx`: 1
-- `T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index.mdx`: 3
-- `T3_Advanced/B-AMBA-2_Protocol_Intuition_and_Memory_Hooks/index.mdx`: 2
-- `T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index.mdx`: 1
-- `T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index.mdx`: 1
-- `T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index.mdx`: 3
-- `T4_Expert/E-PERF-1_UVM_Performance/index.mdx`: 3
-- `T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index.mdx`: 1
-- `T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index.mdx`: 2
-- `T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index.mdx`: 2
+**Not covered: monochrome figures.** Some hand-drawn figures draw only in `currentColor` (no literal, no colour class). CSS cannot tell what such a line means, so they stay black and white until a lesson pass marks their parts with `data-fig` (see "Assigning roles in lessons" below for the roles and the rules). The list of figures still to mark is not kept here, because it goes out of date as lessons change: run `python3 docs/curriculum-quality/workflows/figure-scan.py --work-only` and work from its output. On 2026-11-15 it found 81 monochrome figures in 34 lessons.
 
 | Literal | Was | Now | Figures | Uses |
 |---|---|---|---|---|
@@ -394,6 +360,52 @@ The lessons' own SVG figures give colours as literal attributes. Without editing
 ### Colour-blind safety
 
 Neighbouring meanings that are close under colour-vision differences are told apart by something else, as before: rose and emerald (deuteranopia) by ✕ and ✓ and by the hatch; slate and cyan (protanopia) by the low and high level and the fill under high; cyan and emerald, teal and cyan (tritanopia) by the tag, the band's position and the glyph; violet and indigo by square corners and the `DUT` tag against radius 8 and the `IF` tag. Control (dotted) and causal (dashed) differ by dash, and by colour too where control is amber. Ok and error states differ by the ✓ and ✕ corner marks as well as emerald and rose.
+
+### Assigning roles in lessons
+
+A lesson pass may colour a figure that the kit or the CSS leaves neutral, without changing a word or a coordinate. Two means exist, both text-free:
+
+- **Kit figures:** `role` on a node (leaf or container) of an `<ArchitectureDiagram>` or a participant of a `<SequenceDiagram>`: `"design"` or `"testbench"` only. A node of kind `generic` (or no kind) with a role takes that role's fill, stroke, corner shape and lifeline colour. It gets no tag chip and no legend term, and its text and geometry are unchanged (unit tests compare the layout, every text position and the legend's words with and without roles). The role is said in words only in the accessible description and in a selectable node's name ("Decoder (design side)", "arbiter, design side"). On a node whose kind has a tag, a role must agree with the kind, or the kit shows a data error; any other value is a data error too (the lesson smoke test and `scripts/check-mdx.mjs` catch it). `interface` and `register` are not allowed as a text-free role: their corner radius is the same as a neutral box, so without their IF or REG tag they would differ by colour alone. Use the tagged kinds for them.
+- **Hand-drawn SVG:** `data-fig="<role>"` on a shape, a `<g>`, a `<marker>` or a text. The role colour becomes the element's `color`, so every `currentColor` stroke and fill on it (or inside a marked `<g>` or `<marker>`) follows; a shape that draws a stroke also takes the role stroke directly; text takes the role's text colour (and so does `currentColor` text inside a marked `<g>`). No stroke is added where none was drawn, and a shape's own `fillOpacity` stays, so a marked bar is as light as it was before.
+
+| `role` (kit) / `data-fig` (SVG) | Colour | Non-colour cue that must already be in the figure |
+|---|---|---|
+| `design` / `design` | violet | kit: square corners (radius 3), and the role in words in the description; SVG: the part's label names a design block (RTL, DUT) |
+| `testbench` / `testbench` | amber | kit: pill corners (radius 14) and words; SVG: the label names bench code (TB, UVM component, sequence) |
+| — (tagged kind `interface` only) / `interface` | indigo | kit: the IF tag; SVG: the label names a bus, an interface bundle or a multi-bit value |
+| — (tagged kind `reg` only) / `register` for a model, `expected` for a predicted value | teal | kit: the REG tag; SVG: the label says mirror, model, reference or expected |
+| — / `bit-low`, `bit-high`, `active` | slate, cyan | the low and high level of the trace; `active` only where the text says the part is current or selected |
+| — / `mismatch` | rose | an X, ✕, hatch or the word error or mismatch (use `x` only for an X value on a trace) |
+| — / `z` | amber | a Z or a dashed level |
+| — / `match` | emerald | a ✓ or the word match, pass or ok |
+
+**One token per meaning.** In new markup use `interface` (not `bus` or `data`), `register` or `expected` as the table says, `mismatch` (not `error`) and `match` (not `ok`). The synonyms stay valid only so old markup keeps working.
+
+**Decision procedure.** Work through these in order for each part; the first that applies decides.
+
+1. The part is a concept rather than a component (a phase, a queue slot, a time span, an axis, a counter), or its label says it is not a block: neutral. (B-AHB-1's "HREADY inputs" box stays neutral for that reason.)
+2. The lesson's own words place the part on one side: give it that role, and quote the sentence in the pass log. A domain default is not enough. A master, slave, decoder, multiplexor or bridge is `design` only when the lesson says it is RTL or part of the system being built ("An AHB system with one master needs two pieces of glue logic", B-AHB-1); it is `testbench` when the lesson calls it a VIP, agent, BFM or model in the bench. Drivers, monitors, scoreboards, sequences and anything labelled TB are `testbench`.
+3. Otherwise: neutral.
+
+**Sets and ownership charts.** In a chart or set that splits something by owner (CPU time, bugs, lines of code), mark only the parts whose own label names a side ("Testbench (TB)", "DUT"). Leave parts whose label names something else ("UVM library", "Kernel and I/O") neutral even if they belong to a side by a wider definition: the chart's point is the split its labels make, and a colour must not widen it. Never colour one part of a set when that would suggest the others differ and they do not.
+
+**Labels and shapes.** When a shape is marked, mark its label with the same role. A label may be marked without its shape: do that when marking the shape would break a contrast floor or erase a non-colour ladder (fill opacities, dash patterns) that tells the parts apart. E-PERF-1's attribution bars stay neutral for that reason (an amber bar at 60% opacity measured 2.4:1 against the light page) and only their labels are marked.
+
+**Tint.** Add `tint` only to a box that stands for a component (a block, a node, a participant header), never to a bar, a line, a band or a value. `tint` alone is the neutral tier tint for a component box with no role.
+
+**Containers.** A container (an `env`, a `SoC`, a subsystem box) takes a role only when the lesson places the whole of it on one side (an `env` is testbench; a `SoC` that the lesson calls the design is design). A container that holds both sides, or whose contents the lesson does not place, stays neutral even when some of its children are marked.
+
+**When a part stays neutral.** Whenever the procedure above does not give a role. A figure is never coloured for decoration: if no part's meaning is certain, the figure stays as it is.
+
+**Captions.** A caption or sentence that names a colour must stay true: before marking, read the caption and the paragraph around the figure. `figure-scan.py` prints a WARNING when a figure's caption (hand-drawn `figcaption`, kit `caption` or `<Caption>`) or the paragraph just before or after it names a colour. Never give a part a colour that a caption names for something else, and never mark a figure so that "the shaded box" or "the grey line" stops describing what is drawn. If a caption would have to change, leave the figure neutral; captions are lesson text.
+
+**Arrowheads.** A `<marker>` in `<defs>` inherits from where it is defined, not from the line that uses it, so a `currentColor` arrowhead stays neutral when its line is marked. The rule for the lesson pass: when every line that uses a marker has the same role, mark the marker (or its path) with that role; this works in every browser. A marker shared by lines of different roles stays unmarked, and so neutral. Where the browser supports `context-stroke`, `globals.css` lets an unmarked `currentColor` marker in a figure that has any `data-fig` follow the stroke of the line that uses it; elsewhere it stays neutral, which reads correctly because the line carries the meaning. Checked on 2026-11-15: Chrome 145 supports it; WebKit 26 (Safari) does not; Firefox not checked. Never duplicate a marker per role in a pass: that adds markup the guard rejects.
+
+**Pilot.** On 2026-11-15 the pass was tried on two lessons. B-AHB-1: the ten blocks of its two generic system diagrams took `role: "design"` (the lesson places them in the system it builds; see step 2); the "HREADY inputs" box stayed neutral. E-PERF-1: in the attribution chart, the "Testbench (TB)" label took `testbench` and the "DUT" label `design`; the bars, "UVM library" and "Kernel and I/O" stayed neutral (see "Sets and ownership charts" and "Labels and shapes").
+
+**Forced colours and print.** Marked parts draw in `CanvasText` and `Canvas` like every other figure part; print takes the light values. The non-colour cues above carry the meaning in both.
+
+**Tools.** `docs/curriculum-quality/workflows/figure-scan.py [--tiers T3_Advanced,T4_Expert] [--json OUT] [--work-only] [files]` lists every figure in each lesson with its line range and what a pass could do (generic nodes with no role, participants with neither kind nor role, monochrome SVG), warns when a caption or neighbouring paragraph names a colour, and says "nothing to do" where there is nothing. `docs/curriculum-quality/workflows/figure-guard.py --base <ref> <lesson.mdx>...` passes only if the file, with every allowed `role` (a top-level key of a kit node or participant object) and every allowed `data-fig` (an attribute inside an opening tag within an `<svg>`) removed, is byte-identical to the base. Code fences, and inline code that holds a `<`, are never treated as figures. It fails on any other change, on a value outside the lists, on a role that disagrees with a tagged kind, on a `data-fig` outside an `<svg>` and on a `role` outside a figure's nodes or participants. It also prints a note for each role or `data-fig` that the base had and the file drops or changes, so a reviewer sees meaning changes. `--selftest` proves each case. Run the guard on every lesson a pass touches.
 
 ### Modern, not noisy
 

@@ -16,6 +16,7 @@
  * drawing (BlockDiagram) and the checks measure exactly the same thing.
  */
 import type { DiagramEdge, DiagramNode, DiagramNodeKind, DiagramPort, EdgeStyle, NodeState, PortKind } from "./BlockDiagram";
+import { roleProblem, type AssignedRole } from "./figure-colours";
 
 // ---------------------------------------------------------------------------
 // Shared edge geometry
@@ -356,6 +357,8 @@ export interface GridNode {
   label: string;
   sublabel?: string;
   kind?: DiagramNodeKind;
+  /** Text-free colour role (see DiagramNode.role): colour and corner shape only, no tag, same geometry. */
+  role?: AssignedRole;
   /** Zero-based grid column and row of the top-left cell. */
   col: number;
   row: number;
@@ -452,6 +455,8 @@ export function layoutGridDiagram(spec: GridDiagramSpec): GridLayout {
     if (ids.has(n.id)) problems.push(`Duplicate node id "${n.id}".`);
     ids.add(n.id);
     if (n.col < 0 || n.row < 0) problems.push(`Node "${n.id}" has a negative col or row.`);
+    const bad = roleProblem(`Node "${n.id}"`, n.kind, n.role);
+    if (bad) problems.push(bad);
   }
 
   const containers = spec.nodes.filter((n) => n.container);
@@ -493,6 +498,7 @@ export function layoutGridDiagram(spec: GridDiagramSpec): GridLayout {
       label: n.label,
       sublabel: n.sublabel,
       kind: n.kind ?? (n.container ? "generic" : "generic"),
+      ...(n.role !== undefined ? { role: n.role } : {}),
       x,
       y,
       w,
@@ -560,6 +566,8 @@ export interface SequenceParticipant {
   label: string;
   sublabel?: string;
   kind?: DiagramNodeKind;
+  /** Text-free colour role: the header and lifeline take the role's colour and corner shape; no tag, same geometry. */
+  role?: AssignedRole;
 }
 
 export type SequenceMessageKind = "call" | "return" | "async" | "self" | "note" | "divider";
@@ -691,6 +699,8 @@ export function layoutSequence(spec: SequenceSpec): SequenceLayout {
   spec.participants.forEach((p, i) => {
     if (lifelineX[p.id] !== undefined) problems.push(`Duplicate participant id "${p.id}".`);
     lifelineX[p.id] = SEQ_PAD_X + SEQ_BOX_W / 2 + i * colW;
+    const bad = roleProblem(`Participant "${p.id}"`, p.kind, p.role);
+    if (bad) problems.push(bad);
   });
   const nameOf = (id?: string) => spec.participants.find((p) => p.id === id)?.label ?? id ?? "?";
   const xOf = (id: string | undefined, i: number, role: string) => {

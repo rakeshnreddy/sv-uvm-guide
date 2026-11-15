@@ -15,6 +15,7 @@ import {
   type SequenceParticipant,
 } from "@/components/visual-system/diagram-layout";
 import { DiagramProblems, SequenceDiagram as SequenceDiagramView, SHOW_LAYOUT_WARNINGS } from "@/components/visual-system/SequenceDiagram";
+import { assignedRoleWords } from "@/components/visual-system/figure-colours";
 import { cn } from "@/lib/utils";
 
 /**
@@ -64,9 +65,12 @@ interface ArchitectureDiagramProps {
 function describeArchitecture(nodes: GridNode[], ports: GridPort[] = [], edges: GridEdge[] = []): string {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const portById = new Map(ports.map((p) => [p.id, p]));
+  // A kind is said by its tag; a role given without a tag is said in words (colour is never the only cue).
+  // "Master (design side; HADDR out)": the role follows the name, so it never reads as part of it.
   const tagged = (n: GridNode) => {
     const tag = nodeKindTags[n.kind ?? "generic"];
-    return `${tag ? `${tag} ` : ""}${n.label}${n.sublabel ? ` (${n.sublabel})` : ""}`;
+    const notes = [assignedRoleWords(n.kind, n.role), n.sublabel].filter(Boolean);
+    return `${tag ? `${tag} ` : ""}${n.label}${notes.length ? ` (${notes.join("; ")})` : ""}`;
   };
   const end = (ref: string) => {
     const port = portById.get(ref);
@@ -79,7 +83,8 @@ function describeArchitecture(nodes: GridNode[], ports: GridPort[] = [], edges: 
   const parts = [`Components: ${leaves.map(tagged).join(", ")}.`];
   for (const c of nodes.filter((n) => n.container)) {
     const members = leaves.filter((n) => within(n, c)).map((n) => n.label);
-    if (members.length) parts.push(`${c.label} contains ${members.join(", ")}.`);
+    const said = assignedRoleWords(c.kind, c.role);
+    if (members.length) parts.push(`${c.label}${said ? ` (${said})` : ""} contains ${members.join(", ")}.`);
   }
   if (edges.length) {
     const lines = edges.map((e) => `${end(e.from)} ${e.style === "structural" ? "connects to" : "to"} ${end(e.to)}${e.label ? ` (${e.label})` : ""}`);

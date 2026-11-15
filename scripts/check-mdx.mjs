@@ -22,6 +22,7 @@
  * - flashcard deck ids that do not resolve
  * - internal /curriculum links that do not resolve
  * - explicit H1 headings
+ * - kit figure roles other than design and testbench
  *
  * Warnings:
  * - H2 order differing from the template (Quick Take → Build Your Mental Model →
@@ -42,6 +43,8 @@ const curriculumRoot = path.join(root, "content", "curriculum");
 
 const TEMPLATE = ["Quick Take", "Build Your Mental Model", "Make It Work", "Push Further", "Practice & Reinforce", "References & Next Topics"];
 const KIT = new Set(["ArchitectureDiagram", "TimingDiagram", "SequenceDiagram"]);
+// Interface and register stay with their tagged kinds (IF, REG): without the tag their shape matches a neutral box.
+const KIT_ROLES = ["design", "testbench"];
 
 function registeredComponents() {
   const registry = fs.readFileSync(path.join(root, "src/generated/mdx-component-registry.tsx"), "utf8");
@@ -238,6 +241,14 @@ for (const file of files) {
           if (KIT.has(node.name)) {
             if (!attr("title")) errors.push(`<${node.name}> needs a title (its accessible name) at body line ${line}`);
             if (!attr("caption")) errors.push(`<${node.name}> needs a caption at body line ${line}`);
+            // Text-free colour roles (DESIGN.md section 13): only design and testbench may be given without a tag.
+            for (const name of ["nodes", "participants"]) {
+              const value = attr(name)?.value;
+              const code = typeof value === "object" && value ? value.value : "";
+              for (const m of String(code).matchAll(/["']?role["']?\s*:\s*["']([^"']*)["']/g)) {
+                if (!KIT_ROLES.includes(m[1])) errors.push(`<${node.name}> ${name} has role "${m[1]}" at body line ${line}; use one of ${KIT_ROLES.join(", ")}`);
+              }
+            }
           }
         }
         if (node.type === "link" && typeof node.url === "string") {

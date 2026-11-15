@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 import { DiagramScrollFrame, nodeKindTags } from "./BlockDiagram";
 import { layoutSequence, PHONE_FIT_WIDTH, SEQ_CHAR_W, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
-import { figureRoleOf, roleStyles, tagChipWidth } from "./figure-colours";
+import { assignedRoleWords, effectiveRole, roleStyles, tagChipWidth } from "./figure-colours";
 
 interface SequenceDiagramProps {
   title: string;
@@ -89,6 +89,14 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
   const { width, height, headerHeight, lifelineX } = layout;
   // Phone floor for the lifeline columns; extra width for self-message text keeps the same scale and scrolls.
   const minWidth = Math.round((Math.min(layout.columnsWidth, Math.max(320, participants.length * 120)) * width) / layout.columnsWidth);
+  // Roles given without a tag are said in words in the description, so colour is never the only cue.
+  const saidRoles = participants
+    .map((p) => {
+      const words = assignedRoleWords(p.kind, p.role);
+      return words ? `${p.label} (${words})` : null;
+    })
+    .filter((x): x is string => x !== null);
+  const roleDescription = saidRoles.length ? `Roles: ${saidRoles.join("; ")}.` : null;
 
   return (
     <div className={cn("space-y-2", className)} data-figure-kit="sequence">
@@ -99,8 +107,10 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
           className="block h-auto w-full"
           role="img"
           aria-labelledby={`${id}-title`}
+          aria-describedby={roleDescription ? `${id}-desc` : undefined}
         >
           <title id={`${id}-title`}>{title}</title>
+          {roleDescription ? <desc id={`${id}-desc`}>{roleDescription}</desc> : null}
           <defs>
             {(["normal", "active", "error"] as const).map((tone) => (
               <React.Fragment key={tone}>
@@ -117,9 +127,10 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
           {participants.map((p) => {
             const x = lifelineX[p.id];
             const tag = p.kind ? nodeKindTags[p.kind] : "";
-            const look = roleStyles[figureRoleOf(p.kind)];
+            const participantRole = effectiveRole(p.kind, p.role);
+            const look = roleStyles[participantRole];
             return (
-              <g key={p.id}>
+              <g key={p.id} data-fig-role={participantRole}>
                 <line x1={x} x2={x} y1={headerHeight} y2={height - 8} className={look.lifeline} strokeDasharray="4 4" strokeWidth={1.5} />
                 <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={cn("fill-card", "stroke-none")} />
                 <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={look.box} strokeWidth={1.5} />

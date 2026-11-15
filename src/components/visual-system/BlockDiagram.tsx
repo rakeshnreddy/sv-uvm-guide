@@ -5,7 +5,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 import { EDGE_STYLES, edgeLabelBox, nodeKindTags, PHONE_FIT_WIDTH, pointAlong, portPosition, routeEdges, type Point } from "./diagram-layout";
-import { edgeToneOf, edgeTones, figureRoleOf, roleStyles, stateStyles, tagChipWidth, type EdgeTone, type FigureRole } from "./figure-colours";
+import { assignedRoleWords, edgeToneOf, edgeTones, effectiveRole, figureRoleOf, roleStyles, stateStyles, tagChipWidth, type AssignedRole, type EdgeTone, type FigureRole } from "./figure-colours";
 
 export { nodeKindTags, pointAlong };
 
@@ -34,6 +34,13 @@ export interface DiagramNode {
   label: string;
   sublabel?: string;
   kind: DiagramNodeKind;
+  /**
+   * A text-free colour role for a node of kind "generic" (design or
+   * testbench): the role's fill, stroke and corner shape, with no tag chip, no
+   * legend term and no change to the text or geometry. On a node whose kind
+   * has a role it must agree with that role.
+   */
+  role?: AssignedRole;
   x: number;
   y: number;
   w: number;
@@ -128,7 +135,7 @@ export type LegendEntry =
   /** `tones`: the colours this line style takes in the figure (control can be amber, neutral or both). */
   | { type: "edge"; style: EdgeStyle; text: string; tones: EdgeTone[] };
 
-type LegendNode = Pick<DiagramNode, "kind"> & Partial<Pick<DiagramNode, "id">>;
+type LegendNode = Pick<DiagramNode, "kind"> & Partial<Pick<DiagramNode, "id" | "role">>;
 type LegendPort = Pick<DiagramPort, "kind"> & Partial<Pick<DiagramPort, "id" | "nodeId">>;
 type LegendEdge = Pick<DiagramEdge, "style"> & Partial<Pick<DiagramEdge, "from" | "to">>;
 
@@ -139,13 +146,16 @@ type LegendEdge = Pick<DiagramEdge, "style"> & Partial<Pick<DiagramEdge, "from" 
  */
 export function edgeTouchesTestbench(edge: Partial<Pick<DiagramEdge, "from" | "to">>, nodes: LegendNode[], ports: LegendPort[]): boolean {
   if (edge.from === undefined || edge.to === undefined) return true;
-  const kindOf = (ref: string) => {
+  const nodeOf = (ref: string) => {
     const node = nodes.find((n) => n.id === ref);
-    if (node) return node.kind;
+    if (node) return node;
     const port = ports.find((p) => p.id === ref);
-    return port ? nodes.find((n) => n.id === port.nodeId)?.kind : undefined;
+    return port ? nodes.find((n) => n.id === port.nodeId) : undefined;
   };
-  return [edge.from, edge.to].some((ref) => figureRoleOf(kindOf(ref)) === "testbench");
+  return [edge.from, edge.to].some((ref) => {
+    const node = nodeOf(ref);
+    return effectiveRole(node?.kind, node?.role) === "testbench";
+  });
 }
 
 /**
@@ -153,6 +163,8 @@ export function edgeTouchesTestbench(edge: Partial<Pick<DiagramEdge, "from" | "t
  * actually draws; each entry is drawn with its colour and shape beside it.
  */
 export function legendEntries(ports: LegendPort[], edges: LegendEdge[], nodes: LegendNode[] = []): LegendEntry[] {
+  // Only roles that come from a tagged kind join the legend: a text-free `role`
+  // must not add words to the figure (DESIGN.md section 13).
   const roles = new Set(nodes.map((n) => figureRoleOf(n.kind)));
   const kinds = new Set(ports.map((p) => p.kind));
   const tonesOf = (style: EdgeStyle): EdgeTone[] => {
@@ -392,7 +404,10 @@ export function BlockDiagram({
             const state = node.state ?? "normal";
             const selectable = Boolean(onSelect) && !node.container;
             const tag = nodeKindTags[node.kind];
-            const look = roleStyles[figureRoleOf(node.kind)];
+            const nodeRole = effectiveRole(node.kind, node.role);
+            const look = roleStyles[nodeRole];
+            // A role given without a tag is said in words, so it is never carried by colour alone.
+            const roleSaid = assignedRoleWords(node.kind, node.role);
             const stateLook = state === "normal" ? null : stateStyles[state];
             const radius = node.container ? look.containerRadius : look.radius;
             const selected = selectedId === node.id;
@@ -486,14 +501,15 @@ export function BlockDiagram({
                 ) : null}
               </>
             );
-            if (!selectable) return <g key={node.id}>{body}</g>;
+            if (!selectable) return <g key={node.id} data-fig-role={nodeRole}>{body}</g>;
             return (
               <g
                 key={node.id}
+                data-fig-role={nodeRole}
                 role="button"
                 tabIndex={0}
                 aria-pressed={selected}
-                aria-label={`${tag ? `${tag} ` : ""}${node.label}${node.sublabel ? `, ${node.sublabel}` : ""}${node.badge ? `, ${node.badge}` : ""}${state !== "normal" ? `, ${state}` : ""}`}
+                aria-label={`${tag ? `${tag} ` : ""}${node.label}${roleSaid ? `, ${roleSaid}` : ""}${node.sublabel ? `, ${node.sublabel}` : ""}${node.badge ? `, ${node.badge}` : ""}${state !== "normal" ? `, ${state}` : ""}`}
                 onClick={() => onSelect?.(node.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {

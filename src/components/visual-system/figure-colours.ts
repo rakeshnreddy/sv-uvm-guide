@@ -12,6 +12,65 @@ import type { DiagramNodeKind, EdgeStyle, NodeState } from "./BlockDiagram";
 /** What a node kind means in a figure. "generic" has no role and carries no meaning. */
 export type FigureRole = "design" | "testbench" | "interface" | "register" | "generic";
 
+/**
+ * A text-free colour role an author can give a node or participant (`role:`
+ * in the figure data). It takes the role's colour and corner shape but adds no
+ * tag and changes no text, so a lesson figure can be coloured without changing
+ * its words (DESIGN.md section 13, "Assigning roles in lessons").
+ *
+ * Only design and testbench may be given this way: their corner shape (square,
+ * pill) is a non-colour cue. Interface and register draw with the same radius
+ * as a neutral box, so without their IF or REG tag they would differ by colour
+ * alone; they stay with the tagged kinds.
+ */
+export type AssignedRole = "design" | "testbench";
+
+export const ASSIGNABLE_ROLES: readonly AssignedRole[] = ["design", "testbench"];
+
+/** Words for a role, used in accessible names and descriptions when the role has no tag. */
+export const roleWords: Record<AssignedRole, string> = {
+  design: "design side",
+  testbench: "testbench side",
+};
+
+export function isAssignedRole(value: unknown): value is AssignedRole {
+  return typeof value === "string" && (ASSIGNABLE_ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * The role a node is drawn in: the role of its kind when the kind has one (its
+ * tag says it), else its assigned role. A value that is not a role is ignored
+ * here and reported by the layout as a data error (roleProblem), so a typo
+ * never breaks the drawing.
+ */
+export function effectiveRole(kind: DiagramNodeKind | undefined, role?: AssignedRole): FigureRole {
+  const own = figureRoleOf(kind);
+  if (own !== "generic") return own;
+  return isAssignedRole(role) ? role : "generic";
+}
+
+/**
+ * The role words to say for a node whose role comes from `role` rather than
+ * from a tagged kind (a kind's tag already says it), or null.
+ */
+export function assignedRoleWords(kind: DiagramNodeKind | undefined, role: AssignedRole | undefined): string | null {
+  if (!role || figureRoleOf(kind) !== "generic") return null;
+  return isAssignedRole(role) ? roleWords[role] : null;
+}
+
+/**
+ * A data error for a `role` value, or null: the value must be one of
+ * ASSIGNABLE_ROLES, and on a node whose kind already has a role it must agree
+ * with it (a DRV tag drawn violet would contradict itself).
+ */
+export function roleProblem(subject: string, kind: DiagramNodeKind | undefined, role: unknown): string | null {
+  if (role === undefined) return null;
+  if (!isAssignedRole(role)) return `${subject} has role "${String(role)}"; use one of ${ASSIGNABLE_ROLES.map((r) => `"${r}"`).join(", ")}.`;
+  const own = figureRoleOf(kind);
+  if (own !== "generic" && own !== role) return `${subject} has kind "${kind}" (${own}) but role "${role}"; drop the role or make them agree.`;
+  return null;
+}
+
 export function figureRoleOf(kind: DiagramNodeKind | undefined): FigureRole {
   switch (kind) {
     case "dut":
