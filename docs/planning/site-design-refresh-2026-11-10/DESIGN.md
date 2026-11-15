@@ -232,3 +232,169 @@ Running paragraphs and lists stay directly on the page, and code blocks and edit
 - **Never:** paragraphs and lists, code blocks and editors, quiz and exercise controls and form fields inside interactives.
 
 Section 11's fallbacks apply: without backdrop-filter support, with reduced transparency and in forced colours, panels become solid.
+
+## 13. Figures
+
+Owner request on 2026-11-15: many graphs, block diagrams and illustrations were "bland with no color just black and white"; they asked for colour that aids understanding, modern and clear, "functional and aesthetic", working in both modes, without losing functionality. An audit found the cause: the shared diagram kit (`src/components/mdx/DiagramKit.tsx` over `BlockDiagram`, `CycleWaveform` and `SequenceDiagram`, about 1,120 figures across the 112 lessons) drew almost everything in neutrals, and the 313 hand-drawn SVG figures used literal `rgb()` colours that did not adapt to the mode and fell below 3:1 on the light page. This section is the rule for both. It changes the kit and shared CSS only; no lesson is edited.
+
+### Two guards that come before any colour
+
+- **Meaning does not change.** The encodings of section 3 stay as they are: slate for 0, cyan for 1 and active, rose for X, error and mismatch, amber for Z and testbench, violet for design, indigo for multi-bit values, teal for expected, emerald for match. Only their values per mode change. Every glyph, tag, hatch, dash and label stays, so colour is never the only cue. A caption or sentence that names a colour ("the cyan band", "red notes", "amber badges", "green box") stays true of the rendered figure.
+- **Geometry and text do not change.** Node sizes, label positions, edge routes and label chips are those `diagram-layout.ts` measures; the layout tests pass unchanged. Arrowheads keep the stroke widths the geometry measures (data 1.8, causal and control 1.5).
+
+### Figure colour roles
+
+One role per meaning, each with a stroke (lines, outlines and filled marks), a text value and a soft fill (a lighter base with its own alpha, so tints stay clean instead of muddy). Tokens `--fig-<hue>`, `--fig-<hue>-text` and `--fig-<hue>-fill`, exposed to Tailwind as `stroke-fig-cyan`, `fill-fig-cyan-text`, `fill-fig-cyan-fill` and so on.
+
+| Role | Meaning | Dark stroke / text / fill | Light stroke / text / fill |
+|---|---|---|---|
+| `slate` | logic 0 | `215 16% 58%` / `214 32% 84%` / `215 20% 65% / 0.12` | `215 19% 42%` / `215 25% 30%` / `215 16% 47% / 0.1` |
+| `cyan` | logic 1, active, the attempt band | `188 86% 50%` / `186 90% 72%` / `188 86% 53% / 0.15` | `192 91% 34%` / `194 85% 26%` / `188 86% 53% / 0.15` |
+| `rose` | X, error, mismatch, the fail band | `350 89% 64%` / `352 96% 80%` / `350 89% 60% / 0.16` | `347 77% 47%` / `345 82% 38%` / `350 89% 60% / 0.11` |
+| `amber` | Z, testbench, control lines that touch a testbench node, badges | `38 92% 52%` / `43 96% 70%` / `38 92% 50% / 0.12` | `30 92% 36%` / `26 90% 30%` / `38 92% 50% / 0.15` |
+| `violet` | design (DUT) | `258 90% 72%` / `255 95% 84%` / `258 90% 66% / 0.18` | `262 70% 55%` / `263 70% 44%` / `258 90% 66% / 0.12` |
+| `indigo` | multi-bit values, data flow, interfaces | `234 89% 72%` / `230 94% 84%` / `234 89% 74% / 0.16` | `239 70% 56%` / `243 60% 44%` / `239 84% 67% / 0.12` |
+| `teal` | expected, register model | `172 66% 46%` / `170 76% 68%` / `172 66% 50% / 0.15` | `175 84% 28%` / `176 80% 24%` / `173 80% 40% / 0.13` |
+| `emerald` | match, ok, the pass band | `158 64% 48%` / `156 72% 70%` / `158 64% 52% / 0.15` | `161 94% 28%` / `163 88% 23%` / `160 84% 39% / 0.13` |
+
+Contrast, as built (the lowest over the page, the card, and the quiet glass frame with its sheen over each; `tests/app/theme-contrast.test.ts` enforces 3:1 for strokes and 4.5:1 for text):
+
+| Role | Dark: stroke / text / text on its fill / tag on its chip | Light: stroke / text / text on its fill / tag on its chip |
+|---|---|---|
+| `slate` | 4.95 / 10.61 / 8.64 / 7.05 | 5.44 / 8.69 / 7.72 / 6.90 |
+| `cyan` | 8.50 / 11.34 / 8.27 / 6.06 | 4.03 / 6.72 / 6.10 / 5.64 |
+| `rose` | 4.75 / 7.87 / 6.69 / 5.58 | 4.95 / 6.69 / 5.80 / 5.10 |
+| `amber` | 7.63 / 11.01 / 8.87 / 7.09 | 4.58 / 6.63 / 5.94 / 5.42 |
+| `violet` | 4.87 / 8.22 / 6.74 / 5.57 | 5.78 / 8.18 / 7.06 / 6.17 |
+| `indigo` | 4.89 / 8.68 / 6.75 / 5.31 | 6.53 / 9.22 / 7.97 / 6.96 |
+| `teal` | 7.15 / 11.01 / 8.08 / 5.95 | 4.39 / 5.80 / 5.17 / 4.67 |
+| `emerald` | 7.42 / 10.79 / 7.96 / 5.90 | 4.14 / 5.95 / 5.27 / 4.74 |
+
+The light strokes replace values that were below 3:1 on the light page (cyan-500 2.3, amber-500 2.1, slate-400 2.5, emerald-500 2.4, indigo-400 2.9). The test also keeps each hue in its family, checks primary and secondary text on every soft fill, the step badges, and the neutral tint below. Sky, the "blue band" of captions, stays the accent family (`--info`), apart from cyan.
+
+### Architecture diagrams (`BlockDiagram`)
+
+| Element | Treatment |
+|---|---|
+| Node | soft fill, a 1.5 px stroke and a tag chip, all in the node's role |
+| Design (`dut`) | violet, square corners (radius 3), `DUT` chip |
+| Testbench (`test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence`) | amber, rounded (radius 14, the most the tag chip allows), its tag on the chip |
+| Interface (`interface`) | indigo, radius 8, `IF` chip: the pins it carries are multi-bit values |
+| Register model (`reg`) | teal, radius 8, `REG` chip: the testbench's expected copy of the registers (the mirror) |
+| No role (`generic`) | a neutral tint of the lesson's tier: the tier colour mixed 20% into the secondary colour as the stroke, the tier at 4.5% as the fill, no chip. It carries no meaning, so it stays near-neutral and never reads as a role or state |
+| State | active cyan, error rose, ok emerald, dim at half opacity: the state wins over the role (fill, stroke and chip); active and error strokes are 2.2 px. Ok and error also carry a shape: a ✓ or ✕ in the card colour on a 6.5 px disc of the state colour at the node's top-right corner (kept inside the drawing), because emerald and rose are close under deuteranopia |
+| Container | the role colour as a faint tint (4 to 5%) and a dashed 1.5 px border; its tag on a chip before the name. A container inside another container has no fill, only the dashed role border and chip, so nested tints (TEST, ENV, AGT) do not stack into one wash |
+| Badge (top right) | amber text, as before ("the amber badges" in E-SOC-1) |
+| Tag chip | JetBrains Mono 9 px at 600 on the role's soft fill laid over the node's fill, radius 3; the tag text in the role's text colour |
+| Edges | data indigo, solid, filled head; control dotted with an open head, amber where either end is a testbench node (get_next_item, start, grab) and the strong neutral (foreground at 75%) elsewhere, so a decoder's selects between design blocks never read as testbench traffic; causal (call order) the strong neutral (foreground at 75%), dashed, open head; structural the secondary neutral, plain, 1.5 px. Active cyan, error rose, dim faint, whatever the style. Each arrowhead takes its line's colour |
+| Edge label | a chip on a solid card surface, with the edge colour's soft fill and a hairline in the edge colour, the label in the edge's text colour |
+| Numbered step | a label that starts "N. " (a node label or an edge label) shows its number on a filled pill badge, as in sequence diagrams: the strong neutral (foreground at 80%) with the digits in the page colour on a node, the edge's text colour with the digits in the card colour on an edge label. The text stays exactly as written: the digits are drawn over the badge and the "." is transparent, so widths and the layout tests do not change. The badge is placed from the 0.6 em mono advance (6.9 px for 11.5 px node labels, 6 px for 10 px edge labels) |
+| Ports | the UVM symbols in the strong neutral on the card surface; an error port rose, an active port cyan; the imp ● stays solid |
+| Selection and focus | one neutral ring: 2 px in the foreground colour, 4 px outside the node, with a 2 px card-coloured gap inside it, so it can never be taken for the active cyan or any state colour; no stroke colour change. Forced colours: the ring takes `Highlight` and the gap `Canvas` |
+| Legend | each term that appears in the figure, with its swatch drawn beside it: the role swatch (its shape and colour), the port symbol, or a line sample with the edge's dash, colour and arrowhead (control shows the amber sample, the neutral one, or both, as the figure draws it). Order: roles, ports, lines. A term that does not appear is never listed; nodes with no role add no term. The ASCII line glyphs ("── data flow →") gave way to the drawn swatches, so the terms are now plain words ("data flow") |
+
+### Timing diagrams (`CycleWaveform`, `StepWaveform`)
+
+- A one-bit trace is slate where low and cyan where high, with the cyan soft fill under the high level; each edge takes the new level's colour. 2 px. The high fill is left out where a cyan (attempt) band or the `StepWaveform` cursor already tints the column, so the two cyans never stack into what reads as a second band.
+- A clock is the secondary neutral at 80%, 1.5 px, with no fill, so data stands out. `StepWaveform` treats a row named `clk`, `clock` or ending in `_clk` as a clock.
+- A bus is an indigo outline with the indigo soft fill, the crossing where the value changes, and the value in the indigo text colour (mono, weight 500).
+- X stays the rose hatch (rose stripes on the rose soft fill); Z stays the amber dash.
+- Markers keep their glyphs and tones in the text colours (pass emerald ✓, fail rose ✕, vacuous slate ○, pending and drive amber, sample violet ▼, info sky ●). Highlight bands keep their hues, as the soft fills with a hairline in the same colour: attempt cyan, fail rose, pass emerald, info sky. The cursor is the cyan stroke.
+- Signal names sit in a label column on a faint panel (foreground at 3.5%, radius 6), with hairline rules between rows, like a waveform viewer. The names keep their positions.
+
+### Sequence diagrams (`SequenceDiagram`)
+
+- Participant headers take their role like architecture nodes (soft fill, stroke, tag chip, corner radius up to 12) on a solid card surface; lifelines are the role colour at half strength, dashed, 1.5 px (the hairline for no role).
+- A numbered message shows its number on a filled pill badge (the strong neutral; cyan or rose for an active or error message) with the digits in the page colour. The "N. " stays in the text, so the text reads as before: the digits are drawn over the badge and the ". " is transparent. The badge is placed from the 0.6 em mono advance the layout already measures.
+- Arrows keep their tones (neutral, active cyan, error rose), each with a matching arrowhead.
+- Notes move off amber, which means testbench and Z: a neutral raised surface (`--muted`) on the card, a hairline, and a 3 px leading edge in the lesson's tier colour. A note with `tone: "error"` is rose and `tone: "active"` cyan, so "the red notes" in captions (I-UVM-3B, A-UVM-4B, I-SV-3A) now are red; before, every note was drawn amber.
+- The kit draws no activation bars, so there is nothing to fill.
+
+### Hand-drawn SVG figures
+
+The lessons' own SVG figures give colours as literal attributes. Without editing a lesson, `globals.css` maps each literal to the figure token of the same hue, scoped to `[data-lesson-article] svg` (CSS beats presentation attributes): strokes and filled marks take the stroke value, text takes the text value, and sky takes `--info`. Translucent `rgba()` tints (78 distinct values, 348 figure uses) are left as they are: a tint composites over either mode and carries no contrast duty. 144 of the 313 figures carry at least one remapped literal; the other 92 use Tailwind colour classes or translucent tints, which already adapt.
+
+**Not covered: 77 monochrome figures.** 77 hand-drawn figures in 33 lessons draw only in `currentColor` (no literal, no colour class). CSS cannot tell what such a line means, so they stay black and white after this change; they need a lesson pass. To make that pass a matter of marking parts rather than choosing colours, `globals.css` has opt-in roles: `data-fig="<role>"` on a shape gives it the role's stroke, on text the role's text colour, and with `tint` added (`data-fig="design tint"`) a shape also takes the role's soft fill; `data-fig="tint"` alone is the neutral tier tint for a node with no role. Roles: `bit-low` (slate), `bit-high` and `active` (cyan), `x`, `error` and `mismatch` (rose), `z` and `testbench` (amber), `design` (violet), `bus` and `data` (indigo), `expected` (teal), `match` and `ok` (emerald). A one-bit trace drawn by hand should mark its low segments `bit-low` and its high segments `bit-high`, so it matches the kit's timing diagrams. The figures still to mark (count per lesson, under `content/curriculum/`):
+
+- `T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx`: 8
+- `T1_Foundational/F1B_The_Verification_Mindset/index.mdx`: 2
+- `T1_Foundational/F1C_Why_SystemVerilog/index.mdx`: 1
+- `T1_Foundational/F2A_Core_Data_Types/index.mdx`: 1
+- `T1_Foundational/F2A_Core_Data_Types/operators-and-expressions.mdx`: 2
+- `T1_Foundational/F2A_Core_Data_Types/structs-unions-enums.mdx`: 7
+- `T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control.mdx`: 2
+- `T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index.mdx`: 3
+- `T1_Foundational/F2D_Reusable_Code_and_Parallelism/index.mdx`: 1
+- `T1_Foundational/F2E_First_Self_Checking_Testbench/index.mdx`: 3
+- `T1_Foundational/F3A_Simulation_Semantics/index.mdx`: 1
+- `T1_Foundational/F3B_Scheduling_Regions/index.mdx`: 1
+- `T1_Foundational/F4C_Clocking_Blocks/index.mdx`: 1
+- `T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/advanced-constraints.mdx`: 1
+- `T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow.mdx`: 4
+- `T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage.mdx`: 2
+- `T2_Intermediate/I-SV-4A_SVA_Fundamentals/index.mdx`: 1
+- `T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic/multi-clocking.mdx`: 10
+- `T2_Intermediate/I-SV-9_Why_UVM/index.mdx`: 1
+- `T2_Intermediate/I-UVM-1A_Components/index.mdx`: 3
+- `T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx`: 1
+- `T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer.mdx`: 1
+- `T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences.mdx`: 1
+- `T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index.mdx`: 1
+- `T3_Advanced/B-AHB-1_AHB_Design_Timing_Mechanics/index.mdx`: 3
+- `T3_Advanced/B-AMBA-2_Protocol_Intuition_and_Memory_Hooks/index.mdx`: 2
+- `T3_Advanced/B-AMBA-F1_Bridges_and_System_Integration/index.mdx`: 1
+- `T3_Advanced/B-AXI-1_AXI_Channel_Architecture/index.mdx`: 1
+- `T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics/index.mdx`: 3
+- `T4_Expert/E-PERF-1_UVM_Performance/index.mdx`: 3
+- `T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index.mdx`: 1
+- `T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index.mdx`: 2
+- `T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index.mdx`: 2
+
+| Literal | Was | Now | Figures | Uses |
+|---|---|---|---|---|
+| `stroke="rgb(6,182,212)"` | cyan-500 | `hsl(var(--fig-cyan))` | 86 | 251 |
+| `stroke="rgb(245,158,11)"` | amber-500 | `hsl(var(--fig-amber))` | 54 | 104 |
+| `stroke="rgb(244,63,94)"` | rose-500 | `hsl(var(--fig-rose))` | 43 | 105 |
+| `stroke="rgb(139,92,246)"` | violet-500 | `hsl(var(--fig-violet))` | 36 | 67 |
+| `stroke="rgb(16,185,129)"` | emerald-500 | `hsl(var(--fig-emerald))` | 27 | 41 |
+| `stroke="rgb(99,102,241)"` | indigo-500 | `hsl(var(--fig-indigo))` | 25 | 66 |
+| `stroke="rgb(8,145,178)"` | cyan-600 | `hsl(var(--fig-cyan))` | 25 | 194 |
+| `stroke="rgb(100,116,139)"` | slate-500 | `hsl(var(--fig-slate))` | 14 | 45 |
+| `stroke="rgb(225,29,72)"` | rose-600 | `hsl(var(--fig-rose))` | 12 | 66 |
+| `fill="rgb(8,145,178)" on shapes` | cyan-600 | `hsl(var(--fig-cyan))` | 11 | 11 |
+| `stroke="rgb(14,165,233)"` | sky-500 | `hsl(var(--info))` | 8 | 8 |
+| `stroke="rgb(217,119,6)"` | amber-600 | `hsl(var(--fig-amber))` | 6 | 16 |
+| `stroke="rgb(5,150,105)"` | emerald-600 | `hsl(var(--fig-emerald))` | 5 | 8 |
+| `fill="rgb(6,182,212)" on shapes` | cyan-500 | `hsl(var(--fig-cyan))` | 5 | 9 |
+| `fill="rgb(225,29,72)" on shapes` | rose-600 | `hsl(var(--fig-rose))` | 4 | 4 |
+| `stroke="rgb(168,85,247)"` | purple-500 | `hsl(var(--fig-violet))` | 3 | 6 |
+| `fill="rgb(225,29,72)" on text` | rose-600 | `hsl(var(--fig-rose-text))` | 3 | 7 |
+| `fill="rgb(5,150,105)" on shapes` | emerald-600 | `hsl(var(--fig-emerald))` | 2 | 2 |
+| `fill="rgb(5,150,105)" on text` | emerald-600 | `hsl(var(--fig-emerald-text))` | 2 | 6 |
+| `fill="rgb(245,158,11)" on shapes` | amber-500 | `hsl(var(--fig-amber))` | 2 | 2 |
+| `fill="rgb(16,185,129)" on text` | emerald-500 | `hsl(var(--fig-emerald-text))` | 2 | 2 |
+| `fill="rgb(139,92,246)" on shapes` | violet-500 | `hsl(var(--fig-violet))` | 2 | 4 |
+| `stroke="rgb(148,163,184)"` | slate-400 | `hsl(var(--fig-slate))` | 2 | 2 |
+| `fill="rgb(245,158,11)" on text` | amber-500 | `hsl(var(--fig-amber-text))` | 2 | 2 |
+| `stroke="rgba(244,63,94,0.6)"` | rose-500 at 0.6 | `hsl(var(--fig-rose) / 0.6)` | 1 | 1 |
+| `fill="rgb(244,63,94)" on text` | rose-500 | `hsl(var(--fig-rose-text))` | 1 | 1 |
+| `fill="rgb(244,63,94)" on shapes` | rose-500 | `hsl(var(--fig-rose))` | 1 | 1 |
+| `fill="rgb(100,116,139)" on shapes` | slate-500 | `hsl(var(--fig-slate))` | 1 | 1 |
+| `fill="rgb(139,92,246)" on text` | violet-500 | `hsl(var(--fig-violet-text))` | 1 | 3 |
+| `fill="rgb(14,165,233)" on text` | sky-500 | `hsl(var(--info))` | 1 | 1 |
+| `fill="rgb(220,38,38)" on shapes` | red-600 | `hsl(var(--fig-rose))` | 1 | 2 |
+| `stroke="rgb(220,38,38)"` | red-600 | `hsl(var(--fig-rose))` | 1 | 3 |
+| `fill="rgb(220,38,38)" on text` | red-600 | `hsl(var(--fig-rose-text))` | 1 | 4 |
+
+### Print and forced colours
+
+- **Print.** Tailwind's dark variant applies on screen only (`darkMode: ["variant", "@media screen { … }"]`), so a `dark:` class no longer prints its pale dark-mode colour on white paper; print takes the light values of every token, the figure tokens included (section 7).
+- **Forced colours.** Inside the kit and lesson figures, lines and outlines take `CanvasText`, soft fills become `Canvas` so labels stay readable, marks that are solid by meaning (the imp ●, filled arrowheads; class `fig-solid`) stay solid, text takes `CanvasText`, highlight bands become a dashed `Highlight` outline and the selection ring takes `Highlight`. Hatches, dashes, glyphs and tags still carry every meaning.
+
+### Colour-blind safety
+
+Neighbouring meanings that are close under colour-vision differences are told apart by something else, as before: rose and emerald (deuteranopia) by ✕ and ✓ and by the hatch; slate and cyan (protanopia) by the low and high level and the fill under high; cyan and emerald, teal and cyan (tritanopia) by the tag, the band's position and the glyph; violet and indigo by square corners and the `DUT` tag against radius 8 and the `IF` tag. Control (dotted) and causal (dashed) differ by dash, and by colour too where control is amber. Ok and error states differ by the ✓ and ✕ corner marks as well as emerald and rose.
+
+### Modern, not noisy
+
+Soft tinted fills under stronger strokes; one radius scale (tags 3, square design 3, other nodes 8, testbench 14, containers up to 16); 1.5 px or more for every stroke that carries meaning; no glow, no decorative gradient, no shadow under shapes and no new animation.

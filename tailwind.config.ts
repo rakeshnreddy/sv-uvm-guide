@@ -42,6 +42,18 @@ function tierColours(): Record<string, string> {
   );
 }
 
+/** The figure colour roles (globals.css): fig-cyan (stroke), fig-cyan-text and fig-cyan-fill (the soft fill). */
+const FIG_HUES = ["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"] as const;
+function figColours(): Record<string, string> {
+  return Object.fromEntries(
+    FIG_HUES.flatMap((hue) => [
+      [hue, role(`fig-${hue}`)],
+      [`${hue}-text`, role(`fig-${hue}-text`)],
+      [`${hue}-fill`, `hsl(var(--fig-${hue}-fill))`],
+    ]),
+  );
+}
+
 const proseVariables =Object.fromEntries(
   Object.entries(proseColours).flatMap(([key, value]) => [
     [`--tw-prose-${key}`, value],
@@ -57,7 +69,9 @@ const config: Config = {
     "./content/**/*.mdx",
   ],
   // next-themes sets data-theme before first paint, so dark: styles apply before hydration.
-  darkMode: ["selector", '[data-theme="dark"]'],
+  // Screen only: print uses the light values (DESIGN.md section 7), so a dark: variant must not
+  // print its pale dark-mode colour on white paper.
+  darkMode: ["variant", '@media screen { &:where([data-theme="dark"], [data-theme="dark"] *) }'],
   theme: {
     extend: {
       colors: {
@@ -127,6 +141,13 @@ const config: Config = {
           current: role("tier-current"),
           "current-subtle": "var(--tier-current-subtle)",
           "current-border": "var(--tier-current-border)",
+        },
+        // Figure colours (DESIGN.md section 13): stroke-fig-cyan, fill-fig-cyan-fill, fill-fig-cyan-text,
+        // and fig-generic, the neutral tint of the current tier for nodes with no role.
+        fig: {
+          ...figColours(),
+          generic: "color-mix(in srgb, hsl(var(--tier-current)) 20%, hsl(var(--muted-foreground)))",
+          "generic-fill": "hsl(var(--tier-current) / 0.045)",
         },
         // Glass tokens as colours, for the rare part that needs one on its own (a divider inside a glass menu).
         glass: {

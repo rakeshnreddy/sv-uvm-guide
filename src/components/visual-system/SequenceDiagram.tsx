@@ -5,7 +5,8 @@ import React, { useId } from "react";
 import { cn } from "@/lib/utils";
 
 import { DiagramScrollFrame, nodeKindTags } from "./BlockDiagram";
-import { layoutSequence, PHONE_FIT_WIDTH, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
+import { layoutSequence, PHONE_FIT_WIDTH, SEQ_CHAR_W, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
+import { figureRoleOf, roleStyles, tagChipWidth } from "./figure-colours";
 
 interface SequenceDiagramProps {
   title: string;
@@ -17,17 +18,64 @@ interface SequenceDiagramProps {
   className?: string;
 }
 
-const toneStroke = {
-  normal: "stroke-foreground/70",
-  active: "stroke-cyan-600 dark:stroke-cyan-400",
-  error: "stroke-rose-600 dark:stroke-rose-400",
-} as const;
+type Tone = "normal" | "active" | "error";
 
-const toneFill = {
-  normal: "fill-foreground/70",
-  active: "fill-cyan-600 dark:fill-cyan-400",
-  error: "fill-rose-600 dark:fill-rose-400",
-} as const;
+const toneStroke: Record<Tone, string> = {
+  normal: "stroke-foreground/75",
+  active: "stroke-fig-cyan",
+  error: "stroke-fig-rose",
+};
+
+const toneMarker: Record<Tone, string> = {
+  normal: "fill-foreground/75",
+  active: "fill-fig-cyan",
+  error: "fill-fig-rose",
+};
+
+const toneText: Record<Tone, string> = {
+  normal: "fill-foreground",
+  active: "fill-fig-cyan-text",
+  error: "fill-fig-rose-text",
+};
+
+/** Step badge: a filled pill behind the step number; the digits take the page colour. */
+const toneBadge: Record<Tone, string> = {
+  normal: "fill-foreground/80",
+  active: "fill-fig-cyan-text",
+  error: "fill-fig-rose-text",
+};
+
+/** Notes: a neutral raised surface with a 3 px accent edge; an error or active note takes rose or cyan. */
+const noteStyle: Record<Tone, { box: string; edge: string }> = {
+  normal: { box: "fill-muted stroke-border", edge: "fill-tier-current" },
+  active: { box: "fill-fig-cyan-fill stroke-fig-cyan/50", edge: "fill-fig-cyan" },
+  error: { box: "fill-fig-rose-fill stroke-fig-rose/50", edge: "fill-fig-rose" },
+};
+
+/**
+ * The first line of a numbered message, with its "N. " prefix kept in the text
+ * (so the text reads exactly as before) and the number drawn on a filled badge:
+ * the digits take the page colour and the ". " is transparent. Message text is
+ * 10.5 px mono, SEQ_CHAR_W per character, which places the badge.
+ */
+function StepBadge({ step, startX, baseline, tone }: { step: number; startX: number; baseline: number; tone: Tone }) {
+  const digits = String(step).length;
+  const w = Math.max(14, digits * SEQ_CHAR_W + 7);
+  const cx = startX + (digits * SEQ_CHAR_W) / 2;
+  return <rect x={cx - w / 2} y={baseline - 11} width={w} height={14} rx={7} className={toneBadge[tone]} />;
+}
+
+function PrefixedLine({ prefix, line }: { prefix: string; line: string }) {
+  if (!prefix) return <>{line}</>;
+  const number = prefix.replace(/\. $/, "");
+  return (
+    <>
+      <tspan className="fill-background font-semibold">{number}</tspan>
+      <tspan fillOpacity={0}>{prefix.slice(number.length)}</tspan>
+      {line}
+    </>
+  );
+}
 
 /**
  * Message-sequence diagram: who calls whom, in what order. Calls are solid
@@ -43,7 +91,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
   const minWidth = Math.round((Math.min(layout.columnsWidth, Math.max(320, participants.length * 120)) * width) / layout.columnsWidth);
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-2", className)} data-figure-kit="sequence">
       <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="glass-liquid p-2">
         <svg
           viewBox={`0 0 ${width} ${height}`}
@@ -54,25 +102,34 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
         >
           <title id={`${id}-title`}>{title}</title>
           <defs>
-            <marker id={`${id}-filled`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 Z" className="fill-foreground/70" />
-            </marker>
-            <marker id={`${id}-open`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M1,1 L9,5 L1,9" fill="none" className="stroke-foreground/70" strokeWidth="1.6" />
-            </marker>
+            {(["normal", "active", "error"] as const).map((tone) => (
+              <React.Fragment key={tone}>
+                <marker id={`${id}-filled-${tone}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" className={cn("fig-solid", toneMarker[tone])} />
+                </marker>
+                <marker id={`${id}-open-${tone}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M1,1 L9,5 L1,9" fill="none" className={toneStroke[tone]} strokeWidth="1.6" />
+                </marker>
+              </React.Fragment>
+            ))}
           </defs>
 
           {participants.map((p) => {
             const x = lifelineX[p.id];
             const tag = p.kind ? nodeKindTags[p.kind] : "";
+            const look = roleStyles[figureRoleOf(p.kind)];
             return (
               <g key={p.id}>
-                <line x1={x} x2={x} y1={headerHeight} y2={height - 8} className="stroke-border" strokeDasharray="4 4" strokeWidth={1.2} />
-                <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={8} className="fill-card stroke-border" strokeWidth={1.2} />
+                <line x1={x} x2={x} y1={headerHeight} y2={height - 8} className={look.lifeline} strokeDasharray="4 4" strokeWidth={1.5} />
+                <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={cn("fill-card", "stroke-none")} />
+                <rect x={x - 65} y={6} width={130} height={headerHeight - 10} rx={Math.min(look.radius, 12)} className={look.box} strokeWidth={1.5} />
                 {tag ? (
-                  <text x={x - 58} y={18} className="fill-muted-foreground text-[8.5px] font-bold tracking-wider">
-                    {tag}
-                  </text>
+                  <>
+                    <rect x={x - 61} y={9} width={tagChipWidth(tag, 8.5)} height={12} rx={3} className={look.chip} />
+                    <text x={x - 58} y={18} className={cn("font-mono text-[8.5px] font-semibold [font-variant-ligatures:none]", look.tagText)}>
+                      {tag}
+                    </text>
+                  </>
                 ) : null}
                 <text x={x} y={p.sublabel ? 27 : 31} textAnchor="middle" className="fill-foreground font-mono text-[11px] font-semibold [font-variant-ligatures:none]">
                   {p.label}
@@ -100,9 +157,12 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
               );
             }
             if (m.kind === "note") {
+              const note = noteStyle[m.tone];
               return (
                 <g key={m.index}>
-                  <rect x={m.x1} y={m.y} width={m.x2 - m.x1} height={m.height} rx={4} className="fill-amber-500/10 stroke-amber-600/60 dark:stroke-amber-400/60" strokeWidth={1} />
+                  <rect x={m.x1} y={m.y} width={m.x2 - m.x1} height={m.height} rx={4} className="fill-card" />
+                  <rect x={m.x1} y={m.y} width={m.x2 - m.x1} height={m.height} rx={4} className={note.box} strokeWidth={1} />
+                  <rect x={m.x1} y={m.y} width={3} height={m.height} rx={1.5} className={note.edge} />
                   {m.lines.map((line, k) => (
                     <text key={k} x={m.x1 + 8} y={m.y + 16 + k * 14} className="fill-foreground text-[10.5px]">
                       {line}
@@ -113,6 +173,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
             }
             const stroke = toneStroke[m.tone];
             const prefix = numbered && m.step !== null ? `${m.step}. ` : "";
+            const textClass = cn("font-mono text-[10.5px] [font-variant-ligatures:none]", toneText[m.tone]);
             if (m.kind === "self") {
               const x = m.x1;
               return (
@@ -122,12 +183,12 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                     fill="none"
                     className={stroke}
                     strokeWidth={1.6}
-                    markerEnd={`url(#${id}-filled)`}
+                    markerEnd={`url(#${id}-filled-${m.tone})`}
                   />
+                  {prefix && m.step !== null ? <StepBadge step={m.step} startX={x + SEQ_SELF_TEXT_DX} baseline={m.y + 12} tone={m.tone} /> : null}
                   {m.lines.map((line, k) => (
-                    <text key={k} x={x + SEQ_SELF_TEXT_DX} y={m.y + 12 + k * 14} className={cn("font-mono text-[10.5px] [font-variant-ligatures:none]", m.tone === "normal" ? "fill-foreground" : toneFill[m.tone])}>
-                      {k === 0 ? prefix : ""}
-                      {line}
+                    <text key={k} x={x + SEQ_SELF_TEXT_DX} y={m.y + 12 + k * 14} className={textClass}>
+                      <PrefixedLine prefix={k === 0 ? prefix : ""} line={line} />
                     </text>
                   ))}
                 </g>
@@ -147,18 +208,19 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
                   className={stroke}
                   strokeWidth={1.6}
                   strokeDasharray={isReturn ? "5 4" : undefined}
-                  markerEnd={`url(#${id}-${marker})`}
+                  markerEnd={`url(#${id}-${marker}-${m.tone})`}
                 />
+                {prefix && m.step !== null ? (
+                  <StepBadge
+                    step={m.step}
+                    startX={mid - ((prefix.length + m.lines[0].length) * SEQ_CHAR_W) / 2}
+                    baseline={m.y - 8 - (m.lines.length - 1) * 14}
+                    tone={m.tone}
+                  />
+                ) : null}
                 {m.lines.map((line, k) => (
-                  <text
-                    key={k}
-                    x={mid}
-                    y={m.y - 8 - (m.lines.length - 1 - k) * 14}
-                    textAnchor="middle"
-                    className={cn("font-mono text-[10.5px] [font-variant-ligatures:none]", m.tone === "normal" ? "fill-foreground" : toneFill[m.tone])}
-                  >
-                    {k === 0 ? prefix : ""}
-                    {line}
+                  <text key={k} x={mid} y={m.y - 8 - (m.lines.length - 1 - k) * 14} textAnchor="middle" className={textClass}>
+                    <PrefixedLine prefix={k === 0 ? prefix : ""} line={line} />
                   </text>
                 ))}
               </g>

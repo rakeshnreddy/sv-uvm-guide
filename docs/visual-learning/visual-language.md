@@ -195,7 +195,9 @@ Nodes sit on a grid by `col` and `row` (zero-based), with optional `colSpan` and
 
 Node kinds: `test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence dut interface reg generic`. Edge styles: `data` (solid with a filled arrow), `control` (dotted), `causal` (dashed, call order), `structural` (plain).
 
-The legend (on by default when there are ports or edges) lists only the port symbols and line styles the diagram draws, so a protocol diagram with plain bus lines shows "── connection (no direction)" and no UVM port symbols. `legend={false}` hides it; then the caption should say what the lines mean.
+The legend (on by default when there are ports or edges) lists only the node roles, port symbols and line styles the diagram draws, each with its colour and shape drawn beside the term, so a protocol diagram with plain bus lines shows "connection (no direction)" and no UVM port symbols. `legend={false}` hides it; then the caption should say what the lines mean.
+
+Colours follow DESIGN.md section 13 (`docs/planning/site-design-refresh-2026-11-10/DESIGN.md`): design nodes violet and square, testbench nodes amber and rounded, `interface` indigo, `reg` teal, `generic` a near-neutral tint of the lesson's tier; states win over roles; data lines indigo, control dotted (amber where it touches a testbench node, neutral elsewhere), causal and structural neutral; numbered steps ("1. ") on filled badges; ok and error also marked ✓ and ✕.
 
 Edges attach to the centre of the node side that faces them, so several edges meeting one side share a point. `spreadAnchors` spreads them evenly along that side, ordered by where each edge comes from (off by default, so existing diagrams do not move).
 

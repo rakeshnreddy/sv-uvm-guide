@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { contrast, css, modes, themeBlocks } from "./theme-tokens";
@@ -52,6 +55,8 @@ const ROLES = [
   // Lesson text (DESIGN.md section 12).
   "reference",
   "prose-body",
+  // Figures (DESIGN.md section 13): a stroke and a text value per meaning.
+  ...["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"].flatMap((hue) => [`fig-${hue}`, `fig-${hue}-text`]),
 ];
 
 /** Section 11 tokens that are not plain HSL triplets; copied like the roles. */
@@ -68,6 +73,8 @@ const GLASS_TOKENS = [
   "primary-sheen-highlight",
   "primary-sheen-hover",
   "glass-sheen",
+  // Figure soft fills (DESIGN.md section 13): a triplet with its alpha.
+  ...["slate", "cyan", "rose", "amber", "violet", "indigo", "teal", "emerald"].map((hue) => `fig-${hue}-fill`),
 ];
 
 const CODE_CHROME = ["code-surface", "code-foreground", "code-muted", "code-border"];
@@ -539,3 +546,114 @@ describe.each(MODES)("%s mode lesson text contrast", (_name, { vars }) => {
   });
 });
 
+
+/*
+ * Figures (DESIGN.md section 13). One colour role per meaning of the visual
+ * language, each with a stroke, a text value and a soft fill. Strokes and filled
+ * marks hold 3:1 and text 4.5:1 wherever a figure is drawn: on the page, on a
+ * card, and on the quiet glass frame (its fill and its top sheen) over the page.
+ * Text also holds 4.5:1 on its own soft fill, and a role tag on its chip (the
+ * fill laid over the node's fill). The hues stay in their families, so the
+ * meanings do not move.
+ */
+const FIG_HUES = {
+  slate: [200, 225],
+  cyan: [180, 196],
+  rose: [340, 360],
+  amber: [24, 46],
+  violet: [250, 270],
+  indigo: [225, 245],
+  teal: [165, 180],
+  emerald: [150, 166],
+} as const;
+
+/** Every surface a figure is drawn on: the page, a card, and the liquid frame (fill and sheen) over the page and over a card. */
+function figureSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
+  const page = rgbOf(vars.background);
+  const card = rgbOf(vars.card);
+  const [onPage, onPageSheen] = liquidFills(vars, page);
+  const [onCard, onCardSheen] = liquidFills(vars, card);
+  return [
+    ["page", page],
+    ["card", card],
+    ["frame", onPage],
+    ["frame sheen", onPageSheen],
+    ["frame on card", onCard],
+    ["frame sheen on card", onCardSheen],
+  ];
+}
+
+describe("figure tokens (DESIGN.md section 13)", () => {
+  it.each(MODES)("%s mode keeps every figure hue in its family, with a translucent soft fill", (_name, { vars }) => {
+    for (const [hue, [lo, hi]] of Object.entries(FIG_HUES)) {
+      for (const key of [`fig-${hue}`, `fig-${hue}-text`, `fig-${hue}-fill`]) {
+        const h = parseFloat(vars[key]);
+        expect(h, key).toBeGreaterThanOrEqual(lo);
+        expect(h, key).toBeLessThanOrEqual(hi);
+      }
+      const fill = hsla(vars[`fig-${hue}-fill`]);
+      expect(fill.alpha, `fig-${hue}-fill alpha`).toBeGreaterThanOrEqual(0.08);
+      expect(fill.alpha, `fig-${hue}-fill alpha`).toBeLessThanOrEqual(0.2);
+    }
+  });
+
+  it("exposes the tokens to Tailwind and draws the kit with them", () => {
+    const config = readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
+    expect(config).toContain("role(`fig-${hue}`)");
+    expect(config).toContain("role(`fig-${hue}-text`)");
+    expect(config).toContain("`hsl(var(--fig-${hue}-fill))`");
+  });
+
+  it("prints dark: variants with the light values: the dark variant applies on screen only", () => {
+    const config = readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
+    expect(config).toMatch(/darkMode: \["variant", '@media screen \{ &:where\(\[data-theme="dark"\], \[data-theme="dark"\] \*\) \}'\]/);
+  });
+
+  it("remaps the hand-drawn figures' literal colours to the figure tokens, and gives figures forced-colours rules", () => {
+    expect(css).toContain('[data-lesson-article] svg [stroke="rgb(6,182,212)"] { stroke: hsl(var(--fig-cyan)); }');
+    expect(css).toContain('[data-lesson-article] svg :is(text, tspan)[fill="rgb(225,29,72)"] { fill: hsl(var(--fig-rose-text)); }');
+    expect(css).toMatch(/@media \(forced-colors: active\)\s*\{\s*:is\(\[data-figure-kit\], \[data-lesson-article\]\) svg :is\(text, tspan\) \{\s*fill: CanvasText;/);
+  });
+});
+
+describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {
+  it.each(Object.keys(FIG_HUES))("fig-%s: the stroke holds 3:1 and the text 4.5:1 on every figure surface", (hue) => {
+    const stroke = rgbOf(vars[`fig-${hue}`]);
+    const text = rgbOf(vars[`fig-${hue}-text`]);
+    for (const [surface, base] of figureSurfaces(vars)) {
+      expect(rgbContrast(stroke, base), `fig-${hue} stroke on ${surface}`).toBeGreaterThanOrEqual(3);
+      expect(rgbContrast(text, base), `fig-${hue}-text on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each(Object.keys(FIG_HUES))("fig-%s: text holds 4.5:1 on its own soft fill, and a tag on its chip over the node fill; the stroke holds 3:1 on the fill", (hue) => {
+    const stroke = rgbOf(vars[`fig-${hue}`]);
+    const text = rgbOf(vars[`fig-${hue}-text`]);
+    const fill = hsla(vars[`fig-${hue}-fill`]);
+    for (const [surface, base] of figureSurfaces(vars)) {
+      const node = over(rgbOf(fill.triplet), fill.alpha, base);
+      const chip = over(rgbOf(fill.triplet), fill.alpha, node);
+      expect(rgbContrast(text, node), `fig-${hue}-text on its fill over ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(text, chip), `fig-${hue}-text on its chip over ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(stroke, node), `fig-${hue} stroke on its fill over ${surface}`).toBeGreaterThanOrEqual(3);
+      // Primary text (node labels) on the soft fill.
+      expect(rgbContrast(rgbOf(vars.foreground), node), `foreground on fig-${hue}-fill over ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(rgbContrast(rgbOf(vars["muted-foreground"]), node), `secondary on fig-${hue}-fill over ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("sequence step badges: the digits (page colour) hold 4.5:1 on the neutral, cyan and rose badges", () => {
+    const digits = rgbOf(vars.background);
+    for (const [surface, base] of figureSurfaces(vars)) {
+      expect(rgbContrast(digits, over(rgbOf(vars.foreground), 0.8, base)), `neutral badge over ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const hue of ["cyan", "rose"]) expect(rgbContrast(digits, rgbOf(vars[`fig-${hue}-text`])), `${hue} badge`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(TIERS)("%s: the neutral tint for nodes with no role (20% tier in the secondary colour) holds 3:1 as a stroke", (tier) => {
+    const stroke = over(rgbOf(vars[tier]), 0.2, rgbOf(vars["muted-foreground"]));
+    for (const [surface, base] of figureSurfaces(vars)) {
+      expect(rgbContrast(stroke, over(rgbOf(vars[tier]), 0.045, base)), `${tier} generic stroke on ${surface}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+});

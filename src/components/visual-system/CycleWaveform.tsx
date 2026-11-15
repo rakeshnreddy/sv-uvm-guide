@@ -64,26 +64,112 @@ const MARKER_H = 30;
 const AXIS_H = 22;
 
 const toneStyles: Record<MarkerTone, { glyph: string; className: string }> = {
-  pass: { glyph: "✓", className: "fill-emerald-600 dark:fill-emerald-400" },
-  fail: { glyph: "✕", className: "fill-rose-600 dark:fill-rose-400" },
-  vacuous: { glyph: "○", className: "fill-slate-500 dark:fill-slate-400" },
-  pending: { glyph: "…", className: "fill-amber-600 dark:fill-amber-300" },
-  info: { glyph: "●", className: "fill-sky-600 dark:fill-sky-400" },
-  sample: { glyph: "▼", className: "fill-violet-600 dark:fill-violet-300" },
-  drive: { glyph: "◆", className: "fill-amber-600 dark:fill-amber-300" },
+  pass: { glyph: "✓", className: "fill-fig-emerald-text" },
+  fail: { glyph: "✕", className: "fill-fig-rose-text" },
+  vacuous: { glyph: "○", className: "fill-fig-slate-text" },
+  pending: { glyph: "…", className: "fill-fig-amber-text" },
+  // Sky ("the blue band" in captions) is the accent family, distinct from the cyan attempt band.
+  info: { glyph: "●", className: "fill-info" },
+  sample: { glyph: "▼", className: "fill-fig-violet-text" },
+  drive: { glyph: "◆", className: "fill-fig-amber-text" },
 };
 
+/** Highlight bands keep their hues (captions name them: the cyan, green, red or rose and blue bands). */
 const highlightFill: Record<NonNullable<CycleHighlight["tone"]>, string> = {
-  attempt: "fill-cyan-400/10",
-  fail: "fill-rose-500/15",
-  pass: "fill-emerald-500/15",
-  info: "fill-sky-500/10",
+  attempt: "fill-fig-cyan-fill stroke-fig-cyan/40",
+  fail: "fill-fig-rose-fill stroke-fig-rose/40",
+  pass: "fill-fig-emerald-fill stroke-fig-emerald/40",
+  info: "fill-sky-500/[0.13] stroke-sky-500/40",
 };
 
 const isHigh = (v: CycleValue) => v === 1 || v === "1";
 const isUnknown = (v: CycleValue) => v === undefined || v === "X" || v === "x";
 const isHighZ = (v: CycleValue) => v === "Z" || v === "z";
 const show = (v: CycleValue) => (v === undefined ? "X" : String(v));
+
+/** The X hatch: rose diagonal stripes on a faint rose fill (the visual language's non-colour cue for unknown). */
+export function XHatch({ id }: { id: string }) {
+  return (
+    <pattern id={id} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" className="fill-fig-rose-fill" />
+      <line x1="0" y1="0" x2="0" y2="6" className="stroke-fig-rose" strokeWidth="2" />
+    </pattern>
+  );
+}
+
+/** [x0, x1] less every span in `cover`: the parts of a cell a cyan band or cursor does not already tint. */
+export function uncoveredSpans(x0: number, x1: number, cover: [number, number][]): [number, number][] {
+  let spans: [number, number][] = [[x0, x1]];
+  for (const [c0, c1] of cover) {
+    spans = spans.flatMap(([a, b]): [number, number][] => {
+      if (c1 <= a || c0 >= b) return [[a, b]];
+      const out: [number, number][] = [];
+      if (c0 > a) out.push([a, c0]);
+      if (c1 < b) out.push([c1, b]);
+      return out;
+    });
+  }
+  return spans;
+}
+
+/**
+ * One cycle of a one-bit trace: slate where low, cyan where high with a faint
+ * cyan fill under the high level, and the edge drawn in the new level's colour.
+ * The fill is left out where a cyan band or the cursor already tints the cell
+ * (`cover`), so the two cyans never stack into a second band. A clock
+ * (`clock`) is the quiet neutral with no fill, so data stands out.
+ */
+export function BitCell({
+  x0,
+  x1,
+  hi,
+  lo,
+  high,
+  edgeFrom,
+  y,
+  cover = [],
+  clock = false,
+}: {
+  x0: number;
+  x1: number;
+  hi: number;
+  lo: number;
+  high: boolean;
+  edgeFrom: number | null;
+  y: number;
+  cover?: [number, number][];
+  clock?: boolean;
+}) {
+  const stroke = clock ? "stroke-muted-foreground/80" : high ? "stroke-fig-cyan" : "stroke-fig-slate";
+  return (
+    <g fill="none" strokeWidth={clock ? 1.5 : 2} strokeLinecap="square">
+      {high && !clock
+        ? uncoveredSpans(x0, x1, cover).map(([a, b]) => <rect key={a} x={a} y={hi} width={b - a} height={lo - hi} className="fill-fig-cyan-fill" stroke="none" />)
+        : null}
+      {edgeFrom !== null ? <line x1={x0} x2={x0} y1={edgeFrom} y2={y} className={stroke} /> : null}
+      <line x1={x0} x2={x1} y1={y} y2={y} className={stroke} />
+    </g>
+  );
+}
+
+/** One cycle of a bus: an indigo outline with a faint indigo fill, a crossing where the value changes, and the value in text. */
+export function BusCell({ x0, x1, hi, lo, changed, label, notch = 3, textSize = "text-[10.5px]" }: { x0: number; x1: number; hi: number; lo: number; changed: boolean; label: string | null; notch?: number; textSize?: string }) {
+  const mid = (hi + lo) / 2;
+  const left = changed ? x0 + notch : x0;
+  const outline = changed ? `M${x0},${mid} L${left},${hi} L${x1},${hi} M${x0},${mid} L${left},${lo} L${x1},${lo}` : `M${x0},${hi} L${x1},${hi} M${x0},${lo} L${x1},${lo}`;
+  const area = changed ? `M${x0},${mid} L${left},${hi} L${x1},${hi} L${x1},${lo} L${left},${lo} Z` : `M${x0},${hi} L${x1},${hi} L${x1},${lo} L${x0},${lo} Z`;
+  return (
+    <g>
+      <path d={area} className="fill-fig-indigo-fill" stroke="none" />
+      <path d={outline} className="stroke-fig-indigo" strokeWidth={1.5} fill="none" strokeLinejoin="round" />
+      {label !== null ? (
+        <text x={x0 + notch + 3} y={mid} dominantBaseline="middle" className={cn("fill-fig-indigo-text font-mono font-medium [font-variant-ligatures:none]", textSize)}>
+          {label}
+        </text>
+      ) : null}
+    </g>
+  );
+}
 
 /**
  * Cycle-based waveform used by assertion, clocking, protocol and coverage
@@ -111,9 +197,13 @@ export function CycleWaveform({
   // value[k] spans from just after edge k-1 to just after edge k.
   const segStart = (k: number) => (k === 0 ? LABEL_W : edgeX(k - 1) + W * 0.2);
   const segEnd = (k: number) => (k === edges - 1 ? LABEL_W + edges * W : edgeX(k) + W * 0.2);
+  // Where a cyan (attempt) band already tints the rows, a high level draws no fill of its own.
+  const cyanCover: [number, number][] = highlights
+    .filter((h) => (h.tone ?? "attempt") === "attempt")
+    .map((h) => [edgeX(h.from) - W * 0.35, edgeX(h.to) + W * 0.35]);
 
   return (
-    <figure className={cn("glass-liquid p-2", className)}>
+    <figure className={cn("glass-liquid p-2", className)} data-figure-kit="timing">
       <DiagramScrollFrame label={title} initiallyScrolls={false}>
         <svg
           width={width}
@@ -124,11 +214,16 @@ export function CycleWaveform({
           className="block"
         >
           <defs>
-            <pattern id={`${id}-hatch`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="6" height="6" fill="rgba(244,63,94,0.12)" />
-              <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(244,63,94,0.7)" strokeWidth="2" />
-            </pattern>
+            <XHatch id={`${id}-hatch`} />
           </defs>
+
+          {/* The label column and the row rules, so the signal names line up like a waveform viewer's. */}
+          <rect x={0} y={MARKER_H - 4} width={LABEL_W - 4} height={signals.length * ROW_H + 4} rx={6} className="fill-foreground/[0.035]" />
+          {signals.map((signal, row) =>
+            row === 0 ? null : (
+              <line key={`rule-${signal.name}`} x1={4} x2={width - 4} y1={MARKER_H + row * ROW_H} y2={MARKER_H + row * ROW_H} className="stroke-border/70" strokeWidth={1} />
+            ),
+          )}
 
           {highlights.map((h, i) => (
             <rect
@@ -138,7 +233,8 @@ export function CycleWaveform({
               width={edgeX(h.to) - edgeX(h.from) + W * 0.7}
               height={signals.length * ROW_H + 6}
               rx={6}
-              className={highlightFill[h.tone ?? "attempt"]}
+              className={cn("fig-band", highlightFill[h.tone ?? "attempt"])}
+              strokeWidth={1}
             >
               {h.label ? <title>{h.label}</title> : null}
             </rect>
@@ -152,7 +248,7 @@ export function CycleWaveform({
               x2={edgeX(k)}
               y1={MARKER_H - 4}
               y2={MARKER_H + signals.length * ROW_H}
-              className={k === cursor ? "stroke-cyan-400" : "stroke-muted-foreground/25"}
+              className={k === cursor ? "stroke-fig-cyan" : "stroke-muted-foreground/25"}
               strokeWidth={k === cursor ? 2 : 1}
               strokeDasharray={k === cursor ? undefined : "3 3"}
             />
@@ -195,8 +291,9 @@ export function CycleWaveform({
                       return `${k === 0 ? `M${x0},${lo}` : `L${x0},${lo}`} L${xe},${lo} L${xe},${hi} L${x1},${hi} L${x1},${lo}`;
                     }).join(" ")}
                     fill="none"
-                    className="stroke-slate-400"
+                    className="stroke-muted-foreground/80"
                     strokeWidth={1.5}
+                    strokeLinejoin="round"
                   />
                 ) : (
                   (signal.values ?? []).slice(0, edges).map((v, k) => {
@@ -207,32 +304,14 @@ export function CycleWaveform({
                     const cell = (() => {
                       if (isUnknown(v)) return <rect x={x0} y={hi} width={x1 - x0} height={lo - hi} fill={`url(#${id}-hatch)`} />;
                       if (isHighZ(v))
-                        return <line x1={x0} x2={x1} y1={mid} y2={mid} className="stroke-amber-500" strokeWidth={2} strokeDasharray="4 3" />;
+                        return <line x1={x0} x2={x1} y1={mid} y2={mid} className="stroke-fig-amber" strokeWidth={2} strokeDasharray="4 3" />;
                       if (signal.kind === "bit") {
-                        const y = isHigh(v) ? hi : lo;
+                        const high = isHigh(v);
+                        const y = high ? hi : lo;
                         const py = isHigh(prev) ? hi : isUnknown(prev) || isHighZ(prev) ? mid : lo;
-                        return (
-                          <g className="stroke-cyan-500" strokeWidth={2} fill="none">
-                            {changed ? <line x1={x0} x2={x0} y1={py} y2={y} /> : null}
-                            <line x1={x0} x2={x1} y1={y} y2={y} />
-                          </g>
-                        );
+                        return <BitCell x0={x0} x1={x1} hi={hi} lo={lo} high={high} edgeFrom={changed ? py : null} y={y} cover={cyanCover} />;
                       }
-                      return (
-                        <g>
-                          <path
-                            d={`M${x0 + (changed ? 3 : 0)},${hi} L${x1},${hi} M${x0 + (changed ? 3 : 0)},${lo} L${x1},${lo}${changed ? ` M${x0},${mid} L${x0 + 3},${hi} M${x0},${mid} L${x0 + 3},${lo}` : ""}`}
-                            className="stroke-indigo-400"
-                            strokeWidth={1.5}
-                            fill="none"
-                          />
-                          {changed || k === 0 ? (
-                            <text x={x0 + 6} y={mid} dominantBaseline="middle" className="fill-foreground font-mono text-[10.5px]">
-                              {show(v)}
-                            </text>
-                          ) : null}
-                        </g>
-                      );
+                      return <BusCell x0={x0} x1={x1} hi={hi} lo={lo} changed={changed} label={changed || k === 0 ? show(v) : null} />;
                     })();
                     if (!signal.editable || signal.kind !== "bit" || !onToggle) return <g key={k}>{cell}</g>;
                     return (
@@ -249,7 +328,7 @@ export function CycleWaveform({
                             onToggle(signal.name, k);
                           }
                         }}
-                        className="cursor-pointer focus:outline-none [&:focus-visible>rect:first-child]:stroke-amber-400"
+                        className="cursor-pointer focus:outline-none [&:focus-visible>rect:first-child]:stroke-ring"
                       >
                         <rect
                           x={edgeX(k) - W / 2 + 2}
@@ -257,7 +336,7 @@ export function CycleWaveform({
                           width={W - 4}
                           height={ROW_H - 4}
                           rx={4}
-                          className="fill-transparent stroke-transparent hover:fill-cyan-400/10"
+                          className="fill-transparent stroke-transparent hover:fill-fig-cyan/10"
                           strokeWidth={2}
                         />
                         {cell}
@@ -285,9 +364,9 @@ export function CycleWaveform({
                     onSelectEdge(k);
                   }
                 }}
-                className="cursor-pointer focus:outline-none [&:focus-visible>rect]:stroke-amber-400"
+                className="cursor-pointer focus:outline-none [&:focus-visible>rect]:stroke-ring"
               >
-                <rect x={edgeX(k) - 12} y={height - AXIS_H + 2} width={24} height={AXIS_H - 4} rx={4} className={k === cursor ? "fill-cyan-500/20" : "fill-transparent"} strokeWidth={1.5} />
+                <rect x={edgeX(k) - 12} y={height - AXIS_H + 2} width={24} height={AXIS_H - 4} rx={4} className={k === cursor ? "fill-fig-cyan-fill" : "fill-transparent"} strokeWidth={1.5} />
                 <text x={edgeX(k)} y={height - 8} textAnchor="middle" className="fill-muted-foreground font-mono text-[10px]">
                   {k}
                 </text>
