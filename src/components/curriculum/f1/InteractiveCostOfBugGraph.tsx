@@ -8,7 +8,12 @@ import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
   ANCHOR_OPTIONS,
   COST_STAGES,
+  costBarFraction,
   costRatio,
+  DELAY_EXCEPTION_QUALIFIER,
+  DELAY_EXCEPTION_STAGE,
+  DELAY_RANKING_NOTE,
+  delayLabel,
   formatMultiplier,
   formatUsd,
   illustrativeCost,
@@ -53,6 +58,71 @@ const PREDICTION_OPTIONS: PredictionOption[] = [
   },
 ];
 
+type LadderView = "cost" | "delay";
+
+const VIEW_OPTIONS: { value: LadderView; label: string }[] = [
+  { value: "cost", label: "Cost" },
+  { value: "delay", label: "Delay" },
+];
+
+/**
+ * Delay view: each stage's cost bar (same log scale as the cost chart) with its
+ * qualitative delay class beside it. An HTML list rather than SVG text, so the
+ * longer delay wording wraps at 390 px instead of shrinking.
+ */
+function DelayLadder({ index }: { index: number }) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-0.5">
+        <p className="text-xs font-medium text-muted-foreground">Typical delay to fix, by the stage where the bug is found (project-dependent)</p>
+        <p className="text-xs text-muted-foreground" data-testid="delay-bar-caption">
+          Bar length is the rule-of-thumb cost (log scale), not the delay, so you can rank by both at once.
+        </p>
+      </div>
+      <ol className="space-y-2" aria-label="Typical delay by discovery stage">
+        {COST_STAGES.map((s, i) => {
+          const active = i === index;
+          const exception = s.id === DELAY_EXCEPTION_STAGE;
+          return (
+            <li
+              key={s.id}
+              aria-current={active ? "step" : undefined}
+              className={cn("rounded-lg border px-2 py-1.5", active ? "border-border border-l-2 border-l-primary bg-muted" : "border-transparent")}
+            >
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className={cn(active ? "font-semibold text-foreground" : "text-muted-foreground")}>
+                  {active ? <span aria-hidden>▶ </span> : null}
+                  {s.label}
+                </span>
+                <span className="font-mono tabular-nums text-muted-foreground">{formatMultiplier(s.multiplier)}</span>
+              </div>
+              <div className={cn("mt-1 h-2 w-full rounded-sm", active ? "bg-background" : "bg-muted")} aria-hidden data-testid={`delay-bar-track-${s.id}`}>
+                <div
+                  data-testid={`delay-bar-${s.id}`}
+                  className={cn("h-2 rounded-sm transition-colors motion-reduce:transition-none", active ? "bg-cyan-500/70" : "bg-muted-foreground/25")}
+                  style={{ width: `${costBarFraction(s) * 100}%` }}
+                />
+              </div>
+              <p className="mt-1 text-sm text-foreground" data-testid={`delay-${s.id}`}>
+                {delayLabel(s)}
+                {exception ? <span className="text-muted-foreground"> {DELAY_EXCEPTION_QUALIFIER}</span> : null}
+                {exception ? (
+                  <span className="ml-1.5 inline-flex items-center gap-1 rounded border border-dashed border-input px-1.5 text-xs text-muted-foreground">
+                    <span aria-hidden>↺</span> exception to the order, see below
+                  </span>
+                ) : null}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="rounded-lg border border-dashed border-border p-2 text-xs text-muted-foreground" data-testid="delay-ranking-note">
+        {DELAY_RANKING_NOTE}
+      </p>
+    </div>
+  );
+}
+
 const SHORT_LABELS: Record<string, string> = {
   spec: "Spec",
   rtl: "RTL",
@@ -65,6 +135,7 @@ function CostExplorer() {
   const sliderId = useId();
   const [index, setIndex] = useState(1);
   const [anchor, setAnchor] = useState<AnchorUsd>(1_000);
+  const [view, setView] = useState<LadderView>("cost");
   const stage = COST_STAGES[index];
   const vsRtl = costRatio("rtl", stage.id);
 
@@ -75,8 +146,7 @@ function CostExplorer() {
   const bottom = 26;
   const left = 8;
   const slot = (W - left * 2) / COST_STAGES.length;
-  const maxLog = Math.log10(COST_STAGES[COST_STAGES.length - 1].multiplier) + 1;
-  const barHeight = (m: number) => ((Math.log10(m) + 1) / maxLog) * (H - top - bottom);
+  const barHeight = (s: (typeof COST_STAGES)[number]) => costBarFraction(s) * (H - top - bottom);
 
   const chartLabel = `Relative cost to fix a bug, log scale, illustrative: ${COST_STAGES.map((s) => `${s.label} ${formatMultiplier(s.multiplier)}`).join(", ")}. Selected: ${stage.label}.`;
 
@@ -117,47 +187,59 @@ function CostExplorer() {
         </div>
       </div>
 
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-muted-foreground">Compare the stages by</p>
+        <SegmentedControl label="Compare the stages by" options={VIEW_OPTIONS} value={view} onChange={setView} />
+      </div>
+
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         <figure className="min-w-0 rounded-xl border border-border bg-card p-3">
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
-            {COST_STAGES.map((s, i) => {
-              const h = barHeight(s.multiplier);
-              const x = left + i * slot + slot * 0.18;
-              const w = slot * 0.64;
-              const y = H - bottom - h;
-              const active = i === index;
-              return (
-                <g key={s.id}>
-                  <rect
-                    x={x}
-                    y={y}
-                    width={w}
-                    height={h}
-                    rx={3}
-                    className={cn(
-                      "transition-colors motion-reduce:transition-none",
-                      active ? "fill-cyan-500/70 stroke-cyan-600 dark:stroke-cyan-300" : "fill-muted-foreground/25 stroke-transparent",
-                    )}
-                    strokeWidth={2}
-                  />
-                  <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
-                    {active ? "▼ " : ""}
-                    {formatMultiplier(s.multiplier)}
-                  </text>
-                  <text x={x + w / 2} y={H - bottom + 14} textAnchor="middle" className={cn("text-[10px]", active ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
-                    {SHORT_LABELS[s.id]}
-                  </text>
-                </g>
-              );
-            })}
-            <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-border" strokeWidth={1} />
-            <text x={left} y={12} className="fill-muted-foreground text-[10px]">
-              Relative cost to fix (log scale, illustrative)
-            </text>
-          </svg>
-          <figcaption className="mt-1 text-xs text-muted-foreground">
-            Each bar is ten times the one before it. x-axis: the stage where the bug is found.
-          </figcaption>
+          {view === "delay" ? (
+            <DelayLadder index={index} />
+          ) : (
+            <>
+              <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
+                {COST_STAGES.map((s, i) => {
+                  const h = barHeight(s);
+                  const x = left + i * slot + slot * 0.18;
+                  const w = slot * 0.64;
+                  const y = H - bottom - h;
+                  const active = i === index;
+                  return (
+                    <g key={s.id}>
+                      <rect
+                        data-testid={`cost-bar-${s.id}`}
+                        x={x}
+                        y={y}
+                        width={w}
+                        height={h}
+                        rx={3}
+                        className={cn(
+                          "transition-colors motion-reduce:transition-none",
+                          active ? "fill-cyan-500/70 stroke-cyan-600 dark:stroke-cyan-300" : "fill-muted-foreground/25 stroke-transparent",
+                        )}
+                        strokeWidth={2}
+                      />
+                      <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
+                        {active ? "▼ " : ""}
+                        {formatMultiplier(s.multiplier)}
+                      </text>
+                      <text x={x + w / 2} y={H - bottom + 14} textAnchor="middle" className={cn("text-[10px]", active ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
+                        {SHORT_LABELS[s.id]}
+                      </text>
+                    </g>
+                  );
+                })}
+                <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-border" strokeWidth={1} />
+                <text x={left} y={12} className="fill-muted-foreground text-[10px]">
+                  Relative cost to fix (log scale, illustrative)
+                </text>
+              </svg>
+              <figcaption className="mt-1 text-xs text-muted-foreground">
+                Each bar is ten times the one before it. x-axis: the stage where the bug is found.
+              </figcaption>
+            </>
+          )}
         </figure>
 
         <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
@@ -173,6 +255,13 @@ function CostExplorer() {
             <strong className="text-foreground">What has to be redone: </strong>
             {stage.redo}
           </p>
+          {view === "delay" ? (
+            <p className="text-muted-foreground" data-testid="selected-delay">
+              <strong className="text-foreground">Typical delay (project-dependent): </strong>
+              {delayLabel(stage)}
+              {stage.id === DELAY_EXCEPTION_STAGE ? ` ${DELAY_EXCEPTION_QUALIFIER}` : null}
+            </p>
+          ) : null}
           <p className="rounded-lg border border-dashed border-border/80 p-2 text-xs text-muted-foreground">
             Illustrative only: if a spec-review fix costs {formatUsd(anchor)}, this one costs about{" "}
             <strong className="text-foreground">{formatUsd(illustrativeCost(stage, anchor))}</strong>.

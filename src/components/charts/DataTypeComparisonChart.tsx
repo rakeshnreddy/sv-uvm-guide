@@ -1,16 +1,16 @@
 "use client";
 
-import React, { useId, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 
 import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
-import { DATA_TYPE_ROWS, buildValueDrills, writerRule, type DataTypeRow } from "@/lib/sv-data-type-model";
+import { DATA_TYPE_ROWS, buildValueDrills, writerRule, type DataTypeRow, type ValueDrill } from "@/lib/sv-data-type-model";
 import { cn } from "@/lib/utils";
 
 const ASSUMPTIONS = [
   "Facts from IEEE 1800-2023: Table 6-8 and §6.11 (widths, 2/4-state, signedness), Table 6-7 (default values), §6.5–§6.7 (nets vs variables).",
-  "Defaults are for variables declared without an initializer. Nets have no initializer: an undriven wire reads z.",
+  "Defaults are for variables declared without an initializer. A net has no starting value of its own: `wire w = a;` is a continuous assignment (§10.3.1), not an initializer, and an undriven wire reads z.",
   "Drill answers are computed by the four-state model (src/lib/sv-four-state-model.ts), not typed in.",
 ];
 
@@ -18,71 +18,133 @@ const widthText = (r: DataTypeRow) => (r.width === null ? (r.id === "string" ? "
 const signedText = (r: DataTypeRow) => (r.signed === null ? "—" : r.signed ? "signed" : "unsigned");
 const statesText = (r: DataTypeRow) => (r.states === null ? "—" : `${r.states}-state`);
 
-/** Bits per value for the fixed-width types, drawn to scale. 4-state bars are hatched. */
 /**
- * WidthChart geometry in viewBox units. The value label after a full 64-bit bar
- * ("64 · 4-state", about 70 units at 10.5 px) needs labelRoom to the right edge,
- * so no label is clipped at any rendered width.
+ * WidthChart geometry in viewBox units. Text is set at `fontSize` units and the
+ * SVG never renders narrower than `minRenderWidth` px, so no text drops below
+ * 12 px (fontSize * minRenderWidth / W >= 12). The value label after a full
+ * 64-bit bar ("64 · 4-state") needs labelRoom to the right edge, so no label is
+ * clipped at any rendered width.
  */
 export const WIDTH_CHART_LAYOUT = (() => {
   const W = 360;
-  const labelW = 70;
+  const fontSize = 13.5;
+  const minRenderWidth = 320;
+  const labelW = 74;
   const labelGap = 6;
-  const labelRoom = 90;
-  return { W, labelW, labelGap, labelRoom, barMax: W - labelW - labelRoom };
+  const labelRoom = 104;
+  return { W, fontSize, minRenderWidth, labelW, labelGap, labelRoom, barMax: W - labelW - labelRoom };
 })();
 
-function WidthChart() {
-  const patternId = useId().replace(/:/g, "");
-  const rows = DATA_TYPE_ROWS.filter((r) => r.width !== null);
-  const { W, labelW, barMax } = WIDTH_CHART_LAYOUT;
-  const rowH = 22;
-  const H = rows.length * rowH + 22;
+/** The types drawn to scale: every row with a fixed width (bit, logic and reg take the declared range). */
+export const WIDTH_CHART_ROWS = DATA_TYPE_ROWS.filter((r) => r.width !== null);
+
+const stateTag = (r: DataTypeRow) => (r.states === 4 ? "4-state" : r.states === 2 ? "2-state" : "float");
+
+/**
+ * Bar encoding, all neutral (indigo is the multi-bit value colour and emerald is
+ * match, so neither is used here): 4-state = double dark outline, 2-state =
+ * single dark outline, real (no 2-state/4-state split, §6.12) = faint outline.
+ */
+export const BAR_CLASS = {
+  four: "fill-muted stroke-foreground",
+  two: "fill-card stroke-foreground",
+  other: "fill-muted stroke-border",
+} as const;
+
+export const barClassFor = (r: DataTypeRow) => (r.states === 4 ? BAR_CLASS.four : r.states === 2 ? BAR_CLASS.two : BAR_CLASS.other);
+
+/** Inset of the inner 4-state outline, in viewBox units (about 2.2 px between the lines at 320 px). */
+export const INNER_OUTLINE_INSET = 3.5;
+
+/**
+ * Integer types signed and unsigned by default (IEEE 1800-2023 §6.11.3, Table 6-8),
+ * read from the model so the caption cannot disagree with the table.
+ */
+export const SIGNED_BY_DEFAULT = DATA_TYPE_ROWS.filter((r) => r.states !== null && r.kind === "variable" && r.signed === true).map((r) => r.id);
+export const UNSIGNED_BY_DEFAULT = DATA_TYPE_ROWS.filter((r) => r.states !== null && r.kind === "variable" && r.signed === false).map((r) => r.id);
+
+const listText = (ids: readonly string[]) => (ids.length <= 1 ? ids.join("") : `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}`);
+
+/**
+ * Bits per value for the fixed-width types, drawn to scale. 4-state bars carry a
+ * double outline and a "4-state" tag; rose hatching is reserved for x (unknown).
+ * With `showSign`, a signed type's most significant bit is drawn as a solid
+ * sign-bit cell, one bit wide at the same scale.
+ */
+function WidthChart({ showSign = false }: { showSign?: boolean }) {
+  const rows = WIDTH_CHART_ROWS;
+  const { W, fontSize, minRenderWidth, labelW, barMax, labelGap } = WIDTH_CHART_LAYOUT;
+  const rowH = 28;
+  const barH = rowH - 8;
+  const H = rows.length * rowH + 4;
+  const bitW = barMax / 64;
+  const signWord = (r: DataTypeRow) => (r.signed === true ? ", signed" : r.signed === false ? ", unsigned" : "");
   return (
-    <figure className="min-w-0">
+    <figure className="min-w-0 space-y-2">
       <div className="overflow-x-auto">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="block h-auto w-full min-w-[300px] max-w-[520px]"
+          style={{ minWidth: minRenderWidth }}
+          className="block h-auto w-full max-w-[420px]"
           role="img"
-          aria-label={`Bits per value: ${rows.map((r) => `${r.id} ${r.width}${r.states === 4 ? ", 4-state" : r.states === 2 ? ", 2-state" : ""}`).join("; ")}.`}
+          aria-label={`Bits per value: ${rows
+            .map((r) => `${r.id} ${r.width}${r.states === 4 ? ", 4-state" : r.states === 2 ? ", 2-state" : ""}${showSign ? signWord(r) : ""}`)
+            .join("; ")}.`}
         >
-          <defs>
-            <pattern id={patternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="6" height="6" className="fill-rose-500/20" />
-              <line x1="0" y1="0" x2="0" y2="6" className="stroke-rose-500/70" strokeWidth="2" />
-            </pattern>
-          </defs>
           {rows.map((r, i) => {
             const y = i * rowH + 4;
             const w = ((r.width as number) / 64) * barMax;
+            const four = r.states === 4;
+            const signCell = showSign && r.signed === true;
+            // The inner outline starts after the sign cell so the solid cell never hides it.
+            const innerX = labelW + INNER_OUTLINE_INSET + (signCell ? bitW : 0);
             return (
-              <g key={r.id}>
-                <text x={labelW - 6} y={y + 13} textAnchor="end" className="fill-foreground font-mono text-[11px]">
+              <g key={r.id} data-testid={`width-bar-${r.id}`} data-states={r.states ?? "none"}>
+                <text x={labelW - 6} y={y + barH / 2 + fontSize * 0.35} textAnchor="end" fontSize={fontSize} className="fill-foreground font-mono">
                   {r.id}
                 </text>
                 <rect
                   x={labelW}
                   y={y}
                   width={w}
-                  height={rowH - 6}
+                  height={barH}
                   rx={3}
-                  fill={r.states === 4 ? `url(#${patternId})` : undefined}
-                  className={r.states === 4 ? "stroke-rose-500/70" : "fill-indigo-500/25 stroke-indigo-500/70"}
+                  className={barClassFor(r)}
                   strokeWidth={1}
                 />
-                <text x={labelW + w + WIDTH_CHART_LAYOUT.labelGap} y={y + 13} data-testid="width-chart-value" className="fill-muted-foreground text-[10.5px]">
+                {four ? (
+                  <rect
+                    data-testid="width-bar-inner-outline"
+                    x={innerX}
+                    y={y + INNER_OUTLINE_INSET}
+                    width={Math.max(0, labelW + w - INNER_OUTLINE_INSET - innerX)}
+                    height={barH - 2 * INNER_OUTLINE_INSET}
+                    rx={1.5}
+                    className="fill-none stroke-foreground"
+                    strokeWidth={1}
+                  />
+                ) : null}
+                {signCell ? (
+                  <rect data-testid="width-bar-sign-bit" x={labelW} y={y} width={bitW} height={barH} className="fill-foreground" />
+                ) : null}
+                <text x={labelW + w + labelGap} y={y + barH / 2 + fontSize * 0.35} fontSize={fontSize} data-testid="width-chart-value" className="fill-muted-foreground">
                   {r.width}
-                  {r.states === 4 ? " · 4-state" : r.states === 2 ? " · 2-state" : " · float"}
+                  {` · ${stateTag(r)}`}
                 </text>
               </g>
             );
           })}
-          <text x={labelW} y={H - 4} className="fill-muted-foreground text-[10px]">
-            Bar length = bits per value (64 = full bar). Hatched = 4-state.
-          </text>
         </svg>
       </div>
+      <figcaption className="text-xs text-muted-foreground">
+        Bar length = bits per value (64 = full bar). Double outline = 4-state; single dark outline = 2-state; faint outline = real (tagged float), which is neither. The tag after each bar names it. bit, logic and reg take their width from the declared range, so they have no bar.
+        {showSign ? (
+          <>
+            {" "}
+            A solid first cell is the sign bit, one bit wide at the same scale: {listText(SIGNED_BY_DEFAULT)} are signed by default; {listText(UNSIGNED_BY_DEFAULT)} are unsigned (§6.11.3, Table 6-8).
+          </>
+        ) : null}
+      </figcaption>
     </figure>
   );
 }
@@ -111,7 +173,7 @@ function ComparisonTable() {
               </th>
               <td className="px-3 py-2">{r.kind === "net" ? "net" : "variable"}</td>
               <td className="px-3 py-2">
-                <span className={cn("rounded border px-1.5 py-0.5", r.states === 4 ? "border-dashed border-rose-500/60" : r.states === 2 ? "border-indigo-500/60" : "border-transparent")}>
+                <span className={cn("rounded px-1.5 py-0.5", r.states === 4 ? "border-[3px] border-double border-foreground/70" : r.states === 2 ? "border border-foreground/70" : "border border-transparent")}>
                   {statesText(r)}
                 </span>
               </td>
@@ -129,56 +191,119 @@ function ComparisonTable() {
   );
 }
 
-const DataTypeComparisonChart: React.FC = () => {
-  const drills = useMemo(() => buildValueDrills(), []);
+export type DataTypeChartSection = "all" | "defaults" | "widths";
+
+export interface DataTypeComparisonChartProps {
+  /**
+   * Which part to show. "all" (default) is the full reference page; "defaults"
+   * shows only the predict-the-value drills for starting values and signedness;
+   * "widths" shows only the to-scale bars and the width and sign table.
+   */
+  section?: DataTypeChartSection;
+}
+
+/**
+ * Drills shown by section="defaults": the starting value of int, logic [3:0] and
+ * integer (Table 6-7), and 8'hFF printed with %0d as byte vs bit [7:0] (§6.11.3).
+ * The undriven-wire and 4-state to 2-state drills are left out there because the
+ * lesson's data type explorer asks the same questions.
+ */
+export const DEFAULTS_DRILL_IDS = ["int-default", "logic-default", "integer-default", "byte-signed", "bit-unsigned"] as const;
+
+export function drillsForSection(section: DataTypeChartSection): ValueDrill[] {
+  const drills = buildValueDrills();
+  if (section !== "defaults") return drills;
+  const keep: readonly string[] = DEFAULTS_DRILL_IDS;
+  return drills.filter((d) => keep.includes(d.id));
+}
+
+const FRAME_COPY: Record<DataTypeChartSection, { label: string; eyebrow: string; title: string; summary: string; assumptions: string[] }> = {
+  all: {
+    label: "Data type comparison",
+    eyebrow: "Reference · predict",
+    title: "2-state or 4-state, signed or not, and what it holds before you assign it",
+    summary: "Read the table, then test yourself: predict the value before revealing it.",
+    assumptions: ASSUMPTIONS,
+  },
+  defaults: {
+    label: "Starting values and signedness",
+    eyebrow: "Predict",
+    title: "What a variable holds before you assign it, and how %0d reads its bits",
+    summary: "Pick a declaration, commit to a value, then reveal it.",
+    assumptions: [
+      "Facts from IEEE 1800-2023: Table 6-7 (default values for variables with no initializer), Table 6-8 and §6.11.2 (2-state and 4-state types), §6.11.3 (default signedness).",
+      "Table 21-1 defines %d only as display in decimal format. Printing a negative signed value with a leading minus sign is what simulators do; the standard does not state it.",
+      ASSUMPTIONS[2],
+    ],
+  },
+  widths: {
+    label: "Data type widths and signedness",
+    eyebrow: "Reference",
+    title: "How many bits each type holds, and whether it is signed by default",
+    summary: "Bars are drawn to scale against a 64-bit value.",
+    assumptions: [
+      "Facts from IEEE 1800-2023: Table 6-8 and §6.11 (widths, 2/4-state), §6.11.3 (default signedness), Table 6-7 (default values).",
+      "bit, logic and reg have no fixed width: the declared range sets it, so they appear in the table but not as bars.",
+      "real is not an integral type. It is the same as a C double (§6.12), and its 64 bits are the [63:0] vector that $realtobits returns (§20.5).",
+    ],
+  },
+};
+
+function PredictValues({ drills }: { drills: ValueDrill[] }) {
   const [drillId, setDrillId] = useState(drills[0].id);
   const drill = drills.find((d) => d.id === drillId) ?? drills[0];
+  return (
+    <section aria-label="Predict the value" className="space-y-3">
+      <p className="text-sm font-semibold text-foreground">Predict the value</p>
+      <SegmentedControl label="Declaration to test" mono options={drills.map((d) => ({ value: d.id, label: d.code.split("\n")[0] }))} value={drill.id} onChange={setDrillId} />
+      <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]">
+        <code>{drill.code}</code>
+      </pre>
+      <PredictionPrompt
+        resetKey={drill.id}
+        question={drill.question}
+        options={drill.options.map((o) => ({ id: o.id, label: <span className="font-mono [font-variant-ligatures:none]">{o.label}</span>, correct: o.correct, feedback: o.feedback }))}
+      >
+        <p data-testid="drill-reveal" className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+          <span className="font-semibold">Value: </span>
+          <code className="font-mono [font-variant-ligatures:none]">{drill.answer}</code>. {drill.why} <span className="text-xs opacity-80">({drill.clause})</span>
+        </p>
+      </PredictionPrompt>
+    </section>
+  );
+}
+
+const DataTypeComparisonChart: React.FC<DataTypeComparisonChartProps> = ({ section = "all" }) => {
+  const drills = useMemo(() => drillsForSection(section), [section]);
+  const copy = FRAME_COPY[section] ?? FRAME_COPY.all;
+  const showWidths = section !== "defaults";
+  const showDrills = section !== "widths";
 
   return (
-    <div data-testid="data-type-chart" className="w-full">
-      <VisualFrame
-        label="Data type comparison"
-        eyebrow="Reference · predict"
-        title="2-state or 4-state, signed or not, and what it holds before you assign it"
-        summary="Read the table, then test yourself: predict the value before revealing it."
-        fidelity="model"
-        assumptions={ASSUMPTIONS}
-      >
-        <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
-          <WidthChart />
-          <div className="space-y-2 text-sm">
-            <p className="font-semibold text-foreground">Who may write it</p>
-            <p>
-              <strong>Variable:</strong> {writerRule.variable}
-            </p>
-            <p>
-              <strong>Net:</strong> {writerRule.net}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Assigning a 4-state value to a 2-state variable turns every x and z bit into 0 (§6.11.2), silently.
-            </p>
+    <div data-testid="data-type-chart" data-section={section} className="w-full">
+      <VisualFrame label={copy.label} eyebrow={copy.eyebrow} title={copy.title} summary={copy.summary} fidelity="model" assumptions={copy.assumptions}>
+        {section === "all" ? (
+          <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+            <WidthChart />
+            <div className="space-y-2 text-sm">
+              <p className="font-semibold text-foreground">Who may write it</p>
+              <p>
+                <span className="font-semibold">Variable:</span> {writerRule.variable}
+              </p>
+              <p>
+                <span className="font-semibold">Net:</span> {writerRule.net}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Assigning a 4-state value to a 2-state variable turns every x and z bit into 0 (§6.11.2), silently.
+              </p>
+            </div>
           </div>
-        </div>
+        ) : null}
+        {section === "widths" ? <WidthChart showSign /> : null}
 
-        <ComparisonTable />
+        {showWidths ? <ComparisonTable /> : null}
 
-        <section aria-label="Predict the value" className="space-y-3">
-          <p className="text-sm font-semibold text-foreground">Predict the value</p>
-          <SegmentedControl label="Declaration to test" mono options={drills.map((d) => ({ value: d.id, label: d.code.split("\n")[0] }))} value={drill.id} onChange={setDrillId} />
-          <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]">
-            <code>{drill.code}</code>
-          </pre>
-          <PredictionPrompt
-            resetKey={drill.id}
-            question={drill.question}
-            options={drill.options.map((o) => ({ id: o.id, label: <span className="font-mono [font-variant-ligatures:none]">{o.label}</span>, correct: o.correct, feedback: o.feedback }))}
-          >
-            <p aria-live="polite" className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm text-foreground">
-              <strong>Value: </strong>
-              <code className="font-mono [font-variant-ligatures:none]">{drill.answer}</code>. {drill.why} <span className="text-xs opacity-80">({drill.clause})</span>
-            </p>
-          </PredictionPrompt>
-        </section>
+        {showDrills ? <PredictValues key={section} drills={drills} /> : null}
       </VisualFrame>
     </div>
   );

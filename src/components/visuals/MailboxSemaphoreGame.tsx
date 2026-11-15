@@ -1,13 +1,38 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
 import { HintLadder } from "@/components/visual-system/HintLadder";
+import { OutcomeGroups, type OutcomeGroup } from "@/components/visual-system/OutcomeGroups";
+import { PlaybackControls } from "@/components/visual-system/PlaybackControls";
 import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
-import { PROCESS_MODEL_ASSUMPTIONS, ProcessTraceView, linesFor } from "@/components/visuals/ForkJoinVisualizer";
+import { usePlayback } from "@/components/visual-system/usePlayback";
+import { IpcPanel, PROCESS_MODEL_ASSUMPTIONS, ProcessLanes, ProcessTraceView, ThreadTable, linesFor } from "@/components/visuals/ForkJoinVisualizer";
+import {
+  BENCH_ASSUMPTIONS,
+  BENCH_VARIANT_CHANGES,
+  HANDOFF_REGROUP_ASSUMPTION,
+  BENCH_VARIANT_LABELS,
+  BENCH_VARIANTS,
+  SAME_TIME_TIMING,
+  SAME_TIME_VARIANT_LABELS,
+  benchMoments,
+  benchStory,
+  endingSentence,
+  firstGotAt,
+  logLineText,
+  outcomeRuns,
+  passed,
+  presentProcessRun,
+  sameTimeStory,
+  stepClauses,
+  type BenchQuestion,
+  type BenchVariant,
+  type SameTimeVariant,
+} from "@/lib/sv-ipc-bench-scenarios";
 import {
   formatVal,
   gradeKeyLeak,
@@ -22,6 +47,7 @@ import {
   semaphorePut,
   semaphoreScenario,
   simulateProcesses,
+  stepNarrationBadges,
   type KeyLeakFix,
   type MailboxCore,
   type ProcessScenario,
@@ -32,7 +58,10 @@ import {
 } from "@/lib/sv-process-model";
 import { cn } from "@/lib/utils";
 
-type Mode = "semaphore" | "mailbox" | "debug";
+type Mode = "semaphore" | "mailbox" | "debug" | "bench";
+
+/** A semaphore-mode program that replaces the scripted FIFO prediction. */
+export type MailboxSemaphoreProgram = "same-time";
 
 interface TranscriptEntry {
   id: number;
@@ -43,7 +72,7 @@ interface TranscriptEntry {
 }
 
 const toneClass: Record<TranscriptEntry["tone"], string> = {
-  ok: "text-slate-200",
+  ok: "text-code-foreground",
   block: "text-amber-200",
   wake: "text-emerald-200",
   warn: "text-rose-200",
@@ -57,7 +86,7 @@ function Transcript({ entries, empty }: { entries: TranscriptEntry[]; empty: str
   const latest = entries[entries.length - 1];
   return (
     <div className="space-y-2">
-      <div className="max-h-64 overflow-y-auto rounded-lg border border-border/70 bg-code-surface p-3 font-mono text-xs [font-variant-ligatures:none]">
+      <div className="max-h-64 overflow-y-auto rounded-lg border border-code-border bg-code-surface p-3 font-mono text-xs [font-variant-ligatures:none]">
         <p className="mb-1 font-sans text-label text-code-muted">SystemVerilog call log</p>
         {entries.length === 0 ? (
           <p className="text-code-muted">{empty}</p>
@@ -68,7 +97,7 @@ function Transcript({ entries, empty }: { entries: TranscriptEntry[]; empty: str
                 <span aria-hidden>{toneGlyph[e.tone]} </span>
                 <span className="text-code-muted">{e.who}: </span>
                 <span>{e.code}</span>
-                <span className="block pl-4 font-sans text-xs text-slate-400">{e.result}</span>
+                <span className="block pl-4 font-sans text-xs text-code-muted">{e.result}</span>
               </li>
             ))}
           </ol>
@@ -447,7 +476,8 @@ function ScriptedPredict({
   const [variant, setVariant] = useState(variants[0].value);
   const scenario = useMemo(() => build(variant), [build, variant]);
   const prepared = useMemo(() => prepareScenario(scenario), [scenario]);
-  const result = useMemo(() => simulateProcesses(scenario), [scenario]);
+  // Shown as every mode shows a run: put() hand-offs regrouped to follow §15.4.3.
+  const result = useMemo(() => presentProcessRun(simulateProcesses(scenario)), [scenario]);
   const lines = useMemo(() => linesFor(prepared), [prepared]);
   const opts = options(variant, result);
   return (
@@ -559,7 +589,7 @@ const LEAK_FIXES: { id: KeyLeakFix; label: string; review: string }[] = [
 function KeyLeakDebug() {
   const buggy = useMemo(() => keyLeakScenario("bug"), []);
   const prepared = useMemo(() => prepareScenario(buggy), [buggy]);
-  const run = useMemo(() => simulateProcesses(buggy), [buggy]);
+  const run = useMemo(() => presentProcessRun(simulateProcesses(buggy)), [buggy]);
   const lines = useMemo(() => linesFor(prepared), [prepared]);
   const [suspect, setSuspect] = useState<string | null>(null);
   const [fixId, setFixId] = useState<KeyLeakFix | null>(null);
@@ -570,7 +600,7 @@ function KeyLeakDebug() {
   const fixRun = useMemo(() => {
     if (!fixId) return null;
     const scenario = keyLeakScenario(fixId);
-    const result = simulateProcesses(scenario);
+    const result = presentProcessRun(simulateProcesses(scenario));
     return { scenario, result, grade: gradeKeyLeak(result), prepared: prepareScenario(scenario) };
   }, [fixId]);
   const fix = LEAK_FIXES.find((f) => f.id === fixId);
@@ -696,52 +726,399 @@ function KeyLeakDebug() {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Bench: one run, scrubbed step by step, with the clause for each step.      */
+/* ------------------------------------------------------------------------- */
+
+const benchButton =
+  "inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-card px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
+/** The current moment (DESIGN.md section 2, rule 3): raised surface, 2 px accent marker on the leading edge, primary text. */
+const benchButtonCurrent = "aria-pressed:border-l-2 aria-pressed:border-l-primary aria-pressed:bg-muted aria-pressed:text-primary";
+/** The shared primitives size some controls below 40 px (min-h-9 segments): size them for touch from here. */
+const touchTargets = "[@media(pointer:coarse)]:[&_button]:min-h-10";
+const benchPanel = "rounded-xl border border-border bg-card p-3";
+const benchLabel = "text-label text-muted-foreground";
+
+/** What happened at this step, why, and the clause that says so. */
+function BenchStepNote({ step, result }: { step: SimResult["trace"][number]; result: SimResult }) {
+  const badges = stepNarrationBadges(step, { outcome: result.outcome });
+  const clauses = stepClauses(step);
+  return (
+    <div className={benchPanel} data-testid="bench-step-note">
+      {/* Only a short summary is announced; Why and the clause stay readable on demand. */}
+      <p className="sr-only" aria-live="polite" data-testid="bench-step-announce">
+        t = {step.time} ns: {step.what}
+      </p>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded border border-border bg-muted px-1.5 py-0.5 font-medium text-foreground">{badges.kind}</span>
+        <span className="rounded border border-border px-1.5 py-0.5 text-muted-foreground">{badges.where}</span>
+        {badges.choice ? <span className="rounded bg-warning-subtle px-1.5 py-0.5 text-warning">{badges.choice}</span> : null}
+        <span className="ml-auto font-mono tabular-nums text-muted-foreground">t = {step.time} ns</span>
+      </div>
+      <p className="mt-2 text-sm font-medium text-foreground [font-variant-ligatures:none]">
+        <span className="text-muted-foreground">What: </span>
+        {step.what}
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground [font-variant-ligatures:none]">
+        <span className="font-medium text-foreground">Why: </span>
+        {step.why}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground" data-testid="bench-step-clause">
+        {clauses.length ? `IEEE 1800-2023 ${clauses.join(", ")}` : "Model narration (no clause for this step)"}
+      </p>
+    </div>
+  );
+}
+
+/** Each named event: whether it was triggered in this time step, and who waits on it. */
+function EventPanel({ step }: { step: SimResult["trace"][number] }) {
+  const names = Object.keys(step.events);
+  if (names.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {names.map((name) => {
+        const waiting = step.procs.filter((p) => p.state === "blocked" && p.blockedOn?.startsWith(`@(${name})`)).map((p) => p.label);
+        return (
+          <div key={name} className={cn(benchPanel, "text-sm")}>
+            <p className="font-mono text-xs font-semibold text-foreground [font-variant-ligatures:none]">event {name}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              <span aria-hidden>{step.events[name] ? "◆ " : "◇ "}</span>
+              {step.events[name] ? `Triggered in this time step (${name}.triggered is 1 until time advances, §15.5.3)` : "Not triggered in this time step"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Waiting in @({name}): {waiting.length ? waiting.map((w) => <span key={w} className="mr-1 inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-foreground"><span aria-hidden>⏸</span>{w}</span>) : "nobody"}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The run's output: time stamp, process and text, on the code surface. */
+function BenchLog({ step, label = "Simulation output" }: { step: SimResult["trace"][number]; label?: string }) {
+  const newest = step.kind === "print" ? step.log.length - 1 : -1;
+  return (
+    <div className="rounded-lg border border-code-border bg-code-surface p-3 font-mono text-xs text-code-foreground [font-variant-ligatures:none]">
+      <p className="mb-1 font-sans text-label text-code-muted">{label}</p>
+      {step.log.length === 0 ? (
+        <span className="text-code-muted">(no output yet)</span>
+      ) : (
+        <ol className="space-y-0.5" aria-label={label}>
+          {step.log.map((l, i) => (
+            <li key={i} className={cn("flex gap-3", i === newest && "font-semibold")}>
+              <span className="w-12 shrink-0 text-right tabular-nums text-code-muted">{l.time}</span>
+              <span className="min-w-0 break-words">
+                <span className="text-code-muted">{l.label}: </span>
+                {l.severity ? `$${l.severity}: ` : ""}
+                {l.text}
+                {i === newest ? <span className="sr-only"> (just printed)</span> : null}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** Code, step note, scrubber, key moments, queues, event, lanes and log for one model run. */
+function BenchTrace({ result, lines, resetKey, logNote }: { result: SimResult; lines: CodeTraceLine[]; resetKey: string; logNote?: string }) {
+  const playback = usePlayback(result.trace.length, resetKey);
+  const index = Math.min(playback.index, result.trace.length - 1);
+  const step = result.trace[index];
+  const moments = useMemo(() => benchMoments(result), [result]);
+  const contextKeys = step.procs.filter((p) => p.state !== "done" && p.state !== "killed" && p.lineKey).map((p) => p.lineKey as string);
+  return (
+    <div className="space-y-4" data-testid="bench-trace">
+      <BenchStepNote step={step} result={result} />
+      <div className={touchTargets}>
+        <PlaybackControls playback={playback} stepCount={result.trace.length} stepNoun="Process step" describeStep={(i) => result.trace[i]?.what ?? ""} />
+      </div>
+      <div className="space-y-1">
+        <p className={benchLabel}>Jump to</p>
+        <div className="flex flex-wrap gap-2">
+          {moments.map((m) => (
+            <button key={m.id} type="button" className={cn(benchButton, benchButtonCurrent)} aria-pressed={index === m.index} onClick={() => playback.seek(m.index)}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
+        <CodeTrace label="Code under simulation" lines={lines} activeKey={step.lineKey} contextKeys={contextKeys} />
+        <div className="min-w-0 space-y-3">
+          <IpcPanel step={step} />
+          <EventPanel step={step} />
+          <ThreadTable step={step} lines={lines} />
+        </div>
+      </div>
+      <ProcessLanes result={result} index={index} />
+      <div className="space-y-1">
+        <BenchLog step={step} />
+        {logNote ? <p className="text-xs text-muted-foreground">{logNote}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Mounted inside a prompt's reveal: tells the chain that this question has been answered or skipped. */
+function RevealSignal({ index, onReveal }: { index: number; onReveal: (index: number) => void }) {
+  useEffect(() => onReveal(index), [index, onReveal]);
+  return null;
+}
+
+/**
+ * The questions one after another: each opens only after the one before it is
+ * answered (or skipped), and the reveal content comes after the last one,
+ * outside the prompt cards.
+ */
+function QuestionChain({ questions, resetKey, children }: { questions: BenchQuestion[]; resetKey: string; children: React.ReactNode }) {
+  const [state, setState] = useState({ key: resetKey, revealed: 0 });
+  const revealed = state.key === resetKey ? state.revealed : 0;
+  const onReveal = useCallback(
+    (index: number) => setState((s) => ({ key: resetKey, revealed: Math.max(s.key === resetKey ? s.revealed : 0, index + 1) })),
+    [resetKey],
+  );
+  return (
+    <div className="space-y-4">
+      {questions.slice(0, revealed + 1).map((q, i) => (
+        <PredictionPrompt
+          key={`${resetKey}:${q.id}`}
+          className={cn(touchTargets, "[&>div:empty]:hidden")}
+          resetKey={`${resetKey}:${q.id}`}
+          question={q.question}
+          options={q.options.map((o) => ({ id: o.id, label: o.label, correct: o.correct, feedback: o.feedback }))}
+        >
+          <RevealSignal index={i} onReveal={onReveal} />
+        </PredictionPrompt>
+      ))}
+      {revealed >= questions.length ? children : null}
+    </div>
+  );
+}
+
+/** Under the bench's log: where the time stamp and process columns come from. */
+const BENCH_LOG_NOTE = "The model adds each line's time stamp and process name; the lesson's code prints them itself with %0t, $time and the process name.";
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const blockedText = (r: SimResult) => {
+  const blocked = r.blockedAtEnd.filter((b) => b.label !== "clock");
+  return blocked.length ? `${blocked.map((b) => `${b.label} blocked in ${b.on.split(" — ")[0]}`).join("; ")}; ended at ${r.endTime} ns` : `nobody blocked; ended at ${r.endTime} ns`;
+};
+
+const groupLines = (r: SimResult) => r.log.map((l) => ({ time: `${l.time} ns`, text: logLineText(l).replace(/^\d+ /, "") }));
+
+function BenchLab() {
+  const [variant, setVariant] = useState<BenchVariant>("as-written");
+  const [advanced, setAdvanced] = useState(false);
+  const story = useMemo(() => benchStory(variant, { advanced }), [variant, advanced]);
+  const lines = useMemo(() => linesFor(prepareScenario(story.scenario)), [story.scenario]);
+  const runs = useMemo(() => (story.exploration ? outcomeRuns(story.scenario, story.exploration) : []), [story]);
+  const [selected, setSelected] = useState<string>("o0");
+  const key = `${variant}:${advanced ? "clock" : "plain"}`;
+  const [lastKey, setLastKey] = useState(key);
+  if (key !== lastKey) {
+    setLastKey(key);
+    setSelected("o0");
+  }
+  const groups: OutcomeGroup[] = (story.exploration?.outcomes ?? []).map((g, i) => ({
+    id: `o${i}`,
+    title: passed(runs[i] ?? g.result) ? "PASS printed" : "No PASS line",
+    runCount: g.runs.length,
+    lines: groupLines(runs[i] ?? g.result),
+    endState: blockedText(runs[i] ?? g.result),
+    badge: passed(runs[i] ?? g.result) ? "✓ chk was already waiting" : "✕ chk missed the trigger",
+  }));
+  const shown = story.exploration ? (runs[Number(selected.slice(1))] ?? story.result) : story.result;
+  const advancedId = "mailbox-bench-advanced";
+
+  return (
+    <div className="space-y-4">
+      <div className={cn("space-y-3", touchTargets)}>
+        <div className="space-y-1">
+          <p className={benchLabel}>Bench change</p>
+          <SegmentedControl label="Bench change" value={variant} onChange={setVariant} options={BENCH_VARIANTS.map((v) => ({ value: v, label: BENCH_VARIANT_LABELS[v] }))} />
+        </div>
+        <label htmlFor={advancedId} className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+          <input id={advancedId} type="checkbox" className="size-5 shrink-0 accent-primary" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+          <span>
+            Advanced: add <code className="font-mono text-xs [font-variant-ligatures:none]">always #5 clk = ~clk;</code> and a <code className="font-mono text-xs [font-variant-ligatures:none]">#100 $finish</code> watchdog
+          </span>
+        </label>
+      </div>
+      <p className="text-sm text-muted-foreground">{BENCH_VARIANT_CHANGES[variant]}</p>
+      <CodeTrace label="Code (generated from the model)" lines={lines} />
+      <QuestionChain questions={story.questions} resetKey={key}>
+        <div className="space-y-4">
+          {story.exploration ? (
+            <OutcomeGroups
+              groups={groups}
+              runCount={story.exploration.runCount}
+              capped={story.exploration.capped}
+              onSelect={setSelected}
+              selectedId={selected}
+              selectLabel="Step through this run"
+              label="Outcomes across every order of the ready processes"
+              note="Lines are compared by time stamp: lines printed at one time stamp count as a set, because their order inside the time stamp is a scheduler choice too."
+            />
+          ) : (
+            <p className="text-sm text-foreground" data-testid="bench-ending">
+              {endingSentence(story.result)}
+            </p>
+          )}
+          <BenchTrace key={`${key}:${selected}`} result={shown} lines={lines} resetKey={`${key}:${selected}`} logNote={BENCH_LOG_NOTE} />
+        </div>
+      </QuestionChain>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* Same-time arrivals at the semaphore's FIFO queue.                          */
+/* ------------------------------------------------------------------------- */
+
+function SameTimeLab() {
+  const [variant, setVariant] = useState<SameTimeVariant>("shared-key");
+  const story = useMemo(() => sameTimeStory(variant), [variant]);
+  const lines = useMemo(() => linesFor(prepareScenario(story.scenario)), [story.scenario]);
+  const runs = useMemo(() => outcomeRuns(story.scenario, story.exploration), [story]);
+  const [selected, setSelected] = useState("o0");
+  const [lastVariant, setLastVariant] = useState(variant);
+  if (variant !== lastVariant) {
+    setLastVariant(variant);
+    setSelected("o0");
+  }
+  const groups: OutcomeGroup[] = story.exploration.outcomes.map((g, i) => {
+    const run = runs[i] ?? g.result;
+    const first = firstGotAt(run, SAME_TIME_TIMING.releaseNs);
+    const queue = story.queues[i] ?? [];
+    return {
+      id: `o${i}`,
+      title: first ? `${first} first at ${SAME_TIME_TIMING.releaseNs} ns` : `Nobody at ${SAME_TIME_TIMING.releaseNs} ns`,
+      runCount: g.runs.length,
+      lines: groupLines(run),
+      endState: queue.length ? `queue at ${SAME_TIME_TIMING.arriveNs} ns: ${queue.join(", then ")}` : `ended at ${run.endTime} ns`,
+    };
+  });
+  const shown = runs[Number(selected.slice(1))] ?? story.result;
+  return (
+    <div className="space-y-3">
+      <div className={cn("space-y-1", touchTargets)}>
+        <p className={benchLabel}>Same-time program</p>
+        <SegmentedControl
+          label="Same-time program"
+          value={variant}
+          onChange={setVariant}
+          options={(["shared-key", "owner"] as const).map((v) => ({ value: v, label: SAME_TIME_VARIANT_LABELS[v] }))}
+        />
+      </div>
+      <CodeTrace label="Code (generated from the model)" lines={lines} />
+      <QuestionChain questions={[story.question]} resetKey={`same-time:${variant}`}>
+        <div className="space-y-4">
+          <OutcomeGroups
+            groups={groups}
+            runCount={story.exploration.runCount}
+            capped={story.exploration.capped}
+            onSelect={setSelected}
+            selectedId={selected}
+            label="Outcomes across every order of the ready processes"
+            note={
+              variant === "owner"
+                ? "One process owns the decision, so the time-stamped log no longer depends on which request arrived first."
+                : `The FIFO queue keeps the arrival order (§15.3.3); the ${plural(groups.length, "group")} differ only in that arrival order.`
+            }
+          />
+          <BenchTrace key={`${variant}:${selected}`} result={shown} lines={lines} resetKey={`same-time:${variant}:${selected}`} />
+        </div>
+      </QuestionChain>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
 
 interface MailboxSemaphoreGameProps {
   mode?: Mode;
+  /** Semaphore mode only: "same-time" replaces the scripted FIFO prediction with two waiters arriving in one time slot. */
+  initialProgram?: MailboxSemaphoreProgram;
 }
 
 /**
  * Mailboxes and semaphores on the process model: blocked callers wake by
  * themselves in FIFO order, try_* never block, get(n) waits for n keys, and a
- * lost key deadlocks the test.
+ * lost key deadlocks the test. Bench mode runs the lesson's whole bench; the
+ * same-time program shows what FIFO does not promise.
  */
-export default function MailboxSemaphoreGame({ mode: initialMode = "semaphore" }: MailboxSemaphoreGameProps) {
+export default function MailboxSemaphoreGame({ mode: initialMode = "semaphore", initialProgram }: MailboxSemaphoreGameProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
+  if (initialMode === "bench") {
+    return (
+      <div data-testid="mailbox-semaphore-game">
+        <VisualFrame
+          label="IPC bench lab"
+          eyebrow="Make It Work"
+          title="One bench: backpressure, a key queue and an event"
+          summary="Pick the bench or one of the lesson's three breaks. Predict first, then scrub the run: watch the mailbox slot, the bus key queue and the drv_done trigger. Read the log by time stamp, not by line order."
+          fidelity="model"
+          assumptions={[...PROCESS_MODEL_ASSUMPTIONS, ...BENCH_ASSUMPTIONS]}
+        >
+          <BenchLab />
+        </VisualFrame>
+      </div>
+    );
+  }
+  const sameTime = initialProgram === "same-time";
   return (
     <div data-testid="mailbox-semaphore-game">
       <VisualFrame
         label="Mailbox and semaphore lab"
         eyebrow={mode === "debug" ? "Debug it" : "Interprocess communication"}
-        title={mode === "semaphore" ? "Semaphores: keys, waiters and FIFO wake-up" : mode === "mailbox" ? "Mailboxes: bounded queues that block" : "The test that stops after one packet"}
+        title={
+          mode === "semaphore"
+            ? sameTime
+              ? "Same-time arrivals: what FIFO does and does not promise"
+              : "Semaphores: keys, waiters and FIFO wake-up"
+            : mode === "mailbox"
+              ? "Mailboxes: bounded queues that block"
+              : "The test that stops after one packet"
+        }
         summary="Predict a scripted run first, then drive the calls yourself. Blocked processes are woken by the model — you never have to click them again."
         fidelity="model"
-        assumptions={PROCESS_MODEL_ASSUMPTIONS}
+        assumptions={
+          sameTime ? [...PROCESS_MODEL_ASSUMPTIONS, ...BENCH_ASSUMPTIONS] : mode === "mailbox" ? [...PROCESS_MODEL_ASSUMPTIONS, HANDOFF_REGROUP_ASSUMPTION] : PROCESS_MODEL_ASSUMPTIONS
+        }
       >
-        <SegmentedControl
-          label="Lab"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { value: "semaphore", label: "Semaphore" },
-            { value: "mailbox", label: "Mailbox" },
-            { value: "debug", label: "Debug: the lost key" },
-          ]}
-        />
+        <div className={touchTargets}>
+          <SegmentedControl
+            label="Lab"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "semaphore", label: "Semaphore" },
+              { value: "mailbox", label: "Mailbox" },
+              { value: "debug", label: "Debug: the lost key" },
+            ]}
+          />
+        </div>
         {mode === "semaphore" ? (
           <div className="space-y-6">
-            <ScriptedPredict
-              key="Semaphore"
-              idPrefix="Semaphore"
-              variants={[
-                { value: "fifo", label: "FIFO wake-up" },
-                { value: "multi-key", label: "get(2)" },
-              ]}
-              build={buildSemaphore}
-              question={(v) => (v === "multi-key" ? "When does B print “B got 2 keys”?" : "When does C print “C got the key”?")}
-              options={semaphoreOptions}
-              notice="Watch the wait queue under the code: a put() wakes the oldest waiter whose request fits, with no extra click or poll."
-            />
+            {sameTime ? (
+              <SameTimeLab />
+            ) : (
+              <ScriptedPredict
+                key="Semaphore"
+                idPrefix="Semaphore"
+                variants={[
+                  { value: "fifo", label: "FIFO wake-up" },
+                  { value: "multi-key", label: "get(2)" },
+                ]}
+                build={buildSemaphore}
+                question={(v) => (v === "multi-key" ? "When does B print “B got 2 keys”?" : "When does C print “C got the key”?")}
+                options={semaphoreOptions}
+                notice="Watch the wait queue under the code: a put() wakes the oldest waiter whose request fits, with no extra click or poll."
+              />
+            )}
             <section aria-label="Semaphore sandbox" className="space-y-2">
               <h4 className="text-sm font-semibold text-foreground">Your turn: you decide which process calls what</h4>
               <SemaphoreSandbox />

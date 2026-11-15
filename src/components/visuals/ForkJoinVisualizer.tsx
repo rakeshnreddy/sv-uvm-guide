@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
 import { HintLadder } from "@/components/visual-system/HintLadder";
@@ -36,7 +36,28 @@ import {
   type TimeoutFix,
   type TraceStep,
 } from "@/lib/sv-process-model";
+import {
+  CLEANUP_VARIANTS,
+  FINISHED_CHILD_TIMES,
+  WRAPPER_VARIANTS,
+  checkpointAnswer,
+  checkpointQuestion,
+  findTreeCheckpoints,
+  finishedChildScenario,
+  gradeTreePrediction,
+  isTreeScenarioId,
+  nodeOutcome,
+  processTree,
+  wrapperScenario,
+  type CleanupVariant,
+  type ForkJoinScenarioId,
+  type NodeVerdict,
+  type TreeCheckpoint,
+  type WrapperVariant,
+} from "@/lib/sv-process-tree-scenarios";
 import { cn } from "@/lib/utils";
+
+import ProcessTreeView, { VERDICT_TEXT, type TreeMark } from "./fork-join/ProcessTreeView";
 
 /* ========================================================================= */
 /* Shared view pieces (also used by ProceduralBlocksSimulator and             */
@@ -52,7 +73,7 @@ export const PROCESS_MODEL_ASSUMPTIONS = [
 ];
 
 const stateMeta: Record<ThreadState, { glyph: string; text: string; className: string }> = {
-  pending: { glyph: "◌", text: "not started", className: "text-slate-500 dark:text-slate-400" },
+  pending: { glyph: "◌", text: "not started", className: "text-muted-foreground" },
   ready: { glyph: "●", text: "ready", className: "text-sky-700 dark:text-sky-300" },
   running: { glyph: "▶", text: "running", className: "text-cyan-700 dark:text-cyan-300" },
   blocked: { glyph: "⏸", text: "blocked", className: "text-amber-700 dark:text-amber-300" },
@@ -99,7 +120,7 @@ export function ProcessNarration({ step }: { step: TraceStep }) {
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 font-bold",
+            "rounded px-1.5 py-0.5 font-semibold",
             step.kind === "kill" ? "bg-rose-500/15 text-rose-800 dark:text-rose-200" : "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200",
           )}
         >
@@ -207,12 +228,12 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
           {niceTicks(maxTime).map((t) => (
             <g key={t}>
               <line x1={xOf(t)} x2={xOf(t)} y1={top - 6} y2={height - 6} className="stroke-border" strokeWidth={1} />
-              <text x={xOf(t)} y={top - 10} fontSize={10} textAnchor="middle" fill="currentColor" fillOpacity={0.6}>
+              <text x={xOf(t)} y={top - 10} fontSize={12} textAnchor="middle" fill="currentColor" fillOpacity={0.6}>
                 {t}
               </text>
             </g>
           ))}
-          <text x={8} y={top - 10} fontSize={10} fill="currentColor" fillOpacity={0.6}>
+          <text x={8} y={top - 10} fontSize={12} fill="currentColor" fillOpacity={0.6}>
             t (ns) →
           </text>
           {lanes.map((lane, i) => {
@@ -228,19 +249,19 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
                 <text
                   x={8 + lane.depth * 9}
                   y={y + 4}
-                  fontSize={11}
+                  fontSize={12}
                   fill="currentColor"
-                  fontWeight={focused ? 700 : 400}
+                  fontWeight={focused ? 600 : 400}
                   className="font-mono [font-variant-ligatures:none]"
                 >
                   {lane.label.length > 15 ? `${lane.label.slice(0, 14)}…` : lane.label}
                 </text>
                 {started === undefined ? (
-                  <line x1={xOf(lane.created)} x2={xOf(lane.end)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-slate-400" strokeWidth={2} />
+                  <line x1={xOf(lane.created)} x2={xOf(lane.end)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-muted-foreground" strokeWidth={2} />
                 ) : (
                   <>
                     {started > lane.created ? (
-                      <line x1={xOf(lane.created)} x2={xOf(started)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-slate-400" strokeWidth={2} />
+                      <line x1={xOf(lane.created)} x2={xOf(started)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-muted-foreground" strokeWidth={2} />
                     ) : null}
                     <rect x={xOf(started)} y={y - 4} width={Math.max(3, xOf(barEnd) - xOf(started))} height={8} rx={3} className={barClass} />
                   </>
@@ -251,15 +272,15 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
                     <circle key={k} cx={xOf(m.time)} cy={y} r={3} className="fill-background stroke-cyan-600 dark:stroke-cyan-300" strokeWidth={1.5} />
                   ))}
                 {state === "done" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={11} className="fill-emerald-700 dark:fill-emerald-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-emerald-700 dark:fill-emerald-300">
                     ✓
                   </text>
                 ) : state === "killed" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={11} className="fill-rose-700 dark:fill-rose-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-rose-700 dark:fill-rose-300">
                     ✕
                   </text>
                 ) : state === "blocked" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={10} className="fill-amber-700 dark:fill-amber-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-amber-700 dark:fill-amber-300">
                     ⏸
                   </text>
                 ) : null}
@@ -289,8 +310,8 @@ export function ProcessLog({ step, label = "Simulation output" }: { step: TraceS
         <ol className="space-y-0.5">
           {step.log.map((l, i) => (
             <li key={i} className={cn("flex gap-3", i === newest && "text-cyan-200")}>
-              <span className="w-14 shrink-0 text-right text-slate-400">{l.time} ns</span>
-              <span className="w-20 shrink-0 truncate text-slate-400">{l.label}</span>
+              <span className="w-14 shrink-0 text-right text-code-muted">{l.time} ns</span>
+              <span className="w-20 shrink-0 truncate text-code-muted">{l.label}</span>
               <span>
                 {l.text}
                 {l.region === "postponed" ? <span className="text-code-muted"> ($strobe)</span> : l.region === "final" ? <span className="text-code-muted"> (final)</span> : null}
@@ -377,16 +398,189 @@ interface ProcessTraceViewProps {
   /** Global variables to show as value chips. */
   watch?: string[];
   codeLabel?: string;
+  /**
+   * Draw the process tree beside the lanes, and pause playback before every
+   * disable fork, wait fork and disable <name> so the learner can predict which
+   * processes it reaches.
+   */
+  treeView?: boolean;
+  /** Tree view only: a "what to notice" line, shown once every pause has been answered (it would give answers away). */
+  notice?: string;
+}
+
+type CheckpointAnswer = { picked: number[]; skipped: boolean };
+
+function marksFor(cp: TreeCheckpoint): Record<number, TreeMark> {
+  const marks: Record<number, TreeMark> = {};
+  cp.reached.forEach((pid) => {
+    marks[pid] = cp.kind === "wait-fork" ? "waited" : cp.unwound.includes(pid) ? "forced-out" : "killed";
+  });
+  return marks;
+}
+
+const verdictClass: Record<NodeVerdict, string> = {
+  hit: "text-success",
+  missed: "text-danger",
+  extra: "text-danger",
+  clear: "text-muted-foreground",
+};
+
+const verdictGlyph: Record<NodeVerdict, string> = { hit: "✓", missed: "✕", extra: "✕", clear: "·" };
+
+/** The pause before a process-control statement: pick the processes, then lock in. */
+function TreeCheckpointPrompt({
+  checkpoint,
+  lineText,
+  picked,
+  onLock,
+  onSkip,
+}: {
+  checkpoint: TreeCheckpoint;
+  lineText?: string;
+  picked: number[];
+  onLock: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4" role="group" aria-label="Predict before the statement runs">
+      <p className="text-sm font-semibold text-foreground">
+        <span className="mr-2 rounded bg-muted px-1.5 py-0.5 text-label text-foreground">Predict</span>
+        Playback paused before <code className="font-mono [font-variant-ligatures:none]">{checkpoint.statement}</code>
+      </p>
+      <p className="mt-2 text-sm text-foreground">{checkpointQuestion(checkpoint)}</p>
+      {lineText ? <p className="mt-1 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">Next line: {lineText}</p> : null}
+      <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+        Your prediction: {picked.length === 0 ? "no process" : `${picked.length} process${picked.length === 1 ? "" : "es"}`}. Tap the processes in the tree or with the buttons under it.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onLock}
+          className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+        >
+          Lock in prediction
+        </button>
+        <button
+          type="button"
+          onClick={onSkip}
+          className="inline-flex min-h-10 items-center rounded-lg border border-border bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+        >
+          Reveal without predicting
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The verdict line of the reveal, shared by the feedback heading and the live announcement. */
+function feedbackHeadline(checkpoint: TreeCheckpoint, answer: CheckpointAnswer): { lead: string; text: string } {
+  if (answer.skipped) return { lead: "Answer.", text: checkpointAnswer(checkpoint) };
+  const grade = gradeTreePrediction(checkpoint, answer.picked);
+  return { lead: grade.correct ? "Correct." : "Not quite.", text: grade.summary.replace(/^(Correct|Not quite)\. /, "") };
+}
+
+/**
+ * After the reveal: the model's answer, then why each process was or was not
+ * reached. The verdict is announced by ProcessTraceView's persistent live
+ * region; when the learner has just locked in, focus moves to the verdict.
+ */
+function TreeCheckpointFeedback({
+  checkpoint,
+  answer,
+  focusOnMount = false,
+  onFocused,
+}: {
+  checkpoint: TreeCheckpoint;
+  answer: CheckpointAnswer;
+  focusOnMount?: boolean;
+  onFocused?: () => void;
+}) {
+  const grade = gradeTreePrediction(checkpoint, answer.picked);
+  const headline = feedbackHeadline(checkpoint, answer);
+  const headingRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!focusOnMount) return;
+    headingRef.current?.focus();
+    onFocused?.();
+  }, [focusOnMount, onFocused]);
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 text-sm" role="group" aria-label="Your prediction, revealed">
+      <p ref={headingRef} tabIndex={-1} className={cn("rounded outline-none", answer.skipped ? "text-foreground" : grade.correct ? "text-success" : "text-danger")}>
+        <strong>{headline.lead} </strong>
+        {headline.text}
+      </p>
+      <ul className="mt-3 space-y-2">
+        {grade.nodes.map((n) => {
+          const verdict: NodeVerdict = answer.skipped ? (n.reached ? "hit" : "clear") : n.verdict;
+          return (
+            <li key={n.pid} className="flex gap-2">
+              <span aria-hidden className={cn("w-4 shrink-0 text-center font-semibold", verdictClass[verdict])}>
+                {verdictGlyph[verdict]}
+              </span>
+              <span className="min-w-0 text-muted-foreground">
+                <span className="font-mono font-medium text-foreground [font-variant-ligatures:none]">{n.label}</span>
+                <span className="text-foreground">
+                  {" "}
+                  · {nodeOutcome(checkpoint, n.pid)}
+                  {answer.skipped ? "" : `, ${VERDICT_TEXT[n.verdict]}`}.
+                </span>{" "}
+                {n.why}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 /** Synchronised code, narration, thread table, lanes, IPC state and output for one model run. */
-export function ProcessTraceView({ prepared, result, resetKey, watch, codeLabel = "Code under simulation" }: ProcessTraceViewProps) {
+export function ProcessTraceView({ prepared, result, resetKey, watch, codeLabel = "Code under simulation", treeView = false, notice }: ProcessTraceViewProps) {
   const playback = usePlayback(result.trace.length, resetKey);
-  const index = Math.min(playback.index, result.trace.length - 1);
+  const checkpoints = useMemo(() => (treeView ? findTreeCheckpoints(result, prepared) : []), [treeView, result, prepared]);
+  const [answers, setAnswers] = useState<Record<string, CheckpointAnswer>>({});
+  const [picked, setPicked] = useState<number[]>([]);
+  // The verdict to announce (one live region stays mounted across the prompt-to-feedback swap),
+  // and the checkpoint whose feedback should take focus once, right after lock-in.
+  const [announcement, setAnnouncement] = useState("");
+  const [focusFeedbackId, setFocusFeedbackId] = useState<string | undefined>();
+  const clearFeedbackFocus = React.useCallback(() => setFocusFeedbackId(undefined), []);
+  const [lastKey, setLastKey] = useState(resetKey);
+  if (lastKey !== resetKey) {
+    setLastKey(resetKey);
+    setAnswers({});
+    setPicked([]);
+    setAnnouncement("");
+    setFocusFeedbackId(undefined);
+  }
+
+  // The first unanswered checkpoint: playback may not pass the step before it.
+  const gate = checkpoints.find((cp) => !answers[cp.id]);
+  const limit = gate ? gate.stepIndex - 1 : result.trace.length - 1;
+  const index = Math.min(playback.index, result.trace.length - 1, limit);
+  const { seek } = playback;
+  useEffect(() => {
+    if (gate && playback.index > limit) seek(limit);
+  }, [gate, limit, playback.index, seek]);
+
+  const gated = {
+    ...playback,
+    index,
+    isLast: playback.isLast || index >= limit,
+    stepForward: () => {
+      if (index < limit) playback.stepForward();
+    },
+    seek: (target: number) => seek(Math.min(target, limit)),
+  };
+
   const step = result.trace[index];
   const previous = index > 0 ? result.trace[index - 1] : undefined;
   const lines = useMemo(() => linesFor(prepared), [prepared]);
   const contextKeys = step.procs.filter((p) => alive(p.state) && p.lineKey).map((p) => p.lineKey as string);
+  // The checkpoint the current step belongs to: the latest one whose pause point has been reached.
+  const focus = [...checkpoints].reverse().find((cp) => cp.stepIndex - 1 <= index);
+  const focusAnswer = focus ? answers[focus.id] : undefined;
+  const predicting = focus !== undefined && focus === gate && index === limit ? focus : undefined;
 
   const renderLineControl = (line: CodeTraceLine) => {
     if (!line.key) return null;
@@ -399,7 +593,7 @@ export function ProcessTraceView({ prepared, result, resetKey, watch, codeLabel 
             key={p.pid}
             className={cn(
               "rounded-full border px-1.5 font-sans text-xs leading-4",
-              p.state === "running" ? "border-cyan-300 bg-cyan-400/20 text-cyan-100" : "border-slate-500 text-slate-300",
+              p.state === "running" ? "border-cyan-300 bg-cyan-400/20 text-cyan-100" : "border-code-border text-code-muted",
             )}
           >
             <span aria-hidden>{stateMeta[p.state].glyph} </span>
@@ -411,10 +605,75 @@ export function ProcessTraceView({ prepared, result, resetKey, watch, codeLabel 
     );
   };
 
+  const lock = (skipped: boolean) => {
+    if (!gate) return;
+    const answer = { picked: skipped ? [] : picked, skipped };
+    const headline = feedbackHeadline(gate, answer);
+    setAnswers((a) => ({ ...a, [gate.id]: answer }));
+    setPicked([]);
+    setAnnouncement(`${headline.lead} ${headline.text}`);
+    setFocusFeedbackId(gate.id);
+  };
+
+  const treePanel = treeView ? (
+    <div className="min-w-0 space-y-3">
+      <ProcessTreeView
+        tree={processTree(step)}
+        time={step.time}
+        currentPid={step.pid}
+        callerPid={focus?.callerPid}
+        callerNote={focus ? `the caller, runs ${focus.statement}` : undefined}
+        selectable={predicting?.candidates}
+        selected={picked}
+        onToggle={(pid) => setPicked((p) => (p.includes(pid) ? p.filter((x) => x !== pid) : [...p, pid]))}
+        marks={focus && focusAnswer ? marksFor(focus) : undefined}
+        marksCaption={focus && focusAnswer ? `Marks: what ${focus.statement} reached at t = ${focus.time} ns.` : undefined}
+      />
+      {predicting ? (
+        <TreeCheckpointPrompt
+          checkpoint={predicting}
+          lineText={lines.find((l) => l.key === predicting.lineKey)?.text.trim()}
+          picked={picked}
+          onLock={() => lock(false)}
+          onSkip={() => lock(true)}
+        />
+      ) : focus && focusAnswer ? (
+        <TreeCheckpointFeedback
+          key={focus.id}
+          checkpoint={focus}
+          answer={focusAnswer}
+          focusOnMount={focusFeedbackId === focus.id}
+          onFocused={clearFeedbackFocus}
+        />
+      ) : null}
+      <p className="sr-only" aria-live="polite" data-testid="tree-verdict-live">
+        {announcement}
+      </p>
+      {notice && !gate && checkpoints.length > 0 ? (
+        <p className="text-sm text-foreground">
+          <strong>What to notice: </strong>
+          {notice}
+        </p>
+      ) : null}
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-4">
       <ProcessNarration step={step} />
-      <PlaybackControls playback={playback} stepCount={result.trace.length} stepNoun="Process step" describeStep={(i) => result.trace[i]?.what ?? ""} />
+      <PlaybackControls
+        playback={gated}
+        stepCount={result.trace.length}
+        stepNoun="Process step"
+        describeStep={(i) => (i > limit ? "paused for your prediction" : (result.trace[i]?.what ?? ""))}
+      />
+      {treePanel ? (
+        // Stacked at every width: side by side, a lesson column squeezes both SVGs below the 12 px text minimum.
+        <div className="space-y-4">
+          {treePanel}
+          <ProcessLanes result={result} index={index} className="min-w-0" />
+        </div>
+      ) : null}
       <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
         <CodeTrace label={codeLabel} lines={lines} activeKey={step.lineKey} contextKeys={contextKeys} renderLineControl={renderLineControl} />
         <div className="min-w-0 space-y-3">
@@ -432,7 +691,7 @@ export function ProcessTraceView({ prepared, result, resetKey, watch, codeLabel 
           <IpcPanel step={step} />
         </div>
       </div>
-      <ProcessLanes result={result} index={index} />
+      {treePanel ? null : <ProcessLanes result={result} index={index} />}
       <ProcessLog step={step} />
     </div>
   );
@@ -450,7 +709,7 @@ interface PredictOption {
 }
 
 interface ExploreScenario {
-  id: ProcessScenarioId;
+  id: ForkJoinScenarioId;
   label: string;
   summary: string;
   notice: string;
@@ -725,12 +984,95 @@ const exploreScenarios: ExploreScenario[] = [
   },
 ];
 
-function getExploreScenario(id: ProcessScenarioId): ExploreScenario {
-  return exploreScenarios.find((s) => s.id === id) ?? exploreScenarios[0];
+/*
+ * Process-tree scenarios (sv-process-tree-scenarios). They are offered only
+ * when a lesson names them, so the full scenario picker keeps its six entries.
+ */
+const treeScenarios: ExploreScenario[] = [
+  {
+    id: "wrapper-begin-end",
+    label: "Wrappers and disable fork",
+    summary: "test forks a monitor, then races a response (#15) against a timer (#40) and cleans up with disable fork. Try three wrappers around the race.",
+    notice: "Count the nodes under test when disable fork runs. Only one wrapper adds a process.",
+    variants: WRAPPER_VARIANTS,
+    build: (variant) => wrapperScenario(variant as WrapperVariant),
+    question: "At t = 15 ns the response wins and disable fork runs. Does the monitor survive?",
+    options: (variant, r) => {
+      const killed = firstKill(r)?.killed ?? [];
+      const own = variant === "fork-join";
+      return [
+        {
+          id: "survives",
+          label: variant === "none" ? "Yes: the monitor survives" : "Yes: the wrapper keeps the monitor out of reach",
+          matches: !killed.includes("monitor"),
+          feedback: own
+            ? "Right: fork begin … end join runs the race in a process of its own (§9.5). disable fork now runs in that wrapper, whose only living descendant is the timer (§9.6.3)."
+            : variant === "begin-end"
+              ? "Not with begin … end. A begin-end block is not in §9.5's list of what creates a process, so the race and disable fork still run in test, and the monitor is test's child (§9.6.3)."
+              : "With no wrapper, disable fork runs in test, and the monitor is one of test's children (§9.6.3).",
+        },
+        {
+          id: "killed",
+          label: "No: disable fork kills the monitor",
+          matches: killed.includes("monitor"),
+          feedback: own
+            ? "Not with fork begin … end join: it creates a wrapper process (§9.5), so disable fork runs there and reaches only the wrapper's own descendants (§9.6.3)."
+            : variant === "begin-end"
+              ? "Right: a begin-end block is not in §9.5's list of what creates a process, so disable fork still runs in test and kills every descendant of test, the monitor included (§9.6.3)."
+              : "Right: disable fork runs in test and kills every descendant of test, including the monitor it forked earlier (§9.6.3).",
+        },
+      ];
+    },
+  },
+  {
+    id: "finished-child-grandchild",
+    label: "Finished child, running grandchild",
+    summary: `parent forks C with join. C forks its own child G with join_none, then finishes at t = ${FINISHED_CHILD_TIMES.childEnds} ns. G runs on until t = ${FINISHED_CHILD_TIMES.grandchildEnds} ns unless something stops it.`,
+    notice: "C has already finished when parent runs the cleanup statement. Watch G's node.",
+    variants: CLEANUP_VARIANTS,
+    build: (variant) => finishedChildScenario(variant as CleanupVariant),
+    question: `At t = ${FINISHED_CHILD_TIMES.cleanupAt} ns parent runs the cleanup statement. What happens to G?`,
+    options: (variant, r) => {
+      const killedG = (firstKill(r)?.killed ?? []).includes("G");
+      const passes = timeOf(r, "parent passes cleanup");
+      const gDone = timeOf(r, "G done");
+      const disable = variant === "disable-fork";
+      return [
+        {
+          id: "killed",
+          label: `G is killed at t = ${FINISHED_CHILD_TIMES.cleanupAt} ns`,
+          matches: killedG,
+          feedback: disable
+            ? "Right: disable fork ends every descendant of parent, including descendants of a child that has already terminated (§9.6.3). G is reached through the finished C."
+            : "wait fork never ends a process; it only waits (§9.6.1).",
+        },
+        {
+          id: "runs-on",
+          label: `G runs on to t = ${FINISHED_CHILD_TIMES.grandchildEnds} ns; parent passes at once`,
+          matches: !killedG && gDone === FINISHED_CHILD_TIMES.grandchildEnds && passes === FINISHED_CHILD_TIMES.cleanupAt,
+          feedback: disable
+            ? "That is what wait fork does. disable fork reaches G even though G's parent C has finished (§9.6.3)."
+            : "Right: wait fork waits for immediate children only, excluding their descendants (§9.6.1). parent's only child, C, has finished, so parent passes at once, and G, a grandchild, runs on.",
+        },
+        {
+          id: "waits",
+          label: `parent waits until G ends at t = ${FINISHED_CHILD_TIMES.grandchildEnds} ns`,
+          matches: passes === FINISHED_CHILD_TIMES.grandchildEnds,
+          feedback: "Neither statement does that. wait fork waits for immediate children only (§9.6.1), and G is parent's grandchild.",
+        },
+      ];
+    },
+  },
+];
+
+const allScenarios: ExploreScenario[] = [...exploreScenarios, ...treeScenarios];
+
+function getExploreScenario(id: ForkJoinScenarioId): ExploreScenario {
+  return allScenarios.find((s) => s.id === id) ?? exploreScenarios[0];
 }
 
-function ExploreMode({ scenarios, initial }: { scenarios: ExploreScenario[]; initial: ProcessScenarioId }) {
-  const [scenarioId, setScenarioId] = useState<ProcessScenarioId>(scenarios.some((s) => s.id === initial) ? initial : scenarios[0].id);
+function ExploreMode({ scenarios, initial, treeView = false }: { scenarios: ExploreScenario[]; initial: ForkJoinScenarioId; treeView?: boolean }) {
+  const [scenarioId, setScenarioId] = useState<ForkJoinScenarioId>(scenarios.some((s) => s.id === initial) ? initial : scenarios[0].id);
   const preset = getExploreScenario(scenarioId);
   const [variant, setVariant] = useState<string>(preset.variants?.[0]?.value ?? "");
   const [order, setOrder] = useState<"declaration" | "reverse">("declaration");
@@ -744,7 +1086,7 @@ function ExploreMode({ scenarios, initial }: { scenarios: ExploreScenario[]; ini
   const options = useMemo(() => preset.options(variant, reference, exploration), [preset, variant, reference, exploration]);
   const lines = useMemo(() => linesFor(prepared), [prepared]);
 
-  const pickScenario = (id: ProcessScenarioId) => {
+  const pickScenario = (id: ForkJoinScenarioId) => {
     const next = getExploreScenario(id);
     setScenarioId(id);
     setVariant(next.variants?.[0]?.value ?? "");
@@ -756,30 +1098,13 @@ function ExploreMode({ scenarios, initial }: { scenarios: ExploreScenario[]; ini
     return { declaration: tops.join(" first, then ") || "declaration order", reverse: [...tops].reverse().join(" first, then ") || "reverse order" };
   })();
 
-  return (
-    <div className="space-y-4">
-      {scenarios.length > 1 ? (
-        <SegmentedControl label="Scenario" value={scenarioId} onChange={pickScenario} options={scenarios.map((s) => ({ value: s.id, label: s.label }))} />
-      ) : null}
-      <p className="text-sm text-muted-foreground">{preset.summary}</p>
-      {preset.variants ? (
-        <SegmentedControl
-          label="Variant"
-          mono
-          value={variant}
-          onChange={(value) => {
-            setVariant(value);
-            setOrder("declaration");
-          }}
-          options={preset.variants}
-        />
-      ) : null}
-      <CodeTrace label="Code (generated from the model)" lines={lines} />
-      <PredictionPrompt
-        resetKey={`${scenarioId}:${variant}`}
-        question={preset.question}
-        options={options.map((o) => ({ id: o.id, label: o.label, correct: o.matches, feedback: o.feedback }))}
-      >
+  // With the tree, predictions happen at each disable fork / wait fork / disable <name>
+  // pause instead of up front. A run with no such statement keeps the up-front question.
+  const treeCheckpoints = useMemo(() => (treeView ? findTreeCheckpoints(result, prepared) : []), [treeView, result, prepared]);
+  const treeMode = treeCheckpoints.length > 0;
+  const treeStatements = [...new Set(treeCheckpoints.map((cp) => cp.statement))].join(" or ");
+
+  const body = (
         <div className="space-y-4">
           {exploration ? (
             <p
@@ -796,10 +1121,12 @@ function ExploreMode({ scenarios, initial }: { scenarios: ExploreScenario[]; ini
                 : `Race: ${exploration.outcomes.length} different outcomes across ${exploration.runCount} legal orders.`}
             </p>
           ) : null}
-          <p className="text-sm text-foreground">
-            <strong>What to notice: </strong>
-            {preset.notice}
-          </p>
+          {treeMode ? null : (
+            <p className="text-sm text-foreground">
+              <strong>What to notice: </strong>
+              {preset.notice}
+            </p>
+          )}
           {preset.explore ? (
             <OrderPicker order={order} setOrder={setOrder} labels={orderLabels} name={`order-${scenarioId}-${variant}`} />
           ) : (
@@ -823,9 +1150,53 @@ function ExploreMode({ scenarios, initial }: { scenarios: ExploreScenario[]; ini
               ) : null}
             </div>
           )}
-          <ProcessTraceView prepared={prepared} result={result} resetKey={`${scenarioId}:${variant}:${order}`} watch={scenario.vars?.map((d) => d.name)} />
+          <ProcessTraceView
+            prepared={prepared}
+            result={result}
+            resetKey={`${scenarioId}:${variant}:${order}`}
+            watch={scenario.vars?.map((d) => d.name)}
+            treeView={treeView}
+            notice={treeMode ? preset.notice : undefined}
+          />
         </div>
-      </PredictionPrompt>
+  );
+
+  return (
+    <div className="space-y-4">
+      {scenarios.length > 1 ? (
+        <SegmentedControl label="Scenario" value={scenarioId} onChange={pickScenario} options={scenarios.map((s) => ({ value: s.id, label: s.label }))} />
+      ) : null}
+      <p className="text-sm text-muted-foreground">{preset.summary}</p>
+      {preset.variants ? (
+        <SegmentedControl
+          label="Variant"
+          mono
+          value={variant}
+          onChange={(value) => {
+            setVariant(value);
+            setOrder("declaration");
+          }}
+          options={preset.variants}
+        />
+      ) : null}
+      {treeMode ? (
+        <p className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
+          Step through the run. Playback pauses before each {treeStatements}, so you can predict which processes it reaches before the model shows it.
+        </p>
+      ) : (
+        <CodeTrace label="Code (generated from the model)" lines={lines} />
+      )}
+      {treeMode ? (
+        body
+      ) : (
+        <PredictionPrompt
+          resetKey={`${scenarioId}:${variant}`}
+          question={preset.question}
+          options={options.map((o) => ({ id: o.id, label: o.label, correct: o.matches, feedback: o.feedback }))}
+        >
+          {body}
+        </PredictionPrompt>
+      )}
     </div>
   );
 }
@@ -1047,22 +1418,57 @@ function DebugMode() {
 
 /* ------------------------------------------------------------------------- */
 
+/**
+ * One preset per F2C lesson use of the process tree. Each sets the scenario,
+ * the picker and treeView; explicit props still win.
+ */
+export const FORK_JOIN_TREE_PRESETS = {
+  /** Blocks: begin-end and fork-join, "What creates a process". */
+  "what-creates-a-process": { scenario: "wrapper-begin-end", scenarios: ["wrapper-begin-end"] },
+  /** Waiting for and cleaning up threads. */
+  cleanup: { scenario: "timeout-disable-fork", scenarios: ["timeout-disable-fork", "wrapper-begin-end", "finished-child-grandchild", "named-disable", "wait-fork"] },
+  /** Pitfalls row: "Wrapping the race in begin … end isolates disable fork". */
+  "begin-end-pitfall": { scenario: "wrapper-begin-end", scenarios: ["wrapper-begin-end"] },
+  /** Push Further, Expert: disable in depth. */
+  "disable-in-depth": { scenario: "finished-child-grandchild", scenarios: ["finished-child-grandchild", "named-disable", "wait-fork"] },
+} satisfies Record<string, { scenario: ForkJoinScenarioId; scenarios: ForkJoinScenarioId[] }>;
+
+export type ForkJoinTreePreset = keyof typeof FORK_JOIN_TREE_PRESETS;
+
 interface ForkJoinVisualizerProps {
   /** Initial scenario in explore mode. */
-  scenario?: ProcessScenarioId;
+  scenario?: ForkJoinScenarioId;
   /** Restrict the scenario picker; hides the debug tab. */
-  scenarios?: ProcessScenarioId[];
+  scenarios?: ForkJoinScenarioId[];
   /** Start in the debug challenge. */
   mode?: "explore" | "debug";
+  /**
+   * Draw the process tree beside the lanes. Runs that contain disable fork,
+   * wait fork or disable <name> then pause before each one for a tap-the-nodes
+   * prediction instead of the up-front question.
+   */
+  treeView?: boolean;
+  /** A lesson preset for the process tree; sets scenario, scenarios and treeView. */
+  preset?: ForkJoinTreePreset;
 }
 
 /**
  * Processes over simulation time: fork-join variants, disable fork, wait
- * fork, the fork-in-loop capture bug, named-block disable and event races.
- * Every lane, line highlight and printed value comes from sv-process-model.
+ * fork, the fork-in-loop capture bug, named-block disable and event races,
+ * plus the process-tree scenarios. Every lane, node, line highlight and
+ * printed value comes from sv-process-model; the tree reading and grading
+ * come from sv-process-tree-scenarios.
  */
-export default function ForkJoinVisualizer({ scenario = "join-variants", scenarios, mode = "explore" }: ForkJoinVisualizerProps) {
-  const available = scenarios ? exploreScenarios.filter((s) => scenarios.includes(s.id)) : exploreScenarios;
+export default function ForkJoinVisualizer({ scenario: scenarioProp, scenarios: scenariosProp, mode = "explore", treeView: treeViewProp, preset }: ForkJoinVisualizerProps) {
+  const presetConfig = preset ? FORK_JOIN_TREE_PRESETS[preset] : undefined;
+  const scenario: ForkJoinScenarioId = scenarioProp ?? presetConfig?.scenario ?? "join-variants";
+  const scenarios: ForkJoinScenarioId[] | undefined = scenariosProp ?? presetConfig?.scenarios;
+  const treeView = treeViewProp ?? Boolean(presetConfig);
+  const available = scenarios
+    ? allScenarios.filter((s) => scenarios.includes(s.id))
+    : isTreeScenarioId(scenario)
+      ? [...exploreScenarios, getExploreScenario(scenario)]
+      : exploreScenarios;
   const [tab, setTab] = useState<"explore" | "debug">(scenarios ? "explore" : mode);
   return (
     <VisualFrame
@@ -1084,7 +1490,7 @@ export default function ForkJoinVisualizer({ scenario = "join-variants", scenari
           ]}
         />
       ) : null}
-      {tab === "explore" ? <ExploreMode scenarios={available.length ? available : exploreScenarios} initial={scenario} /> : <DebugMode />}
+      {tab === "explore" ? <ExploreMode scenarios={available.length ? available : exploreScenarios} initial={scenario} treeView={treeView} /> : <DebugMode />}
     </VisualFrame>
   );
 }

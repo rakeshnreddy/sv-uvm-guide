@@ -15,6 +15,14 @@ export interface CostStage {
   multiplier: number;
   /** What has to be redone when the bug is found here. */
   redo: string;
+  /**
+   * Qualitative delay class for a fix found here: no number, only wording the
+   * F1A lesson already uses (its stage table, the "four late bugs" worked
+   * example and the "rank by cost and delay" exercise solution). Typical and
+   * project-dependent. Optional so the other readers of CostStage
+   * (fix-path-model, shift-left-model) are unaffected.
+   */
+  delay?: string;
 }
 
 export const COST_STAGES: CostStage[] = [
@@ -23,32 +31,67 @@ export const COST_STAGES: CostStage[] = [
     label: "Spec review",
     multiplier: 1,
     redo: "Reword a requirement and tell the team. Nothing has been built yet.",
+    delay: "Hours",
   },
   {
     id: "rtl",
     label: "RTL simulation",
     multiplier: 10,
     redo: "Debug the failing test, edit the RTL, rerun the block regression.",
+    delay: "Minutes to days",
   },
   {
     id: "system",
     label: "Full-chip / emulation",
     multiplier: 100,
     redo: "Debug across many blocks and long software runs, then re-verify every block the fix touches.",
+    delay: "Days to weeks",
   },
   {
     id: "post-silicon",
     label: "Post-silicon (lab)",
     multiplier: 1_000,
     redo: "Find the bug on real chips, then pay for new masks and wafers (a metal-only or full respin) or ship a firmware workaround. The product waits weeks to months.",
+    delay: "Weeks to months",
   },
   {
     id: "field",
     label: "In the field",
     multiplier: 10_000,
     redo: "Customers hit it. Recalls or replacements, emergency patches that may cost performance, and lost trust.",
+    delay: "Workaround as fast as a firmware release; the real fix waits for new silicon",
   },
 ];
+
+/**
+ * The lesson's ranking by delay (F1A exercise solution): the same order as by
+ * cost, except that a field bug with a workaround can be contained quickly
+ * while its real fix waits for new silicon. `DELAY_EXCEPTION_STAGE` names the
+ * stage the exception applies to, so the component can mark it.
+ */
+export const DELAY_EXCEPTION_STAGE: CostStage["id"] = "field";
+export const DELAY_RANKING_NOTE =
+  "By delay the order is the same as by cost, except that a field bug with a workaround can be contained quickly while its real fix waits for new silicon.";
+/**
+ * Shown beside the exception stage's delay class: the lesson's fast delay holds
+ * only for "a field bug with a workaround" (exercise solution), not every field bug.
+ */
+export const DELAY_EXCEPTION_QUALIFIER = "(fast only when a workaround exists)";
+
+/** The stage's delay class, or a visible placeholder if a stage lacks one or it is blank. */
+export function delayLabel(stage: CostStage): string {
+  return stage.delay?.trim() ? stage.delay : "Delay not stated";
+}
+
+/**
+ * Bar length for a stage on the log-scale ladder, from 0 to 1: one equal step
+ * per order of magnitude, with the spec-review bar (×1) one step tall so it is
+ * visible. The largest stage is 1.
+ */
+export function costBarFraction(stage: CostStage): number {
+  const maxLog = Math.log10(COST_STAGES[COST_STAGES.length - 1].multiplier) + 1;
+  return (Math.log10(stage.multiplier) + 1) / maxLog;
+}
 
 export function stageIndex(id: CostStage["id"]): number {
   return COST_STAGES.findIndex((s) => s.id === id);

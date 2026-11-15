@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { ContainerControls, ContainerStateView, OpResultPanel } from "./DynamicStructureVisualizer";
+import { MemBlockMode, TOUCH_BUTTONS, type MemBlockCaseId } from "./MemBlockScene";
 
 // ---- 3D materials ----------------------------------------------------------
 
@@ -185,7 +186,7 @@ export function PackedArray2D({ packed, unpacked, highlight }: { packed: number[
 
 // ---- Main component -------------------------------------------------------------
 
-type Mode = "dynamic" | "queue" | "assoc" | "fixed";
+type Mode = "dynamic" | "queue" | "assoc" | "fixed" | "mem";
 
 const sceneParamToMode: Record<string, Mode> = {
   "dynamic-array": "dynamic",
@@ -193,8 +194,9 @@ const sceneParamToMode: Record<string, Mode> = {
   associative: "assoc",
   "packed-matrix": "fixed",
   "fixed-array": "fixed",
+  "mem-block": "mem",
 };
-const modeToSceneParam: Record<Mode, string> = { dynamic: "dynamic-array", queue: "queue", assoc: "associative", fixed: "packed-matrix" };
+const modeToSceneParam: Record<Mode, string> = { dynamic: "dynamic-array", queue: "queue", assoc: "associative", fixed: "packed-matrix", mem: "mem-block" };
 
 function detectWebGL(): boolean {
   if (typeof window === "undefined" || !("WebGLRenderingContext" in window)) return false;
@@ -216,6 +218,10 @@ const ASSUMPTIONS = [
   "Container operations use the same tested model as the container lab (§7.5, §7.8–§7.10).",
   "The cube layout is a picture of index order, not of simulator memory: the LRM defines iteration and assignment order, not storage layout.",
   "Large packed/unpacked shapes are capped for rendering; the logical bit numbering stays exact.",
+  "Memory block: every select is evaluated by the same tested model as the array select explorer: §7.4.4 (unpacked indices first, then packed; the rightmost dimension varies fastest), §7.4.5 and Table 7-1 (an invalid unpacked index reads 'x for logic, '0 for bit) and §11.5.1 (invalid packed selects).",
+  "Memory block: the lanes touch and the drawers sit apart because §7.4.1 guarantees a packed array is a contiguous set of bits and says an unpacked array may or may not be. The gaps are not a storage layout; a tool may store the drawers contiguously.",
+  "Memory block: §7.4.5 lets a tool warn on an invalid index into an unpacked array; the scene shows the read value the standard defines. (§11.5.1 NOTE 2 says a bit-select or part-select index outside the declared range may be flagged as a compile-time error: that covers packed selects, not mem[16].)",
+  "Memory block: the 3D view labels drawers and lanes but not every byte; the text view beside it carries every byte value.",
 ];
 
 interface SystemVerilog3DVisualizerProps {
@@ -225,9 +231,11 @@ interface SystemVerilog3DVisualizerProps {
   initialScene?: string;
   /** Mirror the selected scene into ?scene=… (for the standalone route). Pass false inside lessons. */
   syncSceneToUrl?: boolean;
+  /** Memory block scene only: the select chip to start on (default mem[5]). */
+  initialMemCase?: MemBlockCaseId;
 }
 
-export function SystemVerilog3DVisualizer({ className, height = 420, initialScene, syncSceneToUrl = true }: SystemVerilog3DVisualizerProps) {
+export function SystemVerilog3DVisualizer({ className, height = 420, initialScene, syncSceneToUrl = true, initialMemCase }: SystemVerilog3DVisualizerProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -270,7 +278,7 @@ export function SystemVerilog3DVisualizer({ className, height = 420, initialScen
   useEffect(() => setHighlightP(Array(packedDims.length).fill(0)), [packedDims.length]);
   useEffect(() => setHighlightU(Array(unpackedDims.length).fill(0)), [unpackedDims.length]);
 
-  const current: ContainerState | null = mode === "fixed" ? null : containers[mode];
+  const current: ContainerState | null = mode === "fixed" || mode === "mem" ? null : containers[mode];
 
   const run = (op: ContainerOp) => {
     if (!current) return;
@@ -340,127 +348,134 @@ export function SystemVerilog3DVisualizer({ className, height = 420, initialScen
       className={cn("bg-card", className)}
     >
       <div data-testid="sv-3d-visualizer" className="space-y-4">
-        <SegmentedControl
-          label="Structure"
-          options={[
-            { value: "dynamic" as const, label: "Dynamic array" },
-            { value: "queue" as const, label: "Queue" },
-            { value: "assoc" as const, label: "Associative array" },
-            { value: "fixed" as const, label: "Packed / unpacked" },
-          ]}
-          value={mode}
-          onChange={switchMode}
-        />
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={cn("space-y-4", TOUCH_BUTTONS)}>
           <SegmentedControl
-            label="View"
+            label="Structure"
             options={[
-              { value: "3d" as const, label: "3D", disabled: webgl === false },
-              { value: "2d" as const, label: "2D / text" },
+              { value: "dynamic" as const, label: "Dynamic array" },
+              { value: "queue" as const, label: "Queue" },
+              { value: "assoc" as const, label: "Associative array" },
+              { value: "fixed" as const, label: "Packed / unpacked" },
+              { value: "mem" as const, label: "Memory block" },
             ]}
-            value={view}
-            onChange={setViewChoice}
+            value={mode}
+            onChange={switchMode}
           />
-          {webgl === false ? <p className="text-xs text-muted-foreground">3D needs WebGL, which is unavailable here. The 2D view shows the same state.</p> : null}
-        </div>
-
-        <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
-          <div
-            data-testid="sv-3d-viewport"
-            role={view === "3d" ? "img" : undefined}
-            aria-label={view === "3d" ? `3D view. ${stateSummary}` : undefined}
-            className={cn("relative min-w-0 overflow-hidden rounded-xl border border-border/70", view === "3d" ? "cursor-move bg-slate-950" : "bg-background/50 p-3")}
-            style={view === "3d" ? { height } : undefined}
-          >
-            {view === "3d" ? (
-              <WebGLFallbackBoundary fallback={<div className="h-full overflow-auto bg-background p-3">{twoD}</div>}>
-                <Canvas camera={{ position: [6, 6, 10], fov: 60 }} dpr={[1, 1.5]} frameloop="demand">
-                  <ambientLight intensity={0.7} />
-                  <directionalLight position={[5, 10, 7.5]} intensity={1} />
-                  <Grid args={[50, 50]} cellColor="#444" sectionColor="#444" fadeDistance={30} infiniteGrid />
-                  <OrbitControls makeDefault dampingFactor={0.1} />
-                  {mode === "dynamic" ? <ElementRow3D values={containers.dynamic.values} changed={lastResult?.changedIndices} /> : null}
-                  {mode === "queue" ? <ElementRow3D values={containers.queue.values} changed={lastResult?.changedIndices} /> : null}
-                  {mode === "assoc" ? <AssocRow3D state={containers.assoc} /> : null}
-                  {mode === "fixed" ? <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightLogicalIndex={activeHighlight} /> : null}
-                </Canvas>
-              </WebGLFallbackBoundary>
-            ) : (
-              twoD
-            )}
-          </div>
-
-          <div className="min-w-0 space-y-3">
-            {current ? (
-              <>
-                <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{declarationOf(current)}</p>
-                <ContainerControls key={mode} state={current} onRun={run} />
-                <div aria-live="polite" className="rounded-xl border border-border bg-card p-3">
-                  {lastResult ? <OpResultPanel result={lastResult} elemType={current.elemType} /> : <p className="text-sm text-muted-foreground">Run an operation to see its code, result and rule.</p>}
-                </div>
-              </>
-            ) : (
-              <div className="space-y-3 text-sm">
-                <p className="font-mono text-xs text-foreground [font-variant-ligatures:none]">{declaration}</p>
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Packed dimensions (before the name)</p>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {packedDims.map((d, i) => (
-                      <input key={i} aria-label={`Packed dimension ${i + 1} size`} type="number" min={1} max={64} value={d} onChange={(e) => setDim("packed", i, Number(e.target.value))} className={numberInput} />
-                    ))}
-                    <button type="button" disabled={packedDims.length >= 3} onClick={() => setPackedDims([...packedDims, 2])} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Add packed dimension">
-                      +
-                    </button>
-                    <button type="button" disabled={packedDims.length <= 1} onClick={() => setPackedDims(packedDims.slice(0, -1))} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Remove packed dimension">
-                      −
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Unpacked dimensions (after the name)</p>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {unpackedDims.map((d, i) => (
-                      <input key={i} aria-label={`Unpacked dimension ${i + 1} size`} type="number" min={1} max={64} value={d} onChange={(e) => setDim("unpacked", i, Number(e.target.value))} className={numberInput} />
-                    ))}
-                    <button type="button" disabled={unpackedDims.length >= 3} onClick={() => setUnpackedDims([...unpackedDims, 2])} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Add unpacked dimension">
-                      +
-                    </button>
-                    <button type="button" disabled={unpackedDims.length <= 1} onClick={() => setUnpackedDims(unpackedDims.slice(0, -1))} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Remove unpacked dimension">
-                      −
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/[0.06] p-3 text-xs text-foreground">
-                  <p className="font-semibold">The one rule (§7.4.4)</p>
-                  <p className="mt-1">
-                    You write the unpacked indices first, then the packed ones: <code className="font-mono">my_array{unpackedDims.map((_, i) => `[u${i + 1}]`).join("")}{packedDims.map((_, i) => `[p${i + 1}]`).join("")}</code>. In that list the rightmost index varies fastest, and every packed dimension varies faster than every unpacked one.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-foreground">Find a bit by index</p>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {highlightU.map((v, i) => (
-                      <label key={`u${i}`} className="flex items-center gap-1">
-                        u{i + 1}
-                        <input aria-label={`Unpacked index ${i + 1}`} type="number" value={v} onChange={(e) => setHighlightU(highlightU.map((x, j) => (j === i ? Number(e.target.value) : x)))} className={numberInput} />
-                      </label>
-                    ))}
-                    {highlightP.map((v, i) => (
-                      <label key={`p${i}`} className="flex items-center gap-1">
-                        p{i + 1}
-                        <input aria-label={`Packed index ${i + 1}`} type="number" value={v} onChange={(e) => setHighlightP(highlightP.map((x, j) => (j === i ? Number(e.target.value) : x)))} className={numberInput} />
-                      </label>
-                    ))}
-                  </div>
-                  <button type="button" onClick={findBit} className="min-h-10 rounded-lg border border-cyan-500/50 px-3 text-xs hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    Find bit
-                  </button>
-                  <p className="text-xs text-muted-foreground" aria-live="polite">
-                    {findMessage || `${fixedModel.logicalInstanceCount.toLocaleString()} logical bits${fixedModel.truncated ? ` (3D preview capped at ${fixedModel.instances.length.toLocaleString()})` : ""}.`}
-                  </p>
-                </div>
-              </div>
-            )}
+          <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl
+              label="View"
+              options={[
+                { value: "3d" as const, label: "3D", disabled: webgl === false },
+                { value: "2d" as const, label: "2D / text" },
+              ]}
+              value={view}
+              onChange={setViewChoice}
+            />
+            {webgl === false ? <p className="text-xs text-muted-foreground">3D needs WebGL, which is unavailable here. The 2D view shows the same state.</p> : null}
           </div>
         </div>
+
+        {mode === "mem" ? (
+          <MemBlockMode view={view} height={height} initialCase={initialMemCase} />
+        ) : (
+          <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))]">
+            <div
+              data-testid="sv-3d-viewport"
+              role={view === "3d" ? "img" : undefined}
+              aria-label={view === "3d" ? `3D view. ${stateSummary}` : undefined}
+              className={cn("relative min-w-0 overflow-hidden rounded-xl border", view === "3d" ? "cursor-move border-code-border bg-code-surface" : "border-border/70 bg-background/50 p-3")}
+              style={view === "3d" ? { height } : undefined}
+            >
+              {view === "3d" ? (
+                <WebGLFallbackBoundary fallback={<div className="h-full overflow-auto bg-background p-3">{twoD}</div>}>
+                  <Canvas camera={{ position: [6, 6, 10], fov: 60 }} dpr={[1, 1.5]} frameloop="demand">
+                    <ambientLight intensity={0.7} />
+                    <directionalLight position={[5, 10, 7.5]} intensity={1} />
+                    <Grid args={[50, 50]} cellColor="#444" sectionColor="#444" fadeDistance={30} infiniteGrid />
+                    <OrbitControls makeDefault dampingFactor={0.1} />
+                    {mode === "dynamic" ? <ElementRow3D values={containers.dynamic.values} changed={lastResult?.changedIndices} /> : null}
+                    {mode === "queue" ? <ElementRow3D values={containers.queue.values} changed={lastResult?.changedIndices} /> : null}
+                    {mode === "assoc" ? <AssocRow3D state={containers.assoc} /> : null}
+                    {mode === "fixed" ? <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightLogicalIndex={activeHighlight} /> : null}
+                  </Canvas>
+                </WebGLFallbackBoundary>
+              ) : (
+                twoD
+              )}
+            </div>
+
+            <div className="min-w-0 space-y-3">
+              {current ? (
+                <>
+                  <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">{declarationOf(current)}</p>
+                  <ContainerControls key={mode} state={current} onRun={run} />
+                  <div aria-live="polite" className="rounded-xl border border-border bg-card p-3">
+                    {lastResult ? <OpResultPanel result={lastResult} elemType={current.elemType} /> : <p className="text-sm text-muted-foreground">Run an operation to see its code, result and rule.</p>}
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-3 text-sm">
+                  <p className="font-mono text-xs text-foreground [font-variant-ligatures:none]">{declaration}</p>
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Packed dimensions (before the name)</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {packedDims.map((d, i) => (
+                        <input key={i} aria-label={`Packed dimension ${i + 1} size`} type="number" min={1} max={64} value={d} onChange={(e) => setDim("packed", i, Number(e.target.value))} className={numberInput} />
+                      ))}
+                      <button type="button" disabled={packedDims.length >= 3} onClick={() => setPackedDims([...packedDims, 2])} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Add packed dimension">
+                        +
+                      </button>
+                      <button type="button" disabled={packedDims.length <= 1} onClick={() => setPackedDims(packedDims.slice(0, -1))} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Remove packed dimension">
+                        −
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Unpacked dimensions (after the name)</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {unpackedDims.map((d, i) => (
+                        <input key={i} aria-label={`Unpacked dimension ${i + 1} size`} type="number" min={1} max={64} value={d} onChange={(e) => setDim("unpacked", i, Number(e.target.value))} className={numberInput} />
+                      ))}
+                      <button type="button" disabled={unpackedDims.length >= 3} onClick={() => setUnpackedDims([...unpackedDims, 2])} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Add unpacked dimension">
+                        +
+                      </button>
+                      <button type="button" disabled={unpackedDims.length <= 1} onClick={() => setUnpackedDims(unpackedDims.slice(0, -1))} className="h-9 rounded-md border border-border/70 px-2 text-xs hover:bg-muted disabled:opacity-40" aria-label="Remove unpacked dimension">
+                        −
+                      </button>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted p-3 text-xs text-foreground">
+                    <p className="font-semibold">The one rule (§7.4.4)</p>
+                    <p className="mt-1">
+                      You write the unpacked indices first, then the packed ones: <code className="font-mono">my_array{unpackedDims.map((_, i) => `[u${i + 1}]`).join("")}{packedDims.map((_, i) => `[p${i + 1}]`).join("")}</code>. In that list the rightmost index varies fastest, and every packed dimension varies faster than every unpacked one.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-foreground">Find a bit by index</p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {highlightU.map((v, i) => (
+                        <label key={`u${i}`} className="flex items-center gap-1">
+                          u{i + 1}
+                          <input aria-label={`Unpacked index ${i + 1}`} type="number" value={v} onChange={(e) => setHighlightU(highlightU.map((x, j) => (j === i ? Number(e.target.value) : x)))} className={numberInput} />
+                        </label>
+                      ))}
+                      {highlightP.map((v, i) => (
+                        <label key={`p${i}`} className="flex items-center gap-1">
+                          p{i + 1}
+                          <input aria-label={`Packed index ${i + 1}`} type="number" value={v} onChange={(e) => setHighlightP(highlightP.map((x, j) => (j === i ? Number(e.target.value) : x)))} className={numberInput} />
+                        </label>
+                      ))}
+                    </div>
+                    <button type="button" onClick={findBit} className="min-h-10 rounded-lg border border-border px-3 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Find bit
+                    </button>
+                    <p className="text-xs text-muted-foreground" aria-live="polite">
+                      {findMessage || `${fixedModel.logicalInstanceCount.toLocaleString()} logical bits${fixedModel.truncated ? ` (3D preview capped at ${fixedModel.instances.length.toLocaleString()})` : ""}.`}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </VisualFrame>
   );

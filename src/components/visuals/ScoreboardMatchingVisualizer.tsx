@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { BlockDiagram, type DiagramEdge, type DiagramNode, type DiagramPort, type DiagramToken } from "@/components/visual-system/BlockDiagram";
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
@@ -33,7 +33,24 @@ import {
   type SbResult,
   type SbStep,
   type SbTruth,
+  normalizePlainSvCheckers,
+  plainSvCheckerInfo,
+  plainSvKeyOptions,
+  plainSvScoreboardSource,
+  plainSvStrayProbe,
+  plainSvSummaryOptions,
+  plainSvVerdictOptions,
+  runPlainSvScoreboard,
+  svShort,
+  type PlainSvChecker,
+  type PlainSvCheckResult,
+  type PlainSvConfig,
+  type PlainSvOption,
+  type PlainSvSnapshot,
+  type PlainSvStep,
+  type PlainSvStrayProbe,
 } from "@/lib/scoreboard-model";
+import { comparisonStyles } from "@/components/visual-system/visual-language";
 import { cn } from "@/lib/utils";
 
 export const SCOREBOARD_MODEL_ASSUMPTIONS = [
@@ -662,11 +679,665 @@ function ScoreboardDebugChallenge() {
   );
 }
 
+/* ------------------------------------------------------------------------- */
+/* Plain SystemVerilog tracker (F2B Dynamic Structures)                       */
+/* ------------------------------------------------------------------------- */
+
+export const PLAIN_SV_ASSUMPTIONS = [
+  "The lesson's scripted traffic: add_expected for A1, B1, A2 and C1, then the check_actual calls, then final. INJECT_BUGS = 1 plays a DUT that answers ID 1 out of order and never answers ID 3.",
+  "exists() before any read (IEEE 1800-2023 §7.9.3): reading a missing key warns and returns the default, an empty queue (§7.8.6, Table 7-1).",
+  "A key is allocated by assignment (§7.8.7) and deleted when its queue empties (§7.9.2), so the keys left at the end are the pending IDs.",
+  "pop_front() removes and returns the front item (§7.10.2.4). On an empty queue it returns the default and may warn; this tracker never pops an empty queue.",
+  "final runs at the end of simulation (§9.2.3). $error output carries a tool-specific prefix (§20.10); “Error: ” stands for it here, as in the lesson.",
+  "Not modelled: the warning text a tool prints, and simulator-specific allocation on push_back to a missing key (the lesson allocates explicitly).",
+  "The stray-response probe after the script is not in the lesson. Its unguarded read treats exp_by_id[id].pop_front() on a missing key as a read that warns (§7.8.6); §7.8.7 does not say whether that method call allocates the key, and simulators differ.",
+];
+
+const plainButton =
+  "inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-card px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
+const plainPrimaryButton =
+  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-left text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
+const plainTextButton =
+  "inline-flex min-h-10 items-center text-sm text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const monoText = "font-mono [font-variant-ligatures:none]";
+
+interface PlainSvAnswer {
+  verdict?: string;
+  key?: string;
+  summary?: string;
+  skipped?: boolean;
+}
+
+function ExpChip({ value, front }: { value: number; front: boolean }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs", monoText, comparisonStyles.expected.className)}>
+      <span className="sr-only">expected </span>
+      {svShort(value)}
+      {front ? <span className="text-xs text-muted-foreground">front</span> : null}
+    </span>
+  );
+}
+
+function QueueStrip({ items, label }: { items: number[]; label: string }) {
+  return (
+    <span className="flex flex-wrap items-center gap-1" aria-label={`${label}: ${items.length ? items.map(svShort).join(", ") : "empty"}`}>
+      {items.length === 0 ? <span className="text-xs text-muted-foreground">empty</span> : null}
+      {items.map((v, i) => (
+        <ExpChip key={`${label}-${i}`} value={v} front={i === 0} />
+      ))}
+    </span>
+  );
+}
+
+function ConsumedList({ results, checker }: { results: { label: string; r: PlainSvCheckResult }[]; checker: PlainSvChecker }) {
+  const mine = results.filter((x) => x.r.checker === checker);
+  return (
+    <div>
+      <p className="text-xs font-medium text-muted-foreground">Responses checked</p>
+      {mine.length === 0 ? <p className="text-xs text-muted-foreground">None yet.</p> : null}
+      <ul className="mt-1 space-y-1">
+        {mine.map(({ label, r }) => {
+          const ok = r.outcome === "match";
+          const style = ok ? comparisonStyles.match : comparisonStyles.mismatch;
+          return (
+            <li key={label} className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className={cn("rounded border px-1.5 py-0.5", monoText, comparisonStyles.actual.className)}>
+                <span className="sr-only">actual </span>
+                id {r.id} {svShort(r.actual)}
+              </span>
+              <span className={cn("font-medium", style.className)}>
+                <span aria-hidden className="mr-0.5">
+                  {style.glyph}
+                </span>
+                {r.outcome === "match" ? "match" : r.outcome === "mismatch" ? `MISMATCH, expected ${svShort(r.expected!)}` : "UNEXPECTED"}
+              </span>
+              {r.note ? (
+                <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-foreground">
+                  <span aria-hidden className="mr-0.5">
+                    !
+                  </span>
+                  {r.note}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function CounterRow({ names, counts, hidden }: { names: [string, string, string]; counts: { match: number; mismatch: number; pending: number }; hidden: boolean }) {
+  const values = [counts.match, counts.mismatch, counts.pending];
+  return (
+    <p className="flex flex-wrap gap-1.5 text-xs">
+      {names.map((n, i) => (
+        <span key={n} className={cn("rounded border border-border bg-muted px-1.5 py-0.5 tabular-nums text-foreground", monoText)}>
+          {n} = {hidden ? "?" : values[i]}
+        </span>
+      ))}
+      {hidden ? <span className="text-muted-foreground">Counters stay hidden until you predict the summary.</span> : null}
+    </p>
+  );
+}
+
+function PerIdPanel({
+  snapshot,
+  both,
+  deleted,
+  results,
+  finished,
+  hideCounters,
+}: {
+  snapshot: PlainSvSnapshot;
+  both: boolean;
+  deleted: { id: number; label: string }[];
+  results: { label: string; r: PlainSvCheckResult }[];
+  finished: boolean;
+  hideCounters: boolean;
+}) {
+  return (
+    <section aria-label={both ? "Checker B state" : "exp_by_id state"} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
+      <div>
+        <p className="text-sm font-semibold text-foreground">{both ? plainSvCheckerInfo["per-id"].title : "Inside exp_by_id"}</p>
+        <p className="text-xs text-muted-foreground">
+          <code className={monoText}>bit [31:0] exp_by_id [int][$]</code>: {plainSvCheckerInfo["per-id"].rule}.
+        </p>
+      </div>
+      <ul className="space-y-1.5" aria-label="Keys of exp_by_id">
+        {snapshot.byId.length === 0 ? <li className="text-xs text-muted-foreground">No keys: the array holds no entries.</li> : null}
+        {snapshot.byId.map((row) => (
+          <li key={row.id} className="flex flex-wrap items-center gap-1.5">
+            <span className={cn("min-w-[3.5rem] rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground", monoText)}>key {row.id}</span>
+            <QueueStrip items={row.items} label={`exp_by_id[${row.id}]`} />
+            {finished ? (
+              <span className="text-xs font-medium text-danger">
+                <span aria-hidden className="mr-0.5">
+                  ▲
+                </span>
+                pending at final: $error PENDING
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <div>
+        <p className="text-xs font-medium text-muted-foreground">Deleted keys</p>
+        {deleted.length === 0 ? <p className="text-xs text-muted-foreground">None yet.</p> : null}
+        <ul className="mt-1 flex flex-wrap gap-1.5">
+          {deleted.map((d) => (
+            <li key={`${d.id}-${d.label}`} className="rounded border border-dashed border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              <span className={cn("line-through", monoText)}>key {d.id}</span> deleted after <span className={monoText}>{d.label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <ConsumedList results={results} checker="per-id" />
+      <CounterRow names={both ? ["b_match", "b_mismatch", "b_pending"] : ["n_match", "n_mismatch", "n_pending"]} counts={snapshot.counts["per-id"]} hidden={hideCounters} />
+    </section>
+  );
+}
+
+function InOrderPanel({ snapshot, results, finished, hideCounters }: { snapshot: PlainSvSnapshot; results: { label: string; r: PlainSvCheckResult }[]; finished: boolean; hideCounters: boolean }) {
+  return (
+    <section aria-label="Checker A state" className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
+      <div>
+        <p className="text-sm font-semibold text-foreground">{plainSvCheckerInfo["in-order"].title}</p>
+        <p className="text-xs text-muted-foreground">
+          <code className={monoText}>bit [31:0] exp_q [$]</code>: {plainSvCheckerInfo["in-order"].rule}.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className={cn("min-w-[3.5rem] rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground", monoText)}>exp_q</span>
+        <QueueStrip items={snapshot.inOrder} label="exp_q" />
+        {finished && snapshot.inOrder.length ? (
+          <span className="text-xs font-medium text-danger">
+            <span aria-hidden className="mr-0.5">
+              ▲
+            </span>
+            pending at final
+          </span>
+        ) : null}
+      </div>
+      <ConsumedList results={results} checker="in-order" />
+      {/* Checker A has no pending variable: its code reads exp_q.size() live (§7.10.2), so the third value is the queue's
+          current length, not the model's pending counter, which final alone sets. */}
+      <CounterRow names={["a_match", "a_mismatch", "exp_q.size()"]} counts={{ ...snapshot.counts["in-order"], pending: snapshot.inOrder.length }} hidden={hideCounters} />
+    </section>
+  );
+}
+
+function ChoiceGroup({ legend, name, options, value, onChange }: { legend: string; name: string; options: PlainSvOption[]; value?: string; onChange: (id: string) => void }) {
+  return (
+    <fieldset className="space-y-2">
+      <legend className="mb-1 text-sm font-medium text-foreground">{legend}</legend>
+      <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
+        {options.map((o) => (
+          <label
+            key={o.id}
+            className={cn(
+              "flex min-h-10 cursor-pointer items-start gap-2 rounded-lg border bg-card p-2.5 text-sm text-foreground",
+              value === o.id ? "border-primary bg-muted" : "border-border",
+            )}
+          >
+            <input type="radio" name={name} value={o.id} checked={value === o.id} onChange={() => onChange(o.id)} className="mt-px size-5 shrink-0 accent-primary" />
+            <span className={cn("min-w-0 break-words", /SCB_SUMMARY|^[A-Z]{4,}$/.test(o.label) && monoText)}>{o.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function questionsFor(step: PlainSvStep, both: boolean, summary: { checker: PlainSvChecker; options: PlainSvOption[] }) {
+  if (step.call.kind === "final") {
+    return [
+      {
+        field: "summary" as const,
+        legend: both ? "What does checker A's SCB_SUMMARY line print?" : "What does the SCB_SUMMARY line print?",
+        options: summary.options,
+      },
+    ];
+  }
+  return [
+    {
+      field: "verdict" as const,
+      legend: both ? `Which checker calls $error on ${step.label}?` : `What does ${step.label} report?`,
+      options: plainSvVerdictOptions(step),
+    },
+    {
+      field: "key" as const,
+      legend: both ? "Which key of exp_by_id (checker B) disappears?" : "Which key of exp_by_id disappears?",
+      options: plainSvKeyOptions(step),
+    },
+  ];
+}
+
+function CallPrediction({ step, both, summary, onCommit }: { step: PlainSvStep; both: boolean; summary: { checker: PlainSvChecker; options: PlainSvOption[] }; onCommit: (a: PlainSvAnswer) => void }) {
+  // Two embeds can sit on one lesson page: a per-instance prefix keeps their native radio groups apart.
+  const groupId = useId();
+  const [answer, setAnswer] = useState<PlainSvAnswer>({});
+  const questions = questionsFor(step, both, summary);
+  const ready = questions.every((q) => answer[q.field]);
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-card p-3" role="group" aria-label={`Predict ${step.label}`} data-prediction="">
+      <p className="text-sm text-foreground">
+        <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
+        Next call: <code className={monoText}>{step.label}</code>
+      </p>
+      {questions.map((q) => (
+        <ChoiceGroup key={q.field} legend={q.legend} name={`${groupId}-${step.index}-${q.field}`} options={q.options} value={answer[q.field]} onChange={(id) => setAnswer((a) => ({ ...a, [q.field]: id }))} />
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className={plainPrimaryButton} disabled={!ready} onClick={() => onCommit(answer)}>
+          Lock in prediction
+        </button>
+        <button type="button" className={plainTextButton} onClick={() => onCommit({ skipped: true })}>
+          Reveal without predicting
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PredictionFeedback({ step, both, answer, summary }: { step: PlainSvStep; both: boolean; answer: PlainSvAnswer; summary: { checker: PlainSvChecker; options: PlainSvOption[] } }) {
+  const questions = questionsFor(step, both, summary);
+  return (
+    <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
+      {questions.map((q) => {
+        const correct = q.options.find((o) => o.correct)!;
+        const chosen = q.options.find((o) => o.id === answer[q.field]);
+        return (
+          <div key={q.field}>
+            <p className="text-xs font-medium text-muted-foreground">{q.legend}</p>
+            {chosen ? (
+              <p className={chosen.correct ? "text-success" : "text-danger"}>
+                <span aria-hidden className="mr-1">
+                  {chosen.correct ? "✓" : "✕"}
+                </span>
+                <strong className="font-semibold">{chosen.correct ? "Correct. " : "Not quite. "}</strong>
+                <span className="text-foreground">{chosen.feedback}</span>
+              </p>
+            ) : null}
+            {!chosen || !chosen.correct ? (
+              <p className="text-muted-foreground">
+                <strong className="font-semibold text-foreground">Answer: </strong>
+                <span className={cn(/SCB_SUMMARY/.test(correct.label) && monoText)}>{correct.label}</span>. {correct.feedback}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Phone-width excerpt: the line the CodeTrace highlights and the last output, kept beside the prediction. */
+function NarrowExcerpt({ lines, activeKey, log }: { lines: CodeTraceLine[]; activeKey?: string; log: string[] }) {
+  const active = activeKey ? lines.filter((l) => l.key === activeKey) : [];
+  if (!active.length && !log.length) return null;
+  return (
+    <div className="space-y-2 rounded-xl border border-code-border bg-code-surface p-3 md:hidden" aria-label="Current line and latest output">
+      {active.length ? (
+        <div>
+          <p className="text-xs text-code-muted">Current line in tb_top</p>
+          <pre className={cn("mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-code-foreground", monoText)}>{active.map((l) => l.text.trim()).join("\n")}</pre>
+        </div>
+      ) : null}
+      {log.length ? (
+        <div>
+          <p className="text-xs text-code-muted">Latest output</p>
+          <pre className={cn("mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-code-foreground", monoText)}>{log.slice(-2).join("\n")}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface ProbeAnswer {
+  verdict?: string;
+  unguarded?: string;
+}
+
+/** Past the lesson: one stray response, the guarded check beside what an unguarded read would do. */
+function StrayProbe({ probe, both }: { probe: PlainSvStrayProbe; both: boolean }) {
+  const groupId = useId();
+  const [answer, setAnswer] = useState<ProbeAnswer>({});
+  const [committed, setCommitted] = useState<ProbeAnswer | "skipped" | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (committed) resultRef.current?.focus();
+  }, [committed]);
+  const questions = [
+    {
+      field: "verdict" as const,
+      legend: both ? `With the exists() guard, which checker calls $error on ${probe.label}?` : `With the exists() guard, what does ${probe.label} report?`,
+      options: probe.verdictOptions,
+    },
+    {
+      field: "unguarded" as const,
+      legend: `Without the guard, what would ${both ? "checker B's " : ""}expected = exp_by_id[${probe.id}].pop_front() do?`,
+      options: probe.unguardedOptions,
+    },
+  ];
+  const ready = questions.every((q) => answer[q.field]);
+  return (
+    <section aria-label="Past the lesson: a stray response" className="space-y-3 rounded-xl border border-border bg-card p-3 text-sm">
+      <div>
+        <p className="text-sm font-semibold text-foreground">Past the lesson: a response nobody asked for</p>
+        <p className="text-xs text-muted-foreground">
+          Not in the lesson&apos;s script: one more response, <code className={monoText}>{probe.label}</code>, arrives just before final. No request ever used ID {probe.id}. This is a what-if: the SCB_SUMMARY above is from the lesson&apos;s run without it.
+        </p>
+      </div>
+      {!committed ? (
+        <div className="space-y-3" role="group" aria-label={`Predict ${probe.label}`}>
+          {questions.map((q) => (
+            <ChoiceGroup key={q.field} legend={q.legend} name={`${groupId}-${q.field}`} options={q.options} value={answer[q.field]} onChange={(id) => setAnswer((a) => ({ ...a, [q.field]: id }))} />
+          ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" className={plainPrimaryButton} disabled={!ready} onClick={() => setCommitted(answer)}>
+              Lock in prediction
+            </button>
+            <button type="button" className={plainTextButton} onClick={() => setCommitted("skipped")}>
+              Reveal without predicting
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div ref={resultRef} tabIndex={-1} className="space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="status">
+          {questions.map((q) => {
+            const correct = q.options.find((o) => o.correct)!;
+            const chosen = committed === "skipped" ? undefined : q.options.find((o) => o.id === committed[q.field]);
+            return (
+              <div key={q.field}>
+                <p className="text-xs font-medium text-muted-foreground">{q.legend}</p>
+                {chosen ? (
+                  <p className={chosen.correct ? "text-success" : "text-danger"}>
+                    <span aria-hidden className="mr-1">
+                      {chosen.correct ? "✓" : "✕"}
+                    </span>
+                    <strong className="font-semibold">{chosen.correct ? "Correct. " : "Not quite. "}</strong>
+                    <span className="text-foreground">{chosen.feedback}</span>
+                  </p>
+                ) : null}
+                {!chosen || !chosen.correct ? (
+                  <p className="text-muted-foreground">
+                    <strong className="font-semibold text-foreground">Answer: </strong>
+                    {correct.label}. {correct.feedback}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+            <div className="rounded-lg border border-border bg-muted p-2.5">
+              <p className="text-xs font-medium text-foreground">
+                <span aria-hidden className={cn("mr-1", comparisonStyles.match.className)}>
+                  {comparisonStyles.match.glyph}
+                </span>
+                With exists() first
+              </p>
+              <p className="mt-1 text-foreground">{probe.step.what}</p>
+              <pre className={cn("mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground", monoText)} aria-label="Stray response output">
+                {probe.step.log.join("\n")}
+              </pre>
+            </div>
+            <div className="rounded-lg border border-border bg-muted p-2.5">
+              <p className="text-xs font-medium text-foreground">
+                <span aria-hidden className={cn("mr-1", comparisonStyles.mismatch.className)}>
+                  {comparisonStyles.mismatch.glyph}
+                </span>
+                Without the guard
+              </p>
+              <p className="mt-1 text-foreground">{probe.unguardedText}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PlainSvTracker({ checkers, ignored }: { checkers: PlainSvChecker[]; ignored: string[] }) {
+  const both = checkers.includes("in-order");
+  // The lesson's own defaults: the Make It Work bench sets INJECT_BUGS = 1, the Kata solution 0.
+  const [injectBugs, setInjectBugs] = useState(!both);
+  const config = useMemo<PlainSvConfig>(() => ({ injectBugs, checkers }), [injectBugs, checkers]);
+  const result = useMemo(() => runPlainSvScoreboard(config), [config]);
+  // No owner tag: the whole file is testbench, so a TB tag on every line would say nothing.
+  const source = useMemo<CodeTraceLine[]>(() => plainSvScoreboardSource(config).map((l) => ({ text: l.text, key: l.key })), [config]);
+  const summary = useMemo(() => plainSvSummaryOptions(config), [config]);
+  const probe = useMemo(() => plainSvStrayProbe(config), [config]);
+  const [cursor, setCursor] = useState(0);
+  const [answers, setAnswers] = useState<Record<number, PlainSvAnswer>>({});
+  // Bumped on Start over and INJECT_BUGS changes so the probe forgets its answer.
+  const [runId, setRunId] = useState(0);
+
+  const steps = result.steps;
+  const next = steps[cursor];
+  const last = cursor > 0 ? steps[cursor - 1] : undefined;
+  const done = steps.slice(0, cursor);
+  const snapshot = last ? last.after : steps[0].before;
+  const awaiting = Boolean(next?.gated && !answers[next.index]);
+  const finished = cursor === steps.length;
+  const hideCounters = awaiting && next?.call.kind === "final";
+  const results = done.flatMap((s) => s.results.map((r) => ({ label: s.label, r })));
+  const deleted = done.filter((s) => s.deletedKey !== undefined).map((s) => ({ id: s.deletedKey!, label: s.label }));
+  const log = done.flatMap((s) => s.log);
+  const activeKey = awaiting || !last ? next?.callKey : last.activeKey;
+
+  // Focus: Run, Lock in and Start over can unmount or disable the focused button.
+  // After a move, if focus fell to <body>, put it on the next thing to do.
+  const moved = useRef(false);
+  const predictionRef = useRef<HTMLDivElement>(null);
+  const runRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const probeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moved.current) return;
+    moved.current = false;
+    const active = document.activeElement as HTMLElement | null;
+    const lost = !active || active === document.body || !active.isConnected || (active instanceof HTMLButtonElement && active.disabled);
+    if (!lost) return;
+    const target =
+      predictionRef.current?.querySelector<HTMLElement>("input") ??
+      runRef.current ??
+      probeRef.current?.querySelector<HTMLElement>("input, [tabindex='-1']") ??
+      (backRef.current && !backRef.current.disabled ? backRef.current : null);
+    target?.focus();
+  }, [cursor, answers, injectBugs, runId]);
+
+  const move = (fn: () => void) => {
+    moved.current = true;
+    fn();
+  };
+  const setInject = (v: "0" | "1") => {
+    setInjectBugs(v === "1");
+    setCursor(0);
+    setAnswers({});
+    setRunId((n) => n + 1);
+  };
+  const commit = (a: PlainSvAnswer) => {
+    if (!next) return;
+    move(() => {
+      setAnswers((prev) => ({ ...prev, [next.index]: a }));
+      setCursor((c) => c + 1);
+    });
+  };
+  const back = () =>
+    move(() => {
+      const to = Math.max(0, cursor - 1);
+      setCursor(to);
+      // The step you step back over can be predicted again.
+      setAnswers((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => Number(k) < to)));
+    });
+  const startOver = () =>
+    move(() => {
+      setCursor(0);
+      setAnswers({});
+      setRunId((n) => n + 1);
+    });
+
+  const narration = last
+    ? { head: `Step ${cursor} of ${steps.length}: ${last.label}`, what: last.what, why: last.why }
+    : { head: `Step 0 of ${steps.length}`, what: "Nothing has run yet. exp_by_id holds no entries: an associative array allocates storage only when an entry is written (§7.8).", why: "Run the calls one at a time. Before each check_actual and before final, predict what happens." };
+
+  return (
+    <VisualFrame
+      label={both ? "Checker A against checker B on the same traffic" : "Expected-by-ID tracker walkthrough"}
+      eyebrow="Experiment"
+      title={both ? "One queue against one queue per ID" : "An associative array of queues as an expected-by-ID tracker"}
+      summary={
+        both
+          ? "The Kata's two checkers see the same requests and responses. Predict which one reports an error on each response, then watch checker A misread a legal overtake across IDs."
+          : "Step through the lesson's tb_top: push per request, exists() before any read, pop_front() per response, delete a key when its queue empties, and a leftover check in final."
+      }
+      fidelity="model"
+      assumptions={PLAIN_SV_ASSUMPTIONS}
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-0">
+          <p className="mb-1 text-xs font-medium text-foreground">
+            <code className={monoText}>INJECT_BUGS</code>
+          </p>
+          <SegmentedControl<"0" | "1">
+            label="INJECT_BUGS"
+            className="[&>button]:min-h-10"
+            value={injectBugs ? "1" : "0"}
+            onChange={setInject}
+            options={[
+              { value: "0", label: "0: correct DUT" },
+              { value: "1", label: "1: buggy DUT" },
+            ]}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">1 replays a DUT that answers ID 1 out of order and never answers ID 3.</p>
+        </div>
+      </div>
+      {ignored.length ? (
+        <p className="text-xs text-muted-foreground">
+          The plain-SV bench compares an in-order queue with per-ID queues only; {ignored.join(", ")} {ignored.length === 1 ? "is" : "are"} not part of the lesson and not shown.
+        </p>
+      ) : null}
+
+      <ol className="flex flex-wrap gap-1.5" aria-label="Calls in the lesson's script">
+        {steps.map((s, i) => {
+          const state = i < cursor ? "done" : i === cursor ? "current" : "todo";
+          const errored = s.results.some((r) => r.outcome !== "match") || (s.call.kind === "final" && s.log.some((l) => l.startsWith("Error")));
+          return (
+            <li
+              key={s.index}
+              aria-current={state === "current" ? "step" : undefined}
+              className={cn(
+                "rounded-md border px-2 py-1 text-xs",
+                monoText,
+                state === "current" ? "border-border border-l-2 border-l-primary bg-muted text-foreground" : state === "done" ? "border-border bg-card text-foreground" : "border-border/60 text-muted-foreground",
+              )}
+            >
+              {state === "done" && s.gated ? (
+                <span aria-hidden className={cn("mr-1", errored ? comparisonStyles.mismatch.className : comparisonStyles.match.className)}>
+                  {errored ? comparisonStyles.mismatch.glyph : comparisonStyles.match.glyph}
+                </span>
+              ) : null}
+              {s.label}
+              <span className="sr-only">{state === "done" ? (s.gated ? (errored ? ", reported an error" : ", no error") : ", done") : state === "current" ? ", next" : ""}</span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div role="status" aria-live="polite" aria-label="Prediction result">
+        {last?.gated && answers[last.index] ? <PredictionFeedback step={last} both={both} answer={answers[last.index]} summary={summary} /> : null}
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite" aria-atomic="true">
+        <p className="text-xs font-medium text-muted-foreground">{narration.head}</p>
+        <p className="mt-1 text-foreground">
+          <strong className="font-semibold">What: </strong>
+          {narration.what}
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          <strong className="font-semibold text-foreground">Why: </strong>
+          {narration.why}
+        </p>
+        {finished ? (
+          <p className="mt-2 text-foreground">
+            <strong className="font-semibold">Result: </strong>
+            {result.summaries.map((x) => x.line).join(" · ")}
+            {result.summaries.every((x) => x.counts.mismatch === 0 && x.counts.pending === 0) ? " (pass)" : " (fail)"}
+          </p>
+        ) : null}
+      </div>
+
+      <NarrowExcerpt lines={source} activeKey={activeKey} log={log} />
+
+      {awaiting && next ? (
+        <div ref={predictionRef}>
+          <CallPrediction key={`${injectBugs}-${runId}-${next.index}`} step={next} both={both} summary={summary} onCommit={commit} />
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button ref={backRef} type="button" className={plainButton} disabled={cursor === 0} onClick={back}>
+          Back one call
+        </button>
+        {!awaiting && next ? (
+          <button ref={runRef} type="button" className={plainPrimaryButton} onClick={() => move(() => setCursor((c) => c + 1))}>
+            Run <code className={cn("ml-1", monoText)}>{next.label}</code>
+          </button>
+        ) : null}
+        <button type="button" className={plainButton} disabled={cursor === 0} onClick={startOver}>
+          Start over
+        </button>
+      </div>
+
+      {finished ? (
+        <div ref={probeRef}>
+          <StrayProbe key={`${injectBugs}-${runId}`} probe={probe} both={both} />
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+        {both ? <InOrderPanel snapshot={snapshot} results={results} finished={finished} hideCounters={hideCounters} /> : null}
+        <PerIdPanel snapshot={snapshot} both={both} deleted={deleted} results={results} finished={finished} hideCounters={hideCounters} />
+      </div>
+
+      <CodeTrace
+        label={both ? "tb_top, the Kata solution (generated from the model)" : "tb_top from Make It Work (generated from the model)"}
+        lines={source}
+        activeKey={activeKey}
+        contextKeys={awaiting || !last ? [] : last.contextKeys}
+      />
+      <div className="rounded-xl border border-code-border bg-code-surface p-3">
+        <p className="text-xs text-code-muted">Output so far (“Error: ” stands for the tool&apos;s own $error prefix, §20.10)</p>
+        <pre className={cn("mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-code-foreground", monoText)} aria-label="Simulation output">
+          {log.length ? log.join("\n") : "(nothing printed yet)"}
+        </pre>
+      </div>
+    </VisualFrame>
+  );
+}
+
+export interface ScoreboardMatchingVisualizerProps {
+  /** "debug" shows the single-slot find-and-fix challenge (UVM variant only). */
+  mode?: "explore" | "debug";
+  /** "uvm" (default): the UVM scoreboard experiment. "plain-sv": the F2B lesson's plain SystemVerilog tracker. */
+  variant?: "uvm" | "plain-sv";
+  /** Traffic for the plain-SV variant; it always runs the F2B lesson's script ("default" is treated as "f2b-lesson"). */
+  traffic?: "default" | "f2b-lesson";
+  /** Plain-SV only: include "in-order" to show checker A beside the per-ID checker B (the Kata). */
+  compare?: MatchPolicy[];
+}
+
 /**
  * Scoreboard matching: in-order vs per-ID queues, end-of-test accounting and
  * draining, and which DUT bugs each policy catches. `mode="debug"` shows the
  * broken single-slot scoreboard as a find-and-fix challenge.
+ * `variant="plain-sv"` shows the F2B lesson's associative array of queues
+ * (no UVM); add `compare={["in-order", "per-id"]}` for the Kata's checker A
+ * beside checker B.
  */
-export default function ScoreboardMatchingVisualizer({ mode = "explore" }: { mode?: "explore" | "debug" }) {
+export default function ScoreboardMatchingVisualizer({ mode = "explore", variant = "uvm", compare }: ScoreboardMatchingVisualizerProps) {
+  const plain = useMemo(() => normalizePlainSvCheckers(compare), [compare?.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (variant === "plain-sv") return <PlainSvTracker checkers={plain.checkers} ignored={plain.ignored} />;
   return mode === "debug" ? <ScoreboardDebugChallenge /> : <ScoreboardExplorer />;
 }
