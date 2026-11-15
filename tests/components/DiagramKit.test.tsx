@@ -698,7 +698,7 @@ describe('text-free colour roles (DESIGN.md section 13, "Assigning roles in less
   it('keeps the CSS roles, the guard and the docs on one list', () => {
     const css = fs.readFileSync('src/app/globals.css', 'utf8');
     const guard = fs.readFileSync('docs/curriculum-quality/workflows/figure-guard.py', 'utf8');
-    const cssRoles = [...new Set([...css.matchAll(/\[data-fig~="([a-z-]+)"\]:not\(text, tspan\) \{ color/g)].map((m) => m[1]))];
+    const cssRoles = [...new Set([...css.matchAll(/svg :is\(line, polyline, path, rect, circle, ellipse, polygon\)\[data-fig~="([a-z-]+)"\] \{ color/g)].map((m) => m[1]))];
     const guardRoles = [.../FIG_ROLES = \(([\s\S]*?)\)/.exec(guard)![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
     expect(cssRoles.sort()).toEqual([...guardRoles].sort());
     expect(cssRoles).toEqual(expect.arrayContaining(['bit-low', 'bit-high', 'active', 'x', 'mismatch', 'z', 'testbench', 'design', 'bus', 'interface', 'expected', 'register', 'match']));

@@ -676,8 +676,8 @@ describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {
 /*
  * "solid" on a hand-drawn figure's filled mark (DESIGN.md section 13, "Role only,
  * tint or solid"): data-fig="<role> solid" fills the mark with the
- * role's stroke colour at full opacity, and only on a shape filled in
- * currentColor with no dash. Every role rule must use the stroke
+ * role's stroke colour at full opacity, and only on a rect, circle or ellipse
+ * filled in currentColor with no dash and no transform. Every role rule must use the stroke
  * token of its hue and override fill-opacity, there must be no rule for "solid"
  * alone, and the fill must hold 3:1 on every figure surface in every theme
  * block (dark, light, the no-JavaScript light copy and print).
@@ -701,8 +701,17 @@ const SOLID_ROLES: Record<string, keyof typeof FIG_HUES> = {
   ok: "emerald",
 };
 
+// The opacity floor of "solid" (DESIGN.md section 13, rule B): never a mark
+// drawn at an opacity below 0.2 written on the mark itself, nor one whose
+// opacity is a percentage or an exponent the selector cannot compare. The
+// guard (figure-guard.py, SOLID_MIN_ALPHA) proves the floor through ancestors.
+const FLOOR =
+  ':not([fill-opacity="0"], [fill-opacity^="0.0"], [fill-opacity^="0.1"], [fill-opacity^=".0"], [fill-opacity^=".1"], [fill-opacity^="-"], [fill-opacity$="%"], [fill-opacity*="e" i], ' +
+  '[opacity="0"], [opacity^="0.0"], [opacity^="0.1"], [opacity^=".0"], [opacity^=".1"], [opacity^="-"], [opacity$="%"], [opacity*="e" i])';
+const FLOOR_RE = FLOOR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 describe("solid figure marks (DESIGN.md section 13)", () => {
-  const solidRules = [...css.matchAll(/\[data-lesson-article\] svg \[data-fig~="([\w-]+)"\]\[data-fig~="solid"\]\[fill="currentColor"\]:not\(\[stroke-dasharray\]\):not\(\[fill-opacity="0"\], \[fill-opacity="0\.0"\], \[fill-opacity="0\.00"\], \[opacity="0"\], \[opacity="0\.0"\], \[opacity="0\.00"\]\):not\(text, tspan, g, marker\) \{([^}]*)\}/g)];
+  const solidRules = [...css.matchAll(new RegExp(String.raw`\[data-lesson-article\] svg :is\(rect, circle, ellipse\)\[data-fig~="([\w-]+)"\]\[data-fig~="solid"\]\[fill="currentColor"\]:not\(\[stroke-dasharray\], \[transform\], marker \*\)` + FLOOR_RE + String.raw` \{([^}]*)\}`, "g"))];
 
   it("gives every role a solid rule that fills with its stroke token at full opacity", () => {
     const seen = Object.fromEntries(solidRules.map(([, role, body]) => [role, body.trim()]));
@@ -714,25 +723,62 @@ describe("solid figure marks (DESIGN.md section 13)", () => {
 
   it("does nothing for solid without a role, and draws a solid mark in CanvasText in forced colours", () => {
     expect(css).not.toMatch(/\[data-fig="solid"\]/);
-    expect(css).not.toMatch(/svg \[data-fig~="solid"\](?!:is\()/);
-    // Only a shape filled in currentColor with no dash goes solid: never an outline (fill="none") or a dashed shape.
-    expect(css.match(/\[data-fig~="solid"\][^{]*\{/g)?.every((sel) => sel.includes('[fill="currentColor"]:not([stroke-dasharray])'))).toBe(true);
-    // An empty cell (fill-opacity 0) stays empty: solid never fills it.
-    expect(css.match(/\[data-fig~="solid"\][^{]*\{/g)?.every((sel) => sel.includes(':not([fill-opacity="0"], [fill-opacity="0.0"], [fill-opacity="0.00"], [opacity="0"], [opacity="0.0"], [opacity="0.00"])'))).toBe(true);
-    const forced = /@media \(forced-colors: active\) \{[^@]*\[data-fig~="solid"\]:is\(([^)]*)\)\[fill="currentColor"\]:not\(\[stroke-dasharray\]\):not\(\[fill-opacity="0"\], \[fill-opacity="0\.0"\], \[fill-opacity="0\.00"\], \[opacity="0"\], \[opacity="0\.0"\], \[opacity="0\.00"\]\):not\(text, tspan, g, marker\) \{ fill: CanvasText !important; fill-opacity: 1 !important; \}/.exec(css);
+    expect(css).not.toMatch(/svg \[data-fig~="solid"\]/);
+    const selectors = css.match(/^[^\n{]*\[data-fig~="solid"\][^{]*\{/gm) ?? [];
+    expect(selectors.length).toBe(17);
+    for (const sel of selectors) {
+      // Only a rect, circle or ellipse goes solid (never a path, polygon, text, <g> or <marker>) ...
+      expect(sel, sel).toContain("svg :is(rect, circle, ellipse)[data-fig~=");
+      // ... filled in currentColor, with no dash, no transform, not in a marker ...
+      expect(sel, sel).toContain('[fill="currentColor"]:not([stroke-dasharray], [transform], marker *)');
+      // ... and never an empty cell (fill-opacity or opacity 0, in any spelling the CSS can see).
+      expect(sel, sel).toContain(FLOOR);
+    }
+    const forced = new RegExp(String.raw`@media \(forced-colors: active\) \{[^@]*svg :is\(rect, circle, ellipse\)\[data-fig~="solid"\]:is\(([^)]*)\)\[fill="currentColor"\]:not\(\[stroke-dasharray\], \[transform\], marker \*\)` + FLOOR_RE + String.raw` \{ fill: CanvasText !important; fill-opacity: 1 !important; \}`).exec(css);
     expect(forced, "forced-colours solid rule").not.toBeNull();
     const roles = [...(forced?.[1] ?? "").matchAll(/\[data-fig~="([\w-]+)"\]/g)].map((m) => m[1]);
     expect(roles.sort()).toEqual(Object.keys(SOLID_ROLES).sort());
   });
 
-  it("fills a tint only on a closed box that is not dashed and not in a marker", () => {
-    // An open path, a polyline or a marker's arrowhead never takes a tint fill, and a dashed outline stays hollow.
+  it("fills a tint only on a hollow rect that is not dashed, not transformed and not in a marker, and never without a role", () => {
+    // A circle, a polygon, an open path, a polyline, a marker's arrowhead or a filled shape never takes a tint fill, and a dashed outline stays hollow.
     const tintRules = css.match(/^\s*\[data-lesson-article\][^\n{]*\[data-fig~?="tint"\][^\n{]*\{/gm) ?? [];
-    expect(tintRules.length).toBe(18);
+    expect(tintRules.length).toBe(17);
     for (const sel of tintRules) {
-      expect(sel, sel).toContain("svg :is(rect, circle, ellipse, polygon)[data-fig");
-      expect(sel, sel).toContain(":not([stroke-dasharray], marker *)");
+      expect(sel, sel).toContain('svg rect[data-fig~="');
+      expect(sel, sel).toContain('[fill="none"]:not([stroke-dasharray], [transform], marker *)');
     }
+    expect(css).not.toMatch(/\[data-fig="tint"\]/);
+    // In forced colours a marked tint draws no fill at all (an opaque Canvas fill would hide a label or a line drawn before the box).
+    const forcedTint = /@media \(forced-colors: active\) \{[^@]*svg rect\[data-fig~="tint"\]:is\(([^)]*)\)\[fill="none"\]:not\(\[stroke-dasharray\], \[transform\], marker \*\) \{ fill: none !important; \}/.exec(css);
+    expect(forcedTint, "forced-colours tint rule").not.toBeNull();
+    const tintRoles = [...(forcedTint?.[1] ?? "").matchAll(/\[data-fig~="([\w-]+)"\]/g)].map((m) => m[1]);
+    expect(tintRoles.sort()).toEqual(Object.keys(SOLID_ROLES).sort());
+    expect(css).not.toMatch(/svg rect\[data-fig~="tint"\]\[fill="none"\]/);
+    // Every role's tint uses that role's soft fill.
+    for (const [role, hue] of Object.entries(SOLID_ROLES)) {
+      expect(css).toContain(`[data-lesson-article] svg rect[data-fig~="${role}"][data-fig~="tint"][fill="none"]:not([stroke-dasharray], [transform], marker *) { fill: hsl(var(--fig-${hue}-fill)); }`);
+    }
+  });
+
+  it("puts a plain role only on the tags the guard allows (rule D), and never colours a <g>, <marker> or <svg> or the text inside one", () => {
+    const SHAPES = ":is(line, polyline, path, rect, circle, ellipse, polygon)";
+    const roleSelectors = (css.match(/^[^\n{@]*\[data-fig[~=][^{]*\{/gm) ?? []).filter((sel) => !/\[data-fig~="(?:tint|solid)"\]/.test(sel));
+    for (const sel of roleSelectors) {
+      for (const part of sel.replace(/\s*\{$/, "").split(/,\s*(?=\[data-lesson-article\])/)) {
+        // A part that is not marked (an unmarked arrowhead in a marked figure) is outside this rule.
+        if (/:not\(\[data-fig\]\)\s*:is|marker:not\(\[data-fig\]\)/.test(part)) continue;
+        expect(part, part).toMatch(/svg (?::is\(line, polyline, path, rect, circle, ellipse, polygon\)|:is\(text, tspan\))\[data-fig/);
+      }
+    }
+    expect(css).not.toMatch(/svg g\[data-fig/);
+    expect(css).not.toMatch(/\[data-fig~="[\w-]+"\]:not\(text, tspan/);
+    for (const [role, hue] of Object.entries(SOLID_ROLES)) {
+      expect(css).toContain(`[data-lesson-article] svg ${SHAPES}[data-fig~="${role}"] { color: hsl(var(--fig-${hue})); }`);
+      expect(css).toContain(`[data-lesson-article] svg :is(text, tspan)[data-fig~="${role}"] { fill: hsl(var(--fig-${hue}-text)); }`);
+    }
+    // No role rule repaints a stroke directly: a stroke written in another colour stays as drawn (the guard rejects a role on it).
+    expect(css).not.toMatch(/\[data-fig~="[\w-]+"\][^{\n]*\{ stroke: hsl/);
   });
 
   describe.each(themeBlocks().map((block) => [`${block.media || "screen"} ${block.selector}`, block] as const))("%s", (_name, block) => {

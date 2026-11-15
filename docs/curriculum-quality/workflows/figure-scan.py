@@ -21,11 +21,15 @@ lesson it prints every figure with its line range:
 - hand-drawn <svg>: monochrome (only currentColor and neutrals), a little
   colour, or colourful; whether any data-fig is present; whether its
   figcaption names a colour (a colour pass must keep that sentence true).
-  For a monochrome figure with solid candidates (shapes filled in
-  currentColor, not empty, with no text anchored on them), the note says that
-  a mark with its own text label beside it may take data-fig="<role> solid",
-  and that one without keeps its ladder; with none it says "no solid
-  candidates".
+  For every svg it then says what the guard's rules (figure-guard.py
+  fig_rule; DESIGN.md section 13) would let a pass do with each unmarked
+  part: how many parts could take a plain role (per tag), which marks could
+  take "solid" (every rule B holds except the label, which the pass marks
+  with the same role; listed only when the figure has a text that can carry
+  a role) and which boxes could take "tint" (rule C), by line. A figure the
+  guard cannot see into (a {…} expression, a <use>, a <pattern>) takes no
+  modifier, and the note says why. Arrowheads are not counted: a marker's
+  shape takes a role only with the lines that use it.
 - For every figure: a WARNING when its caption (kit caption prop, read
   also when it is written as JSX or a template string, or <Caption>, or the
   svg's figcaption) or the paragraph just before or after it names a colour
@@ -227,28 +231,35 @@ def classify_svg(svg):
     return ("little" if share < 0.3 or len(hues) <= 1 else "colourful"), n, k
 
 
-def filled_marks(svg):
-    """Shapes filled in currentColor (bars, dots, cells, swatches) that
-    data-fig="<role> solid" could fill with a role colour: not an empty one
-    (fill opacity or opacity 0) and not one with a <text> or <tspan> anchored
-    inside its box (text never sits on a solid fill). The same tests as the guard."""
-    masked = guard.mask_code(svg)
-    opens, _ = guard.scan_tags(masked)
-    anchors = guard.text_anchors(masked, opens, 0, len(masked))
-    count = 0
-    for ta, tb, tag in opens:
-        if tag not in guard.SOLID_TAGS or tb >= len(masked):
+def svg_parts(fm, svg_start):
+    """What each unmarked part of the svg that starts at svg_start may take under
+    the guard's rules (DESIGN.md section 13): {"plain": {tag: n}, "solid":
+    [lines], "tint": [lines], "why": reason the figure takes no modifier or
+    None}. "solid" lists marks that satisfy rule B except the label, which a
+    pass marks with the same role; it is listed only when the figure has a
+    text that can carry that role. Arrowheads are not counted: a marker's
+    shape takes a role only with the lines that use it."""
+    out = {"plain": {}, "solid": [], "tint": [], "why": None}
+    block = next(((a, b) for a, b in fm.svg_blocks if a == svg_start), None)
+    if block is None:
+        out["why"] = "the guard does not read this svg"
+        return out
+    fig = fm.figure(*block)
+    out["why"] = fig.opaque
+    labels = any(guard.fig_rule(fig, t, "design", None) is None for t in fig.texts())
+    for el in fig.els[1:]:
+        if el.datafig is not None or el.tag not in guard.FIG_ROLE_TAGS:
             continue
-        names = {n: (q, v) for n, q, v, _, _ in guard.parse_attrs(masked, ta + 1 + len(tag), tb)}
-        if names.get("fill", (None, None))[1] != "currentColor" or names.get("fill", (None,))[0] not in ('"', "'"):
+        if guard.Presentation(el).context == "marker":
             continue
-        if "strokeDasharray" in names or "stroke-dasharray" in names or guard.zero_opacity(names):
-            continue
-        box = guard.shape_box(tag, names)
-        if box and any(box[0] <= x <= box[2] and box[1] <= y <= box[3] for x, y in anchors):
-            continue
-        count += 1
-    return count
+        line = el.line(fm.masked)
+        if guard.fig_rule(fig, el, "design", None) is None:
+            out["plain"][el.tag] = out["plain"].get(el.tag, 0) + 1
+        if labels and guard.fig_rule(fig, el, "design", "solid", assume_label=True) is None:
+            out["solid"].append(line)
+        if guard.fig_rule(fig, el, "design", "tint") is None:
+            out["tint"].append(line)
+    return out
 
 
 def colour_words(text):
@@ -309,6 +320,10 @@ def nearby_colours(text, start, end):
 def scan_file(path):
     raw = open(path, encoding="utf8").read()
     text = blank_code_fences(raw)
+    masked = guard.mask_code(raw)
+    opens, closes = guard.scan_tags(masked)
+    fm = guard.FileModel(masked, opens, closes)
+    fm.svg_blocks = guard.blocks(masked, opens, closes, "svg")
     figures = []
     for m in re.finditer(r"<(" + "|".join(KIT) + r")\b", text):
         name = m.group(1)
@@ -364,7 +379,7 @@ def scan_file(path):
             "shapes": shapes,
             "colouredShapes": coloured,
             "dataFig": "data-fig=" in svg,
-            "filledMarks": filled_marks(svg),
+            "parts": svg_parts(fm, m.start()),
             "markers": svg.count("<marker"),
             "figcaption": bool(cap),
             "captionColours": caption_colours,
@@ -398,6 +413,17 @@ def side_note(fig):
     )
 
 
+def parts_note(parts):
+    """What the guard would let a pass do with the svg's unmarked parts."""
+    plain = sum(parts["plain"].values())
+    note = "plain role possible on " + (f"{plain} part(s) ({', '.join(f'{k} {v}' for k, v in sorted(parts['plain'].items()))})" if plain else "no part")
+    note += "; solid: " + (f"{len(parts['solid'])} mark(s) at line(s) {', '.join(map(str, parts['solid']))} (each with its own label marked with the same role)" if parts["solid"] else "none")
+    note += "; tint: " + (f"{len(parts['tint'])} box(es) at line(s) {', '.join(map(str, parts['tint']))}" if parts["tint"] else "none")
+    if parts["why"] and not parts["solid"] and not parts["tint"]:
+        note += f" (no modifier in this figure: {parts['why']})"
+    return note
+
+
 def describe(fig):
     lines = f"{fig['lines'][0]}-{fig['lines'][1]}"
     title = f' "{fig["title"]}"' if fig.get("title") else ""
@@ -421,13 +447,7 @@ def describe(fig):
         todo = f"partly marked: {fig['unmarkedShapes']} currentColor shape(s) still unmarked (leave those that are neutral by design)"
     if fig["colour"] == "little" and fig["candidate"]:
         todo = "check: a little colour; mark the remaining parts only if the meaning is certain"
-    if fig["colour"] == "monochrome" and fig.get("filledMarks"):
-        todo += (
-            f"; {fig['filledMarks']} solid candidate(s) (filled, not empty, no text on them): a mark whose own text label beside it names its side may take"
-            ' data-fig="<role> solid"; a mark without its own label keeps its ladder (fill opacity, dash) and stays neutral'
-        )
-    elif fig["colour"] == "monochrome":
-        todo += "; no solid candidates"
+    todo += "; " + parts_note(fig["parts"])
     near = f"\n      WARNING: nearby prose names colour: {', '.join(fig['nearbyColours'])} (keep those sentences true)" if fig.get("nearbyColours") else ""
     if fig["captionColours"]:
         near += f"\n      WARNING: caption names colour: {', '.join(fig['captionColours'])} (keep that sentence true)"
@@ -496,6 +516,57 @@ SELFTEST_MDX = """Intro.
     { id: "d", label: "drv", kind: "driver", col: 3, row: 0 }
   ]}
 />
+
+Owner shares follow.
+
+<figure>
+<svg viewBox="0 0 300 60" role="img" aria-label="Two owners">
+  <text x="0" y="12" fontSize="10" fill="currentColor">Testbench</text>
+  <rect x="80" y="2" width="120" height="12" fill="currentColor" fillOpacity="0.6" />
+  <text x="0" y="40" fontSize="10" fill="currentColor">Design</text>
+  <rect x="80" y="30" width="40" height="12" fill="currentColor" fillOpacity="0.3" />
+</svg>
+<figcaption>Who owns the time.</figcaption>
+</figure>
+
+The burst wraps.
+
+<figure>
+<svg viewBox="0 0 300 80" role="img" aria-label="A wrapping burst">
+  <g fill="none" stroke="currentColor" strokeDasharray="3 3">
+    <rect x="18" y="38" width="36" height="30" rx="3" />
+  </g>
+  <rect x="60" y="38" width="36" height="30" rx="3" fill="none" stroke="currentColor" />
+  <text x="78" y="58" fontSize="12" textAnchor="middle" fill="currentColor">3</text>
+  <rect x="120" y="38" width="20" height="20" fill="currentColor" />
+</svg>
+<figcaption>The burst's block, with the beats outside it.</figcaption>
+</figure>
+
+Three methods compared.
+
+<figure>
+<svg viewBox="0 0 300 80" role="img" aria-label="Three methods">
+  <rect x="0" y="0" width="30" height="30" fill="currentColor" fillOpacity="0.14" />
+  <rect x="40" y="0" width="30" height="30" fill="currentColor" fillOpacity="0.28" />
+  <rect x="80" y="0" width="30" height="30" fill="currentColor" fillOpacity="0.3" />
+  <text x="0" y="60" fontSize="10" fill="currentColor">directed</text>
+</svg>
+<figcaption>Each method reaches different states.</figcaption>
+</figure>
+
+A driver feeds the DUT.
+
+<figure>
+<svg viewBox="0 0 300 60" role="img" aria-label="Driver and DUT">
+  <rect x="10" y="10" width="80" height="30" fill="none" stroke="currentColor" />
+  <text x="50" y="30" fontSize="10" textAnchor="middle" fill="currentColor">Driver</text>
+  <rect x="200" y="10" width="80" height="30" fill="none" stroke="currentColor" />
+  <text x="240" y="30" fontSize="10" textAnchor="middle" fill="currentColor">DUT</text>
+  <line x1="90" y1="25" x2="200" y2="25" stroke="currentColor" />
+</svg>
+<figcaption>The driver sends items.</figcaption>
+</figure>
 """
 
 
@@ -507,7 +578,7 @@ def selftest():
         figs = scan_file(fh.name)["figures"]
     finally:
         os.unlink(fh.name)
-    wrap, kit, part, cells, timing, edges, bridge = figs
+    wrap, kit, part, cells, timing, edges, bridge, owners, burst, ladder, boxes = figs
     own = dict((src, words) for src, words in part["ownTextColours"])
     cases = [
         ("an svg caption that says 'shaded' warns (the B-AHB-1 WRAP figure)", "shaded" in wrap["captionColours"]),
@@ -518,14 +589,22 @@ def selftest():
         ("svg <text> that says 'greyed' warns", own.get("<text>") == ["greyed"]),
         ("a partly marked svg reports its unmarked currentColor shapes", part["unmarkedShapes"] == 1 and not part["candidate"]),
         ("an unmarked svg is a candidate", wrap["candidate"] and wrap["unmarkedShapes"] is None),
-        ("an empty cell and a cell with text on it are not solid candidates; a bar with its label beside it is", cells["filledMarks"] == 1),
+        ("a caption that says 'Solid cells' and 'Hatched' leaves no solid candidate in its figure", cells["parts"]["solid"] == [] and "solid: none" in describe(cells)),
+        ("two labelled bars of different sizes, with no appearance word near them, are both solid candidates", len(owners["parts"]["solid"]) == 2 and owners["parts"]["tint"] == []),
+        ("a rect in a dashed group is not a tint candidate, and a figure with a filled shape has none (B-AHB-1)", burst["parts"]["tint"] == []),
+        ("...the filled square beside the dashed group is a solid candidate only if a text could carry its role, and the box with text on it is not", burst["parts"]["solid"] == [burst["lines"][0] + 6]),
+        ("three same-size cells (an opacity ladder, F1B) are not solid candidates", ladder["parts"]["solid"] == []),
+        ("two hollow boxes in a figure with no filled shape are tint candidates", len(boxes["parts"]["tint"]) == 2 and boxes["parts"]["solid"] == []),
+        ("plain roles are counted per tag: texts, the hollow boxes and the line", boxes["parts"]["plain"] == {"text": 2, "rect": 2, "line": 1}),
+        ("a filled bar takes no plain role (only a fill none closed shape does)", owners["parts"]["plain"] == {"text": 2}),
+        ("the note names what each part may take", "plain role possible on 5 part(s)" in describe(boxes) and "tint: 2 box(es)" in describe(boxes)),
         ("an svg caption that says 'Solid cells' warns (the F2D memory grid)", "solid" in cells["captionColours"]),
         ("a timing caption that names a colour prints a WARNING line, as the total counts it", "WARNING" in describe(timing) and timing["captionColours"] == ["red"]),
         ("a kit caption's 'solid' (an edge style the kit keeps) does not warn", edges["captionColours"] == [] and "WARNING" not in describe(edges)),
         ("each part of a side-overridable kind is listed with the side it draws now, and no other kind is",
          bridge["sideChecks"] == [("write buffer", "fifo", "testbench"), ("read buffer", "fifo", "design"), ("ctx_reg", "reg", "register model (testbench side)")]
          and describe(bridge).count("check the side") == 3),
-        ("a monochrome svg with no solid candidates says so", "no solid candidates" in describe({**cells, "filledMarks": 0})),
+        ("a figure with a {…} expression or a <use> takes no modifier, and the note says why", "no modifier in this figure" in parts_note({"plain": {}, "solid": [], "tint": [], "why": "a <use> inside the svg"})),
     ]
     failed = 0
     for name, ok in cases:
@@ -575,6 +654,23 @@ def main(argv=None):
     totals["genericNodes"] = sum(f.get("genericNoRole", 0) for r in results for f in r["figures"])
     totals["untypedParticipants"] = sum(f.get("untyped", 0) for r in results for f in r["figures"])
     totals["sideChecks"] = sum(len(f.get("sideChecks", [])) for r in results for f in r["figures"])
+    # What the guard would let a pass mark, per tier: parts that may take a plain
+    # role, marks that may take solid, boxes that may take tint (all hand-drawn
+    # svgs, and the monochrome ones among them).
+    totals["parts"] = {}
+    for r in results:
+        m = re.search(r"content/curriculum/([^/]+)/", r["file"].replace(os.sep, "/"))
+        tier = m.group(1) if m else "other"
+        t = totals["parts"].setdefault(tier, {k: 0 for k in ("svg", "plain", "solid", "tint", "monoSvg", "monoPlain", "monoSolid", "monoTint")})
+        for f in r["figures"]:
+            if f["type"] != "svg":
+                continue
+            p = f["parts"]
+            vals = {"svg": 1, "plain": sum(p["plain"].values()), "solid": len(p["solid"]), "tint": len(p["tint"])}
+            for k, v in vals.items():
+                t[k] += v
+                if f["colour"] == "monochrome":
+                    t["mono" + k[0].upper() + k[1:]] += v
 
     for r in results:
         if args.work_only and not r["work"]:
@@ -595,6 +691,9 @@ def main(argv=None):
     print(f"Kit captions that name a colour: {totals['kitCaptionNamesColour']}; figures whose neighbouring prose names a colour: {totals['nearbyProseNamesColour']}")
     print(f"Generic nodes with no role: {totals['genericNodes']}; participants with neither kind nor role: {totals['untypedParticipants']}")
     print(f"Parts of a side-overridable kind ({', '.join(guard.SIDE_OVERRIDABLE_KINDS)}) to check the side of: {totals['sideChecks']}")
+    print("Hand-drawn parts the guard would accept, per tier (all svg / monochrome svg): plain role, solid, tint")
+    for tier, t in sorted(totals["parts"].items()):
+        print(f"  {tier}: {t['svg']} svg: plain {t['plain']}, solid {t['solid']}, tint {t['tint']} / {t['monoSvg']} monochrome: plain {t['monoPlain']}, solid {t['monoSolid']}, tint {t['monoTint']}")
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf8") as fh:
