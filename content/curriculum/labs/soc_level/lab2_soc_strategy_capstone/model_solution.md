@@ -124,4 +124,4 @@ The lead reviews all P0/P1 buckets daily and assigns owner plus next reproductio
 
 ## 10. Peer Review Score
 
-A strong answer scores 22 or higher out of 27, with no zero in coverage, formal/liveness, system scenarios, debug, or risk management. A staff-level answer explicitly trades off simulation, formal, firmware, and block reuse responsibilities, and justifies every agent mode by who drives the interface. A senior-staff answer also names the organizational review cadence, signoff owners, and escalation rules.
+A strong answer scores 22 or higher out of 27, with no zero in coverage, formal/liveness, system scenarios, debug, or risk management. A senior-level answer explicitly trades off simulation, formal, firmware, and block reuse responsibilities, and justifies every agent mode by who drives the interface. A senior-staff answer also names the organizational review cadence, signoff owners, and escalation rules.

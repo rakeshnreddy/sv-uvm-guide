@@ -85,7 +85,7 @@ export default function CurriculumPage() {
       />
       <PageHeader
         title={siteLabel(CURRICULUM_HREF)}
-        lead="SystemVerilog and UVM from the first testbench to staff-level methodology, in four tiers. Pick a route, or browse every module below."
+        lead="SystemVerilog and UVM from the first testbench to expert-level methodology, in four tiers. Pick a route, or browse every module below."
       >
         <TierJumpLinks tiers={tiers} />
       </PageHeader>

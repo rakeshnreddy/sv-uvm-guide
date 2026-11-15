@@ -353,6 +353,8 @@ describe('modules by tier', () => {
     expect(TIER_PROGRESS_CLASS).toContain('min-h-4');
     expect(TIER_PROGRESS_CLASS).toContain('max-sm:empty:hidden');
     expect(TIER_PROGRESS_CLASS).toContain(`max-sm:[html[${RETURNING_ATTRIBUTE}]_&]:block`);
+    // A returning learner's untouched tier reads "Not started" on that line, never an empty one.
+    expect(TIER_PROGRESS_CLASS).toContain(`max-sm:[html[${RETURNING_ATTRIBUTE}]_&]:empty:before:content-['Not_started']`);
     renderOverview();
     for (const id of ['t1', 't2']) {
       expect(within(document.getElementById(id)!).getByTestId('tier-progress').className).toBe(TIER_PROGRESS_CLASS);

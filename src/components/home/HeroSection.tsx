@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { CURRICULUM_HREF, PLACEMENT_QUIZ_HREF } from '@/lib/site-links';
 
-import HeroPrimaryAction from './HeroPrimaryAction';
+import HeroPrimaryAction, { HERO_FIT_ROW_CLASS } from './HeroPrimaryAction';
 import { COURSE_SPAN, countWord, heroParagraph, type LandingFacts } from './home-stats';
 import type { LandingLesson } from './landing-resume';
 import PathTierList from './PathTierList';
@@ -53,10 +53,11 @@ export default function HeroSection({ facts, lessons, tiers }: HeroSectionProps)
           {HERO_HEADLINE}
         </h1>
         <p className="mt-6 max-w-[34em] text-lead text-muted-foreground">{heroParagraph(facts)}</p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <HeroPrimaryAction lessons={lessons} />
+        {/* One row from 1024 px in both states: the returning button takes the room left beside "Browse the curriculum". */}
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:flex-nowrap">
+          <HeroPrimaryAction lessons={lessons} className={HERO_FIT_ROW_CLASS} />
           {/* On phones both buttons are full width with a left label and an arrow, so they line up. */}
-          <Button asChild size="lg" variant="secondary" className="w-full justify-between px-5 sm:w-auto sm:justify-center">
+          <Button asChild size="lg" variant="secondary" className="w-full shrink-0 justify-between px-5 sm:w-auto sm:justify-center">
             <Link href={CURRICULUM_HREF} data-testid="hero-browse-curriculum">
               {BROWSE_CURRICULUM_LABEL}
               <ArrowRight aria-hidden="true" className="ml-3 h-4 w-4 shrink-0 sm:hidden" />

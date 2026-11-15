@@ -478,7 +478,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         id: 'interview',
         title: 'Interview preparation',
         summary:
-          'Rehearse staff-level questions: the interview banks, the AMBA interview and debug clinic, and the expert topics in every lesson.',
+          'Rehearse senior-level questions: the interview banks, the AMBA interview and debug clinic, and the expert topics in every lesson.',
         modules: [],
         practice: [
           { kind: 'interview', href: INTERVIEW_PREP_HREF, label: 'Interview question banks' },

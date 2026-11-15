@@ -33,12 +33,14 @@ export interface TierSectionProps {
 
 /**
  * The progress words beside a tier's counts. Below sm they always sit on a
- * second line one text line tall: shown empty before React takes over when
- * <html> carries data-home-returning, hidden while empty otherwise, so the
- * tier's heading block paints at its final height for every visitor.
+ * second line one text line tall: shown before React takes over when <html>
+ * carries data-home-returning, hidden while empty otherwise, so the tier's
+ * heading block paints at its final height for every visitor. On that line a
+ * returning learner's tier with nothing opened reads "Not started" (CSS, so it
+ * is there before hydration too) instead of an empty line.
  */
 export const TIER_PROGRESS_CLASS =
-  'min-h-4 min-w-[16ch] font-medium tabular-nums text-muted-foreground max-sm:basis-full max-sm:empty:hidden max-sm:[html[data-home-returning]_&]:block';
+  "min-h-4 min-w-[16ch] font-medium tabular-nums text-muted-foreground max-sm:basis-full max-sm:empty:hidden max-sm:[html[data-home-returning]_&]:block max-sm:[html[data-home-returning]_&]:empty:before:content-['Not_started']";
 
 function countLine(tier: OverviewTier, shown: number, searching: boolean): string {
   const modules = `${tier.modules.length} ${tier.modules.length === 1 ? 'module' : 'modules'}`;

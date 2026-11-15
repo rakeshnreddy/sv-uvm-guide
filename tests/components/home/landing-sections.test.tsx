@@ -294,6 +294,16 @@ describe('hero primary action', () => {
     expect(action).toHaveAccessibleName(`Continue F3C: ${lessons.find((lesson) => lesson.href === F3C)?.title}`);
     expect(action).toHaveAttribute('href', F3C);
     expect(action).toHaveAttribute('data-state', 'continue');
+    // A truncated title stays whole on hover.
+    expect(action).toHaveAttribute('title', `Continue F3C: ${title}`);
+  });
+
+  it('in the hero, takes the room beside "Browse the curriculum" from 1024 px, so both stay on one row', () => {
+    render(<HeroSection facts={facts} lessons={lessons} tiers={tiers} />);
+    const action = screen.getByTestId('hero-primary-action');
+    expect(action).toHaveClass('lg:[html[data-home-returning]_&]:flex-1', 'lg:[html[data-home-returning]_&]:max-w-96', 'lg:data-[state=continue]:flex-1');
+    expect(action.parentElement).toHaveClass('lg:flex-nowrap');
+    expect(screen.getByTestId('hero-browse-curriculum')).toHaveClass('shrink-0');
   });
 });
 

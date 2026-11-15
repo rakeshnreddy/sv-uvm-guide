@@ -143,7 +143,7 @@ export default function ExpertIndexPage() {
       <PageHeader
         breadcrumbs={EXPERT_INDEX_TRAIL}
         title={siteLabel(EXPERT_INDEX_HREF)}
-        lead="Every Expert subsection in the lessons, linked to the heading itself: corner cases, tool behaviour, methodology trade-offs and staff-level questions."
+        lead="Every Expert subsection in the lessons, linked to the heading itself: corner cases, tool behaviour, methodology trade-offs and questions for senior engineers."
         meta={<span>{summary}</span>}
         actions={
           <>

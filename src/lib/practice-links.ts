@@ -780,7 +780,7 @@ export const INTERVIEW_BANK_OUTCOMES: Readonly<Record<string, string>> = {
   sva: 'Assertion types, sampling, vacuity, liveness, multiclock checks and formal strategy.',
   uvm: 'The factory, phasing, configuration, TLM, sequences, the register layer and scoreboards.',
   amba: 'APB, AHB, AXI4, bridges, interconnects, ACE and CHI, with waveform and trace triage.',
-  debug: 'From a failing log to staff-level regression triage: races, hangs and X-propagation.',
+  debug: 'From a failing log to regression triage at scale: races, hangs and X-propagation.',
   soc: 'SoC address maps, interrupts, reset and boot, CDC/RDC, coherency, power and sign-off.',
 };
 

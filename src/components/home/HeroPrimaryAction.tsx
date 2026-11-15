@@ -20,6 +20,8 @@ interface HeroPrimaryActionProps {
    */
   variant?: 'default' | 'secondary';
   testId?: string;
+  /** Extra classes for the button, such as HERO_FIT_ROW_CLASS in the hero. */
+  className?: string;
 }
 
 /**
@@ -31,7 +33,7 @@ interface HeroPrimaryActionProps {
  * 384 px for a returning learner, set before first paint by the inline script's
  * attribute on <html> (RETURNING_ATTRIBUTE in landing-resume), so the secondary action beside it
  * never moves when the stored position appears after hydration. A long title
- * ends in an ellipsis; the accessible name keeps the full title. The server
+ * ends in an ellipsis; the accessible name and the hover title keep the full title. The server
  * HTML is always "Start lesson 1".
  */
 /**
@@ -41,19 +43,32 @@ interface HeroPrimaryActionProps {
  */
 export const HERO_RETURNING_WIDTH_CLASS = 'sm:[html[data-home-returning]_&]:w-96 sm:data-[state=continue]:w-96';
 
+/**
+ * In the hero from 1024 px, where the column is narrower than both buttons at
+ * their returning widths: a returning learner's button takes the room the
+ * secondary action leaves (up to 384 px), so the two stay on one row. The
+ * width still comes from the container and the html attribute, never from the
+ * label, so nothing moves when the stored position appears. Literal, so
+ * Tailwind sees it.
+ */
+export const HERO_FIT_ROW_CLASS =
+  'lg:[html[data-home-returning]_&]:w-auto lg:[html[data-home-returning]_&]:min-w-0 lg:[html[data-home-returning]_&]:max-w-96 lg:[html[data-home-returning]_&]:flex-1 lg:data-[state=continue]:w-auto lg:data-[state=continue]:min-w-0 lg:data-[state=continue]:max-w-96 lg:data-[state=continue]:flex-1';
+
 /** The signal tag on the accent fill: the fill's text colour and a faint border of it. */
 export const HERO_TAG_CLASS = 'border-primary-foreground/40 text-primary-foreground';
 
-export default function HeroPrimaryAction({ lessons, variant = 'default', testId = 'hero-primary-action' }: HeroPrimaryActionProps) {
+export default function HeroPrimaryAction({ lessons, variant = 'default', testId = 'hero-primary-action', className }: HeroPrimaryActionProps) {
   const { lesson } = useLandingResume(lessons);
   const first = lessons[0];
   return (
-    <Button asChild size="lg" variant={variant} className={`w-full justify-between px-5 sm:w-64 ${HERO_RETURNING_WIDTH_CLASS}`}>
+    <Button asChild size="lg" variant={variant} className={`w-full justify-between px-5 sm:w-64 ${HERO_RETURNING_WIDTH_CLASS}${className ? ` ${className}` : ''}`}>
       <Link
         href={lesson?.href ?? first?.href ?? CURRICULUM_HREF}
         data-testid={testId}
         data-state={lesson ? 'continue' : 'start'}
         aria-label={lesson ? continueAccessibleName(lesson) : undefined}
+        // A narrow button ends the title in an ellipsis; hovering shows the whole destination.
+        title={lesson ? continueAccessibleName(lesson) : undefined}
       >
         {/* Left-aligned in a fixed box, so the text starts at the same point whichever label shows. */}
         {lesson ? (

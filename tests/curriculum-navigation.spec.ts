@@ -3,7 +3,6 @@ import {
   curriculumData,
   findPrevNextTopics,
   findTopicBySlug,
-  getBreadcrumbs,
   normalizeSlug,
   type Topic,
 } from '@/lib/curriculum-data';
@@ -54,23 +53,6 @@ describe('curriculum navigation contract', () => {
         normalizeSlug([prettySlug(tierSlug), prettySlug(sectionSlug), prettySlug(topic.slug)]),
         `${tierSlug}/${sectionSlug}/${topic.slug}`,
       ).toEqual([tierSlug, sectionSlug, topic.slug]);
-    }
-  });
-
-  it('gives every topic a breadcrumb chain whose links resolve to real curriculum pages', () => {
-    for (const { tierSlug, sectionSlug, topic } of allTopicRoutes()) {
-      const breadcrumbs = getBreadcrumbs([tierSlug, sectionSlug, topic.slug]);
-      expect(breadcrumbs.map((breadcrumb) => breadcrumb.path)).toEqual([
-        '/curriculum',
-        `/curriculum/${tierSlug}`,
-        `/curriculum/${tierSlug}/${sectionSlug}`,
-        `/curriculum/${tierSlug}/${sectionSlug}/${topic.slug}`,
-      ]);
-
-      for (const breadcrumb of breadcrumbs.slice(1)) {
-        const slug = breadcrumb.path.replace(/^\/curriculum\/?/, '').split('/').filter(Boolean);
-        expect(normalizeSlug(slug), breadcrumb.path).toHaveLength(3);
-      }
     }
   });
 

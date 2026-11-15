@@ -37,7 +37,16 @@ const DATA = __DATA__
 const CONTEXT = __CONTEXT__
 const M = DATA.models
 const READONLY = 'You are READ-ONLY: do not create, edit or delete any file.'
-const WHERE = `Work ONLY in the worktree ${DATA.worktree}: cd there first for every command, and read and edit files there, never in another checkout.`
+const WHERE = `Work ONLY in the worktree ${DATA.worktree}: cd there first for every command, and read and edit files there, never in another checkout.
+SAFETY: the worktree's node_modules is a symlink to the shared copy, and a build in this worktree can delete the shared node_modules. So NEVER run next build, npm run build, cf:build, npm ci, npm install, a dev server or the Playwright test runner here. Allowed: npx tsc --noEmit, npx eslint, npx vitest run <files>.`
+const STYLE = `STYLING (the rules are docs/planning/site-design-refresh-2026-11-10/DESIGN.md sections 2 to 4, 9, 11 and 12: read them; the one reference component is src/components/visuals/TimescaleLab.tsx):
+- Wrap the interactive in VisualFrame (src/components/visual-system/VisualFrame.tsx); it already applies the quiet liquid glass frame. Add no other glass, and never glass on glass.
+- Controls, form fields, code and traces sit on solid surfaces: bg-card or bg-muted, and the code-surface roles (bg-code-surface, text-code-foreground, text-code-muted, border-code-border) for code.
+- No slate utility classes and no arbitrary hsl() for chrome. Slate stays only where the visual language encodes the value 0 (DESIGN.md section 3).
+- Labels in sentence case, with no uppercase or tracking classes. No text below 12 px. Weights 400, 500 and 600 only.
+- Tier colour only through the current-tier tokens (--tier-current, --tier-current-subtle, --tier-current-border), and always beside a name.
+- The accent means clickable or current. One filled accent button at most; every other button is the secondary style.
+- Touch targets at least 40 px tall on phones. Respect prefers-reduced-motion.`
 const SEV = 'Severity: S1 = the model or its text teaches something false. S2 = a real defect a learner would hit. S3 = polish. Do not inflate polish to S2, and do not pass over a real S2. Write each finding as "Sev file:line - problem -> fix".'
 const FIX_PROPS = {
   files: { type: 'array', items: { type: 'string' } },
@@ -70,10 +79,11 @@ You are the builder for interactive component "${c.name}" (${c.spec.dimension ||
 SPEC: ${JSON.stringify(c.spec).slice(0, 12000)}
 Build it to the house standard:
 - The semantics live in the pure model (no React). Implement each rule from the primary source, name its clause in a comment, and unit-test it with the clause in the test title.
-- The component is a client component with a default export, named props, and one preset per lesson use. It is keyboard operable, has an accessible name and a text alternative (a live region or a described summary), respects prefers-reduced-motion, fits 390 px without sideways scroll, and works in light and dark themes. Reuse the visual-system primitives (src/components/visual-system/) the way DecisionLab, SubroutineLab and TimescaleLab do.
+- The component is a client component with a default export, named props, and one preset per lesson use. It is keyboard operable, has an accessible name and a text alternative (a live region or a described summary), respects prefers-reduced-motion, fits 390 px without sideways scroll, and works in light and dark themes. Reuse the visual-system primitives (src/components/visual-system/) the way TimescaleLab does.
 - Use predict-then-reveal where the spec asks for a prediction, with feedback that explains why.
 - Component tests cover the interactions and the reveal behaviour, not implementation details.
 - For an extension of an existing component, keep every existing preset, prop and test working: lessons already embed it.
+${STYLE}
 Before you return, check what reviewers found in earlier components:
 ${TRAPS}
 ${validate(c)}
@@ -105,6 +115,8 @@ ${WHERE}
 ${READONLY} Learning and UX review of component "${c.name}" (files: ${c.files.join(', ')}). Builder's or fixer's notes: ${String((fix && fix.notes) || '').slice(0, 2000)}
 SPEC: ${JSON.stringify(c.spec).slice(0, 8000)}
 Does it teach the concept better than prose: a clear goal, a prediction before the reveal, feedback that explains why, presets that match each lesson, a path from junior to expert? Check accessibility (keyboard, names, live text, focus), the 390 px layout, reduced motion, themes, performance and test quality.
+Check the styling against DESIGN.md sections 11 and 12 and the builder's styling rules below, and report each breach as a finding like the others:
+${STYLE}
 ${prior.length ? `A fixer has worked on these earlier findings. Verify each is resolved, then review freshly:\n${prior.join('\n').slice(0, 7000)}` : ''}
 ${validate(c)}
 ${SEV}
@@ -183,9 +195,10 @@ const results = (await parallel(DATA.components.map((c) => () => finish(c)))).ma
 const clean = results.filter((r) => r.status === 'clean')
 log(`clean: ${clean.map((r) => r.id).join(', ') || 'none'}; not clean: ${results.filter((r) => r.status !== 'clean').map((r) => `${r.id} (${r.status})`).join(', ') || 'none'}`)
 phase('Integrate')
+const renderLesson = `content/curriculum/${(clean.flatMap((r) => ((DATA.components.find((c) => c.id === r.id) || {}).spec || {}).lessons || [])[0] || 'T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx').split(' > ')[0].trim()}`
 const integration = clean.length ? await agent(`${CONTEXT}
 ${WHERE}
-You are the single integrator. Register each component below in src/components/mdx/lazy-mdx-interactives.ts (its name) and in the loaders map of src/components/mdx/LazyMdxInteractive.tsx (the builder's loader line, checked against the real export). A component that is already registered keeps its entry. Edit only those two files, plus tests that pin the registry (grep tests/ for lazyMdxInteractiveNames and the loaders map) if they need the new names. Then run: npx tsc --noEmit; npx eslint src/components/mdx; NODE_OPTIONS='--require @prisma/client' npx vitest run tests/components tests/lib tests/curriculum/mdx-render-smoke.test.tsx. Fix registry problems; do not change the components. If one cannot be registered, leave it out and say why.
+You are the single integrator. Register each component below in src/components/mdx/lazy-mdx-interactives.ts (its name) and in the loaders map of src/components/mdx/LazyMdxInteractive.tsx (the builder's loader line, checked against the real export). A component that is already registered keeps its entry. src/generated/mdx-component-registry.tsx maps every name in lazyMdxInteractiveNames automatically and needs no edit. Edit only those two files, plus tests that pin the registry (grep tests/ for lazyMdxInteractiveNames and the loaders map) if they need the new names. Then run: npx tsc --noEmit; npx eslint src/components/mdx; NODE_OPTIONS='--require @prisma/client' npx vitest run tests/components tests/lib tests/curriculum/mdx-render-smoke.test.tsx; and render one lesson that embeds these components with node scripts/check-mdx.mjs --render ${renderLesson}, which must report 0 errors. Fix registry problems; do not change the components. If one cannot be registered, leave it out and say why.
 COMPONENTS: ${JSON.stringify(clean.map((r) => ({ id: r.id, name: r.name, files: r.files, loader: r.fix ? r.fix.loader : '' }))).slice(0, 20000)}
 RETURN registered, notRegistered (with why), checks (commands and results).`, { label: 'integrate', phase: 'Integrate', schema: INTEGRATE_SCHEMA, model: M.integrate, effort: 'medium' }) : null
 // Compact on purpose: the lead reads details (open findings, S3 residue, notes) from the run journal with wf-journal.py.

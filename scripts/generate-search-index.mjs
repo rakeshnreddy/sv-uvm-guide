@@ -160,6 +160,19 @@ const GENERIC_KEYWORD_WORDS = new Set([
   "them", "then", "they", "this", "through", "up", "use", "when", "which", "without", "you", "your",
 ]);
 
+/**
+ * Verbs, counts and filler from outcome lines and lesson titles ("prove", "fixed",
+ * "completes", "before"): they name no topic, so a query for them should not
+ * pull in practice items. Kept explicit, so a topic word is never dropped by rule.
+ */
+const FILLER_KEYWORD_WORDS = new Set([
+  "arrives", "aware", "based", "before", "bottom", "broken", "build", "capture", "catch", "catches", "changing",
+  "close", "compare", "complete", "completes", "contradicts", "describe", "draw", "early", "editing", "fails",
+  "find", "first", "fix", "fixed", "four", "integrating", "itself", "level", "off", "own", "pass", "passively",
+  "pick", "pinpoint", "planted", "predict", "prove", "right", "run", "see", "show", "spot", "three", "two",
+  "waiting", "watches", "write",
+]);
+
 /** Words as search tokenizes them (tokenizeSearchText): lowercase, SystemVerilog identifiers kept whole. */
 function searchWords(text) {
   return String(text ?? "")
@@ -174,7 +187,7 @@ function searchWords(text) {
  * Topic keywords for a practice item, from data already true of it: the words
  * of its authored outcome line and the titles of the lessons that teach it
  * (for a lab, its launching lesson and every lesson that places its LabLink).
- * Single letters, stop words, function words and words already in its title,
+ * Single letters, stop words, function words, filler verbs and words already in its title,
  * one-line description or other keywords are left out: they add size and no match.
  *
  * @param {{ title: string, description: string, outcome?: string, lessonTitles?: string[] }} entry
@@ -185,7 +198,7 @@ export function topicKeywords({ title, description, outcome, lessonTitles = [] }
   const known = new Set([...searchWords(title), ...searchWords(oneLine(description)), ...existing.flatMap(searchWords)]);
   const words = [];
   for (const word of [...searchWords(outcome), ...lessonTitles.flatMap((lessonTitle) => searchWords(stripCodePrefix(lessonTitle)))]) {
-    if (word.length < 2 || KEYWORD_STOP_WORDS.has(word) || GENERIC_KEYWORD_WORDS.has(word) || known.has(word)) continue;
+    if (word.length < 2 || KEYWORD_STOP_WORDS.has(word) || GENERIC_KEYWORD_WORDS.has(word) || FILLER_KEYWORD_WORDS.has(word) || known.has(word)) continue;
     known.add(word);
     words.push(word);
   }

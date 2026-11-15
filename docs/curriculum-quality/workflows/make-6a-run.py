@@ -88,7 +88,12 @@ def main():
                         "prompt or text it serves, with one or two sentences that say what to try and what to notice. Never let it reveal the "
                         "answer to a prediction that comes before it. When an existing embed of the same component only gains props, edit that "
                         "tag in place. Skip a planned embed that does not fit the lesson as it is now, and say why in skipped. Make no other "
-                        "change to the lesson." + (" " + args.note if args.note else ""))
+                        "change to the lesson. Lesson text styling is automatic (docs/planning/site-design-refresh-2026-11-10/DESIGN.md "
+                        "section 12), so add no styling classes or wrappers of your own. Give an embed placeholderHeight / "
+                        "placeholderMobileHeight props only when that instance opens a preset whose height differs from the component's "
+                        "default (see lazyMdxInteractiveMeta in src/components/mdx/lazy-mdx-interactives.ts). In any raw SVG you write, "
+                        "text is about 11 px or more at 390 px wide (a viewBox about 340 to 360 wide with font size 11 or more), which "
+                        "overrides the 9 px floor below." + (" " + args.note if args.note else ""))
         picked = [l for l in all_lessons if l["file"] in tasks]
     elif args.review_only:
         wanted = [f.strip() for f in Path(args.files_from).read_text().split() if f.strip()]

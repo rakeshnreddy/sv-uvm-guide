@@ -1745,29 +1745,6 @@ export function findTopicBySlug(slug: string[]): Topic | undefined {
   return section.topics.find(t => t.slug === topicSlug);
 }
 
-export function getBreadcrumbs(slug: string[]): { title: string, path: string }[] {
-  const normalized = normalizeSlug(slug);
-  if (normalized.length !== 3) return [];
-  const [tierSlug, sectionSlug, topicSlug] = normalized;
-  const breadcrumbs: { title: string, path: string }[] = [];
-  const courseModule = curriculumData.find(m => m.slug === tierSlug);
-  if (!courseModule) return breadcrumbs;
-
-  breadcrumbs.push({ title: "Curriculum", path: `/curriculum` });
-  breadcrumbs.push({ title: courseModule.title, path: `/curriculum/${courseModule.slug}` });
-
-  const section = courseModule.sections.find(s => s.slug === sectionSlug);
-  if (!section) return breadcrumbs;
-  breadcrumbs.push({ title: section.title, path: `/curriculum/${courseModule.slug}/${section.slug}` });
-
-  const topic = section.topics.find(t => t.slug === topicSlug);
-  if (topic) {
-    breadcrumbs.push({ title: topic.title, path: `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}` });
-  }
-
-  return breadcrumbs;
-}
-
 export interface NavTopic extends Topic {
   /** Folder name of the module (section) this topic belongs to. */
   moduleSlug: string;

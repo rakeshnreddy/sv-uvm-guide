@@ -18,7 +18,7 @@ describe('topic keywords for practice items', () => {
         outcome: 'Draw a wait-for graph from a watchdog report and fix a leaked key.',
         lessonTitles: ['I-SV-5: Synchronization and IPC', 'Semaphores: Keys, Mutual Exclusion and Deadlock', 'F1A: The Cost of Bugs'],
       }),
-    ).toEqual(['draw', 'wait', 'graph', 'fix', 'leaked', 'key', 'synchronization', 'ipc', 'semaphores', 'keys', 'mutual', 'exclusion', 'deadlock', 'cost', 'bugs']);
+    ).toEqual(['wait', 'graph', 'leaked', 'key', 'synchronization', 'ipc', 'semaphores', 'keys', 'mutual', 'exclusion', 'deadlock', 'cost', 'bugs']);
   });
 
   it('adds no stop words, function words, single letters or words the item already holds', () => {
@@ -29,6 +29,17 @@ describe('topic keywords for practice items', () => {
       ),
     ).toEqual(['split', 'check']);
     expect(topicKeywords({ title: 'T', description: 'D.', lessonTitles: [] })).toEqual([]);
+  });
+
+  it('leaves out filler verbs and counts, keeping the topic words', () => {
+    expect(
+      topicKeywords({
+        title: 'Arbiter lab',
+        description: 'Arbitrate.',
+        outcome: 'Prove the fixed arbiter completes every request before starvation: catch it, then build and write two checks.',
+        lessonTitles: [],
+      }),
+    ).toEqual(['every', 'request', 'starvation', 'checks']);
   });
 });
 

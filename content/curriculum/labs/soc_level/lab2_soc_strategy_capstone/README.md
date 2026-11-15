@@ -1,4 +1,4 @@
-# Capstone: Staff-Level SoC Verification Strategy Review
+# Capstone: Senior-Level SoC Verification Strategy Review
 
 This capstone belongs to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index). It is the planning step of the milestone M8 code capstone, a DMA subsystem bench that is planned and not yet available: the strategy you write here is the one that bench would implement. (Lab `dma-1` is a smaller, earlier DMA lab in I-UVM-3B, not this capstone.)
 
@@ -14,7 +14,7 @@ You are the verification lead for a new application SoC. The design includes:
 - DDR, SRAM, boot ROM, and peripheral register space.
 - Boot firmware that configures clocks, resets, interrupts, DMA descriptors, and security policy.
 
-The block teams already have local UVM environments. Your task is not to write one more test. Your task is to create the staff-level verification strategy that decides what must be reused, what must be newly checked at SoC scope, how coverage closes, how deadlocks and liveness are proven, and how failures are triaged.
+The block teams already have local UVM environments. Your task is not to write one more test. Your task is to create the senior-level verification strategy that decides what must be reused, what must be newly checked at SoC scope, how coverage closes, how deadlocks and liveness are proven, and how failures are triaged.
 
 ## Deliverables
 
@@ -31,7 +31,7 @@ Complete `strategy_template.md` with:
 9. **Risk register** - top risks, owner, mitigation, and exit criteria.
 10. **Peer review rubric** - score your own plan, with evidence for every row.
 
-Score your plan against the rubric **before** you open `model_solution.md`. Do not copy the model answer; use it as a staff-level calibration artifact after your own review.
+Score your plan against the rubric **before** you open `model_solution.md`. Do not copy the model answer; use it as a senior-level calibration artifact after your own review.
 
 ## Acceptance Criteria
 

@@ -2351,9 +2351,9 @@ export const GENERATED_LAB_MANIFESTS = [
   {
     "id": "soc-strategy-capstone",
     "version": "2",
-    "title": "Staff-Level SoC Verification Strategy Review",
-    "description": "Create and review a staff-level SoC verification strategy covering VIP reuse, coverage, formal/liveness, debug triage, regression gates, and signoff risks.",
-    "outcome": "Write and review a staff-level SoC verification strategy, from VIP reuse to signoff.",
+    "title": "Senior-Level SoC Verification Strategy Review",
+    "description": "Create and review a senior-level SoC verification strategy covering VIP reuse, coverage, formal/liveness, debug triage, regression gates, and signoff risks.",
+    "outcome": "Write and review a senior-level SoC verification strategy, from VIP reuse to signoff.",
     "owningModule": "E-SOC-1",
     "routeSlug": "soc-strategy-capstone",
     "status": "available",
@@ -2392,7 +2392,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "2",
         "completion": "self_attested",
         "title": "Step 4: Peer Review Against the Rubric",
-        "instructions": "Score your plan with the rubric in section 10, writing the evidence for every row, before you open `model_solution.md`. Then compare with the model answer to identify missing staff-level reasoning.",
+        "instructions": "Score your plan with the rubric in section 10, writing the evidence for every row, before you open `model_solution.md`. Then compare with the model answer to identify missing senior-level reasoning.",
         "starterCode": ""
       }
     ],
