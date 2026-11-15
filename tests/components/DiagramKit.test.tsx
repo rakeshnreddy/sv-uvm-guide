@@ -1,10 +1,14 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { ArchitectureDiagram, SequenceDiagram, TimingDiagram } from '@/components/mdx/DiagramKit';
-import { BlockDiagram, legendEntries, legendItems } from '@/components/visual-system/BlockDiagram';
+import { BlockDiagram, legendEntries, legendItems, nodeKindTags, roleKeyEntries, type DiagramNodeKind } from '@/components/visual-system/BlockDiagram';
+import { figureRoleOf } from '@/components/visual-system/figure-colours';
 import { StepWaveform } from '@/components/visual-system/StepWaveform';
 import { layoutGridDiagram, layoutSequence, readableMinWidth } from '@/components/visual-system/diagram-layout';
 import { mdxComponents } from '@/generated/mdx-component-registry';
@@ -65,7 +69,7 @@ describe('MDX diagram kit', () => {
     expect(screen.queryByTestId('diagram-legend')).not.toBeInTheDocument();
     expect(legendItems([{ kind: 'port' }, { kind: 'analysis_imp' }], [{ style: 'causal' }])).toEqual(['port', 'imp', 'causal / call order']);
     expect(legendItems([], [], [{ kind: 'dut' }, { kind: 'driver' }, { kind: 'interface' }, { kind: 'reg' }, { kind: 'generic' }])).toEqual([
-      'design (DUT)',
+      'design',
       'testbench',
       'interface',
       'register model',
@@ -379,19 +383,25 @@ describe('text-free colour roles (DESIGN.md section 13, "Assigning roles in less
     expect(container.querySelector('polyline')!.getAttribute('class')).toContain('stroke-fig-amber');
   });
 
-  it('adds no legend term for a text-free role, and says each role in words in the description', () => {
+  it('lists every role colour in use in the legend, and says each text-free role in words in the description', () => {
     const a = render(<ArchitectureDiagram title="Roles" caption="c" nodes={gridNodes} edges={gridEdges} />);
     const plainLegend = within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent);
     a.unmount();
     render(<ArchitectureDiagram title="Roles" caption="c" nodes={withRoles} edges={gridEdges} />);
-    // The legend's words are the same with and without roles: a role adds no words to the figure.
-    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(plainLegend);
+    // Nodes with no role add no term; a role-coloured part adds its role's term, so every colour drawn can be looked up.
     expect(plainLegend).toEqual(['data flow', 'control']);
-    const asLegend = (ns: { id: string; kind?: 'generic'; role?: 'design' | 'testbench' }[]) => ns.map((n) => ({ id: n.id, kind: n.kind ?? ('generic' as const), role: n.role }));
-    expect(legendItems([], gridEdges, asLegend(withRoles))).toEqual(legendItems([], gridEdges, asLegend(gridNodes)));
-    expect(legendItems([], [], [{ kind: 'generic', role: 'design' }, { kind: 'generic', role: 'testbench' }, { kind: 'generic' }])).toEqual([]);
-    // A tagged kind still lists its role.
-    expect(legendItems([], [], [{ kind: 'dut' }, { kind: 'generic', role: 'testbench' }])).toEqual(['design (DUT)']);
+    const legend = screen.getByTestId('diagram-legend');
+    expect(within(legend).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench', 'data flow', 'control']);
+    // Each role term has its swatch: the role's colour and corner shape.
+    const swatches = [...legend.querySelectorAll('span[aria-hidden]')].map((n) => n.getAttribute('class'));
+    expect(swatches[0]).toContain('border-fig-violet');
+    expect(swatches[1]).toContain('border-fig-amber');
+    // Parts coloured only by a role list their roles.
+    expect(legendItems([], [], [{ kind: 'generic', role: 'design' }, { kind: 'generic', role: 'testbench' }, { kind: 'generic' }])).toEqual(['design', 'testbench']);
+    // The term is plain "design", true of a dut and of a role-coloured bus block alike (the dut says DUT on its tag).
+    expect(legendItems([], [], [{ kind: 'dut' }, { kind: 'generic', role: 'testbench' }])).toEqual(['design', 'testbench']);
+    expect(legendItems([], [], [{ kind: 'generic', role: 'design' }])).toEqual(['design']);
+    expect(legendItems([], [], [{ kind: 'dut' }, { kind: 'generic', role: 'design' }])).toEqual(['design']);
     expect(screen.getByRole('img', { name: 'Roles' })).toHaveAccessibleDescription(
       'Components: Master (testbench side; HADDR out), Decoder (design side), AHB bus. SoC (design side) contains Master, Decoder, AHB bus. Connections: Master to Decoder (HSEL); Master to AHB bus (HADDR).',
     );
@@ -461,6 +471,228 @@ describe('text-free colour roles (DESIGN.md section 13, "Assigning roles in less
     expect(heads[1].querySelector('line')!.getAttribute('class')).toBe('stroke-fig-violet/50');
     expect(heads[1].querySelectorAll('rect')[1].getAttribute('rx')).toBe('3');
     expect(screen.getByRole('img', { name: 'Seq' })).toHaveAccessibleDescription('Roles: seq (testbench side); dut (design side).');
+  });
+
+  it('legend: a figure with only role-coloured parts lists their roles, and one with kinds and roles lists each role once', () => {
+    const onlyRoles = [
+      { id: 'dec', label: 'decoder', role: 'design' as const, col: 0, row: 0 },
+      { id: 'bfm', label: 'AHB BFM', role: 'testbench' as const, col: 1, row: 0 },
+    ];
+    const a = render(<ArchitectureDiagram title="Only roles" caption="c" nodes={onlyRoles} edges={[{ from: 'bfm', to: 'dec', style: 'data' }]} />);
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench', 'data flow']);
+    a.unmount();
+    const mixed = [
+      { id: 'drv', label: 'drv', kind: 'driver' as const, col: 0, row: 0 },
+      { id: 'u', label: 'u_dut', kind: 'dut' as const, col: 1, row: 0 },
+      { id: 'arb', label: 'arbiter', role: 'design' as const, col: 2, row: 0 },
+      { id: 'vif', label: 'vif', kind: 'interface' as const, col: 0, row: 1 },
+      { id: 'ral', label: 'ral', kind: 'reg' as const, col: 1, row: 1 },
+      { id: 'bus', label: 'AHB bus', col: 2, row: 1 },
+    ];
+    render(<ArchitectureDiagram title="Mixed" caption="c" nodes={mixed} edges={[{ from: 'drv', to: 'u', style: 'data' }]} />);
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench', 'interface', 'register model', 'data flow']);
+  });
+
+  it('side-overridable kinds: an RTL fifo with role "design" keeps its tag, text and geometry and draws as design', () => {
+    const plainNodes = [
+      { id: 'sp', label: 'AHB slave port', role: 'design' as const, col: 0, row: 0 },
+      { id: 'wf', label: 'write-data FIFO', sublabel: 'WSTRB, WLAST', kind: 'fifo' as const, col: 1, row: 0 },
+      { id: 'mbx', label: 'gen2drv', kind: 'fifo' as const, col: 2, row: 0 },
+    ];
+    const roled = plainNodes.map((n) => (n.id === 'wf' ? { ...n, role: 'design' as const } : n));
+    const edges = [
+      { from: 'sp', to: 'wf', style: 'control' as const, label: 'len' },
+      { from: 'wf', to: 'mbx', style: 'data' as const },
+    ];
+    // No data error, and the same layout and text positions as without the role.
+    const plainLayout = layoutGridDiagram({ nodes: plainNodes, edges });
+    const roledLayout = layoutGridDiagram({ nodes: roled, edges });
+    expect(roledLayout.problems).toEqual([]);
+    const strip = (l: typeof plainLayout) => ({ ...l, nodes: l.nodes.map(({ role: _role, ...n }) => n) });
+    expect(strip(roledLayout)).toEqual(strip(plainLayout));
+    const a = render(<ArchitectureDiagram title="Bridge" caption="c" nodes={plainNodes} edges={edges} />);
+    const plain = geometry(a.container);
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench', 'data flow', 'control']);
+    a.unmount();
+    const { container } = render(<ArchitectureDiagram title="Bridge" caption="c" nodes={roled} edges={edges} />);
+    expect(geometry(container)).toEqual(plain);
+    const groupOf = (label: string) => [...container.querySelectorAll('g[data-fig-role]')].find((g) => g.textContent?.includes(label))!;
+    const fifo = groupOf('write-data FIFO');
+    expect(fifo.getAttribute('data-fig-role')).toBe('design');
+    expect(fifo.textContent).toContain('FIFO');
+    const [box, chip] = [...fifo.querySelectorAll('rect')];
+    expect(box.getAttribute('class')).toContain('stroke-fig-violet');
+    expect(box.getAttribute('rx')).toBe('3');
+    expect(chip.getAttribute('class')).toContain('fill-fig-violet-fill');
+    // The mailbox keeps its testbench default.
+    expect(groupOf('gen2drv').getAttribute('data-fig-role')).toBe('testbench');
+    // The control line between two design parts is no longer testbench amber.
+    expect(container.querySelector('polyline')!.getAttribute('class')).not.toContain('stroke-fig-amber');
+    // The overridden part counts under design only: the legend still has testbench for the mailbox.
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench', 'data flow', 'control']);
+    expect(legendItems([], [], [{ kind: 'fifo', role: 'design' }])).toEqual(['design']);
+    expect(legendItems([], [], [{ kind: 'reg', role: 'design' }])).toEqual(['design']);
+    expect(legendItems([], [], [{ kind: 'fifo' }, { kind: 'reg' }])).toEqual(['testbench', 'register model']);
+    // A role that names the kind's own side changes nothing.
+    expect(legendItems([], [], [{ kind: 'fifo', role: 'testbench' }, { kind: 'reg', role: 'testbench' }])).toEqual(['testbench', 'register model']);
+    // The side is said in words, since the FIFO tag alone reads as the testbench default.
+    expect(screen.getByRole('img', { name: 'Bridge' })).toHaveAccessibleDescription(
+      'Components: AHB slave port (design side), FIFO write-data FIFO (design side; WSTRB, WLAST), FIFO gen2drv. Connections: AHB slave port to write-data FIFO (len); write-data FIFO to gen2drv.',
+    );
+  });
+
+  it('side-overridable kinds: a role on any other tagged kind is still a data error; on fifo and reg it is not', () => {
+    expect(
+      layoutGridDiagram({
+        nodes: [
+          { id: 'f', label: 'f', kind: 'fifo', col: 0, row: 0, role: 'design' },
+          { id: 'r', label: 'r', kind: 'reg', col: 1, row: 0, role: 'design' },
+          { id: 'm', label: 'm', kind: 'model', col: 2, row: 0, role: 'design' },
+          { id: 'u', label: 'u', kind: 'dut', col: 3, row: 0, role: 'testbench' },
+        ],
+      }).problems,
+    ).toEqual([
+      'Node "m" has kind "model" (testbench) but role "design"; drop the role or make them agree.',
+      'Node "u" has kind "dut" (design) but role "testbench"; drop the role or make them agree.',
+    ]);
+    expect(layoutSequence({ participants: [{ id: 'q', label: 'interconnect buffer', kind: 'fifo', role: 'design' }], messages: [] }).problems).toEqual([]);
+    expect(layoutSequence({ participants: [{ id: 'q', label: 'q', kind: 'fifo', role: 'interface' as never }], messages: [] }).problems).toEqual([
+      'Participant "q" has role "interface"; use one of "design", "testbench".',
+    ]);
+  });
+
+  it('SequenceDiagram: an RTL fifo participant with role "design" draws as design and keeps its tag', () => {
+    const participants = [
+      { id: 'cpu', label: 'master' },
+      { id: 'buf', label: 'interconnect buffer', kind: 'fifo' as const },
+    ];
+    const messages = [{ from: 'cpu', to: 'buf', label: 'W1' }];
+    const a = render(<SequenceDiagram title="Buf" caption="c" participants={participants} messages={messages} />);
+    const plain = geometry(a.container);
+    a.unmount();
+    const roled = participants.map((p) => (p.id === 'buf' ? { ...p, role: 'design' as const } : p));
+    const { container } = render(<SequenceDiagram title="Buf" caption="c" participants={roled} messages={messages} />);
+    expect(geometry(container)).toEqual(plain);
+    const head = [...container.querySelectorAll('[data-fig-role]')][1];
+    expect(head.getAttribute('data-fig-role')).toBe('design');
+    expect(head.textContent).toContain('FIFO');
+    expect(head.querySelector('line')!.getAttribute('class')).toBe('stroke-fig-violet/50');
+  });
+
+  it('keeps the side-overridable kinds on one list across the kit, check-mdx and the figure tools', () => {
+    const colours = fs.readFileSync('src/components/visual-system/figure-colours.ts', 'utf8');
+    const guard = fs.readFileSync('docs/curriculum-quality/workflows/figure-guard.py', 'utf8');
+    const checkMdx = fs.readFileSync('scripts/check-mdx.mjs', 'utf8');
+    const kitKinds = [.../export const SIDE_OVERRIDABLE_KINDS = \[([^\]]*)\]/.exec(colours)![1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    const guardKinds = [.../SIDE_OVERRIDABLE_KINDS = \(([^)]*)\)/.exec(guard)![1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    expect(kitKinds).toEqual(['fifo', 'reg']);
+    expect(guardKinds).toEqual(kitKinds);
+    // check-mdx reads the list from figure-colours.ts; figure-scan uses the guard's.
+    expect(checkMdx).toContain('src/components/visual-system/figure-colours.ts');
+    expect(fs.readFileSync('docs/curriculum-quality/workflows/figure-scan.py', 'utf8')).toContain('guard.SIDE_OVERRIDABLE_KINDS');
+    // The kind-to-role maps copied into check-mdx (KIND_ROLE) and the guard (KIND_ROLE) agree with figureRoleOf for every kind.
+    const parseMap = (body: string) =>
+      Object.fromEntries([...body.matchAll(/"?([a-z]+)"?\s*:\s*(None|null|"([a-z]+)")/g)].map((m) => [m[1], m[3] ?? 'generic']));
+    const checkMap = parseMap(/const KIND_ROLE = \{([^}]*)\}/.exec(checkMdx)![1]);
+    const guardMap = parseMap(/^KIND_ROLE = \{([^}]*)\}/m.exec(guard)![1]);
+    for (const kind of Object.keys(nodeKindTags) as DiagramNodeKind[]) {
+      expect([kind, checkMap[kind] ?? 'testbench']).toEqual([kind, figureRoleOf(kind)]);
+      expect([kind, guardMap[kind] ?? 'testbench']).toEqual([kind, figureRoleOf(kind)]);
+    }
+  });
+
+  it('check-mdx reports a role error on a part whose label holds braces', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-mdx-'));
+    const file = path.join(dir, 'braced.mdx');
+    fs.writeFileSync(
+      file,
+      [
+        '---',
+        'title: Braced',
+        'description: Braced labels',
+        '---',
+        '',
+        '<ArchitectureDiagram',
+        '  title="Braced"',
+        '  caption="c"',
+        '  nodes={[',
+        '    { id: "drv", label: "driver", sublabel: "drives {req}", kind: "driver", role: "design", col: 0, row: 0 },',
+        '    { id: "dut", label: "dut", sublabel: "enum {A, B} e1;", kind: "dut", col: 1, row: 0 },',
+        '  ]}',
+        '  edges={[{ from: "drv", to: "dut", label: "inside {[64:256]}", role: "design" }]}',
+        '/>',
+        '',
+      ].join('\n'),
+    );
+    let out = '';
+    try {
+      execFileSync('node', ['scripts/check-mdx.mjs', file], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string };
+      out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(out).toContain('has kind "driver" (testbench) with role "design"');
+    expect(out).toContain('edges has a role');
+  });
+
+  it('legend: a part drawn in a state colour adds no role term, since its role colour is not drawn', () => {
+    expect(legendItems([], [], [{ kind: 'driver', state: 'error' }, { kind: 'interface', state: 'ok' }, { kind: 'dut' }])).toEqual(['design']);
+    expect(legendItems([], [], [{ kind: 'test', state: 'dim' }, { kind: 'env', state: 'active' }])).toEqual([]);
+    expect(legendItems([], [], [{ kind: 'driver', state: 'normal' }])).toEqual(['testbench']);
+  });
+
+  it('role key: a figure with no full legend still lists the role terms when a part takes its colour from a role', () => {
+    // Tagged parts alone need no key: their tags name them.
+    expect(roleKeyEntries([{ kind: 'driver' }, { kind: 'dut' }])).toEqual([]);
+    // A role-coloured part brings the key, which then lists every role colour drawn.
+    expect(roleKeyEntries([{ kind: 'generic', role: 'design' }, { kind: 'driver' }]).map((e) => e.text)).toEqual(['design', 'testbench']);
+    expect(roleKeyEntries([{ kind: 'fifo', role: 'design' }]).map((e) => e.text)).toEqual(['design']);
+    // A role that names a fifo's own side, or a role on a part drawn in a state, brings no key.
+    expect(roleKeyEntries([{ kind: 'fifo', role: 'testbench' }])).toEqual([]);
+    expect(roleKeyEntries([{ kind: 'generic', role: 'design', state: 'error' }])).toEqual([]);
+
+    const nodes = [
+      { id: 'm', label: 'master', role: 'testbench' as const, col: 0, row: 0 },
+      { id: 'dec', label: 'decoder', role: 'design' as const, col: 1, row: 0 },
+    ];
+    const edges = [{ from: 'm', to: 'dec', style: 'structural' as const }];
+    // legend={false} hides the lines and ports, not the role key.
+    const a = render(<ArchitectureDiagram title="Off" caption="c" nodes={nodes} edges={edges} legend={false} />);
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench']);
+    a.unmount();
+    // No edges and no ports: the role key alone.
+    const b = render(<ArchitectureDiagram title="No edges" caption="c" nodes={nodes} />);
+    expect(within(screen.getByTestId('diagram-legend')).getAllByText(/./).map((n) => n.textContent)).toEqual(['design', 'testbench']);
+    b.unmount();
+    // Plain parts with no role: still no legend at all.
+    const c = render(<ArchitectureDiagram title="Plain" caption="c" nodes={nodes.map(({ role: _role, ...n }) => n)} edges={edges} legend={false} />);
+    expect(screen.queryByTestId('diagram-legend')).not.toBeInTheDocument();
+    c.unmount();
+
+    // SequenceDiagram: the key shows only when a participant takes its colour from a role.
+    const messages = [{ from: 'm', to: 'f', label: 'AR' }];
+    const d = render(<SequenceDiagram title="Tags only" caption="c" participants={[{ id: 'm', label: 'drv', kind: 'driver' }, { id: 'f', label: 'u', kind: 'dut' }]} messages={messages} />);
+    expect(screen.queryByTestId('diagram-legend')).not.toBeInTheDocument();
+    d.unmount();
+    const e = render(
+      <SequenceDiagram
+        title="Roles"
+        caption="c"
+        participants={[
+          { id: 'm', label: 'master' },
+          { id: 'f', label: 'FIFO data port', kind: 'fifo', role: 'design' },
+        ]}
+        messages={messages}
+      />,
+    );
+    const key = screen.getByTestId('diagram-legend');
+    expect(within(key).getAllByText(/./).map((n) => n.textContent)).toEqual(['design']);
+    expect(key.querySelector('span[aria-hidden]')!.getAttribute('class')).toContain('border-fig-violet');
+    // It is not a second figcaption inside the kit's figure.
+    expect(key.tagName).toBe('DIV');
+    e.unmount();
   });
 
   it('keeps the CSS roles, the guard and the docs on one list', () => {

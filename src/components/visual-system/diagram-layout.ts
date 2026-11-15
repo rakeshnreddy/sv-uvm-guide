@@ -357,7 +357,7 @@ export interface GridNode {
   label: string;
   sublabel?: string;
   kind?: DiagramNodeKind;
-  /** Text-free colour role (see DiagramNode.role): colour and corner shape only, no tag, same geometry. */
+  /** Text-free colour role (see DiagramNode.role): colour and corner shape only, same text and geometry; it may set the side of a side-overridable kind (fifo, reg). */
   role?: AssignedRole;
   /** Zero-based grid column and row of the top-left cell. */
   col: number;
@@ -566,7 +566,7 @@ export interface SequenceParticipant {
   label: string;
   sublabel?: string;
   kind?: DiagramNodeKind;
-  /** Text-free colour role: the header and lifeline take the role's colour and corner shape; no tag, same geometry. */
+  /** Text-free colour role: the header and lifeline take the role's colour and corner shape; same text and geometry; it may set the side of a side-overridable kind (fifo, reg). */
   role?: AssignedRole;
 }
 

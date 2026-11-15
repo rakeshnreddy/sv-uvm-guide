@@ -4,7 +4,7 @@ import React, { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { DiagramScrollFrame, nodeKindTags } from "./BlockDiagram";
+import { DiagramLegend, DiagramScrollFrame, nodeKindTags, roleKeyEntries } from "./BlockDiagram";
 import { layoutSequence, PHONE_FIT_WIDTH, SEQ_CHAR_W, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
 import { assignedRoleWords, effectiveRole, roleStyles, tagChipWidth } from "./figure-colours";
 
@@ -15,6 +15,12 @@ interface SequenceDiagramProps {
   /** Number calls, async sends and returns (default true). */
   numbered?: boolean;
   columnWidth?: number;
+  /**
+   * Draw the role terms under the drawing when some participant takes its
+   * colour from a `role` (no tag says it), so that colour can be looked up
+   * (roleKeyEntries). The MDX kit sets it.
+   */
+  showRoleKey?: boolean;
   className?: string;
 }
 
@@ -83,7 +89,7 @@ function PrefixedLine({ prefix, line }: { prefix: string; line: string }) {
  * open head, and self-calls loop back. A numbered text version of every step
  * sits under the drawing for screen readers and for anyone who prefers text.
  */
-export function SequenceDiagram({ title, participants, messages, numbered = true, columnWidth, className }: SequenceDiagramProps) {
+export function SequenceDiagram({ title, participants, messages, numbered = true, columnWidth, showRoleKey = false, className }: SequenceDiagramProps) {
   const id = useId();
   const layout = layoutSequence({ participants, messages, columnWidth, numbered });
   const { width, height, headerHeight, lifelineX } = layout;
@@ -97,6 +103,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
     })
     .filter((x): x is string => x !== null);
   const roleDescription = saidRoles.length ? `Roles: ${saidRoles.join("; ")}.` : null;
+  const roleKey = showRoleKey ? roleKeyEntries(participants.map((p) => ({ kind: p.kind ?? "generic", role: p.role }))) : [];
 
   return (
     <div className={cn("space-y-2", className)} data-figure-kit="sequence">
@@ -239,6 +246,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
           })}
         </svg>
       </DiagramScrollFrame>
+      <DiagramLegend entries={roleKey} as="div" />
       <details className="rounded-lg border border-border px-3 text-sm [&[open]]:pb-2">
         <summary className="min-h-10 cursor-pointer py-2.5 font-medium text-foreground">Steps as text</summary>
         <ol className="mt-2 list-none space-y-1 font-mono text-xs text-foreground [font-variant-ligatures:none]">

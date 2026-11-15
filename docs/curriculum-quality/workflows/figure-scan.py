@@ -11,6 +11,11 @@ lesson it prints every figure with its line range:
 - ArchitectureDiagram: title, nodes, nodes of kind "generic" (or no kind)
   with no role, edges.
 - SequenceDiagram: title, participants, participants with neither kind nor role.
+- For both: each node or participant of a side-overridable kind (fifo, reg;
+  the guard's SIDE_OVERRIDABLE_KINDS) with the side it draws now, as "check
+  the side": a fifo draws as testbench and a reg as the register model unless
+  its role says "design". Read the lesson's words and give an RTL FIFO,
+  buffer, queue or hardware register role: "design".
 - TimingDiagram: counted only (the kit already colours values); its caption
   still gets the WARNING below.
 - hand-drawn <svg>: monochrome (only currentColor and neutrals), a little
@@ -168,6 +173,22 @@ def key_value(obj, key):
     return m.group(1) if m else None
 
 
+# What a side-overridable kind draws as with no role, or with its default side.
+SIDE_DEFAULT = {"fifo": "testbench", "reg": "register model (testbench side)"}
+
+
+def side_checks(objs):
+    """[(label, kind, side drawn now)] for each part of a side-overridable kind."""
+    out = []
+    for obj in objs:
+        kind = key_value(obj, "kind")
+        if kind not in guard.SIDE_OVERRIDABLE_KINDS:
+            continue
+        role = key_value(obj, "role")
+        out.append((key_value(obj, "label") or key_value(obj, "id") or "?", kind, "design" if role == "design" else SIDE_DEFAULT.get(kind, "testbench")))
+    return out
+
+
 def untyped(obj):
     kind = key_value(obj, "kind")
     role = key_value(obj, "role")
@@ -311,12 +332,14 @@ def scan_file(path):
             fig["withRole"] = sum(1 for n in nodes if key_value(n, "role") is not None)
             fig["edges"] = len(array_items(prop_expression(tag, "edges")))
             fig["candidate"] = fig["genericNoRole"] > 0
+            fig["sideChecks"] = side_checks(nodes)
         elif name == "SequenceDiagram":
             parts = array_items(prop_expression(tag, "participants"))
             fig["participants"] = len(parts)
             fig["untyped"] = sum(1 for p in parts if untyped(p))
             fig["withRole"] = sum(1 for p in parts if key_value(p, "role") is not None)
             fig["candidate"] = fig["untyped"] > 0
+            fig["sideChecks"] = side_checks(parts)
         else:
             fig["candidate"] = False
         figures.append(fig)
@@ -366,16 +389,25 @@ def colour_note(fig):
     return f"\n      WARNING: {'; '.join(notes)} (keep those sentences true)" if notes else ""
 
 
+def side_note(fig):
+    """One line per part of a side-overridable kind, with the side it draws now."""
+    return "".join(
+        f'\n      check the side: {kind} "{label}" draws as {side} (role: "design" only if the lesson places it in a design block)'
+        if side != "design" else f'\n      check the side: {kind} "{label}" draws as design (its role)'
+        for label, kind, side in fig.get("sideChecks", [])
+    )
+
+
 def describe(fig):
     lines = f"{fig['lines'][0]}-{fig['lines'][1]}"
     title = f' "{fig["title"]}"' if fig.get("title") else ""
     t = fig["type"]
     if t == "ArchitectureDiagram":
         todo = f"{fig['genericNoRole']} generic node(s) could take a role" if fig["candidate"] else "nothing: every node has a kind or role"
-        return f"  {lines} architecture{title}: {fig['nodes']} nodes, {fig['genericNoRole']} generic with no role, {fig['edges']} edges -> {todo}" + colour_note(fig)
+        return f"  {lines} architecture{title}: {fig['nodes']} nodes, {fig['genericNoRole']} generic with no role, {fig['edges']} edges -> {todo}" + side_note(fig) + colour_note(fig)
     if t == "SequenceDiagram":
         todo = f"{fig['untyped']} participant(s) could take a role" if fig["candidate"] else "nothing: every participant has a kind or role"
-        return f"  {lines} sequence{title}: {fig['participants']} participants, {fig['untyped']} with neither kind nor role -> {todo}" + colour_note(fig)
+        return f"  {lines} sequence{title}: {fig['participants']} participants, {fig['untyped']} with neither kind nor role -> {todo}" + side_note(fig) + colour_note(fig)
     if t == "TimingDiagram":
         return f"  {lines} timing{title} -> nothing (the kit colours values)" + colour_note(fig)
     cap = ""
@@ -453,6 +485,17 @@ SELFTEST_MDX = """Intro.
   caption="Solid edges carry data; dashed edges are control."
   nodes={[{ id: "b", label: "B", col: 0, row: 0 }]}
 />
+
+<ArchitectureDiagram
+  title="Bridge"
+  caption="Two buffers."
+  nodes={[
+    { id: "w", label: "write buffer", kind: "fifo", col: 0, row: 0 },
+    { id: "r", label: "read buffer", kind: "fifo", role: "design", col: 1, row: 0 },
+    { id: "c", label: "ctx_reg", kind: "reg", col: 2, row: 0 },
+    { id: "d", label: "drv", kind: "driver", col: 3, row: 0 }
+  ]}
+/>
 """
 
 
@@ -464,7 +507,7 @@ def selftest():
         figs = scan_file(fh.name)["figures"]
     finally:
         os.unlink(fh.name)
-    wrap, kit, part, cells, timing, edges = figs
+    wrap, kit, part, cells, timing, edges, bridge = figs
     own = dict((src, words) for src, words in part["ownTextColours"])
     cases = [
         ("an svg caption that says 'shaded' warns (the B-AHB-1 WRAP figure)", "shaded" in wrap["captionColours"]),
@@ -479,6 +522,9 @@ def selftest():
         ("an svg caption that says 'Solid cells' warns (the F2D memory grid)", "solid" in cells["captionColours"]),
         ("a timing caption that names a colour prints a WARNING line, as the total counts it", "WARNING" in describe(timing) and timing["captionColours"] == ["red"]),
         ("a kit caption's 'solid' (an edge style the kit keeps) does not warn", edges["captionColours"] == [] and "WARNING" not in describe(edges)),
+        ("each part of a side-overridable kind is listed with the side it draws now, and no other kind is",
+         bridge["sideChecks"] == [("write buffer", "fifo", "testbench"), ("read buffer", "fifo", "design"), ("ctx_reg", "reg", "register model (testbench side)")]
+         and describe(bridge).count("check the side") == 3),
         ("a monochrome svg with no solid candidates says so", "no solid candidates" in describe({**cells, "filledMarks": 0})),
     ]
     failed = 0
@@ -528,6 +574,7 @@ def main(argv=None):
     totals["nearbyProseNamesColour"] = sum(1 for r in results for f in r["figures"] if f.get("nearbyColours"))
     totals["genericNodes"] = sum(f.get("genericNoRole", 0) for r in results for f in r["figures"])
     totals["untypedParticipants"] = sum(f.get("untyped", 0) for r in results for f in r["figures"])
+    totals["sideChecks"] = sum(len(f.get("sideChecks", [])) for r in results for f in r["figures"])
 
     for r in results:
         if args.work_only and not r["work"]:
@@ -547,6 +594,7 @@ def main(argv=None):
     print("Hand-drawn svg: " + (", ".join(f"{k} {v}" for k, v in sorted(totals["svgColour"].items())) or "none") + f"; captions that name a colour: {totals['svgCaptionNamesColour']}; own text that names a colour: {totals['svgOwnTextNamesColour']}")
     print(f"Kit captions that name a colour: {totals['kitCaptionNamesColour']}; figures whose neighbouring prose names a colour: {totals['nearbyProseNamesColour']}")
     print(f"Generic nodes with no role: {totals['genericNodes']}; participants with neither kind nor role: {totals['untypedParticipants']}")
+    print(f"Parts of a side-overridable kind ({', '.join(guard.SIDE_OVERRIDABLE_KINDS)}) to check the side of: {totals['sideChecks']}")
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf8") as fh:

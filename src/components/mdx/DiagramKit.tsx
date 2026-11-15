@@ -52,8 +52,10 @@ interface ArchitectureDiagramProps {
   gapX?: number;
   gapY?: number;
   /**
-   * Show the legend of port symbols and line styles (default true when ports or
-   * edges exist). It lists only the symbols and styles this diagram draws.
+   * Show the legend of roles, port symbols and line styles (default true when
+   * ports or edges exist). It lists only what this diagram draws. With no
+   * legend (false, or no ports or edges), the role terms alone still show when
+   * a part takes its colour from a `role`, so every colour drawn has its term.
    */
   legend?: boolean;
   /** Spread edges that meet the same side of a node along that side instead of one centre point. */
@@ -110,6 +112,7 @@ export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellW
         spreadAnchors={spreadAnchors}
         minWidth={readableMinWidth(layout.width)}
         showLegend={showLegend}
+        showRoleKey
       />
       {layout.problems.length ? <DiagramProblems problems={layout.problems} /> : null}
       {SHOW_LAYOUT_WARNINGS && layout.warnings.length ? <DiagramProblems variant="layout" problems={layout.warnings.map((w) => w.message)} /> : null}
@@ -171,7 +174,7 @@ interface SequenceDiagramProps {
 export function SequenceDiagram({ title, caption, participants, messages, numbered, columnWidth, className }: SequenceDiagramProps) {
   return (
     <figure className={cn("not-prose my-6", className)} data-diagram="sequence">
-      <SequenceDiagramView title={title} participants={participants} messages={messages} numbered={numbered} columnWidth={columnWidth} />
+      <SequenceDiagramView title={title} participants={participants} messages={messages} numbered={numbered} columnWidth={columnWidth} showRoleKey />
       <Caption>{caption}</Caption>
     </figure>
   );

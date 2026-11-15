@@ -22,7 +22,9 @@
  * - flashcard deck ids that do not resolve
  * - internal /curriculum links that do not resolve
  * - explicit H1 headings
- * - kit figure roles other than design and testbench
+ * - kit figure roles other than design and testbench, a role that disagrees
+ *   with a tagged kind other than a side-overridable one (fifo, reg), and a
+ *   role on an edge, port or message (the kit ignores it there)
  *
  * Warnings:
  * - H2 order differing from the template (Quick Take → Build Your Mental Model →
@@ -45,6 +47,85 @@ const TEMPLATE = ["Quick Take", "Build Your Mental Model", "Make It Work", "Push
 const KIT = new Set(["ArchitectureDiagram", "TimingDiagram", "SequenceDiagram"]);
 // Interface and register stay with their tagged kinds (IF, REG): without the tag their shape matches a neutral box.
 const KIT_ROLES = ["design", "testbench"];
+// Kinds whose side a role may set (an RTL FIFO with role "design"). The one list is
+// SIDE_OVERRIDABLE_KINDS in src/components/visual-system/figure-colours.ts; read it from there.
+const SIDE_OVERRIDABLE_KINDS = sideOverridableKinds();
+// The role a tagged kind already has (figure-colours.ts figureRoleOf); any other
+// kind is testbench. Same shape as KIND_ROLE in figure-guard.py; a unit test
+// checks both against figureRoleOf for every kind.
+const KIND_ROLE = { generic: null, dut: "design", interface: "interface", reg: "register" };
+const kindRole = (kind) => (kind in KIND_ROLE ? KIND_ROLE[kind] : "testbench");
+
+function skipString(text, i) {
+  const quote = text[i];
+  for (let k = i + 1; k < text.length; k++) {
+    if (text[k] === "\\") k++;
+    else if (text[k] === quote) return k + 1;
+  }
+  return text.length;
+}
+
+/**
+ * The top-level keys of an object literal's text ("{…}"), each with its value
+ * when that is a plain string (else null). Words inside strings and nested
+ * brackets are never read as keys, so a label that says "kind: 'fifo'" is not
+ * the object's kind.
+ */
+function topLevelKeys(obj) {
+  const keys = new Map();
+  let depth = 0;
+  let atKey = true;
+  for (let i = 1; i < obj.length - 1; ) {
+    const c = obj[i];
+    if (depth === 0 && atKey && /["'A-Za-z_$]/.test(c)) {
+      const m = /^["']?([A-Za-z_$][\w$]*)["']?\s*:\s*(?:"([^"]*)"|'([^']*)')?/.exec(obj.slice(i));
+      if (m && !keys.has(m[1])) keys.set(m[1], m[2] ?? m[3] ?? null);
+      atKey = false;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      i = skipString(obj, i);
+      continue;
+    }
+    if ("{[(".includes(c)) depth++;
+    else if ("}])".includes(c)) depth--;
+    else if (c === "," && depth === 0) atKey = true;
+    else if (!/\s/.test(c)) atKey = false;
+    i++;
+  }
+  return keys;
+}
+
+/**
+ * Every object literal's text ("{…}") in an expression, at any depth, in
+ * source order. Braces inside strings are skipped, so a label such as
+ * "drives {req}" neither hides its node nor splits it (the guard's
+ * _scan_braced does the same).
+ */
+function objectsIn(code) {
+  const out = [];
+  const open = [];
+  for (let i = 0; i < code.length; ) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i = skipString(code, i);
+      continue;
+    }
+    if (c === "{") open.push(i);
+    else if (c === "}" && open.length) {
+      const start = open.pop();
+      out.push({ start, text: code.slice(start, i + 1) });
+    }
+    i++;
+  }
+  return out.sort((a, b) => a.start - b.start).map((o) => o.text);
+}
+
+function sideOverridableKinds() {
+  const source = fs.readFileSync(path.join(root, "src/components/visual-system/figure-colours.ts"), "utf8");
+  const list = /export const SIDE_OVERRIDABLE_KINDS = \[([^\]]*)\]/.exec(source);
+  if (!list) throw new Error("check-mdx: SIDE_OVERRIDABLE_KINDS not found in figure-colours.ts");
+  return [...list[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+}
 
 function registeredComponents() {
   const registry = fs.readFileSync(path.join(root, "src/generated/mdx-component-registry.tsx"), "utf8");
@@ -247,6 +328,23 @@ for (const file of files) {
               const code = typeof value === "object" && value ? value.value : "";
               for (const m of String(code).matchAll(/["']?role["']?\s*:\s*["']([^"']*)["']/g)) {
                 if (!KIT_ROLES.includes(m[1])) errors.push(`<${node.name}> ${name} has role "${m[1]}" at body line ${line}; use one of ${KIT_ROLES.join(", ")}`);
+              }
+              // A role must agree with a tagged kind, except on a side-overridable kind.
+              for (const obj of objectsIn(String(code))) {
+                const keys = topLevelKeys(obj);
+                const role = keys.get("role");
+                const kind = keys.get("kind");
+                if (!role || !kind || !KIT_ROLES.includes(role) || SIDE_OVERRIDABLE_KINDS.includes(kind)) continue;
+                const own = kindRole(kind);
+                if (own && own !== role) errors.push(`<${node.name}> ${name} has kind "${kind}" (${own}) with role "${role}" at body line ${line}; drop the role or make them agree (only ${SIDE_OVERRIDABLE_KINDS.join(", ")} may take either side)`);
+              }
+            }
+            // A role belongs on a node or participant only; on an edge, port or message the kit ignores it.
+            for (const name of ["edges", "ports", "messages"]) {
+              const value = attr(name)?.value;
+              const code = typeof value === "object" && value ? value.value : "";
+              for (const obj of objectsIn(String(code))) {
+                if (topLevelKeys(obj).has("role")) errors.push(`<${node.name}> ${name} has a role at body line ${line}; a role goes on a node or participant only`);
               }
             }
           }

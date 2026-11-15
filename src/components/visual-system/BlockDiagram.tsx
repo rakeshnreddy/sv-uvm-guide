@@ -5,7 +5,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 import { EDGE_STYLES, edgeLabelBox, nodeKindTags, PHONE_FIT_WIDTH, pointAlong, portPosition, routeEdges, type Point } from "./diagram-layout";
-import { assignedRoleWords, edgeToneOf, edgeTones, effectiveRole, figureRoleOf, roleStyles, stateStyles, tagChipWidth, type AssignedRole, type EdgeTone, type FigureRole } from "./figure-colours";
+import { assignedRoleWords, edgeToneOf, edgeTones, effectiveRole, roleStyles, stateStyles, tagChipWidth, type AssignedRole, type EdgeTone, type FigureRole } from "./figure-colours";
 
 export { nodeKindTags, pointAlong };
 
@@ -36,9 +36,11 @@ export interface DiagramNode {
   kind: DiagramNodeKind;
   /**
    * A text-free colour role for a node of kind "generic" (design or
-   * testbench): the role's fill, stroke and corner shape, with no tag chip, no
-   * legend term and no change to the text or geometry. On a node whose kind
-   * has a role it must agree with that role.
+   * testbench): the role's fill, stroke and corner shape, with no tag chip and
+   * no change to the text or geometry; the legend lists the role's term. On a
+   * node whose kind has a role it must agree with that role, except on a
+   * side-overridable kind (SIDE_OVERRIDABLE_KINDS: fifo, reg), where it may
+   * set the side and the node keeps its tag.
    */
   role?: AssignedRole;
   x: number;
@@ -101,6 +103,12 @@ interface BlockDiagramProps {
   minWidth?: number;
   showLegend?: boolean;
   /**
+   * With no full legend, still draw the role terms alone when some part takes
+   * its colour from a `role` (no tag says it), so every colour drawn can be
+   * looked up (roleKeyEntries). The MDX kit sets it; visualizers leave it off.
+   */
+  showRoleKey?: boolean;
+  /**
    * Accessible role of the SVG. "img" (static pictures: the MDX kit) names it
    * with <title> and describes it with <desc>; "group" (the default, for
    * visualizers with live state or selectable nodes) uses aria-label and keeps
@@ -135,7 +143,7 @@ export type LegendEntry =
   /** `tones`: the colours this line style takes in the figure (control can be amber, neutral or both). */
   | { type: "edge"; style: EdgeStyle; text: string; tones: EdgeTone[] };
 
-type LegendNode = Pick<DiagramNode, "kind"> & Partial<Pick<DiagramNode, "id" | "role">>;
+type LegendNode = Pick<DiagramNode, "kind"> & Partial<Pick<DiagramNode, "id" | "role" | "state">>;
 type LegendPort = Pick<DiagramPort, "kind"> & Partial<Pick<DiagramPort, "id" | "nodeId">>;
 type LegendEdge = Pick<DiagramEdge, "style"> & Partial<Pick<DiagramEdge, "from" | "to">>;
 
@@ -163,9 +171,14 @@ export function edgeTouchesTestbench(edge: Partial<Pick<DiagramEdge, "from" | "t
  * actually draws; each entry is drawn with its colour and shape beside it.
  */
 export function legendEntries(ports: LegendPort[], edges: LegendEdge[], nodes: LegendNode[] = []): LegendEntry[] {
-  // Only roles that come from a tagged kind join the legend: a text-free `role`
-  // must not add words to the figure (DESIGN.md section 13).
-  const roles = new Set(nodes.map((n) => figureRoleOf(n.kind)));
+  // Every colour in use has its term: a role term is listed when any part is
+  // drawn in that role, whether from its kind or from a `role`. A part whose
+  // side was overridden counts under the role it is drawn in only. The terms
+  // are plain words true of every part they cover ("design", not "design
+  // (DUT)": a dut node already says DUT on its tag). DESIGN.md section 13.
+  // A node in a state (active, error, ok, dim) is drawn in the state's look,
+  // not its role's, so it adds no role term.
+  const roles = new Set(nodes.filter(drawnInRole).map((n) => effectiveRole(n.kind, n.role)));
   const kinds = new Set(ports.map((p) => p.kind));
   const tonesOf = (style: EdgeStyle): EdgeTone[] => {
     const tones = edges.filter((e) => e.style === style).map((e) => edgeToneOf(style, "normal", edgeTouchesTestbench(e, nodes, ports)));
@@ -176,6 +189,39 @@ export function legendEntries(ports: LegendPort[], edges: LegendEdge[], nodes: L
     ...PORT_LEGEND.filter((item) => item.kinds.some((k) => kinds.has(k))).map((item) => ({ type: "port" as const, kind: item.glyph, text: item.text })),
     ...EDGE_LEGEND.map((item) => ({ type: "edge" as const, style: item.style, text: item.text, tones: tonesOf(item.style) })).filter((item) => item.tones.length > 0),
   ];
+}
+
+/** Whether a node is drawn in its role's colour: a state (active, error, ok, dim) wins over the role. */
+function drawnInRole(node: LegendNode): boolean {
+  return (node.state ?? "normal") === "normal";
+}
+
+/**
+ * The role terms alone, for a figure that shows no full legend (legend off, or
+ * no lines or ports): listed only when some part drawn in its role takes that
+ * colour from a `role` rather than from a tag (a generic part with a role, or
+ * a side-overridable kind moved to the other side), so that colour can still
+ * be looked up. Tagged parts alone need no key: their tag names them. When
+ * the key shows, it lists every role colour drawn, as the full legend does.
+ */
+export function roleKeyEntries(nodes: LegendNode[]): LegendEntry[] {
+  const roleColoured = nodes.some((n) => drawnInRole(n) && assignedRoleWords(n.kind, n.role) !== null);
+  return roleColoured ? legendEntries([], [], nodes) : [];
+}
+
+/** A row of legend entries, each term with its colour and shape drawn beside it. */
+export function DiagramLegend({ entries, as: Tag = "figcaption", className }: { entries: LegendEntry[]; as?: "figcaption" | "div"; className?: string }) {
+  if (!entries.length) return null;
+  return (
+    <Tag className={cn("flex flex-wrap gap-x-4 gap-y-1.5 px-1 text-xs text-muted-foreground", className)} data-testid="diagram-legend">
+      {entries.map((entry) => (
+        <span key={`${entry.type}-${entry.text}`} className="inline-flex items-center gap-1.5">
+          <LegendSwatch entry={entry} />
+          <span>{entry.text}</span>
+        </span>
+      ))}
+    </Tag>
+  );
 }
 
 /** The legend's terms, in order. */
@@ -368,6 +414,7 @@ export function BlockDiagram({
   onSelect,
   minWidth = 320,
   showLegend = false,
+  showRoleKey = false,
   role = "group",
   description,
   spreadAnchors = false,
@@ -376,7 +423,7 @@ export function BlockDiagram({
   const id = useId();
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const routes = routeEdges(nodes, ports, edges, { spreadAnchors });
-  const legend = showLegend ? legendEntries(ports, edges, nodes) : [];
+  const legend = showLegend ? legendEntries(ports, edges, nodes) : showRoleKey ? roleKeyEntries(nodes) : [];
 
   // A container inside another container draws no fill, so nested tints (TEST, ENV, AGT) do not stack.
   const nestedContainers = new Set(
@@ -604,16 +651,7 @@ export function BlockDiagram({
           })}
         </svg>
       </DiagramScrollFrame>
-      {legend.length ? (
-        <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 px-1 text-xs text-muted-foreground" data-testid="diagram-legend">
-          {legend.map((entry) => (
-            <span key={`${entry.type}-${entry.text}`} className="inline-flex items-center gap-1.5">
-              <LegendSwatch entry={entry} />
-              <span>{entry.text}</span>
-            </span>
-          ))}
-        </figcaption>
-      ) : null}
+      <DiagramLegend entries={legend} className="mt-2" />
     </figure>
   );
 }

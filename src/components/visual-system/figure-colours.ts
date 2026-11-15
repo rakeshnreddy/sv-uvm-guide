@@ -38,34 +38,79 @@ export function isAssignedRole(value: unknown): value is AssignedRole {
 }
 
 /**
+ * Kinds that lessons use on both sides, so a `role` may set their side
+ * (DESIGN.md section 13, "Assigning roles in lessons"). A `fifo` is a mailbox,
+ * a uvm_tlm_fifo or an analysis FIFO by default (testbench), but lessons also
+ * draw RTL FIFOs and buffers inside a design block with it; a `reg` is a
+ * register-model register by default, but lessons also draw hardware
+ * registers with it. On these kinds `role: "design"` draws the part as design
+ * (violet, square corners) and keeps its tag, text and geometry; the role is
+ * then said in words, as for a generic node. Every other tagged kind keeps its
+ * own side, and a role that disagrees with it is a data error.
+ *
+ * The one list: scripts/check-mdx.mjs reads it from this file, and
+ * figure-guard.py and figure-scan.py mirror it (a unit test keeps them equal).
+ */
+export const SIDE_OVERRIDABLE_KINDS = ["fifo", "reg"] as const satisfies readonly DiagramNodeKind[];
+
+export function isSideOverridable(kind: DiagramNodeKind | undefined): boolean {
+  return kind !== undefined && (SIDE_OVERRIDABLE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * The side a tagged kind sits on by default: "design" for dut, "testbench" for
+ * the bench kinds and for reg (the register model is the testbench's copy of
+ * the registers), null for generic and interface (an interface joins both).
+ */
+function defaultSideOf(kind: DiagramNodeKind | undefined): AssignedRole | null {
+  const own = figureRoleOf(kind);
+  if (own === "design" || own === "testbench") return own;
+  return own === "register" ? "testbench" : null;
+}
+
+/**
+ * Whether `role` moves a node of a side-overridable kind to the other side
+ * from its kind's default (an RTL FIFO with role "design").
+ */
+export function overridesSide(kind: DiagramNodeKind | undefined, role: unknown): role is AssignedRole {
+  return isSideOverridable(kind) && isAssignedRole(role) && role !== defaultSideOf(kind);
+}
+
+/**
  * The role a node is drawn in: the role of its kind when the kind has one (its
- * tag says it), else its assigned role. A value that is not a role is ignored
+ * tag says it), unless the kind is side-overridable and its `role` names the
+ * other side; else its assigned role. A value that is not a role is ignored
  * here and reported by the layout as a data error (roleProblem), so a typo
  * never breaks the drawing.
  */
 export function effectiveRole(kind: DiagramNodeKind | undefined, role?: AssignedRole): FigureRole {
+  if (overridesSide(kind, role)) return role as AssignedRole;
   const own = figureRoleOf(kind);
   if (own !== "generic") return own;
   return isAssignedRole(role) ? role : "generic";
 }
 
 /**
- * The role words to say for a node whose role comes from `role` rather than
- * from a tagged kind (a kind's tag already says it), or null.
+ * The role words to say for a node whose side comes from `role` rather than
+ * from a tagged kind (a kind's tag already says it), or null. An overridden
+ * side is said too: a FIFO tag alone would read as the testbench default.
  */
 export function assignedRoleWords(kind: DiagramNodeKind | undefined, role: AssignedRole | undefined): string | null {
-  if (!role || figureRoleOf(kind) !== "generic") return null;
-  return isAssignedRole(role) ? roleWords[role] : null;
+  if (!isAssignedRole(role)) return null;
+  if (figureRoleOf(kind) === "generic" || overridesSide(kind, role)) return roleWords[role];
+  return null;
 }
 
 /**
  * A data error for a `role` value, or null: the value must be one of
  * ASSIGNABLE_ROLES, and on a node whose kind already has a role it must agree
- * with it (a DRV tag drawn violet would contradict itself).
+ * with it (a DRV tag drawn violet would contradict itself), except on a
+ * side-overridable kind, where either side is allowed.
  */
 export function roleProblem(subject: string, kind: DiagramNodeKind | undefined, role: unknown): string | null {
   if (role === undefined) return null;
   if (!isAssignedRole(role)) return `${subject} has role "${String(role)}"; use one of ${ASSIGNABLE_ROLES.map((r) => `"${r}"`).join(", ")}.`;
+  if (isSideOverridable(kind)) return null;
   const own = figureRoleOf(kind);
   if (own !== "generic" && own !== role) return `${subject} has kind "${kind}" (${own}) but role "${role}"; drop the role or make them agree.`;
   return null;
@@ -119,7 +164,7 @@ export const roleStyles: Record<FigureRole, RoleStyle> = {
     containerRadius: 4,
     lifeline: "stroke-fig-violet/50",
     swatch: "rounded-[2px] border-fig-violet bg-fig-violet-fill",
-    legend: "design (DUT)",
+    legend: "design",
   },
   testbench: {
     box: "fill-fig-amber-fill stroke-fig-amber",

@@ -23,8 +23,9 @@ applied to the base, so roles already there may stay). Tags are found by a
 scanner that skips quoted strings, {…} expressions and inline code, so a "<"
 inside a string never starts a tag. It fails, printing the first differing
 hunk, on any other change, and also when a role or data-fig value is not
-allowed, when a data-fig sits outside an <svg>, or when a role appears anywhere
-else. A role or data-fig that the base had and the file drops or changes is
+allowed, when a role disagrees with a tagged kind (any allowed role passes on
+a side-overridable kind: fifo, reg), when a data-fig sits outside an <svg>, or
+when a role appears anywhere else. A role or data-fig that the base had and the file drops or changes is
 printed as a note; with --strict it fails. Standard library only. The rules are in
 docs/planning/site-design-refresh-2026-11-10/DESIGN.md section 13,
 "Assigning roles in lessons".
@@ -60,8 +61,14 @@ FIG_TAGS = ("path", "rect", "circle", "ellipse", "polygon", "polyline", "line", 
 # The role a tagged kind already has (figure-colours.ts figureRoleOf); any other
 # tagged kind is testbench. A role must agree with it.
 KIND_ROLE = {"generic": None, "dut": "design", "interface": "interface", "reg": "register"}
+# Kinds that lessons use on both sides (an RTL FIFO inside a design block, a
+# hardware register): a role may set their side, so any allowed role passes on
+# them. Mirrors SIDE_OVERRIDABLE_KINDS in figure-colours.ts (a unit test keeps
+# them equal). On every other tagged kind a disagreeing role is an error.
+SIDE_OVERRIDABLE_KINDS = ("fifo", "reg")
 
 ROLE_PROP = re.compile(r"""["']?role["']?\s*:\s*(?:"([^"]*)"|'([^']*)')""")
+KIND_PROP = re.compile(r"""["']?kind["']?\s*:\s*(?:"([^"]*)"|'([^']*)')""")
 
 
 def _blank(m):
@@ -348,9 +355,10 @@ def top_level_roles(text, a, b):
     for j, m, obj, at in found:
         seen[at] = seen.get(at, 0) + 1
         value = m.group(1) if m.group(1) is not None else m.group(2)
-        kind = re.search(r"""["']?kind["']?\s*:\s*["']([\w-]+)["']""", obj)
-        if kind and KIND_ROLE.get(kind.group(1), "testbench") not in (None, value):
-            value = f"{value}\0{kind.group(1)}"
+        m_kind = top_level_key(obj, KIND_PROP)
+        kind = None if m_kind is None else (m_kind.group(1) if m_kind.group(1) is not None else m_kind.group(2))
+        if kind and kind not in SIDE_OVERRIDABLE_KINDS and KIND_ROLE.get(kind, "testbench") not in (None, value):
+            value = f"{value}\0{kind}"
         before = text[:j].rstrip()
         if before.endswith(","):
             # `, role: "x"`: cut from the comma before it.
@@ -364,6 +372,33 @@ def top_level_roles(text, a, b):
         if seen[at] > 1:
             out = [o for o in out if o[0] != j] + [(j, None, None, "\0\0duplicate")]
     return out
+
+
+def top_level_key(obj, prop):
+    """The match of `prop` written as a top-level key of the object text obj ("{…}"),
+    else None. Keys inside strings or nested objects are not read, so a label
+    that says "kind: 'fifo'" is not the object's kind."""
+    end = _scan_braced(obj, 1)
+    j, prev = 1, 0  # prev: index of the last `{` or `,` at the object's top level
+    while j < end - 1:
+        d = obj[j]
+        if d in "\"'`":
+            m = prop.match(obj, j)
+            if m and obj[prev + 1:j].strip() == "":
+                return m
+            j = _skip_string(obj, j)
+            continue
+        if d in "{[(":
+            j = _scan_braced(obj, j + 1)
+            continue
+        if d == ",":
+            prev = j
+        elif d.isalpha() and obj[prev + 1:j].strip() == "":
+            m = prop.match(obj, j)
+            if m:
+                return m
+        j += 1
+    return None
 
 
 def inside(pos, spans):
@@ -670,6 +705,29 @@ KIT_BASE = """Some text about the role of a design.
 
 def selftest():
     base = KIT_BASE + SVG_BASE
+    # A base with tagged kinds: two side-overridable (fifo, reg) and two that are not (driver, dut).
+    side_base = base.replace(
+        '{ id: "s", label: "Slave", col: 1, row: 0 }',
+        '{ id: "s", label: "Slave", col: 1, row: 0 },\n'
+        '    { id: "f", label: "write buffer", kind: "fifo", col: 2, row: 0 },\n'
+        '    { id: "r", label: "ctx_reg", kind: "reg", col: 3, row: 0 },\n'
+        '    { id: "d", label: "drv", kind: "driver", col: 4, row: 0 },\n'
+        '    { id: "u", label: "dut", kind: "dut", col: 5, row: 0 }',
+    ).replace('{ "id": "b", "label": "B" }', '{ "id": "b", "label": "B" },\n    { id: "q", label: "buffer", kind: "fifo" }')
+    # The same base, with labels that quote another kind: kind is read as a top-level key, never from a label.
+    label_base = side_base.replace('label: "drv", kind: "driver"', 'label: "kind: \'fifo\' note", kind: "driver"').replace('label: "write buffer", kind: "fifo"', 'label: "kind: \'driver\' buffer", kind: "fifo"')
+    side_cases = [
+        ("role design on a side-overridable fifo node passes", side_base.replace('label: "write buffer", kind: "fifo"', 'label: "write buffer", kind: "fifo", role: "design"'), True),
+        ("role design on a side-overridable reg node passes", side_base.replace('label: "ctx_reg", kind: "reg"', 'label: "ctx_reg", kind: "reg", role: "design"'), True),
+        ("role testbench (its default side) on a fifo node passes", side_base.replace('label: "write buffer", kind: "fifo"', 'label: "write buffer", kind: "fifo", role: "testbench"'), True),
+        ("role design on a side-overridable fifo participant passes", side_base.replace('label: "buffer", kind: "fifo"', 'label: "buffer", kind: "fifo", role: "design"'), True),
+        ("role design on a driver (not side-overridable) fails", side_base.replace('label: "drv", kind: "driver"', 'label: "drv", kind: "driver", role: "design"'), False),
+        ("role testbench on a dut (not side-overridable) fails", side_base.replace('label: "dut", kind: "dut"', 'label: "dut", kind: "dut", role: "testbench"'), False),
+        ("a disallowed role on a side-overridable fifo still fails", side_base.replace('label: "write buffer", kind: "fifo"', 'label: "write buffer", kind: "fifo", role: "register"'), False),
+        ("a role on a driver whose label says kind: 'fifo' still fails (kind is read as a top-level key)", label_base.replace('kind: "driver"', 'kind: "driver", role: "design"'), False),
+        ("...and role design on a fifo whose label says kind: 'driver' passes", label_base.replace('kind: "fifo", col: 2', 'kind: "fifo", role: "design", col: 2'), True),
+        ("a changed kind on a side-overridable node fails", side_base.replace('label: "write buffer", kind: "fifo"', 'label: "write buffer", kind: "generic", role: "design"'), False),
+    ]
     cases = [
         ("allowed kit roles in two quotings pass", base.replace('kind: "generic", col: 0', 'kind: "generic", role: "design", col: 0').replace('label: "Slave", col', "label: \"Slave\", role: 'design', col").replace('{ id: "a", label: "A" }', '{ id: "a", label: "A", role: "testbench" }').replace('"label": "B" }', '"label": "B", "role": "design" }'), True),
         ("a role written first in its object passes", base.replace('{ id: "m",', '{ role: "design", id: "m",'), True),
@@ -727,7 +785,7 @@ def selftest():
         ("tint on a <g> passes", base.replace('<g transform="translate(0 0)">', '<g transform="translate(0 0)" data-fig="design tint">'), True),
         ("tint on a closed polygon inside a <marker> fails", base.replace('<path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1" />', '<polygon points="1,1 9,5 1,9" fill="none" stroke="currentColor" data-fig="design tint" />'), False),
         ("two data-fig attributes on one tag fail (A10)", base.replace('fillOpacity="0.6" />', 'fillOpacity="0.6" data-fig="design" data-fig="testbench" />'), False),
-    ]
+    ] + side_cases
     # Bases for the two code-sample cases differ from `base`; compare those with their own base.
     own_base = {
         "...and the same sample with a role in it fails": base + '\n```mdx\n<ArchitectureDiagram nodes={[{ id: "a", label: "A", col: 0, row: 0 }]} />\n```\n',
@@ -738,6 +796,8 @@ def selftest():
         "data-fig on a <title> fails": base.replace('<rect x="0" y="0"', '<title>Bars</title>\n  <rect x="0" y="0"'),
         "tint on a closed polygon inside a <marker> fails": base.replace('<path d="M1,1 L9,5 L1,9" fill="none" stroke="currentColor" strokeWidth="1" />', '<polygon points="1,1 9,5 1,9" fill="none" stroke="currentColor" />'),
     }
+    own_base.update({name: side_base for name, _, _ in side_cases})
+    own_base.update({name: label_base for name, _, _ in side_cases if "label says" in name})
     failed = 0
     for name, text, expect in cases:
         ok, msg = check(own_base.get(name, base), text, "selftest.mdx")
