@@ -418,20 +418,21 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
     ],
   },
   // Each lesson opens its own scenario and picker; the picker's length changes the height as much as the scenario does.
-  // Mid-band heights measured on 2026-11-15 at 1100 px.
+  // Mid-band heights measured on 2026-11-15 at 1100 px; re-measured on 2026-11-16 at 1440, 1100 and 390 px (every
+  // instance) after the figure title strip: the openings with a figure are 8 px taller.
   TimeSlotTraceVisualizer: {
-    height: 1059,
-    midHeight: 1073,
-    mobileHeight: 1699,
+    height: 1067,
+    midHeight: 1081,
+    mobileHeight: 1707,
     variants: [
-      { when: propIs("scenario", "shift-blocking"), height: 1240, midHeight: 1228, mobileHeight: 1916 },
-      { when: propIs("scenario", "shift-nba"), height: 1202, midHeight: 1190, mobileHeight: 1764 },
-      { when: propIs("scenario", "display-vs-strobe"), height: 1059, midHeight: 1073, mobileHeight: 1699 },
+      { when: propIs("scenario", "shift-blocking"), height: 1248, midHeight: 1236, mobileHeight: 1924 },
+      { when: propIs("scenario", "shift-nba"), height: 1210, midHeight: 1198, mobileHeight: 1772 },
+      { when: propIs("scenario", "display-vs-strobe"), height: 1067, midHeight: 1081, mobileHeight: 1707 },
       { when: propIs("scenario", "f3a-one-edge"), height: 901, midHeight: 901, mobileHeight: 1185 },
       { when: propIs("scenario", "gclk-interleave"), height: 659, midHeight: 659, mobileHeight: 870 },
-      { when: propIs("scenario", "tb-blocking-drive"), height: 1136, midHeight: 1184, mobileHeight: 1888 },
-      { when: propIs("scenario", "tb-nba-drive"), height: 1136, midHeight: 1264, mobileHeight: 1888 },
-      { when: propIs("scenario", "tb-clocking-block"), height: 1045, midHeight: 1093, mobileHeight: 1739 },
+      { when: propIs("scenario", "tb-blocking-drive"), height: 1144, midHeight: 1192, mobileHeight: 1896 },
+      { when: propIs("scenario", "tb-nba-drive"), height: 1144, midHeight: 1272, mobileHeight: 1896 },
+      { when: propIs("scenario", "tb-clocking-block"), height: 1053, midHeight: 1101, mobileHeight: 1747 },
     ],
   },
   // Each deck holds a different number of cards.
@@ -623,7 +624,8 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   },
   // Measured on 2026-11-15 at 1440, 1100 and 390 px for every instance in every lesson that embeds them
   // (F1A, F1C, F2A, F2B, F2C and flow-control, F2E, F3B, F4A, F4C, I-SV-4A, I-SV-4B, E-AI-1).
-  DesignGapChart: { height: 682, midHeight: 682, mobileHeight: 587 },
+  // DesignGapChart redrawn for the new figure look; re-measured on 2026-11-16 (F1A, its one instance).
+  DesignGapChart: { height: 758, midHeight: 754, mobileHeight: 603 },
   ShiftLeftTimeline: { height: 1235, midHeight: 1235, mobileHeight: 2201 },
   StringMethodExplorer: { height: 574, midHeight: 574, mobileHeight: 690 },
   // The game opens on its short start card.
@@ -710,13 +712,14 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
     ],
   },
   // The base is the full lab with no props (I-SV-4A, I-SV-4B, E-AI-1); the learn-only presets in Tier 1 are shorter.
+  // Re-measured on 2026-11-16 (every instance) after the figure title strip.
   SvaSequenceWaveformVisualizer: {
-    height: 1155,
-    midHeight: 1155,
-    mobileHeight: 1735,
+    height: 1163,
+    midHeight: 1163,
+    mobileHeight: 1743,
     variants: [
-      { when: propIs("initialPreset", "req-gnt-2"), height: 1089, midHeight: 1089, mobileHeight: 1485 },
-      { when: propIs("initialPreset", "flop-output-low"), height: 1079, midHeight: 1079, mobileHeight: 1487 },
+      { when: propIs("initialPreset", "req-gnt-2"), height: 1097, midHeight: 1097, mobileHeight: 1493 },
+      { when: propIs("initialPreset", "flop-output-low"), height: 1087, midHeight: 1087, mobileHeight: 1495 },
     ],
   },
   // Each preset opens its own trace; "reset-nba-flush" (F2C) is the base.
@@ -739,11 +742,12 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
     variants: [{ when: propIs("section", "slow"), height: 649, midHeight: 649, mobileHeight: 829 }],
   },
   AnimatedUvmTestbenchDiagram: { height: 663, midHeight: 663, mobileHeight: 1019 },
+  // Re-measured on 2026-11-16 (every instance) after the figure title strip; B-AMBA-2 states its own mid and phone heights.
   AxiChannelHandshakeVisualizer: {
-    height: 1497,
-    midHeight: 1497,
-    mobileHeight: 2427,
-    variants: [{ when: propIs("focus", "handshake"), height: 1063, midHeight: 1063, mobileHeight: 1697 }],
+    height: 1505,
+    midHeight: 1505,
+    mobileHeight: 2435,
+    variants: [{ when: propIs("focus", "handshake"), height: 1071, midHeight: 1071, mobileHeight: 1705 }],
   },
   AxiDeadlockSimulator: { height: 822, midHeight: 857, mobileHeight: 1340 },
   AxiIdOrderingVisualizer: {
@@ -809,11 +813,12 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
       { when: propIs("initialStimulus", "biased"), height: 2122, midHeight: 2122, mobileHeight: 2915 },
     ],
   },
+  // The sampling tab re-measured on 2026-11-16 after the figure title strip.
   CovergroupBuilder: {
     height: 1842,
     midHeight: 1842,
     mobileHeight: 2807,
-    variants: [{ when: propIs("initialTab", "sampling"), height: 864, midHeight: 996, mobileHeight: 1411 }],
+    variants: [{ when: propIs("initialTab", "sampling"), height: 872, midHeight: 1004, mobileHeight: 1435 }],
   },
   CurriculumDataTypeExplorer: { height: 706, midHeight: 722, mobileHeight: 1097 },
   CurriculumDataTypeQuiz: { height: 714, midHeight: 714, mobileHeight: 866 },
@@ -847,7 +852,8 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   },
   FactoryOverrideExplorerVisualizer: { height: 2199, midHeight: 2199, mobileHeight: 2746 },
   FactoryOverrideVisualizer: { height: 1626, midHeight: 1670, mobileHeight: 2537 },
-  FirstBugHuntGame: { height: 724, midHeight: 724, mobileHeight: 900 },
+  // Re-measured on 2026-11-16 (F1B) after its redesign.
+  FirstBugHuntGame: { height: 732, midHeight: 732, mobileHeight: 908 },
   FormalVsSimulationVisualizer: { height: 1371, midHeight: 1391, mobileHeight: 1968 },
   GenerateElaborationVisualizer: { height: 859, midHeight: 859, mobileHeight: 1229 },
   InteractiveUvmArchitectureDiagram: { height: 2121, midHeight: 2131, mobileHeight: 3147 },
@@ -883,10 +889,11 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   RALPredictorVisualizer: { height: 1339, midHeight: 1355, mobileHeight: 2004 },
   RalRegisterMapVisualizer: { height: 909, midHeight: 909, mobileHeight: 1394 },
   // The base is the "smoke" step-through; the debug lab and the two matrices differ.
+  // The base re-measured on 2026-11-16 after the figure title strip.
   SelfCheckBenchLab: {
-    height: 2594,
-    midHeight: 2587,
-    mobileHeight: 1618,
+    height: 2602,
+    midHeight: 2595,
+    mobileHeight: 1626,
     variants: [
       { when: all(propIs("mode", "matrix"), propIs("scope", "plan")), height: 599, midHeight: 599, mobileHeight: 687 },
       { when: propIs("mode", "matrix"), height: 728, midHeight: 728, mobileHeight: 872 },
@@ -919,8 +926,10 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   },
   TLMPortConnector: { height: 1019, midHeight: 1019, mobileHeight: 1452 },
   TelemetryEventBusVisualizer: { height: 1122, midHeight: 1078, mobileHeight: 1676 },
-  TemporalLogicExplorer: { height: 1222, midHeight: 1222, mobileHeight: 1786 },
-  TlmConnectionBuilderVisualizer: { height: 1268, midHeight: 1259, mobileHeight: 1602 },
+  // TemporalLogicExplorer, TlmConnectionBuilderVisualizer and UvmVirtualSequencerDiagram re-measured on 2026-11-16
+  // (every instance) after the figure title and legend strips.
+  TemporalLogicExplorer: { height: 1230, midHeight: 1230, mobileHeight: 1810 },
+  TlmConnectionBuilderVisualizer: { height: 1291, midHeight: 1282, mobileHeight: 1657 },
   TransactionRecordingVisualizer: { height: 1139, midHeight: 1183, mobileHeight: 1647 },
   UVMTreeExplorer: { height: 621, midHeight: 621, mobileHeight: 1021 },
   UvmContainerVisualizer: { height: 873, midHeight: 873, mobileHeight: 1061 },
@@ -928,7 +937,7 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   UvmPhasingDiagram: { height: 1203, midHeight: 1203, mobileHeight: 2008 },
   UvmPolicyVisualizer: { height: 1382, midHeight: 1498, mobileHeight: 2239 },
   UvmSequenceHierarchyVisualizer: { height: 1117, midHeight: 1117, mobileHeight: 1719 },
-  UvmVirtualSequencerDiagram: { height: 1270, midHeight: 1279, mobileHeight: 1449 },
+  UvmVirtualSequencerDiagram: { height: 1293, midHeight: 1302, mobileHeight: 1516 },
   VIPReuseVisualizer: { height: 540, midHeight: 540, mobileHeight: 756 },
   VerificationMethodologiesDiagram: { height: 1082, midHeight: 1082, mobileHeight: 1723 },
   VerificationMethodsExplorer: {

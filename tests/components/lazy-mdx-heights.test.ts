@@ -9,7 +9,7 @@ const option = (length: number) => ({ text: "x".repeat(length), correct: false }
 
 describe("placeholder heights re-measured on 2026-11-11", () => {
   it("gives the time-slot trace visualizer its measured height per scenario, not one value for all", () => {
-    expect(lazyMdxInteractivePlaceholder("TimeSlotTraceVisualizer", { scenario: "shift-blocking" })).toMatchObject({ height: 1240, mobileHeight: 1916 });
+    expect(lazyMdxInteractivePlaceholder("TimeSlotTraceVisualizer", { scenario: "shift-blocking" })).toMatchObject({ height: 1248, mobileHeight: 1924 });
     expect(lazyMdxInteractivePlaceholder("TimeSlotTraceVisualizer", { scenario: "gclk-interleave" })).toMatchObject({ height: 659, mobileHeight: 870 });
     expect(lazyMdxInteractivePlaceholder("ProceduralBlocksSimulator", { scenario: "decl-init-ready" })).toMatchObject({ height: 645, mobileHeight: 975 });
   });
@@ -103,7 +103,7 @@ describe("placeholder heights measured on 2026-11-15 for all interactives", () =
   };
 
   it("gives the F1 to F4 and SVA interactives their measured heights, per opening", () => {
-    expect(heights("DesignGapChart")).toEqual({ height: 682, midHeight: 682, mobileHeight: 587 });
+    expect(heights("DesignGapChart")).toEqual({ height: 758, midHeight: 754, mobileHeight: 603 });
     expect(heights("ShiftLeftTimeline")).toEqual({ height: 1235, midHeight: 1235, mobileHeight: 2201 });
     expect(heights("StringMethodExplorer")).toEqual({ height: 574, midHeight: 574, mobileHeight: 690 });
     expect(heights("PacketSorterGame")).toEqual({ height: 364, midHeight: 364, mobileHeight: 552 });
@@ -144,9 +144,9 @@ describe("placeholder heights measured on 2026-11-15 for all interactives", () =
     expect(heights("SVSchedulerRegionVisualizer", { mode: "next-region", scenario: "comb-after-nba", scenarios: tour })).toEqual({ height: 775, midHeight: 775, mobileHeight: 1232 });
     expect(heights("SVSchedulerRegionVisualizer", { scenario: "clocking-drive", scenarios: ["clocking-drive"] })).toEqual({ height: 993, midHeight: 1061, mobileHeight: 1640 });
 
-    expect(heights("SvaSequenceWaveformVisualizer")).toEqual({ height: 1155, midHeight: 1155, mobileHeight: 1735 });
-    expect(heights("SvaSequenceWaveformVisualizer", { initialPreset: "req-gnt-2", modes: ["learn"] })).toEqual({ height: 1089, midHeight: 1089, mobileHeight: 1485 });
-    expect(heights("SvaSequenceWaveformVisualizer", { initialPreset: "flop-output-low", modes: ["learn"] })).toEqual({ height: 1079, midHeight: 1079, mobileHeight: 1487 });
+    expect(heights("SvaSequenceWaveformVisualizer")).toEqual({ height: 1163, midHeight: 1163, mobileHeight: 1743 });
+    expect(heights("SvaSequenceWaveformVisualizer", { initialPreset: "req-gnt-2", modes: ["learn"] })).toEqual({ height: 1097, midHeight: 1097, mobileHeight: 1493 });
+    expect(heights("SvaSequenceWaveformVisualizer", { initialPreset: "flop-output-low", modes: ["learn"] })).toEqual({ height: 1087, midHeight: 1087, mobileHeight: 1495 });
 
     expect(heights("DeferredReportVisualizer", { preset: "reset-nba-flush" })).toEqual({ height: 1076, midHeight: 1076, mobileHeight: 1478 });
     expect(heights("DeferredReportVisualizer", { preset: "assert-forms-glitch" })).toEqual({ height: 772, midHeight: 772, mobileHeight: 1146 });
@@ -188,7 +188,7 @@ describe("placeholder heights corrected on 2026-11-15 from the full re-measureme
     expect(heights("RaceConditionDebugger")).toEqual({ height: 656, midHeight: 656, mobileHeight: 895 });
     expect(heights("RaceConditionDebugger", { bench: "nba-writers" })).toEqual({ height: 687, midHeight: 731, mobileHeight: 931 });
     expect(heights("TimeSlotRegionMap")).toEqual({ height: 686, midHeight: 674, mobileHeight: 1024 });
-    expect(heights("TimeSlotTraceVisualizer", { scenario: "tb-nba-drive" })).toEqual({ height: 1136, midHeight: 1264, mobileHeight: 1888 });
+    expect(heights("TimeSlotTraceVisualizer", { scenario: "tb-nba-drive" })).toEqual({ height: 1144, midHeight: 1272, mobileHeight: 1896 });
     expect(heights("TimescaleLab", { mode: "global-precision" })).toEqual({ height: 815, midHeight: 839, mobileHeight: 1240 });
     expect(heights("TimescaleLab", { mode: "cross-scope" })).toEqual({ height: 1084, midHeight: 1084, mobileHeight: 1507 });
 
@@ -202,7 +202,7 @@ describe("placeholder heights corrected on 2026-11-15 from the full re-measureme
   });
 
   it("gives the interactives that had no measured height their own, per opening", () => {
-    expect(heights("SelfCheckBenchLab", { mode: "step", preset: "smoke" })).toEqual({ height: 2594, midHeight: 2587, mobileHeight: 1618 });
+    expect(heights("SelfCheckBenchLab", { mode: "step", preset: "smoke" })).toEqual({ height: 2602, midHeight: 2595, mobileHeight: 1626 });
     expect(heights("SelfCheckBenchLab", { mode: "matrix", scope: "plan" })).toEqual({ height: 599, midHeight: 599, mobileHeight: 687 });
     expect(heights("SelfCheckBenchLab", { mode: "matrix" })).toEqual({ height: 728, midHeight: 728, mobileHeight: 872 });
     expect(heights("InteractiveUvmArchitectureDiagram")).toEqual({ height: 2121, midHeight: 2131, mobileHeight: 3147 });
