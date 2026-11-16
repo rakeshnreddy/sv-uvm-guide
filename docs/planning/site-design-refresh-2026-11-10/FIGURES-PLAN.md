@@ -37,7 +37,7 @@ eight hand-drawn figures, two kit figures with no roles and six interactives, so
 
 ## The art direction (preview, not released)
 
-Branch `figures/art-direction` (commit `759de2cb`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
+Branch `figures/art-direction` (commit `3d1403ee`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
 branch. In short:
 
 - A figure is an instrument panel: a glass panel with a title strip and a legend strip of chips.
@@ -50,12 +50,16 @@ branch. In short:
 - Isometric drawings where the subject has layers.
 - Two settings: rich (the default) and calm (flat parts in the glass frame).
 
-Three visuals of lesson 1 were redrawn to it, with every text string unchanged:
+Five visuals of lesson 1 were redrawn to it, with every text string unchanged (the first three were reviewed
+independently; the last two are designed and not yet reviewed):
 
 - "Where a bug can be found": five stage plates on the cost ramp, divided by a lit tape-out line.
 - "Which mask layers change for each kind of fix": three isometric stacks; hatched and lit for new masks, solid for
   reused, dashed wireframe for none yet.
 - The chart in `InteractiveCostOfBugGraph`: ramped bars, the selected stage in a lit cursor column.
+- "The cost ladder with the three fix routes after tape-out" (the recap strip): the five-stages plates with their
+  numbers, and the three fix routes hanging on the tape-out line.
+- "Which masks change for each of the four decisions": the mask-layer stacks, one per decision.
 
 Before and after images (both themes) were sent to the owner on 2026-11-15; copies are in
 `test-results/design-previews/figures-art/` (not committed).
@@ -69,11 +73,13 @@ small. A fixer addressed them and a fourth reviewer rechecked. Open after the re
    strip of chips): FirstBugHuntGame, SelfCheckBenchLab, TimeSlotTraceVisualizer, TemporalLogicExplorer,
    SvaSequenceWaveformVisualizer, TlmConnectionBuilderVisualizer. About 30 components embed kit figures; all need
    measuring again with `scripts/measure-lazy-interactive-heights.cjs` after the branch is rebased.
-2. In the calm setting the cost arrow in the five-stages figure is under 3:1.
+2. (Closed on the branch after the review: in the calm setting ramp marks now keep 3:1, pinned by a test.)
 3. The cost chart's controls still move when a stage is picked at 1280 px wide and on phones (fixed at 1440 and 1100).
-4. Only four kit figures name a focal part. The teaching review lists the right part for 21 more.
-5. Six of lesson 1's eight hand-drawn figures are not redrawn. Two of them say they use the same drawing as a redrawn
-   one (the recap strip, and the four decisions), so lesson 1 must be finished before it is released.
+4. Only four kit figures name a focal part. The teaching review counted 21 more where the right part is clear, but
+   its list was not kept as data; redo that check lesson by lesson.
+5. Four of lesson 1's eight hand-drawn figures are not redrawn (the verification lifecycle, shift left, the career
+   ladder, 100% coverage of an incomplete plan), nor are the visuals of five of its interactives. The two that were
+   redrawn last (the recap strip and the four decisions) still need the independent review.
 6. Small: kit label collisions that predate this work (a tag under a step badge, a container label crossed by a
    border); sequence diagrams still read neutral; one "Predict" badge is under 4.5:1 in light mode.
 
