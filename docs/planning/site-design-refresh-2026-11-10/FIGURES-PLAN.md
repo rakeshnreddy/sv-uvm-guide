@@ -37,7 +37,7 @@ eight hand-drawn figures, two kit figures with no roles and six interactives, so
 
 ## The art direction (preview, not released)
 
-Branch `figures/art-direction` (commit `9160d480`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
+Branch `figures/art-direction` (commit `d6a09c33`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
 branch. In short:
 
 - A figure is an instrument panel: a glass panel with a title strip and a legend strip of chips.
@@ -77,8 +77,10 @@ small. A fixer addressed them and a fourth reviewer rechecked. Open after the re
 3. The cost chart's controls still move when a stage is picked at 1280 px wide and on phones (fixed at 1440 and 1100).
 4. Only four kit figures name a focal part. The teaching review counted 21 more where the right part is clear, but
    its list was not kept as data; redo that check lesson by lesson.
-5. Four of lesson 1's eight hand-drawn figures are not redrawn (the verification lifecycle, shift left, the career
-   ladder, 100% coverage of an incomplete plan), nor are the visuals of five of its interactives.
+5. All eight of lesson 1's hand-drawn figures are now redrawn. The last four (the verification lifecycle, shift left,
+   the career ladder, 100% coverage of an incomplete plan) were checked by their designer only and still need the
+   independent three-lens review. The visuals of five of the lesson's interactives are not redesigned yet
+   (DesignGapChart, FixPathDecisionLab, HallOfShameCarousel, ShiftLeftTimeline, BoundaryProbe).
 6. Small: kit label collisions that predate this work (a tag under a step badge, a container label crossed by a
    border); sequence diagrams still read neutral; one "Predict" badge is under 4.5:1 in light mode.
 
