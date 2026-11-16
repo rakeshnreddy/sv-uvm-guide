@@ -609,8 +609,7 @@ const TIER_MIXES = [0];
 
 /**
  * The stage of a figure panel (DESIGN.md section 14): the liquid frame with
- * each tier's field colour at --fig-stage, its strongest stop, over it. Calm
- * scales the field down, so rich (full strength) is the worst case.
+ * each tier's field colour at --fig-stage, its strongest stop, over it.
  */
 function stageSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
   const stage = parseFloat(vars["fig-stage"]);
@@ -787,8 +786,8 @@ describe("solid figure marks (DESIGN.md section 13)", () => {
 /*
  * Figure art direction (DESIGN.md section 14): the glass panel with its tier
  * field and title strip, parts as lit objects, wells, traces, the ordered
- * ramp, and the calm and rich settings. Every floor is checked at full
- * strength (rich); calm scales the same tokens down.
+ * ramp. There is one setting, drawn at full strength, and every floor is
+ * checked at that strength.
  */
 const ART_HUES = Object.keys(FIG_HUES) as Array<keyof typeof FIG_HUES>;
 
@@ -801,18 +800,9 @@ function objectFill(vars: Record<string, string>, hue: string, alpha: number, ba
 describe("figure art direction (DESIGN.md section 14)", () => {
   const art = css.slice(css.indexOf("Figure art direction (DESIGN.md section 14). A figure is an instrument"), css.indexOf("Print uses the light values whatever the mode on screen"));
 
-  it("has the rich setting as the default and calm as a scaled copy of it, set by data-fig-style", () => {
-    const rich = /:root,\s*\[data-fig-style="rich"\]\s*\{([^}]*)\}/.exec(art)?.[1] ?? "";
-    const calm = /\[data-fig-style="calm"\]\s*\{([^}]*)\}/.exec(art)?.[1] ?? "";
-    const read = (block: string, key: string) => parseFloat(new RegExp(`--${key}:\\s*([\\d.]+)`).exec(block)?.[1] ?? "NaN");
-    expect(read(rich, "fig-level")).toBe(1);
-    expect(read(rich, "fig-glow-level")).toBe(1);
-    expect(read(rich, "fig-field")).toBe(1);
-    // Calm is the glass frame with flat parts: a fifth of the depth, no glow and no field.
-    expect(read(calm, "fig-level")).toBeGreaterThan(0);
-    expect(read(calm, "fig-level")).toBeLessThanOrEqual(0.25);
-    expect(read(calm, "fig-glow-level")).toBe(0);
-    expect(read(calm, "fig-field")).toBe(0);
+  it("has one setting, drawn at full strength: no data-fig-style and no strength scale", () => {
+    expect(css).not.toContain("data-fig-style");
+    expect(css).not.toMatch(/--fig-(level|glow-level|field|panel-drop)\b(?!-)/);
     expect(art).not.toContain("--fig-tier-mix");
     const config = readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
     expect(config).toContain('generic: "hsl(var(--muted-foreground))"');
@@ -1014,18 +1004,10 @@ describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) 
     }
   });
 
-  // Calm quiets a solid ramp mark (the cost arrow of F1A) but not below its floor: at the opacity the .fig-ramp-mark
-  // rule gives it under calm's --fig-level, every step still holds 3:1 against what it is drawn on. Calm has no tier
-  // field, so the surround is a figure surface or a well on one; the stage surfaces are checked too, so the floor
-  // also holds wherever a quieted mark meets a tier field. (At the 60% calm used to give, ramp-1 fell to 2.2:1.)
-  it("a solid ramp mark in the calm setting: every step holds 3:1 against its surround", () => {
-    const rule = /\.fig-ramp-mark\s*\{\s*opacity:\s*calc\(([\d.]+) \+ ([\d.]+) \* var\(--fig-level\)\);/.exec(css);
-    expect(rule, "the .fig-ramp-mark rule scales with --fig-level from a floor").not.toBeNull();
-    const [floor, span] = [parseFloat(rule![1]), parseFloat(rule![2])];
-    expect(floor + span).toBeCloseTo(1, 5);
-    const calmLevel = parseFloat(/\[data-fig-style="calm"\]\s*\{[^}]*--fig-level:\s*([\d.]+)/.exec(css)?.[1] ?? "NaN");
-    const opacity = floor + span * calmLevel;
-    expect(opacity).toBeLessThan(1);
+  // A solid ramp mark (the cost arrow of F1A, class fig-ramp-mark) is drawn at full strength. It meets a well as well
+  // as a figure surface or a stage, so every step holds 3:1 against each, and against a well on each.
+  it("a solid ramp mark: every step holds 3:1 against its surround, a well included", () => {
+    expect(css).not.toMatch(/\.fig-ramp-mark\s*\{/);
     const well = hsla(vars["fig-well"]);
     const surfaces = [...figureSurfaces(vars), ...stageSurfaces(vars)].flatMap(([name, base]) => [
       [name, base] as [string, Rgb],
@@ -1033,8 +1015,7 @@ describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) 
     ]);
     for (const [surface, base] of surfaces) {
       for (const step of [1, 2, 3, 4, 5]) {
-        const mark = over(rgbOf(vars[`fig-ramp-${step}`]), opacity, base);
-        expect(rgbContrast(mark, base), `fig-ramp-${step} at ${opacity} on ${surface}`).toBeGreaterThanOrEqual(3);
+        expect(rgbContrast(rgbOf(vars[`fig-ramp-${step}`]), base), `fig-ramp-${step} on ${surface}`).toBeGreaterThanOrEqual(3);
       }
     }
   });

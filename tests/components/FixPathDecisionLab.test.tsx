@@ -50,6 +50,15 @@ describe("FixPathDecisionLab (decide mode)", () => {
     // The path is marked with text, not with several aria-current items.
     expect(tree.querySelectorAll("[aria-current]")).toHaveLength(0);
     expect(within(tree).getAllByText("(on this path)")).toHaveLength(3);
+    // The lit trace leaves step 3, goes around the skipped step 4 and ends at step 5; no lit rail runs through step 4.
+    expect(Array.from(tree.querySelectorAll("[data-rail]")).map((m) => m.getAttribute("data-rail"))).toEqual(["lit", "out", "around", "end"]);
+  });
+
+  it("bug 2: every step is on the path, so the rail is lit from step 2 to step 5", () => {
+    render(<FixPathDecisionLab preset="comparator" />);
+    lockIn(document.body, FIX_LABELS.metal);
+    const tree = within(result()!).getByRole("list", { name: /Triage steps 2 to 5/ });
+    expect(Array.from(tree.querySelectorAll("[data-rail]")).map((m) => m.getAttribute("data-rail"))).toEqual(["lit", "lit", "lit", "end"]);
   });
 
   it("bug 3: predicting metal-only diagnoses 'lines of RTL = layers' and the reveal shows a full respin", () => {

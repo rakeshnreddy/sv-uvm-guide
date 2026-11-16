@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 
 import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
@@ -73,6 +73,35 @@ const RAMP_BG = ["bg-fig-ramp-1", "bg-fig-ramp-2", "bg-fig-ramp-3", "bg-fig-ramp
 const RAMP_RING = ["ring-fig-ramp-1/25", "ring-fig-ramp-2/25", "ring-fig-ramp-3/25", "ring-fig-ramp-4/25", "ring-fig-ramp-5/25"];
 const rampStep = (i: number) => Math.min(i, RAMP_FILL.length - 1);
 
+/**
+ * Text drawn by CSS from an attribute. It takes the same room as the words but
+ * adds no text node, so it can reserve a place for words shown elsewhere
+ * without being read aloud or found twice. Always used inside an invisible,
+ * aria-hidden layer.
+ */
+function Ghost({ text }: { text: string }) {
+  return <span data-t={text} className="before:content-[attr(data-t)]" />;
+}
+
+/**
+ * A label that may be marked selected (▶ and bold). The invisible layer holds
+ * the selected form in the same grid cell, so the label takes the same room
+ * whichever stage is selected and nothing around it wraps or moves.
+ */
+function SteadyLabel({ label, active, className }: { label: string; active: boolean; className?: string }) {
+  return (
+    <span className={cn("inline-grid", className)}>
+      <span className="col-start-1 row-start-1">
+        {active ? <span aria-hidden>▶ </span> : null}
+        {label}
+      </span>
+      <span aria-hidden className="invisible col-start-1 row-start-1 font-semibold">
+        <Ghost text={`▶ ${label}`} />
+      </span>
+    </span>
+  );
+}
+
 const VIEW_OPTIONS: { value: LadderView; label: string }[] = [
   { value: "cost", label: "Cost" },
   { value: "delay", label: "Delay" },
@@ -100,13 +129,11 @@ function DelayLadder({ index }: { index: number }) {
             <li
               key={s.id}
               aria-current={active ? "step" : undefined}
-              className={cn("rounded-lg border px-2 py-1.5", active ? "border-border border-l-2 border-l-primary bg-muted" : "border-transparent")}
+              // Every row has the same 2 px left border (transparent unless selected), so the text has the same room in every row.
+              className={cn("rounded-lg border border-l-2 px-2 py-1.5", active ? "border-border border-l-primary bg-muted" : "border-transparent")}
             >
               <div className="flex items-baseline justify-between gap-2 text-xs">
-                <span className={cn(active ? "font-semibold text-foreground" : "text-muted-foreground")}>
-                  {active ? <span aria-hidden>▶ </span> : null}
-                  {s.label}
-                </span>
+                <SteadyLabel label={s.label} active={active} className={cn(active ? "font-semibold text-foreground" : "text-muted-foreground")} />
                 <span className="font-mono tabular-nums text-muted-foreground">{formatMultiplier(s.multiplier)}</span>
               </div>
               <div className={cn("mt-1 h-2 w-full rounded-sm", active ? "bg-background" : "bg-muted")} aria-hidden data-testid={`delay-bar-track-${s.id}`}>
@@ -146,6 +173,90 @@ const SHORT_LABELS: Record<string, string> = {
   field: "Field",
 };
 
+/** The cost chart's drawing units at its natural shape (8:5, the `aspect-[8/5]` of its box). */
+const CHART_W = 320;
+const CHART_H = 200;
+
+/**
+ * The cost chart's box takes its natural 8:5 shape, or more height when the
+ * readout beside it makes the card taller. This keeps the drawing's height in
+ * step with the box, so the bars and their labels fill the card at the same
+ * scale instead of leaving empty space under the chart. The box's own height
+ * never depends on the drawing, so nothing on the page moves when it changes.
+ */
+function useChartHeight(active: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [h, setH] = useState(CHART_H);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const { width, height } = el.getBoundingClientRect();
+      if (width > 0 && height > 0) setH(Math.max(CHART_H, (CHART_W * height) / width));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [active]);
+  return [ref, h] as const;
+}
+
+/**
+ * What the readout says about one stage. With `ghost`, the same layout with
+ * every word drawn by CSS (see Ghost), used only to reserve the room.
+ */
+function ReadoutBody({
+  stage,
+  view,
+  anchor,
+  ghost = false,
+}: {
+  stage: (typeof COST_STAGES)[number];
+  view: LadderView;
+  anchor: AnchorUsd;
+  ghost?: boolean;
+}) {
+  const t = (text: string) => (ghost ? <Ghost text={text} /> : text);
+  const i = COST_STAGES.indexOf(stage);
+  const vsRtl = costRatio("rtl", stage.id);
+  return (
+    <>
+      <div>
+        <p className="text-label text-muted-foreground">{t("Found at")}</p>
+        <p className="flex items-center gap-2.5 text-lg font-semibold text-foreground">
+          <span
+            aria-hidden
+            data-testid={ghost ? undefined : "stage-swatch"}
+            className={cn("h-2.5 w-2.5 flex-none rounded-[3px] border border-transparent ring-[3px]", RAMP_BG[rampStep(i)], RAMP_RING[rampStep(i)])}
+          />
+          {t(stage.label)}
+        </p>
+      </div>
+      <p className="text-foreground">
+        {t("About ")}
+        <strong>{t(formatMultiplier(stage.multiplier))}</strong>
+        {t(" the cost of catching it at spec review")}
+        {t(stage.id === "rtl" ? "." : vsRtl >= 1 ? `, and ${formatMultiplier(vsRtl)} an RTL-simulation fix.` : `, and about ${formatMultiplier(1 / vsRtl).replace("×", "1/")} of an RTL-simulation fix.`)}
+      </p>
+      <p className="text-muted-foreground">
+        <strong className="text-foreground">{t("What has to be redone: ")}</strong>
+        {t(stage.redo)}
+      </p>
+      {view === "delay" ? (
+        <p className="text-muted-foreground" data-testid={ghost ? undefined : "selected-delay"}>
+          <strong className="text-foreground">{t("Typical delay (project-dependent): ")}</strong>
+          {t(delayLabel(stage))}
+          {stage.id === DELAY_EXCEPTION_STAGE ? t(` ${DELAY_EXCEPTION_QUALIFIER}`) : null}
+        </p>
+      ) : null}
+      <p className="rounded-lg border border-dashed border-border/80 p-2 text-xs text-muted-foreground">
+        {t(`Illustrative only: if a spec-review fix costs ${formatUsd(anchor)}, this one costs about `)}
+        <strong className="text-foreground">{t(formatUsd(illustrativeCost(stage, anchor)))}</strong>
+        {t(".")}
+      </p>
+    </>
+  );
+}
+
 function CostExplorer() {
   const sliderId = useId();
   const fx = `cost-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -153,12 +264,11 @@ function CostExplorer() {
   const [anchor, setAnchor] = useState<AnchorUsd>(1_000);
   const [view, setView] = useState<LadderView>("cost");
   const stage = COST_STAGES[index];
-  const vsRtl = costRatio("rtl", stage.id);
 
   // Bar chart geometry (log scale: one step per order of magnitude).
-  const W = 320;
-  // Tall enough to fill the card beside the readout, whose height is fixed for the longest text.
-  const H = 200;
+  const W = CHART_W;
+  // The drawing is CHART_W by CHART_H at its natural shape; beside a taller readout it is drawn taller to fill its card (see useChartHeight).
+  const [plotRef, H] = useChartHeight(view === "cost");
   const top = 26;
   const bottom = 26;
   const left = 8;
@@ -203,8 +313,7 @@ function CostExplorer() {
                 i === index ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
               )}
             >
-              {i === index ? <span aria-hidden>▶ </span> : null}
-              {s.label}
+              <SteadyLabel label={s.label} active={i === index} className="place-items-center" />
             </button>
           ))}
         </div>
@@ -216,107 +325,111 @@ function CostExplorer() {
       </div>
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        {/* Top-aligned: the chart stays where it is while the readout beside it changes length. */}
+        {/* The two cards share one row height, set by the taller of them; the readout's height is the same for every stage, so the chart never moves. */}
         <figure className="flex min-w-0 flex-col rounded-xl border border-border bg-card p-3">
           {view === "delay" ? (
             <DelayLadder index={index} />
           ) : (
             <>
-              <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
-                <defs>
-                  {/* Depth for a bar: shaded toward its base (so the top is the lighter end in both modes) and a lit top rim. */}
-                  <linearGradient id={`${fx}-shade`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0.25" className="fig-stop-none" />
-                    <stop offset="1" className="fig-stop-shade" />
-                  </linearGradient>
-                  <linearGradient id={`${fx}-rim`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" className="fig-rim-top" />
-                    <stop offset="0.6" className="fig-rim-end" />
-                  </linearGradient>
-                  <filter id={`${fx}-glow`} filterUnits="userSpaceOnUse" x={-16} y={-16} width={W + 32} height={H + 32}>
-                    <feGaussianBlur stdDeviation="5" />
-                  </filter>
-                </defs>
-                {/* One faint rule per order of magnitude, from the bar that reaches it to the right edge: "this level", not an axis grid. */}
-                <g aria-hidden className="fig-fx">
-                  {COST_STAGES.map((s, i) => (
-                    <line
-                      key={s.id}
-                      x1={barX(i) + barW}
-                      x2={W - left}
-                      y1={H - bottom - barHeight(s)}
-                      y2={H - bottom - barHeight(s)}
-                      className="stroke-fig-generic"
-                      strokeOpacity={0.3}
-                      strokeWidth={1}
-                      strokeDasharray="1.5 4"
-                    />
-                  ))}
-                </g>
-                {/* The selected stage: a cursor column, as in a waveform viewer, and a glow under its bar. */}
-                <rect
-                  aria-hidden
-                  data-testid="cost-cursor"
-                  x={left + index * slot + 2}
-                  y={cursorTop}
-                  width={slot - 4}
-                  height={H - 3 - cursorTop}
-                  rx={6}
-                  className="fig-fx fill-fig-cyan-fill stroke-fig-cyan"
-                  strokeOpacity={0.55}
-                  strokeWidth={1}
-                />
-                <g aria-hidden className="fig-fx fig-fx-blur fig-glow" filter={`url(#${fx}-glow)`}>
-                  <rect x={barX(index) - 2} y={selectedTop - 2} width={barW + 4} height={barHeight(stage) + 2} rx={5} className={RAMP_FILL[rampStep(index)]} stroke="none" />
-                </g>
-                {COST_STAGES.map((s, i) => {
-                  const h = barHeight(s);
-                  const x = barX(i);
-                  const w = barW;
-                  const y = H - bottom - h;
-                  const active = i === index;
-                  const step = rampStep(i);
-                  return (
-                    <g key={s.id}>
-                      <rect
-                        data-testid={`cost-bar-${s.id}`}
-                        x={x}
-                        y={y}
-                        width={w}
-                        height={h}
-                        rx={3}
-                        // Full strength for every bar, so the ramp reads in order whichever stage is selected; solid in forced colours, the selected one outlined.
-                        className={cn("fig-solid", active ? "fig-selected" : null, RAMP_FILL[step], RAMP_STROKE[step])}
-                        strokeWidth={1.5}
-                      />
-                      <rect aria-hidden x={x} y={y} width={w} height={h} rx={3} fill={`url(#${fx}-shade)`} stroke="none" className="fig-fx pointer-events-none" />
-                      <rect
-                        aria-hidden
-                        x={x + 1.25}
-                        y={y + 1.25}
-                        width={w - 2.5}
-                        height={Math.max(0, h - 2.5)}
-                        rx={1.75}
-                        fill="none"
-                        stroke={`url(#${fx}-rim)`}
+              {/* The box: at least the drawing's natural 8:5 shape, and the rest of the card's height when the readout beside it is taller. The drawing fills it. */}
+              <div ref={plotRef} className="relative min-h-0 flex-1" data-testid="cost-chart-box">
+                <div aria-hidden className="aspect-[8/5] w-full" />
+                <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="absolute inset-0 h-full w-full">
+                  <defs>
+                    {/* Depth for a bar: shaded toward its base (so the top is the lighter end in both modes) and a lit top rim. */}
+                    <linearGradient id={`${fx}-shade`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0.25" className="fig-stop-none" />
+                      <stop offset="1" className="fig-stop-shade" />
+                    </linearGradient>
+                    <linearGradient id={`${fx}-rim`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" className="fig-rim-top" />
+                      <stop offset="0.6" className="fig-rim-end" />
+                    </linearGradient>
+                    <filter id={`${fx}-glow`} filterUnits="userSpaceOnUse" x={-16} y={-16} width={W + 32} height={H + 32}>
+                      <feGaussianBlur stdDeviation="5" />
+                    </filter>
+                  </defs>
+                  {/* One faint rule per order of magnitude, from the bar that reaches it to the right edge: "this level", not an axis grid. */}
+                  <g aria-hidden className="fig-fx">
+                    {COST_STAGES.map((s, i) => (
+                      <line
+                        key={s.id}
+                        x1={barX(i) + barW}
+                        x2={W - left}
+                        y1={H - bottom - barHeight(s)}
+                        y2={H - bottom - barHeight(s)}
+                        className="stroke-fig-generic"
+                        strokeOpacity={0.3}
                         strokeWidth={1}
-                        className="fig-fx pointer-events-none"
+                        strokeDasharray="1.5 4"
                       />
-                      <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
-                        {active ? "▼ " : ""}
-                        {formatMultiplier(s.multiplier)}
-                      </text>
-                      <text x={x + w / 2} y={H - bottom + 14} textAnchor="middle" className={cn("text-[10px]", active ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
-                        {SHORT_LABELS[s.id]}
-                      </text>
-                    </g>
-                  );
-                })}
-                <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-fig-generic" strokeOpacity={0.8} strokeWidth={1} />
-                <text x={left} y={12} className="fill-muted-foreground text-[10px]">
-                  Relative cost to fix (log scale, illustrative)
-                </text>
-              </svg>
+                    ))}
+                  </g>
+                  {/* The selected stage: a cursor column, as in a waveform viewer, and a glow under its bar. */}
+                  <rect
+                    aria-hidden
+                    data-testid="cost-cursor"
+                    x={left + index * slot + 2}
+                    y={cursorTop}
+                    width={slot - 4}
+                    height={H - 3 - cursorTop}
+                    rx={6}
+                    className="fig-fx fill-fig-cyan-fill stroke-fig-cyan"
+                    strokeOpacity={0.55}
+                    strokeWidth={1}
+                  />
+                  <g aria-hidden className="fig-fx fig-fx-blur fig-glow" filter={`url(#${fx}-glow)`}>
+                    <rect x={barX(index) - 2} y={selectedTop - 2} width={barW + 4} height={barHeight(stage) + 2} rx={5} className={RAMP_FILL[rampStep(index)]} stroke="none" />
+                  </g>
+                  {COST_STAGES.map((s, i) => {
+                    const h = barHeight(s);
+                    const x = barX(i);
+                    const w = barW;
+                    const y = H - bottom - h;
+                    const active = i === index;
+                    const step = rampStep(i);
+                    return (
+                      <g key={s.id}>
+                        <rect
+                          data-testid={`cost-bar-${s.id}`}
+                          x={x}
+                          y={y}
+                          width={w}
+                          height={h}
+                          rx={3}
+                          // Full strength for every bar, so the ramp reads in order whichever stage is selected; solid in forced colours, the selected one outlined.
+                          className={cn("fig-solid", active ? "fig-selected" : null, RAMP_FILL[step], RAMP_STROKE[step])}
+                          strokeWidth={1.5}
+                        />
+                        <rect aria-hidden x={x} y={y} width={w} height={h} rx={3} fill={`url(#${fx}-shade)`} stroke="none" className="fig-fx pointer-events-none" />
+                        <rect
+                          aria-hidden
+                          x={x + 1.25}
+                          y={y + 1.25}
+                          width={w - 2.5}
+                          height={Math.max(0, h - 2.5)}
+                          rx={1.75}
+                          fill="none"
+                          stroke={`url(#${fx}-rim)`}
+                          strokeWidth={1}
+                          className="fig-fx pointer-events-none"
+                        />
+                        <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
+                          {active ? "▼ " : ""}
+                          {formatMultiplier(s.multiplier)}
+                        </text>
+                        <text x={x + w / 2} y={H - bottom + 14} textAnchor="middle" className={cn("text-[10px]", active ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
+                          {SHORT_LABELS[s.id]}
+                        </text>
+                      </g>
+                    );
+                  })}
+                  <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-fig-generic" strokeOpacity={0.8} strokeWidth={1} />
+                  <text x={left} y={12} className="fill-muted-foreground text-[10px]">
+                    Relative cost to fix (log scale, illustrative)
+                  </text>
+                </svg>
+              </div>
               <figcaption className="mt-1 text-xs text-muted-foreground">
                 Each bar is ten times the one before it. x-axis: the stage where the bug is found.
               </figcaption>
@@ -324,34 +437,21 @@ function CostExplorer() {
           )}
         </figure>
 
-        {/* One height for the longest readout, so neither the chart card nor the controls below move as the stage changes. */}
-        <div className="min-h-[17.5rem] min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
-          <div>
-            <p className="text-label text-muted-foreground">Found at</p>
-            <p className="flex items-center gap-2.5 text-lg font-semibold text-foreground">
-              <span aria-hidden data-testid="stage-swatch" className={cn("h-2.5 w-2.5 flex-none rounded-[3px] border border-transparent ring-[3px]", RAMP_BG[rampStep(index)], RAMP_RING[rampStep(index)])} />
-              {stage.label}
-            </p>
+        {/*
+          One height for every stage: the five stages' readouts are laid out in
+          the same grid cell, invisible, under the one shown, so the card is as
+          tall as the longest at any width and neither the chart card nor the
+          controls below move as the stage changes.
+        */}
+        <div data-testid="cost-readout" className="grid min-h-[17.5rem] min-w-0 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
+          <div className="col-start-1 row-start-1 min-w-0 space-y-3">
+            <ReadoutBody stage={stage} view={view} anchor={anchor} />
           </div>
-          <p className="text-foreground">
-            About <strong>{formatMultiplier(stage.multiplier)}</strong> the cost of catching it at spec review
-            {stage.id === "rtl" ? "." : vsRtl >= 1 ? `, and ${formatMultiplier(vsRtl)} an RTL-simulation fix.` : `, and about ${formatMultiplier(1 / vsRtl).replace("×", "1/")} of an RTL-simulation fix.`}
-          </p>
-          <p className="text-muted-foreground">
-            <strong className="text-foreground">What has to be redone: </strong>
-            {stage.redo}
-          </p>
-          {view === "delay" ? (
-            <p className="text-muted-foreground" data-testid="selected-delay">
-              <strong className="text-foreground">Typical delay (project-dependent): </strong>
-              {delayLabel(stage)}
-              {stage.id === DELAY_EXCEPTION_STAGE ? ` ${DELAY_EXCEPTION_QUALIFIER}` : null}
-            </p>
-          ) : null}
-          <p className="rounded-lg border border-dashed border-border/80 p-2 text-xs text-muted-foreground">
-            Illustrative only: if a spec-review fix costs {formatUsd(anchor)}, this one costs about{" "}
-            <strong className="text-foreground">{formatUsd(illustrativeCost(stage, anchor))}</strong>.
-          </p>
+          {COST_STAGES.map((s) => (
+            <div key={s.id} aria-hidden className="invisible col-start-1 row-start-1 min-w-0 space-y-3">
+              <ReadoutBody stage={s} view={view} anchor={anchor} ghost />
+            </div>
+          ))}
         </div>
       </div>
 

@@ -48,11 +48,56 @@ export const SHIFT_LEFT_ASSUMPTIONS = [
   "Each token stands for one kind of bug, not a count of bugs.",
 ];
 
-const kindCue: Record<PlacementKind, { glyph: string; text: string; className: string }> = {
-  earliest: { glyph: "✓", text: "earliest catcher", className: "border-emerald-500/70 bg-emerald-500/10" },
-  moved: { glyph: "→", text: "moved right", className: "border-dashed border-amber-500/80 bg-amber-500/10" },
-  escaped: { glyph: "✕", text: "passed tape-out", className: "border-rose-500/70 bg-rose-500/10" },
+/*
+ * The figure (DESIGN.md section 14): the lanes are recessed trays on one time
+ * axis, each capped with its step of the fuchsia cost ramp; the tape-out line
+ * is the dashed tier-coloured line of the lesson's "Shift left" figure; each
+ * placed token is a lit object in its protected colour (emerald match, amber
+ * moved, rose error), and the token of the current step is the one focal part:
+ * full strength, raised and glowing. Every other token rests at 40%. All of it
+ * is paint: gradients and shadows drop in forced colours (box-shadow is forced
+ * off there, and each gradient carries forced-colors:bg-none) and the glows in
+ * print, where the borders, dashes and glyphs carry every meaning.
+ */
+const LIT = "shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_3px_6px_-3px_hsl(var(--fig-obj-shadow))]";
+const QUIET_BODY =
+  "bg-card bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] forced-colors:bg-none";
+
+/** Body gradients and the focal glow per state hue, written out in full so Tailwind finds them. */
+const tokenHue = {
+  emerald: {
+    full: "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))]",
+    rest: "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-emerald-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+    glow: "shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_7px_14px_-5px_hsl(var(--fig-obj-shadow)),0_0_14px_-3px_hsl(var(--fig-emerald)/calc(var(--fig-glow)*0.6))]",
+  },
+  amber: {
+    full: "bg-[linear-gradient(180deg,hsl(var(--fig-amber-body)/var(--fig-obj-top)),hsl(var(--fig-amber-body)/var(--fig-obj-bottom)))]",
+    rest: "bg-[linear-gradient(180deg,hsl(var(--fig-amber-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-amber-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+    glow: "shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_7px_14px_-5px_hsl(var(--fig-obj-shadow)),0_0_14px_-3px_hsl(var(--fig-amber)/calc(var(--fig-glow)*0.6))]",
+  },
+  rose: {
+    full: "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))]",
+    rest: "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-rose-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+    glow: "shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_7px_14px_-5px_hsl(var(--fig-obj-shadow)),0_0_14px_-3px_hsl(var(--fig-rose)/calc(var(--fig-glow)*0.6))]",
+  },
+} as const;
+
+const kindCue: Record<PlacementKind, { glyph: string; text: string; hue: keyof typeof tokenHue; className: string; cueClass: string }> = {
+  earliest: { glyph: "✓", text: "earliest catcher", hue: "emerald", className: "border-fig-emerald", cueClass: "text-fig-emerald-text" },
+  moved: { glyph: "→", text: "moved right", hue: "amber", className: "border-dashed border-fig-amber", cueClass: "text-fig-amber-text" },
+  escaped: { glyph: "✕", text: "passed tape-out", hue: "rose", className: "border-fig-rose", cueClass: "text-fig-rose-text" },
 };
+
+/** The fuchsia cost ramp, one step per lane; the lane after tape-out spans the lab (step 4) and the field (step 5). */
+const laneRamp: Record<TimelineStageId, string[]> = {
+  spec: ["bg-fig-ramp-1"],
+  rtl: ["bg-fig-ramp-2"],
+  integration: ["bg-fig-ramp-3"],
+  "after-tape-out": ["bg-fig-ramp-4", "bg-fig-ramp-5"],
+};
+
+/** A lane: a recessed tray (a well) with an inner shadow; the lanes carry the well outline of the lesson's "Shift left" figure. */
+const TRAY = "bg-[hsl(var(--fig-well))] shadow-[inset_0_2px_8px_-2px_hsl(var(--fig-obj-shadow))]";
 
 const toggleClass =
   "flex min-h-11 w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
@@ -65,26 +110,60 @@ function RevealSignal({ onReveal }: { onReveal: () => void }) {
   return null;
 }
 
-function Token({ placement, glyph, short }: { placement?: Placement; glyph: string; short: string }) {
-  const cue = placement ? kindCue[placement.kind] : null;
+const glyphDisc = "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 font-mono text-xs font-semibold";
+
+/**
+ * A token. Waiting in the tray it is a neutral glass pill. Placed, it is a lit
+ * card in the colour of its kind: the glyph and the cost on the top line, the
+ * name below (so a narrow lane never breaks a word). `focal` marks the token of
+ * the current step: full strength, raised, glowing; the others rest at 40%.
+ */
+function Token({ placement, glyph, short, focal = false }: { placement?: Placement; glyph: string; short: string; focal?: boolean }) {
+  if (!placement) {
+    return (
+      <span
+        data-testid="token-waiting"
+        className={cn("inline-flex max-w-full items-center gap-1.5 rounded-full border border-border px-2 py-1 text-xs text-foreground", QUIET_BODY, LIT)}
+      >
+        <span aria-hidden className={glyphDisc}>
+          {glyph}
+        </span>
+        <span className="min-w-0 break-words">{short}</span>
+      </span>
+    );
+  }
+  const cue = kindCue[placement.kind];
+  const hue = tokenHue[cue.hue];
   return (
     <span
-      data-testid={`token-${placement?.bug.id ?? "waiting"}`}
+      data-testid={`token-${placement.bug.id}`}
+      data-focal={focal || undefined}
       className={cn(
-        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-xs text-foreground transition-colors motion-reduce:transition-none",
-        cue ? cue.className : "border-border/70 bg-background/60",
+        "flex w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border-[1.5px] bg-card px-2 py-1.5 text-xs text-foreground transition-colors motion-reduce:transition-none forced-colors:bg-none print:shadow-none",
+        cue.className,
+        focal ? hue.full : hue.rest,
+        focal ? hue.glow : LIT,
       )}
     >
-      <span aria-hidden className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 font-mono text-xs font-semibold">
-        {glyph}
-      </span>
-      <span className="min-w-0 break-words">{short}</span>
-      {placement && cue ? (
-        <span className="shrink-0 font-mono text-xs font-semibold">
-          <span aria-hidden>{cue.glyph} </span>
+      {/*
+       * One line where the lane is full width (below md: the wrapper is `contents`,
+       * so glyph, name and cost share the token's row). From md the glyph and the
+       * cost are one row that never splits (the cost wraps beside the glyph, not
+       * under it), and the name sits below. The cost is in the foreground colour
+       * and only its glyph in the kind's hue, so every multiplier reads as one family.
+       */}
+      <span className="contents md:flex md:w-full md:min-w-0 md:items-start md:justify-between md:gap-0.5">
+        <span aria-hidden className={glyphDisc}>
+          {glyph}
+        </span>
+        <span className="order-3 ml-auto shrink-0 break-normal text-right font-mono text-xs font-semibold leading-5 text-foreground md:order-none md:min-w-0 md:shrink">
+          <span aria-hidden className={cue.cueClass}>
+            {cue.glyph}{" "}
+          </span>
           {placement.multiplierText}
         </span>
-      ) : null}
+      </span>
+      <span className={cn("order-2 min-w-0 flex-1 leading-snug md:basis-full", focal ? "font-semibold" : null)}>{short}</span>
     </span>
   );
 }
@@ -93,25 +172,26 @@ function Token({ placement, glyph, short }: { placement?: Placement; glyph: stri
  * The project timeline. Vertical below md (390 px phones), horizontal from md.
  * `placed` holds the tokens revealed so far; the rest wait in the tray.
  */
-function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; placed: Placement[] }) {
+function Timeline({ enabled, placed, current }: { enabled: ReadonlySet<ActivityId>; placed: Placement[]; current?: Placement }) {
   const placedIds = new Set(placed.map((p) => p.bug.id));
   const waiting = BUGS.filter((b) => !placedIds.has(b.id));
+  // The current token, when it moved or escaped, leaves a dashed empty slot in the lane of its earliest catcher.
+  const ghostStage = current && current.kind !== "earliest" && current.earliest.stage !== current.stage ? current.earliest.stage : null;
   const lane = (id: TimelineStageId) => {
     const stage = TIMELINE.find((s) => s.id === id)!;
     const tokens = placed.filter((p) => p.stage === id);
     const acts = ACTIVITIES.filter((a) => a.stage === id);
     return (
-      <div
-        key={id}
-        data-testid={`lane-${id}`}
-        className={cn(
-          "min-w-0 rounded-xl border p-2.5",
-          stage.afterTapeOut ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-border/70 bg-background/40",
-        )}
-      >
+      <div key={id} data-testid={`lane-${id}`} className={cn("relative min-w-0 overflow-hidden rounded-xl border border-fig-generic/55 p-2.5", TRAY)}>
+        {/* The lane's step of the cost ramp: a solid cap along the top edge, labelled by the multiplier beside the lane name. */}
+        <span aria-hidden className="absolute inset-x-0 top-0 flex h-[5px]">
+          {laneRamp[id].map((c) => (
+            <span key={c} className={cn("flex-1 [forced-color-adjust:none] forced-colors:bg-[CanvasText]", c)} />
+          ))}
+        </span>
         <p className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm font-semibold text-foreground">
           <span>{stage.label}</span>
-          <span className="font-mono text-xs font-normal text-muted-foreground">{laneMultiplierText(id)}</span>
+          <span className="font-mono text-xs font-semibold text-fig-ramp-text">{laneMultiplierText(id)}</span>
         </p>
         {acts.length > 0 ? (
           <ul aria-label={`Activities ${stage.phrase}`} className="mt-1.5 flex flex-wrap gap-1">
@@ -119,8 +199,13 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
               <li
                 key={a.id}
                 className={cn(
-                  "rounded border px-1.5 py-0.5 text-xs",
-                  enabled.has(a.id) ? "border-cyan-500/60 bg-cyan-500/10 text-foreground" : "border-dashed border-border/70 text-muted-foreground line-through",
+                  "rounded-md border px-1.5 py-0.5 text-xs",
+                  enabled.has(a.id)
+                    ? cn(
+                        "border-fig-cyan bg-card bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-cyan-body)/calc(var(--fig-obj-bottom)*0.4)))] text-foreground forced-colors:bg-none",
+                        LIT,
+                      )
+                    : "border-dashed border-fig-generic text-muted-foreground line-through",
                 )}
               >
                 {a.short}
@@ -132,8 +217,17 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
           <p className="mt-1.5 text-xs text-muted-foreground">Post-silicon validation (always runs)</p>
         )}
         <div className="mt-2 flex min-h-8 flex-col items-start gap-1.5" aria-hidden>
+          {/* The slot the current token left: an empty outline of a token holding only its number, so it borrows no legend cue. */}
+          {ghostStage === id && current ? (
+            <span
+              data-testid="token-ghost"
+              className="flex w-full items-center rounded-lg border-[1.5px] border-dashed border-fig-generic px-2 py-1.5"
+            >
+              <span className={cn(glyphDisc, "bg-transparent text-muted-foreground ring-1 ring-inset ring-fig-generic")}>{current.bug.glyph}</span>
+            </span>
+          ) : null}
           {tokens.map((p) => (
-            <Token key={p.bug.id} placement={p} glyph={p.bug.glyph} short={p.bug.short} />
+            <Token key={p.bug.id} placement={p} glyph={p.bug.glyph} short={p.bug.short} focal={p.bug.id === current?.bug.id} />
           ))}
         </div>
       </div>
@@ -142,19 +236,27 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto_1.25fr]">
+      <div className="relative grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto_1.25fr]">
         {lane("spec")}
         {lane("rtl")}
         {lane("integration")}
-        <div aria-hidden className="flex items-center gap-2 md:flex-col md:justify-center">
-          <span className="h-0 flex-1 border-t-2 border-dashed border-foreground/50 md:h-auto md:w-0 md:border-l-2 md:border-t-0" />
-          <span className="text-label text-foreground">tape-out</span>
-          <span className="h-0 flex-1 border-t-2 border-dashed border-foreground/50 md:h-auto md:w-0 md:border-l-2 md:border-t-0" />
+        {/* The tape-out line of the lesson's "Shift left" figure: dashed, in the tier colour, with its halo at half strength so the tokens lead. */}
+        <div aria-hidden className="relative flex items-center gap-2 md:flex-col md:justify-center md:px-1">
+          <span className="pointer-events-none absolute inset-x-0 top-1/2 h-[7px] -translate-y-1/2 rounded-full bg-tier-current/25 blur-[4px] forced-colors:hidden print:hidden md:inset-x-auto md:inset-y-0 md:left-1/2 md:h-auto md:w-[7px] md:-translate-x-1/2 md:translate-y-0" />
+          <span className="relative h-0 flex-1 border-t-[2.5px] border-dashed border-tier-current md:h-auto md:w-0 md:border-l-[2.5px] md:border-t-0" />
+          <span className="relative rounded-md border-[1.5px] border-tier-current bg-card px-2 py-0 text-label leading-[13px] text-foreground shadow-[inset_0_0_0_999px_hsl(var(--tier-current)/0.16)]">
+            tape-out
+          </span>
+          <span className="relative h-0 flex-1 border-t-[2.5px] border-dashed border-tier-current md:h-auto md:w-0 md:border-l-[2.5px] md:border-t-0" />
         </div>
         {lane("after-tape-out")}
+        {/* One time axis under the lanes (from md, where the lanes run left to right), as in the lesson's figure. */}
+        <span aria-hidden className="pointer-events-none absolute -bottom-[6px] left-0 right-2.5 hidden h-[3px] rounded-full bg-fig-generic forced-colors:bg-[CanvasText] md:block">
+          <span className="absolute -right-2 top-1/2 -translate-y-1/2 border-y-[4px] border-l-[8px] border-y-transparent border-l-fig-generic [forced-color-adjust:none] forced-colors:border-l-[CanvasText]" />
+        </span>
       </div>
       {waiting.length > 0 ? (
-        <div data-testid="token-tray" className="rounded-xl border border-dashed border-border/70 p-2.5" aria-hidden>
+        <div data-testid="token-tray" className={cn("rounded-xl border border-dashed border-fig-generic p-2.5", TRAY)} aria-hidden>
           <p className="text-xs text-muted-foreground">Not placed yet</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {waiting.map((b) => (
@@ -163,8 +265,23 @@ function Timeline({ enabled, placed }: { enabled: ReadonlySet<ActivityId>; place
           </div>
         </div>
       ) : null}
-      <p className="text-xs text-muted-foreground">
-        <span aria-hidden>✓</span> earliest catcher · <span aria-hidden>→</span> moved right (dashed) · <span aria-hidden>✕</span> passed tape-out
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+        <span className="fig-chip !border-fig-emerald !py-0 leading-[13px]">
+          <span aria-hidden className="font-semibold text-fig-emerald-text">✓</span> earliest catcher
+        </span>{" "}
+        {/* Each separator travels with the chip after it, so a line never ends on "·". */}
+        <span className="inline-flex items-center gap-x-1.5 whitespace-nowrap">
+          ·{" "}
+          <span className="fig-chip !border-dashed !border-fig-amber !py-0 leading-[13px]">
+            <span aria-hidden className="font-semibold text-fig-amber-text">→</span> moved right (dashed)
+          </span>
+        </span>{" "}
+        <span className="inline-flex items-center gap-x-1.5 whitespace-nowrap">
+          ·{" "}
+          <span className="fig-chip !border-fig-rose !py-0 leading-[13px]">
+            <span aria-hidden className="font-semibold text-fig-rose-text">✕</span> passed tape-out
+          </span>
+        </span>
       </p>
     </div>
   );
@@ -271,7 +388,7 @@ function RevealedRun({
           </>
         ) : null}
       </p>
-      <Timeline enabled={enabled} placed={placed} />
+      <Timeline enabled={enabled} placed={placed} current={current} />
       <PositionList placed={placed} />
       {complete ? (
         <div
@@ -352,7 +469,7 @@ export default function ShiftLeftTimeline({ preset = "shift-left", className }: 
       summary="Six kinds of bug, one project timeline. Each kind has an earliest activity that catches it reliably. Predict where one bug is found, then place the tokens."
       fidelity="illustration"
       assumptions={SHIFT_LEFT_ASSUMPTIONS}
-      className={className}
+      className={cn("fig-panel", className)}
     >
       <div className="space-y-2">
         <h4 id={presetsHeadingId} className={sectionHeadingClass}>

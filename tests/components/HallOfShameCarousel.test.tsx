@@ -11,7 +11,7 @@ vi.mock("next/image", () => ({
   },
 }));
 
-import HallOfShameCarousel, { HALL_OF_SHAME_INCIDENTS } from "@/components/curriculum/f1/HallOfShameCarousel";
+import HallOfShameCarousel, { HALL_OF_SHAME_INCIDENTS, slideMark } from "@/components/curriculum/f1/HallOfShameCarousel";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -50,6 +50,30 @@ describe("HallOfShameCarousel: verified content", () => {
       expect(a).toHaveAttribute("target", "_blank");
       expect(a).toHaveAttribute("rel", expect.stringContaining("noopener"));
     });
+  });
+});
+
+describe("HallOfShameCarousel: card pictures", () => {
+  it("draws the FDIV and Spectre pictures inline from the figure tokens, with their words unchanged and hidden as before", () => {
+    const [fdiv, , spectre] = HALL_OF_SHAME_INCIDENTS;
+    expect(fdiv.picture).toBe("fdiv");
+    expect(spectre.picture).toBe("spectre");
+    expect(fdiv.image).toBeUndefined();
+    const { container } = render(<HallOfShameCarousel predict />);
+    const pic = container.querySelector('[data-testid="incident-picture-fdiv"]') as HTMLElement;
+    expect(pic).not.toBeNull();
+    expect(pic).toHaveAttribute("aria-hidden");
+    expect(pic.textContent).toContain("FDIV");
+    expect(pic.textContent).toContain("Pentium Floating-Point Divide Bug");
+    expect(pic.textContent).toContain("A lookup table flaw corrupted rare divisions, costing Intel hundreds of millions.");
+    // No file picture and no literal colour: one focal mark, the rose cell with its ✕.
+    expect(pic.querySelector("img")).toBeNull();
+    expect(pic.innerHTML).not.toMatch(/#[0-9a-f]{3,6}\b|rgba?\(/i);
+    expect(pic.querySelectorAll(".stroke-fig-rose")).toHaveLength(1);
+    const spec = container.querySelector('[data-testid="incident-picture-spectre"]') as HTMLElement;
+    expect(spec.textContent).toContain("Spectre & Meltdown");
+    expect(spec.textContent).toContain("Speculative execution opened a side-channel into secrets.");
+    expect(spec.textContent).toContain("Worldwide patches, mitigations, and performance hits followed.");
   });
 });
 
@@ -415,5 +439,58 @@ describe("HallOfShameCarousel predict: predict-then-reveal", () => {
     render(<HallOfShameCarousel predict items={[]} />);
     expect(screen.getByText("No incidents to show.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next incident" })).toBeDisabled();
+  });
+});
+
+describe("HallOfShameCarousel: progress capsules", () => {
+  const slides = buildPredictSlides(HALL_OF_SHAME_INCIDENTS);
+  const n = HALL_OF_SHAME_INCIDENTS.length;
+
+  it("marks a card unopened, opened, right or wrong, and the summary opened only once every card is revealed", () => {
+    const revealed = new Set([0, 1, 2]);
+    expect(slideMark(slides[0], {}, new Set(), n)).toBe("unopened");
+    expect(slideMark(slides[0], {}, new Set([0]), n)).toBe("opened");
+    expect(slideMark(slides[0], { 0: true }, new Set([0]), n)).toBe("right");
+    expect(slideMark(slides[1], { 1: false }, new Set([1]), n)).toBe("wrong");
+    expect(slideMark(slides[n], {}, new Set([0, 1]), n)).toBe("unopened");
+    expect(slideMark(slides[n], {}, revealed, n)).toBe("opened");
+  });
+
+  it("marks the summary right or wrong once its common-thread prediction is locked in, never before it unlocks", () => {
+    const revealed = new Set([0, 1, 2]);
+    expect(slideMark(slides[n], {}, revealed, n, true)).toBe("right");
+    expect(slideMark(slides[n], {}, revealed, n, false)).toBe("wrong");
+    expect(slideMark(slides[n], {}, new Set([0]), n, true)).toBe("unopened");
+  });
+
+  it("shows the summary result on its capsule after the summary prediction", () => {
+    render(<HallOfShameCarousel predict />);
+    const dots = within(screen.getByRole("group", { name: "Choose an incident" })).getAllByRole("button");
+    for (let i = 0; i < n; i++) {
+      fireEvent.click(dots[i]);
+      fireEvent.click(within(slide()).getByRole("button", { name: "Reveal without predicting" }));
+    }
+    fireEvent.click(dots[n]);
+    expect(dots[n].querySelector("[data-mark]")).toHaveAttribute("data-mark", "opened");
+    const summary = slide();
+    const wrong = defaultThreadOptions().find((o) => !o.correct)!;
+    fireEvent.click(within(summary).getByLabelText(wrong.text));
+    fireEvent.click(within(summary).getByRole("button", { name: "Lock in prediction" }));
+    expect(dots[n].querySelector("[data-mark]")).toHaveAttribute("data-mark", "wrong");
+    expect(dots[n]).toHaveAccessibleName("Go to the common thread");
+  });
+
+  it("draws the marks in the dot buttons without changing their names", () => {
+    render(<HallOfShameCarousel predict />);
+    const dots = within(screen.getByRole("group", { name: "Choose an incident" })).getAllByRole("button");
+    expect(dots).toHaveLength(n + 1);
+    expect(dots[0]).toHaveAttribute("aria-current", "true");
+    for (const dot of dots) expect(dot.querySelector("[data-mark]")).toHaveAttribute("data-mark", "unopened");
+    const first = within(dots[0]).queryByText(/./);
+    expect(first).toBeNull();
+    fireEvent.click(screen.getByLabelText(HALL_OF_SHAME_INCIDENTS[0].checkOptions![1].text));
+    fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+    expect(dots[0].querySelector("[data-mark]")).toHaveAttribute("data-mark", "right");
+    expect(dots[0]).toHaveAccessibleName(`Go to incident 1: ${HALL_OF_SHAME_INCIDENTS[0].title}`);
   });
 });

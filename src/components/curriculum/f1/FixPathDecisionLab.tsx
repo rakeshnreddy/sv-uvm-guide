@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
 import { ReorderList, type ReorderItem } from "@/components/visual-system/ReorderList";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { FigureDepthDefs, glowFilter, shadowFilter } from "@/components/visual-system/figure-depth";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import { COST_STAGES } from "@/lib/bug-cost-model";
 import {
@@ -78,41 +79,157 @@ function RevealSignal({ onReveal }: { onReveal: () => void }) {
   return null;
 }
 
-const bandHeights = [12, 12, 12, 26];
-
-function bandProps(state: LayerState, hatchId: string): React.SVGProps<SVGRectElement> {
-  if (state === "new") return { fill: `url(#${hatchId})`, stroke: "currentColor", strokeWidth: 1.2 };
-  if (state === "reused") return { fill: "currentColor", fillOpacity: 0.16, stroke: "currentColor", strokeOpacity: 0.6, strokeWidth: 1 };
-  return { fill: "none", stroke: "currentColor", strokeOpacity: 0.75, strokeWidth: 1, strokeDasharray: "4 3" };
-}
-
 function describeSection(section: CrossSection): string {
   return `${section.caption}. ${section.layers.map((l) => `${l.label}: ${LAYER_STATE_LABELS[l.state]}`).join("; ")}.`;
 }
 
-/** One cross-section in the encoding of the lesson's respin figure: hatched = new mask, solid = reused, dashed = no mask yet. */
-function CrossSectionFigure({ section }: { section: CrossSection }) {
-  const hatchId = useId().replace(/:/g, "");
-  let y = 4;
+/*
+ * The cut block of the lesson's mask-layer figures (DESIGN.md section 14,
+ * "Isometric drawings"; F1A's respin and four-decisions figures), to the unit:
+ * axes at 30 degrees, a cut face 52 wide under a top 14 deep, the base plate 13
+ * thick, metal plates 7 thick and 4 apart, and new masks on a held wafer lifted
+ * 5 more. Corners are relative to a plate's top-front corner (0, 0).
+ */
+/** The lesson's units, drawn 1.3 times larger here, so the stack leads its four labels in a well of its own. */
+const S = 1.3;
+const u = (n: number) => Math.round(n * S * 10) / 10;
+const ISO = { cutX: u(-45), cutY: u(-26), backX: u(12.1), backY: u(-7), farX: u(-32.9), farY: u(-33) } as const;
+const BASE_T = u(13);
+const METAL_T = u(7);
+const PITCH = METAL_T + u(4);
+const LIFT = u(5);
+/** x of the stack's front corner, y of the base plate's top-front corner, and the drawing's size. */
+const STACK_X = 166;
+const STACK_Y = 100;
+const VIEW_W = 188;
+const VIEW_H = 124;
+
+const isoPt = (x: number, y: number, dy = 0) => `${x},${Math.round((y + dy) * 10) / 10}`;
+const topFace = [isoPt(0, 0), isoPt(ISO.backX, ISO.backY), isoPt(ISO.farX, ISO.farY), isoPt(ISO.cutX, ISO.cutY)].join(" ");
+const cutFace = (t: number) => [isoPt(ISO.cutX, ISO.cutY), isoPt(0, 0), isoPt(0, 0, t), isoPt(ISO.cutX, ISO.cutY, t)].join(" ");
+const sideFace = (t: number) => [isoPt(0, 0), isoPt(ISO.backX, ISO.backY), isoPt(ISO.backX, ISO.backY, t), isoPt(0, 0, t)].join(" ");
+const silhouette = (t: number) =>
+  [isoPt(ISO.cutX, ISO.cutY), isoPt(ISO.farX, ISO.farY), isoPt(ISO.backX, ISO.backY), isoPt(ISO.backX, ISO.backY, t), isoPt(0, 0, t), isoPt(ISO.cutX, ISO.cutY, t)].join(" ");
+/** A plate with no mask yet: a dashed wireframe of its outer edges (and the far edges of the topmost one), no fill and no shadow. */
+const wireframe = (t: number, topmost: boolean) =>
+  `M${ISO.cutX},${ISO.cutY} L0,0 L${ISO.backX},${ISO.backY} M${ISO.cutX},${ISO.cutY + t} L0,${t} L${ISO.backX},${ISO.backY + t} M${ISO.cutX},${ISO.cutY} v${t} M${ISO.backX},${ISO.backY} v${t}` +
+  (topmost ? ` M${ISO.cutX},${ISO.cutY} L${ISO.farX},${ISO.farY} L${ISO.backX},${ISO.backY}` : "");
+
+/** One plate, drawn in place (no <use>: rules that reach into a figure through its ancestors, forced colours among them, do not reach a <use> copy). */
+function Plate({ state, t, y, topmost, hatch }: { state: LayerState; t: number; y: number; topmost: boolean; hatch: string }) {
+  const at = `translate(${STACK_X} ${y})`;
+  if (state === "no-mask") {
+    return (
+      <path
+        transform={at}
+        d={wireframe(t, topmost)}
+        fill="none"
+        className="stroke-fig-generic"
+        strokeWidth={1.1}
+        strokeDasharray="4 3"
+        strokeLinejoin="round"
+        data-plate={state}
+      />
+    );
+  }
+  if (state === "reused") {
+    // Solid neutral glass: the silicon that does not change. The top face is a solid mark, so forced colours fill it.
+    const s = { stroke: "currentColor", strokeWidth: 1, strokeLinejoin: "round" as const };
+    return (
+      <g transform={at} className="text-fig-generic" data-plate={state}>
+        <polygon points={silhouette(t)} className="fill-card" stroke="none" />
+        <polygon points={topFace} className="fig-solid fig-face-top" {...s} />
+        <polygon points={cutFace(t)} className="fig-face-left" {...s} />
+        <polygon points={sideFace(t)} className="fig-face-right" {...s} />
+      </g>
+    );
+  }
+  // A new mask: the fix pays for it, so it takes the cost ramp's step (ramp-4, as in the lesson), hatched on every face.
+  const s = { fill: `url(#${hatch})`, stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" as const };
   return (
-    <figure className="space-y-1">
+    <g transform={at} className="text-fig-ramp-4" data-plate={state}>
+      <polygon points={silhouette(t)} className="fill-card" stroke="none" />
+      <polygon points={topFace} className="fig-face-top" stroke="none" />
+      <polygon points={cutFace(t)} className="fig-face-left" stroke="none" />
+      <polygon points={sideFace(t)} className="fig-face-right" stroke="none" />
+      <polygon points={topFace} {...s} />
+      <polygon points={cutFace(t)} {...s} />
+      <polygon points={sideFace(t)} {...s} />
+    </g>
+  );
+}
+
+/** Plate geometry, bottom (base) first: the model lists the layers top first. A new mask on a held wafer lifts clear of it. */
+function stackOf(section: CrossSection) {
+  const fromBottom = [...section.layers].reverse();
+  const lift = fromBottom.some((l) => l.state === "new") && fromBottom.some((l) => l.state === "reused") ? LIFT : 0;
+  let y = STACK_Y;
+  return fromBottom.map((layer, k) => {
+    if (k > 0) y -= PITCH + (fromBottom[k - 1].state !== "new" && layer.state === "new" ? lift : 0);
+    return { layer, k, y, t: k === 0 ? BASE_T : METAL_T, topmost: k === fromBottom.length - 1 };
+  });
+}
+
+/**
+ * One cross-section in the encoding of the lesson's mask-layer figures: hatched
+ * and lit (ramp-4) = new mask, solid neutral = reused, dashed wireframe = no
+ * mask yet. The count of lit plates is what the fix costs, so the new masks are
+ * the focal part: they rise and take the soft glow. Each section sits in a well.
+ */
+function CrossSectionFigure({ section }: { section: CrossSection }) {
+  const fx = useId().replace(/:/g, "");
+  const hatch = `${fx}-hatch`;
+  const stack = stackOf(section);
+  const built = stack.some((p) => p.layer.state !== "no-mask");
+  const lit = stack.filter((p) => p.layer.state === "new");
+  const labelX = STACK_X + ISO.cutX - 13;
+  return (
+    <figure
+      data-lit={lit.length}
+      className="space-y-1 rounded-xl border border-[hsl(var(--muted-foreground)/0.55)] bg-[hsl(var(--fig-well))] px-3 pb-2 pt-2.5"
+    >
       <figcaption className="text-xs font-semibold text-foreground">{section.caption}</figcaption>
-      <svg viewBox="0 0 230 92" role="img" aria-label={describeSection(section)} className="w-full max-w-xs text-foreground">
+      <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={describeSection(section)} className="mx-auto block w-full max-w-[18rem] text-foreground">
         <defs>
-          <pattern id={hatchId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.55" />
+          <pattern id={hatch} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)" className="text-fig-ramp-4">
+            <line x1="0" y1="0" x2="0" y2="5" stroke="currentColor" strokeWidth="1.5" />
           </pattern>
+          <FigureDepthDefs id={fx} hues={[]} width={VIEW_W} height={VIEW_H} />
         </defs>
-        {section.layers.map((layer, i) => {
-          const h = bandHeights[i];
-          const top = y;
-          y += h + 3;
+        {/* A stack that exists casts a shadow; a wireframe does not, because no mask exists yet. */}
+        {built ? (
+          <g aria-hidden className="fig-fx fig-fx-blur" filter={shadowFilter(fx)}>
+            <polygon transform={`translate(${STACK_X} ${STACK_Y + BASE_T + 3})`} points={topFace} className="fig-shadow" stroke="none" />
+          </g>
+        ) : null}
+        {lit.length > 0 ? (
+          <g aria-hidden className="fig-fx fig-fx-blur fig-glow-soft" filter={glowFilter(fx)}>
+            {lit.map((p) => (
+              <polygon key={p.layer.id} transform={`translate(${STACK_X} ${p.y})`} points={silhouette(p.t)} className="fill-fig-ramp-4" stroke="none" />
+            ))}
+          </g>
+        ) : null}
+        {stack.map((p) => (
+          <Plate key={p.layer.id} state={p.layer.state} t={p.t} y={p.y} topmost={p.topmost} hatch={hatch} />
+        ))}
+        {/* Labels beside the stack on leader lines, top layer first (the model's order), never on a face. */}
+        {[...stack].reverse().map((p) => {
+          const cy = p.y + ISO.cutY + p.t / 2;
+          const isNew = p.layer.state === "new";
           return (
-            <g key={layer.id} data-state={layer.state}>
-              <text x="4" y={top + h / 2 + 3.5} fontSize="10" fill="currentColor">
-                {layer.label}
+            <g key={p.layer.id} data-state={p.layer.state}>
+              <path d={`M${labelX + 3},${cy} H${STACK_X + ISO.cutX - 2}`} fill="none" className="stroke-fig-generic" strokeWidth={1} />
+              <text
+                x={labelX}
+                y={cy + 3.5}
+                fontSize="10"
+                textAnchor="end"
+                fontWeight={isNew ? 600 : undefined}
+                className={isNew ? "fill-fig-ramp-text" : undefined}
+                fill={isNew ? undefined : "currentColor"}
+              >
+                {p.layer.label}
               </text>
-              <rect x="118" y={top} width="104" height={h} rx="2" {...bandProps(layer.state, hatchId)} />
             </g>
           );
         })}
@@ -121,29 +238,96 @@ function CrossSectionFigure({ section }: { section: CrossSection }) {
   );
 }
 
+/** The layer key as a strip of chips, each with a swatch drawn like its plate. */
 function Legend() {
   // Several legends can render at once (one per kata scenario), so the pattern id must be unique.
   const base = useId().replace(/:/g, "");
   const swatch = (state: LayerState) => (
     <svg viewBox="0 0 16 12" aria-hidden className="h-3 w-4 shrink-0 text-foreground">
-      <defs>
-        <pattern id={`${base}-${state}`} width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="4" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.55" />
-        </pattern>
-      </defs>
-      <rect x="1" y="1" width="14" height="10" rx="1.5" {...bandProps(state, `${base}-${state}`)} />
+      {state === "new" ? (
+        <>
+          <defs>
+            <pattern id={`${base}-new`} width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)" className="text-fig-ramp-4">
+              <line x1="0" y1="0" x2="0" y2="4" stroke="currentColor" strokeWidth="1.3" />
+            </pattern>
+          </defs>
+          <g className="text-fig-ramp-4">
+            <rect x="1" y="1" width="14" height="10" rx="1.5" className="fig-face-left" stroke="none" />
+            <rect x="1" y="1" width="14" height="10" rx="1.5" fill={`url(#${base}-new)`} stroke="currentColor" strokeWidth="1.2" />
+          </g>
+        </>
+      ) : state === "reused" ? (
+        <rect x="1" y="1" width="14" height="10" rx="1.5" className="fig-solid fig-face-top text-fig-generic" stroke="currentColor" strokeWidth="1" />
+      ) : (
+        <rect x="1" y="1" width="14" height="10" rx="1.5" fill="none" className="stroke-fig-generic" strokeWidth="1" strokeDasharray="3 2.4" />
+      )}
     </svg>
   );
   return (
-    <ul aria-label="Layer legend" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+    <ul aria-label="Layer legend" className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
       {(["new", "reused", "no-mask"] as const).map((state) => (
-        <li key={state} className="flex items-center gap-1.5">
+        <li key={state} className="fig-chip">
           {swatch(state)}
-          {state === "new" ? "hatched: " : state === "reused" ? "solid: " : "dashed: "}
-          {LAYER_STATE_LABELS[state]}
+          <span>
+            {state === "new" ? "hatched: " : state === "reused" ? "solid: " : "dashed: "}
+            {LAYER_STATE_LABELS[state]}
+          </span>
         </li>
       ))}
     </ul>
+  );
+}
+
+/** A step on the path: cyan, the colour of the active path, with a lit top rim like a raised part. */
+const TAKEN_STEP_CLASS = "border-cyan-500/60 bg-cyan-500/[0.07] shadow-[inset_0_1px_0_hsl(var(--glass-highlight))]";
+
+/**
+ * How the rail leaves a step, down to the next one: "lit" (both steps are on
+ * the path), "out" (on the path, but the next step is skipped: the trace turns
+ * out of the node column), "around" (a skipped step: the trace passes it outside
+ * the node column, and turns back in when "rejoin" is set), "unlit" (a skipped
+ * step with no path running past it) or "end" (step 5, where every path ends).
+ */
+type RailSegment = "lit" | "out" | "around" | "unlit" | "end";
+
+/** The node column's centre is 14 px left of a card, its node 20 px down; the bypass runs at 23 px, outside the nodes. */
+const NEUTRAL_RAIL = "absolute -left-[15px] top-[25px] -bottom-[23px] border-l-[1.5px] border-dashed border-fig-generic";
+
+/**
+ * The path as a lit trace (decoration, fig-fx): a cyan rail joins the steps the
+ * path reaches, from step 2 to step 5, where every path ends. A step the path
+ * does not reach keeps a neutral dashed rail and a hollow dashed node, and the
+ * lit trace bends out of the node column and goes around it, so the colour
+ * never says the path passes a step it skips. The cards' own borders and the
+ * "(on this path)" text carry the meaning without it.
+ */
+function PathMarker({ taken, rail, rejoin = false }: { taken: boolean; rail: RailSegment; rejoin?: boolean }) {
+  return (
+    <span aria-hidden className="fig-fx" data-rail={rail}>
+      {rail === "lit" ? (
+        <>
+          <span className="absolute -bottom-7 -left-[17px] top-5 w-[6px] bg-fig-cyan/15 dark:bg-fig-cyan/25" />
+          <span className="absolute -bottom-7 -left-[15px] top-5 w-0.5 bg-fig-cyan" />
+        </>
+      ) : null}
+      {rail === "out" || rail === "around" || rail === "unlit" ? <span className={NEUTRAL_RAIL} /> : null}
+      {rail === "out" ? <span className="absolute -bottom-7 -left-[24px] top-[19px] w-[10px] rounded-tl-md border-l-2 border-t-2 border-fig-cyan" /> : null}
+      {rail === "around" ? (
+        <span
+          className={cn(
+            // Offsets count from inside the cards' 1 px border: it starts 3 px above its node to meet the line coming down, and turns in at the next node's centre.
+            "absolute -left-[24px] top-[17px] w-[10px] border-l-2 border-fig-cyan",
+            rejoin ? "-bottom-[31px] rounded-bl-md border-b-2" : "-bottom-7",
+          )}
+        />
+      ) : null}
+      <span
+        className={cn(
+          "absolute -left-[19px] top-[15px] size-2.5 rounded-full",
+          taken ? "bg-fig-cyan shadow-[0_0_0_3px_hsl(var(--fig-cyan)/0.2)]" : "border-[1.5px] border-dashed border-fig-generic",
+        )}
+      />
+    </span>
   );
 }
 
@@ -152,17 +336,27 @@ const answerWord = { yes: "yes", no: "no", depends: "depends", open: "left open"
 /** The lesson's triage tree, steps 2-5, with the path this bug takes highlighted. */
 function TriageTree({ tree }: { tree: TreeStep[] }) {
   const byStep = new Map(tree.map((t) => [t.step, t]));
+  // Step 5 ends every path, so it always counts as reached.
+  const reached = (step: number) => step === 5 || byStep.has(step as TreeStep["step"]);
+  const steps = [2, 3, 4] as const;
+  const railOf = (step: (typeof steps)[number]): RailSegment => {
+    const pathRunsPast = steps.some((s) => s < step && reached(s));
+    if (reached(step)) return reached(step + 1) ? "lit" : "out";
+    return pathRunsPast ? "around" : "unlit";
+  };
   return (
-    <ol aria-label="Triage steps 2 to 5, with the path taken" className="space-y-2">
-      {([2, 3, 4] as const).map((step) => {
+    <ol aria-label="Triage steps 2 to 5, with the path taken" className="space-y-2 pl-6">
+      {steps.map((step) => {
         const taken = byStep.get(step);
         const branches = TREE_BRANCHES[step];
         return (
           <li
             key={step}
             data-taken={taken ? "true" : "false"}
-            className={cn("rounded-xl border p-2.5 text-sm", taken ? "border-cyan-500/60 bg-cyan-500/[0.07]" : "border-dashed border-border/70 opacity-70")}
+            // A skipped card fades its words (not its path marks, which keep their 3:1); /50 on the border matches the old /70 at 70% opacity.
+            className={cn("relative rounded-xl border p-2.5 text-sm", taken ? TAKEN_STEP_CLASS : "border-dashed border-border/50 [&>p]:opacity-70")}
           >
+            <PathMarker taken={Boolean(taken)} rail={railOf(step)} rejoin={reached(step + 1)} />
             <p className="font-semibold text-foreground">
               {TREE_NODES[step].node}
               {taken ? <span className="sr-only"> (on this path)</span> : null}
@@ -181,7 +375,8 @@ function TriageTree({ tree }: { tree: TreeStep[] }) {
           </li>
         );
       })}
-      <li className="rounded-xl border border-cyan-500/60 bg-cyan-500/[0.07] p-2.5 text-sm">
+      <li className={cn("relative rounded-xl border p-2.5 text-sm", TAKEN_STEP_CLASS)}>
+        <PathMarker taken rail="end" />
         <p className="font-semibold text-foreground">
           {TREE_STEP5.node}
           <span className="sr-only"> (on this path)</span>
@@ -192,25 +387,45 @@ function TriageTree({ tree }: { tree: TreeStep[] }) {
   );
 }
 
+/** The ordered ramp (DESIGN.md section 14): one step per discovery stage, as in the cost chart, beside the stage it names. */
+const RAMP_SWATCH = [
+  "bg-fig-ramp-1 ring-fig-ramp-1/25",
+  "bg-fig-ramp-2 ring-fig-ramp-2/25",
+  "bg-fig-ramp-3 ring-fig-ramp-3/25",
+  "bg-fig-ramp-4 ring-fig-ramp-4/25",
+  "bg-fig-ramp-5 ring-fig-ramp-5/25",
+];
+
+function StageSwatch({ stageId }: { stageId: StageId }) {
+  const i = Math.max(0, COST_STAGES.findIndex((s) => s.id === stageId));
+  return <span aria-hidden data-ramp-step={i + 1} className={cn("h-2.5 w-2.5 flex-none rounded-[3px] border border-transparent ring-[3px]", RAMP_SWATCH[Math.min(i, RAMP_SWATCH.length - 1)])} />;
+}
+
+const FACT_CARD_CLASS = "rounded-lg border border-border/70 bg-background/50 p-2.5 shadow-[inset_0_1px_0_hsl(var(--glass-highlight))]";
+
 function ResultFacts({ decision, scenario }: { decision: FixDecision; scenario: FixScenario | null }) {
   return (
     <dl className="grid gap-2 text-sm grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
-      <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
+      <div className={FACT_CARD_CLASS}>
         <dt className="text-label text-muted-foreground">Rule-of-thumb cost</dt>
         <dd className="mt-0.5 text-foreground">
-          <span className="font-mono font-semibold">{decision.multiplierText}</span> at {decision.stage.label}
+          <span className="font-mono font-semibold">{decision.multiplierText}</span> at{" "}
+          <span className="ml-0.5 inline-flex items-center gap-1.5">
+            <StageSwatch stageId={decision.stage.id} />
+            {decision.stage.label}
+          </span>
         </dd>
       </div>
-      <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
+      <div className={FACT_CARD_CLASS}>
         <dt className="text-label text-muted-foreground">Typical delay (project-dependent)</dt>
         <dd className="mt-0.5 text-foreground">{decision.delay}</dd>
       </div>
-      <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
+      <div className={FACT_CARD_CLASS}>
         <dt className="text-label text-muted-foreground">What changes</dt>
         <dd className="mt-0.5 text-foreground">{decision.whatChanges}</dd>
       </div>
       {scenario?.detail ? (
-        <div className="rounded-lg border border-border/70 bg-background/50 p-2.5">
+        <div className={FACT_CARD_CLASS}>
           <dt className="text-label text-muted-foreground">The fix in detail</dt>
           <dd className="mt-0.5 text-foreground">{scenario.detail}</dd>
         </div>
@@ -221,19 +436,46 @@ function ResultFacts({ decision, scenario }: { decision: FixDecision; scenario: 
 
 function DecisionReveal({ facts, scenario, showTree = true }: { facts: BugFacts; scenario: FixScenario | null; showTree?: boolean }) {
   const decision = decide(facts);
+  const tree = showTree && decision.tree.length > 0;
+  const several = decision.sections.length > 1;
+  const sections = (
+    <div className="space-y-3">
+      <div className={cn("grid gap-3", several ? "grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))]" : "grid-cols-[repeat(auto-fit,minmax(min(100%,13.5rem),1fr))]")}>
+        {decision.sections.map((section) => (
+          <CrossSectionFigure key={section.caption} section={section} />
+        ))}
+      </div>
+      <Legend />
+    </div>
+  );
+  const factsBlock = <ResultFacts decision={decision} scenario={scenario} />;
   return (
     <div className="space-y-4" data-testid="fix-path-result">
       <p className="text-sm font-semibold text-foreground">{decision.summary}</p>
-      <div className={cn("grid gap-4", showTree && decision.tree.length > 0 && "md:grid-cols-2")}>
-        <div className="space-y-3">
-          {decision.sections.map((section) => (
-            <CrossSectionFigure key={section.caption} section={section} />
-          ))}
-          <Legend />
-        </div>
-        {showTree && decision.tree.length > 0 ? <TriageTree tree={decision.tree} /> : null}
-      </div>
-      <ResultFacts decision={decision} scenario={scenario} />
+      {several ? (
+        /* Two or three sections sit side by side in a full-width row, as in the lesson's respin figure; the triage path then sits beside the facts. */
+        <>
+          {sections}
+          {tree ? (
+            // items-start: the fact cards keep their own height instead of stretching into empty cards beside the taller path.
+            <div className="grid items-start gap-4 md:grid-cols-2">
+              <TriageTree tree={decision.tree} />
+              {factsBlock}
+            </div>
+          ) : (
+            factsBlock
+          )}
+        </>
+      ) : (
+        /* One section and its key on the left; the triage path beside it, or in the kata (no tree) the facts, so no well stands alone in an empty row. */
+        <>
+          <div className="grid gap-4 md:grid-cols-2">
+            {sections}
+            {tree ? <TriageTree tree={decision.tree} /> : factsBlock}
+          </div>
+          {tree ? factsBlock : null}
+        </>
+      )}
       <p className="text-sm text-foreground">{escapeLine(facts.stage, scenario?.escape ?? null)}</p>
     </div>
   );
@@ -575,7 +817,7 @@ export default function FixPathDecisionLab({ mode = "decide", preset, className 
       }
       fidelity="illustration"
       assumptions={FIX_PATH_ASSUMPTIONS}
-      className={className}
+      className={cn("fig-panel", className)}
     >
       {kata ? <KataMode /> : <DecideMode preset={preset} />}
     </VisualFrame>

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import { FigureDepthDefs, depthFill, glowFilter, levelFill, rimStroke, shadowFilter } from "@/components/visual-system/figure-depth";
 import { comparisonStyles, valueStyles } from "@/components/visual-system/visual-language";
 import {
   BOUNDARY_PROBE_ASSUMPTIONS,
@@ -54,10 +55,112 @@ const inputClass =
   "h-10 w-24 min-w-0 rounded-md border border-input bg-card px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** The shared segmented control is 36 px tall: lift it to 40 px on touch screens from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
-/** The frame's assumptions disclosure: a 40 px target on touch screens. */
-const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
+/** The frame's assumptions disclosure: a 40 px target on touch screens. The frame is a figure panel (DESIGN.md section 14): the tier field behind it. */
+const frameClass = "fig-panel [@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
 
 const bitClass = (b: Bit4) => (b === 1 ? valueStyles.one.className : b === 0 ? valueStyles.zero.className : valueStyles.unknown.className);
+
+/*
+ * Depth for the HTML parts of the drawing (DESIGN.md section 14), from the figure tokens only. A part is an opaque
+ * card base under a gradient in its own body hue (lighter at the top in both modes), a lit top rim and a soft shadow.
+ * At rest a part keeps 40% of its hue; the focal or state part takes it whole and sits higher. Forced colours drop
+ * the gradients and shadows, and the part's own border, text and glyph carry the meaning; print drops the glows.
+ */
+const restBody = {
+  zero: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-slate-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+  one: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-cyan-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+  match: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/calc(var(--fig-obj-top)*0.4)),hsl(var(--fig-emerald-body)/calc(var(--fig-obj-bottom)*0.4)))]",
+};
+const fullBody = {
+  zero: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/var(--fig-obj-top)),hsl(var(--fig-slate-body)/var(--fig-obj-bottom)))]",
+  one: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))]",
+  mismatch: "bg-card bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))]",
+};
+/** Resting on the panel: the lit rim and a 3 px shadow. */
+const objectRest = "shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_3px_5px_-2px_hsl(var(--fig-obj-shadow))]";
+/** Raised and lit (the focal or state part): the rim, a 7 px shadow and a glow in the state's hue. Print keeps only the rim. */
+const objectRaisedRose =
+  "relative z-[1] shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_7px_10px_-4px_hsl(var(--fig-obj-shadow)),0_0_14px_hsl(var(--fig-rose)/var(--fig-glow))] print:shadow-[inset_0_1px_0_hsl(var(--fig-obj-highlight))]";
+/**
+ * A bit of the close-up read as a one-bit trace: a 1 carries the high level along its top edge (cyan), a 0 the low
+ * level along its bottom edge (slate), so each row reads low, then a rising edge, then high, and the two edges sit
+ * one cell apart. Only the cells of the disagreement band glow (rose) and sit raised: one focal part. In forced
+ * colours, where shadows and rings drop, those cells keep a Highlight outline. Written out in full for Tailwind.
+ */
+const levelShadow = (b: Bit4, raised: boolean) =>
+  b === 1
+    ? raised
+      ? "shadow-[inset_0_2px_0_hsl(var(--fig-cyan)),0_7px_10px_-4px_hsl(var(--fig-obj-shadow)),0_0_14px_hsl(var(--fig-rose)/var(--fig-glow))]"
+      : "shadow-[inset_0_2px_0_hsl(var(--fig-cyan)),0_3px_5px_-2px_hsl(var(--fig-obj-shadow))]"
+    : raised
+      ? "shadow-[inset_0_-2px_0_hsl(var(--fig-slate)),inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_7px_10px_-4px_hsl(var(--fig-obj-shadow)),0_0_14px_hsl(var(--fig-rose)/var(--fig-glow))]"
+      : "shadow-[inset_0_-2px_0_hsl(var(--fig-slate)),inset_0_1px_0_hsl(var(--fig-obj-highlight)),0_3px_5px_-2px_hsl(var(--fig-obj-shadow))]";
+/**
+ * The band's cells in forced colours, where the ring and the glow drop: an outline in the system highlight. The style
+ * is an arbitrary property because tailwind-merge drops a bare `outline` next to `outline-2`.
+ */
+const forcedFocal = "forced-colors:[outline-style:solid] forced-colors:outline-2 forced-colors:outline-[Highlight]";
+/** A screen set into the panel (a well): the well token and a shadow cast inward from its top edge. */
+const wellClass = "rounded-lg border border-border/70 bg-[hsl(var(--fig-well))] shadow-[inset_0_2px_6px_-2px_hsl(var(--fig-obj-shadow))]";
+/** A bit on a lit body: its value colour (text and outline) from the visual language, its depth from the figure. */
+const litBit = (b: Bit4, strength: "rest" | "full" = "rest") =>
+  cn(bitClass(b), b === 1 ? (strength === "full" ? fullBody.one : restBody.one) : b === 0 ? (strength === "full" ? fullBody.zero : restBody.zero) : null, objectRest);
+
+/** Where a run of values sits on the axis, in per cent: its centre and its width (one value is 1/256 of the axis). */
+const bandSpan = (values: number[]) => {
+  const total = TEMP_MAX - TEMP_MIN + 1;
+  const start = (values[0] - TEMP_MIN) / total;
+  const end = (values[values.length - 1] - TEMP_MIN + 1) / total;
+  return { centre: ((start + end) / 2) * 100, width: (end - start) * 100 };
+};
+/** The band never draws narrower than this, so a one-value band still reads as a part at 390 px. */
+const BAND_MIN_PX = 6;
+
+/**
+ * The depth under one lane of the number line, drawn in SVG behind the lane's own HTML segments (which keep their
+ * words, borders and colours). Geometry is in per cent of the lane, so it lines up with the segments at every width.
+ * The lane is a one-bit trace over the temperature axis: low (slate) up to the threshold, a rising edge, high (cyan)
+ * after it, drawn as a lit trace. The lanes are the subject, so in light mode they take their body hue whole (at 40%
+ * they read as plain white bars); dark keeps the rest strength, which already reads as lit glass. The rising edge is
+ * drawn in the cyan ink in light mode, so it keeps 3:1 against the pale lane. The test values are not drawn here (the
+ * marker row under the lanes carries them and their verdicts), so nothing crowds the focal part: the disagreement
+ * band, drawn on the RTL lane only (where the RTL is wrong) as a filled, glowing rose segment from the Spec edge to the
+ * RTL edge, at least BAND_MIN_PX wide.
+ */
+function LaneDepth({ id, first, band }: { id: string; first: number; band: number[] }) {
+  const edge = ((first - TEMP_MIN) / (TEMP_MAX - TEMP_MIN + 1)) * 100;
+  const span = band.length ? bandSpan(band) : null;
+  const bandBox = span
+    ? { x: `calc(${span.centre}% - max(${span.width / 2}%, ${BAND_MIN_PX / 2}px))`, width: `max(${span.width}%, ${BAND_MIN_PX}px)` }
+    : null;
+  return (
+    <svg aria-hidden className="fig-fx pointer-events-none absolute inset-0 h-full w-full overflow-visible" data-testid="lane-depth">
+      <defs>
+        <FigureDepthDefs id={id} hues={["slate", "cyan"]} width={2400} height={40} level />
+      </defs>
+      <g className="fig-fx-blur" filter={shadowFilter(id)}>
+        <rect x="0.3%" y={3} width="99.4%" height="100%" rx={6} className="fig-shadow" />
+      </g>
+      <rect x="0" y="0" width="100%" height="100%" rx={6} className="fill-card" />
+      {/* Light (and print): the body hue whole. Dark: the rest strength. */}
+      <rect x="0" y="0" width={`${edge}%`} height="100%" fill={depthFill(id, "slate", "full")} className="dark:hidden" />
+      <rect x={`${edge}%`} y="0" width={`${100 - edge}%`} height="100%" fill={depthFill(id, "cyan", "full")} className="dark:hidden" />
+      <rect x="0" y="0" width={`${edge}%`} height="100%" fill={depthFill(id, "slate", "rest")} className="hidden dark:inline" />
+      <rect x={`${edge}%`} y="0" width={`${100 - edge}%`} height="100%" fill={depthFill(id, "cyan", "rest")} className="hidden dark:inline" />
+      <rect x="1.25" y="1.25" style={{ width: "calc(100% - 2.5px)", height: "calc(100% - 2.5px)" }} rx={5} fill="none" stroke={rimStroke(id)} strokeWidth={1} />
+      {/* The alarm as a one-bit trace: high after the threshold, so the cyan fill deepens toward its top edge (the high
+          level), and the rising edge at the threshold is a lit line. */}
+      <rect x={`${edge}%`} y="0" width={`${100 - edge}%`} height="100%" fill={levelFill(id)} />
+      <g className="fig-fx-blur fig-glow-soft" filter={glowFilter(id)}>
+        <line x1={`${edge}%`} x2={`${edge}%`} y1="0" y2="100%" className="stroke-fig-cyan" strokeWidth={6} />
+        {bandBox ? <rect y="-2" height="32" style={bandBox} className="fill-fig-rose" /> : null}
+      </g>
+      {/* The disagreement band: the focal part after the reveal. */}
+      {bandBox ? <rect y="0" height="100%" rx={1} style={bandBox} className="fill-fig-rose" data-testid="band-column" /> : null}
+      <line x1={`${edge}%`} x2={`${edge}%`} y1="0" y2="100%" className="stroke-fig-cyan-text dark:stroke-fig-cyan" strokeWidth={2} />
+    </svg>
+  );
+}
 
 /** One persistent polite live region, mounted from the first render so its first message is announced. */
 function LiveAnnouncement({ text }: { text: string }) {
@@ -104,25 +207,31 @@ function NumberLine({ values, fixed, run }: { values: number[]; fixed: boolean; 
   const layout = markerLayout(values, run);
   /** Reserve the rows the revealed labels (with their glyphs) need, so the line keeps its height on reveal. */
   const markerRows = Math.max(layout.rows, markerLayout(values, runChecks(values, fixed)).rows);
+  const fx = `probe-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const band = disagreementBand(fixed);
   return (
-    <figure className={cn(panel, "space-y-2")} data-testid="number-line">
+    <figure className={cn(panel, "fig-panel space-y-2")} data-testid="number-line">
       <figcaption className="text-xs text-muted-foreground">
         All {total} values of <code className={mono}>logic [7:0]</code>, {TEMP_MIN} to {TEMP_MAX}. A bar reads 1 where that side raises the alarm.
       </figcaption>
-      {rows.map((row) => {
+      {/* The screen: both lanes, the value markers and the axis sit in a well, like the traces of a logic analyser. */}
+      <div className={cn(wellClass, "space-y-1.5 px-2 pt-1")}>
+      {rows.map((row, i) => {
         const zeroWidth = ((row.first - TEMP_MIN) / total) * 100;
         const tick = row.name === "RTL" && run ? bandTickLabel(fixed) : null;
-        const band = disagreementBand(fixed);
         return (
           <div key={row.name} className="space-y-1">
             <p className="text-xs text-foreground">
               <span className="font-medium">{row.name}</span> <code className={mono}>{row.code}</code>
             </p>
-            <div className="flex h-7 overflow-hidden rounded-md" aria-hidden>
-              <div className={cn("flex items-center border px-1 text-xs", valueStyles.zero.className)} style={{ width: `${zeroWidth}%` }}>
-                alarm 0
+            <div className="relative h-7" aria-hidden>
+              <LaneDepth id={`${fx}-${i}`} first={row.first} band={run && row.name === "RTL" ? band.values : []} />
+              <div className="relative flex h-7 overflow-hidden rounded-md">
+                <div className={cn("flex items-center border px-1 text-xs", valueStyles.zero.className, "border-fig-slate/80 bg-transparent dark:border-slate-400/60")} style={{ width: `${zeroWidth}%` }}>
+                  alarm 0
+                </div>
+                <div className={cn("flex flex-1 items-center border px-1 text-xs", valueStyles.one.className, "border-fig-cyan bg-transparent dark:border-cyan-500/70")}>alarm 1</div>
               </div>
-              <div className={cn("flex flex-1 items-center border px-1 text-xs", valueStyles.one.className)}>alarm 1</div>
             </div>
             {tick && band.width ? (
               <div className="relative h-5" data-testid="band-tick">
@@ -133,6 +242,8 @@ function NumberLine({ values, fixed, run }: { values: number[]; fixed: boolean; 
                   <span aria-hidden>{comparisonStyles.mismatch.glyph}</span>
                   <span className={mono}>{tick}</span>
                 </span>
+                {/* A leader from the band on the lane above down to its tick. */}
+                <span aria-hidden className="absolute -top-1 h-1 w-0.5 -translate-x-1/2 bg-fig-rose" style={{ left: `${bandSpan(band.values).centre}%` }} />
               </div>
             ) : null}
           </div>
@@ -146,7 +257,7 @@ function NumberLine({ values, fixed, run }: { values: number[]; fixed: boolean; 
           return (
             <React.Fragment key={m.value}>
               <span
-                className="absolute top-0 -translate-x-1/2 text-xs leading-4 text-foreground"
+                className={cn("absolute top-0 -translate-x-1/2 text-xs leading-4", mark ? mark.className : "text-foreground", result && !result.pass && "z-[1]")}
                 style={{ left: `${m.at * 100}%` }}
                 data-testid={`marker-${m.value}`}
               >
@@ -167,6 +278,7 @@ function NumberLine({ values, fixed, run }: { values: number[]; fixed: boolean; 
         <span>{TEMP_MIN}</span>
         <span>{TEMP_MAX}</span>
       </div>
+      </div>
       <p className="sr-only">
         The spec raises the alarm where {rows[0].code}; the RTL raises it where {rows[1].code}. Test values: {values.join(", ") || "none"}.
         {run && bandTickLabel(fixed) ? ` They disagree at ${bandTickLabel(fixed)}.` : ""}
@@ -181,12 +293,12 @@ function BandLens({ fixed }: { fixed: boolean }) {
   const cells = LENS_VALUES.map((v) => check(v, fixed));
   const cell = "flex h-8 items-center justify-center rounded border text-xs";
   return (
-    <figure className={cn(panel, "space-y-2")} data-testid="band-lens">
+    <figure className={cn(panel, "fig-panel space-y-2")} data-testid="band-lens">
       <figcaption className="text-xs text-muted-foreground">
         Close-up of {LENS_VALUES[0]} to {LENS_VALUES[LENS_VALUES.length - 1]}. Disagreement band: <span className="font-medium text-foreground">{band.width} value{band.width === 1 ? "" : "s"} wide</span>
         {band.width ? ` (${band.text})` : ""}.
       </figcaption>
-      <table className="w-full table-fixed border-separate border-spacing-1" aria-label="Spec, RTL and the !== check for each value near the threshold">
+      <table className={cn(wellClass, "w-full table-fixed border-separate border-spacing-1 border-0 ring-1 ring-inset ring-border/70")} aria-label="Spec, RTL and the !== check for each value near the threshold">
         <colgroup>
           <col style={{ width: "3.25rem" }} />
           {cells.map((c) => (
@@ -218,7 +330,9 @@ function BandLens({ fixed }: { fixed: boolean }) {
               </th>
               {cells.map((c) => (
                 <td key={c.temp} className="p-0">
-                  <span className={cn(cell, mono, bitClass(pick(c)), c.differs && "ring-2 ring-danger")}>{String(pick(c))}</span>
+                  <span className={cn(cell, mono, litBit(pick(c), c.differs ? "full" : "rest"), c.differs && cn("relative z-[1] ring-2 ring-danger", forcedFocal), levelShadow(pick(c), c.differs === 1), "print:shadow-none")}>
+                    {String(pick(c))}
+                  </span>
                 </td>
               ))}
             </tr>
@@ -231,7 +345,13 @@ function BandLens({ fixed }: { fixed: boolean }) {
               const mark = c.differs ? comparisonStyles.mismatch : comparisonStyles.match;
               return (
                 <td key={c.temp} className="p-0">
-                  <span className={cn(cell, "border-border bg-muted", mark.className)}>
+                  <span
+                    className={cn(
+                      cell,
+                      mark.className,
+                      c.differs ? cn("border-fig-rose font-semibold", fullBody.mismatch, objectRaisedRose, forcedFocal) : cn("border-fig-emerald/60", restBody.match, objectRest),
+                    )}
+                  >
                     <span aria-hidden>{mark.glyph}</span>
                     <span className="sr-only">{c.differs ? "differ: fail" : "equal: pass"}</span>
                   </span>
@@ -286,10 +406,10 @@ function Results({ run }: { run: RunResult }) {
               <tr key={r.temp}>
                 <td className={cn("py-1", mono)}>{r.temp}</td>
                 <td className="py-1">
-                  <span className={cn("rounded border px-1.5", mono, bitClass(r.alarm))}>{String(r.alarm)}</span>
+                  <span className={cn("rounded border px-1.5", mono, litBit(r.alarm))}>{String(r.alarm)}</span>
                 </td>
                 <td className="py-1">
-                  <span className={cn("rounded border px-1.5", mono, bitClass(r.expected))}>{String(r.expected)}</span>
+                  <span className={cn("rounded border px-1.5", mono, litBit(r.expected))}>{String(r.expected)}</span>
                 </td>
                 <td className={cn("py-1 font-medium", mark.className)}>
                   <span aria-hidden>{mark.glyph} </span>

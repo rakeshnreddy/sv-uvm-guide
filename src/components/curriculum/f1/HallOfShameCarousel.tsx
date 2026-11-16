@@ -35,7 +35,9 @@ export interface HallOfShameItem {
   title: string;
   story: string;
   impact: string;
-  /** Decorative picture; optional. */
+  /** Decorative picture, drawn inline in the figure tokens (IncidentPicture); optional. */
+  picture?: IncidentPictureKind;
+  /** Decorative picture from a file, for cards given through `items`; optional. `picture` wins. */
   image?: string;
   /** The check that would have caught it, revealed on demand. */
   lesson?: string;
@@ -55,7 +57,7 @@ export interface HallOfShameItem {
 export const HALL_OF_SHAME_INCIDENTS: HallOfShameItem[] = [
   {
     title: "Intel Pentium FDIV bug (1994) · hardware",
-    image: "/visuals/pentium-fdiv.svg",
+    picture: "fdiv",
     story:
       "The Pentium's floating-point divider looked up quotient digits in a table, and entries that should have held +2 held 0. Most divisions never reached them: Intel's own analysis put the rate at about 1 in 9 billion random divides. Prof. Thomas Nicely reported wrong results in October 1994. Intel first replaced chips only for users who could show they needed the accuracy, then on 19 December 1994 offered a replacement to anyone who asked.",
     impact: "A $475 million pre-tax charge, taken in the fourth quarter of 1994, to cover replacement and inventory costs.",
@@ -138,7 +140,7 @@ export const HALL_OF_SHAME_INCIDENTS: HallOfShameItem[] = [
   },
   {
     title: "Spectre and Meltdown (disclosed January 2018) · hardware security",
-    image: "/visuals/spectre-meltdown.svg",
+    picture: "spectre",
     story:
       "Processors execute instructions speculatively and throw the results away when the guess was wrong, but the cache keeps traces of what was touched. By timing cache accesses, code can read data it was never allowed to see. The researchers reported it to vendors in June 2017 and published on 3 January 2018. Spectre was demonstrated on Intel, AMD and ARM processors; Meltdown was verified on Intel processors, and ARM reported some of its cores affected.",
     impact:
@@ -409,7 +411,9 @@ const ClassicCarousel = ({ items }: { items: HallOfShameItem[] }) => {
           className="grid gap-6 rounded-2xl border border-code-border bg-slate-900/80 p-4 shadow-inner sm:p-6 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]"
         >
           <div className="min-w-0 space-y-4">
-            {item.image ? (
+            {item.picture ? (
+              <IncidentPicture kind={item.picture} />
+            ) : item.image ? (
               <div className="relative h-48 w-full overflow-hidden rounded-2xl border border-code-border">
                 <Image src={item.image} alt="" fill sizes="(min-width: 1024px) 40vw, 90vw" className="object-cover" />
               </div>
@@ -492,6 +496,255 @@ const secondaryButton =
 const iconButton = cn(secondaryButton, "w-10 px-0");
 const labelClass = "text-label text-muted-foreground";
 
+/* --------------------------------------------------------------------------
+ * Figure depth for this carousel (DESIGN.md section 14), built from the figure
+ * tokens: the card is a lit plate on the panel's tier field, the parts that
+ * carry the idea are lit objects, and the focal part is the gap: the question
+ * the plan never asked, drawn as the lesson's coverage figure draws it (a
+ * dashed rose outline, rose being X and error). Every effect is decoration:
+ * forced colours drop the gradients, shadows and glows (the borders, dashes,
+ * glyphs and words carry the meaning), and print drops the shadows.
+ * ---------------------------------------------------------------------- */
+
+type ObjectHue = "cyan" | "rose" | "emerald";
+
+/** Drop the depth in forced colours and on paper; the border and text stay. */
+const depthFallback = "forced-colors:!bg-none forced-colors:!shadow-none print:!shadow-none";
+
+/**
+ * A lit object: a gradient in its own hue over the card (lighter at the top),
+ * the 1 px lit rim inside its top edge and a soft shadow under it. No hue is
+ * neutral glass (the primary colour at the quiet alphas). `rise` is how far it
+ * sits above the stage (3 at rest, 7 for the focal part).
+ */
+export function objectStyle({ hue, rise = 3, glow }: { hue?: ObjectHue; rise?: number; glow?: ObjectHue }): React.CSSProperties {
+  const body = hue
+    ? `linear-gradient(hsl(var(--fig-${hue}-body) / var(--fig-obj-top)), hsl(var(--fig-${hue}-body) / var(--fig-obj-bottom)))`
+    : "linear-gradient(hsl(var(--foreground) / var(--fig-quiet-top)), hsl(var(--foreground) / var(--fig-quiet-bottom)))";
+  const shadows = [`inset 0 1px 0 hsl(var(--fig-obj-highlight))`, `0 ${rise}px ${rise * 2 + 2}px -2px hsl(var(--fig-obj-shadow))`];
+  if (glow) shadows.push(`0 0 18px -2px hsl(var(--fig-${glow}) / var(--fig-glow))`);
+  return { backgroundImage: body, boxShadow: shadows.join(", ") };
+}
+
+/**
+ * A part at the quiet level (the impact, the card's lesson, the timing): neutral
+ * glass with its lit rim and no drop shadow, so it sits on the stage and the gap
+ * is the only raised, coloured object on the card.
+ */
+const quietStyle: React.CSSProperties = {
+  backgroundImage: "linear-gradient(hsl(var(--foreground) / var(--fig-quiet-top)), hsl(var(--foreground) / var(--fig-quiet-bottom)))",
+  boxShadow: "inset 0 1px 0 hsl(var(--fig-obj-highlight))",
+};
+
+/** The stage plate a slide sits on: the card raised off the panel's field, with its lit rim. */
+const stageStyle: React.CSSProperties = {
+  boxShadow: "inset 0 1px 0 hsl(var(--fig-obj-highlight)), 0 7px 18px -6px hsl(var(--fig-obj-shadow))",
+};
+
+/** The well the progress capsules sit in, set into the stage. */
+const wellStyle: React.CSSProperties = {
+  backgroundColor: "hsl(var(--fig-well))",
+  boxShadow: "inset 0 1px 2px hsl(var(--fig-obj-shadow))",
+};
+
+/** The pictures a card can carry. Each is drawn inline from the figure tokens, so it follows the theme. */
+export type IncidentPictureKind = "fdiv" | "spectre";
+
+/** The words each picture has always carried, unchanged; they are HTML text, so they wrap and keep their size. */
+const PICTURE_WORDS: Record<IncidentPictureKind, { name: string; lines: [string, string] }> = {
+  fdiv: { name: "FDIV", lines: ["Pentium Floating-Point Divide Bug", "A lookup table flaw corrupted rare divisions, costing Intel hundreds of millions."] },
+  spectre: { name: "Spectre & Meltdown", lines: ["Speculative execution opened a side-channel into secrets.", "Worldwide patches, mitigations, and performance hits followed."] },
+};
+
+/**
+ * A card's picture (DESIGN.md section 14): a neutral glass plate on the stage, with a small
+ * instrument drawing in a well beside the picture's name and its own words under them. One focal
+ * mark, in a protected meaning (rose: error). FDIV: the quotient table as a grid of neutral cells,
+ * one entry wrong (entries that should have held +2 held 0), lifted, glowing, with a rose ✕.
+ * Spectre and Meltdown: the cache as a stack of lines (memory has layers, so it is isometric, in
+ * the plates of the lesson's mask stacks), one line lifted in rose: the trace a speculative access
+ * leaves, which timing reads. Decorative, as the old file pictures were (alt=""), so it is hidden
+ * from assistive technology; the card's title and story carry the incident. Forced colours drop
+ * the gradients, shadows and glows; the outlines and the ✕ stay.
+ */
+function IncidentPicture({ kind }: { kind: IncidentPictureKind }) {
+  const id = useId().replace(/:/g, "");
+  const words = PICTURE_WORDS[kind];
+  return (
+    <div
+      aria-hidden
+      data-testid={`incident-picture-${kind}`}
+      className={cn("min-h-40 w-full space-y-3 rounded-lg border border-border bg-card p-4", depthFallback)}
+      style={{ backgroundImage: quietStyle.backgroundImage, boxShadow: stageStyle.boxShadow }}
+    >
+      <div className="flex items-center gap-4">
+        <svg viewBox="0 0 120 92" className="h-[4.6rem] w-24 flex-none">
+          <defs>
+            <linearGradient id={`${id}-quiet`} x1="0" y1="0" x2="0" y2="1" className="fig-grad-quiet">
+              <stop offset="0" className="fig-stop-top" />
+              <stop offset="1" className="fig-stop-bottom" />
+            </linearGradient>
+            <linearGradient id={`${id}-rose`} x1="0" y1="0" x2="0" y2="1" className="text-fig-rose-body">
+              <stop offset="0" className="fig-stop-top" />
+              <stop offset="1" className="fig-stop-bottom" />
+            </linearGradient>
+            <filter id={`${id}-shadow`} x="-20%" y="-20%" width="140%" height="160%">
+              <feGaussianBlur stdDeviation="1.6" />
+            </filter>
+            <filter id={`${id}-glow`} x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="3.5" />
+            </filter>
+          </defs>
+          <rect x="1" y="1" width="118" height="90" rx="8" className="fig-well stroke-fig-generic" strokeWidth="1" />
+          {kind === "fdiv" ? <QuotientTable id={id} /> : <CacheStack id={id} />}
+        </svg>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-xl font-semibold leading-tight text-foreground">{words.name}</p>
+          <p className="text-sm font-semibold text-foreground">{words.lines[0]}</p>
+        </div>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">{words.lines[1]}</p>
+    </div>
+  );
+}
+
+/** The quotient table: 5 by 4 neutral cells, one entry wrong. */
+function QuotientTable({ id }: { id: string }) {
+  const cells: { x: number; y: number; bad: boolean }[] = [];
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) cells.push({ x: 12 + c * 20, y: 14 + r * 17, bad: r === 1 && c === 3 });
+  const bad = cells.find((c) => c.bad) ?? cells[0];
+  return (
+    <>
+      <g className="fig-fx fig-fx-blur" filter={`url(#${id}-shadow)`}>
+        {cells.map((c) => (
+          <rect key={`${c.x}-${c.y}`} x={c.x} y={c.y + (c.bad ? 3 : 1.5)} width={16} height={13} rx={2.5} className="fig-shadow" stroke="none" />
+        ))}
+      </g>
+      <g className="fig-fx fig-fx-blur fig-glow" filter={`url(#${id}-glow)`}>
+        <rect x={bad.x - 2} y={bad.y - 2} width={20} height={17} rx={4} className="fill-fig-rose" stroke="none" />
+      </g>
+      {cells.map((c) => (
+        <g key={`${c.x}-${c.y}`}>
+          <rect x={c.x} y={c.y} width={16} height={13} rx={2.5} className="fill-card" stroke="none" />
+          <rect x={c.x} y={c.y} width={16} height={13} rx={2.5} fill={`url(#${id}-${c.bad ? "rose" : "quiet"})`} className={c.bad ? "stroke-fig-rose" : "stroke-fig-generic"} strokeWidth={c.bad ? 2 : 1} />
+          <line x1={c.x + 2.5} x2={c.x + 13.5} y1={c.y + 1} y2={c.y + 1} className="fig-fx stroke-[hsl(var(--fig-obj-highlight))]" strokeWidth={1} />
+        </g>
+      ))}
+      <text x={bad.x + 8} y={bad.y + 10.5} textAnchor="middle" fontSize="11" fontWeight="700" className="fill-fig-rose-text">
+        {"✕"}
+      </text>
+    </>
+  );
+}
+
+/** One isometric cache line: a plate 52 wide, 14 deep and 7 thick, as the plates of the lesson's mask stacks. */
+const PLATE_TOP = "0,0 12.1,-7 -32.9,-33 -45,-26";
+const PLATE_LEFT = "-45,-26 0,0 0,7 -45,-19";
+const PLATE_RIGHT = "0,0 12.1,-7 12.1,0 0,7";
+const PLATE_OUTLINE = "-45,-26 -32.9,-33 12.1,-7 12.1,0 0,7 -45,-19";
+
+/** The cache: four lines, one lifted in rose (the trace a speculative access leaves). */
+function CacheStack({ id }: { id: string }) {
+  // Bottom to top, 4 apart; the third line is the lit one, lifted 5 units clear of the line under it.
+  const plates = [
+    { y: 78, lit: false },
+    { y: 67, lit: false },
+    { y: 51, lit: true },
+    { y: 40, lit: false },
+  ];
+  const x = 76;
+  return (
+    <>
+      <g className="fig-fx fig-fx-blur" filter={`url(#${id}-shadow)`}>
+        <polygon transform={`translate(${x} ${plates[0].y + 4})`} points={PLATE_OUTLINE} className="fig-shadow" stroke="none" />
+      </g>
+      <g className="fig-fx fig-fx-blur fig-glow" filter={`url(#${id}-glow)`}>
+        <polygon transform={`translate(${x} ${plates[2].y})`} points={PLATE_OUTLINE} className="fill-fig-rose" stroke="none" />
+      </g>
+      {plates.map((p) => (
+        <g key={p.y} transform={`translate(${x} ${p.y})`} className={p.lit ? "text-fig-rose" : "text-fig-generic"}>
+          <polygon points={PLATE_OUTLINE} className="fill-card" stroke="none" />
+          <polygon points={PLATE_TOP} className="fig-face-top" stroke="currentColor" strokeWidth={p.lit ? 1.6 : 1} strokeLinejoin="round" />
+          <polygon points={PLATE_LEFT} className="fig-face-left" stroke="currentColor" strokeWidth={p.lit ? 1.6 : 1} strokeLinejoin="round" />
+          <polygon points={PLATE_RIGHT} className="fig-face-right" stroke="currentColor" strokeWidth={p.lit ? 1.6 : 1} strokeLinejoin="round" />
+        </g>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The gap: what the plan never asked, drawn as the lesson's coverage figure
+ * draws it (a dashed rose outline, rose being X and error). The focal one is
+ * the strongest object on the card: a lit rose body over the card, 2 px dashed
+ * rim, raised at 7 and glowing rose. Each card's gap on the summary rests as a
+ * 2 px dashed rose rule down its left side, hung in the row's padding so its
+ * words line up with the row title. Padding drops by the extra border width so
+ * the box keeps its size.
+ */
+const gapFocal = "rounded-lg border-2 border-dashed border-fig-rose bg-card p-[11px]";
+const gapRest = "-ml-[10px] border-l-2 border-dashed border-fig-rose pl-2";
+const gapFocalStyle: React.CSSProperties = objectStyle({ hue: "rose", rise: 7, glow: "rose" });
+
+/** Where a slide stands, for its progress capsule. */
+export type SlideMark = "unopened" | "opened" | "right" | "wrong";
+
+/**
+ * Unopened until its reveal; then right or wrong when a prediction was locked
+ * in, else opened. The summary is opened once it unlocks, then right or wrong
+ * once its own common-thread prediction is locked in (`summaryResult`).
+ */
+export function slideMark(
+  slide: PredictSlide,
+  results: PredictionResults,
+  revealed: ReadonlySet<number>,
+  incidentCount: number,
+  summaryResult?: boolean,
+): SlideMark {
+  if (slide.kind === "summary") {
+    if (pendingReveals(incidentCount, revealed).length > 0) return "unopened";
+    return summaryResult === undefined ? "opened" : summaryResult ? "right" : "wrong";
+  }
+  if (slide.incident in results) return results[slide.incident] ? "right" : "wrong";
+  return revealed.has(slide.incident) ? "opened" : "unopened";
+}
+
+/**
+ * One progress capsule (decoration inside a dot button, which keeps its name
+ * and aria-current). Unopened is a dashed outline on an opaque card, like a
+ * layer that does not exist yet (the opaque body stops the rail at its edge);
+ * opened is a solid neutral object; a locked-in prediction is emerald with ✓
+ * or rose with ✕. The current slide is the focal part: raised, ringed in the
+ * selection cyan and glowing; with no result yet its body and rim are cyan.
+ * Hover darkens the rim of a neutral capsule only; a result capsule keeps its
+ * emerald or rose rim and brightens instead.
+ */
+function ProgressCapsule({ mark, current, summary }: { mark: SlideMark; current: boolean; summary: boolean }) {
+  const hue: ObjectHue | undefined = mark === "right" ? "emerald" : mark === "wrong" ? "rose" : current ? "cyan" : undefined;
+  const neutral = mark === "unopened" || mark === "opened";
+  return (
+    <span
+      aria-hidden
+      data-mark={mark}
+      className={cn(
+        "relative inline-flex h-5 items-center justify-center rounded-full bg-card text-xs font-semibold leading-none text-foreground",
+        summary ? "w-6" : "w-10",
+        mark === "unopened" && !current ? "border border-dashed border-muted-foreground" : "border border-muted-foreground",
+        mark === "unopened" && current && "border-fig-cyan",
+        mark === "right" && "border-fig-emerald",
+        mark === "wrong" && "border-fig-rose",
+        neutral ? "group-hover:border-foreground" : "group-hover:brightness-110",
+        // An outline, not a ring: the object's own box-shadow carries its depth.
+        current && "-translate-y-px outline-2 outline-offset-2 outline-fig-cyan [outline-style:solid]",
+        depthFallback,
+      )}
+      style={mark === "unopened" && !current ? undefined : objectStyle({ hue, rise: current ? 7 : 3, glow: current ? "cyan" : undefined })}
+    >
+      {mark === "right" ? "✓" : mark === "wrong" ? "✕" : null}
+    </span>
+  );
+}
+
 /** Marks a slide as revealed once PredictionPrompt renders its reveal (locked in or skipped). */
 function RevealMarker({ incident, onReveal }: { incident: number; onReveal: (incident: number) => void }) {
   useEffect(() => {
@@ -567,14 +820,18 @@ function IncidentSlide({
   return (
     <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
       <div className="min-w-0 space-y-3">
-        {item.image ? (
-          <div className="relative h-40 w-full overflow-hidden rounded-lg border border-border">
+        {item.picture ? (
+          <IncidentPicture kind={item.picture} />
+        ) : item.image ? (
+          <div className={cn("relative h-40 w-full overflow-hidden rounded-lg border border-border", depthFallback)} style={stageStyle}>
             <Image src={item.image} alt="" fill sizes="(min-width: 1024px) 40vw, 90vw" className="object-cover" />
+            {/* The lit rim along the picture's top edge, so it reads as a plate under glass. */}
+            <span aria-hidden className="pointer-events-none absolute inset-0 rounded-lg forced-colors:hidden" style={{ boxShadow: "inset 0 1px 0 hsl(var(--fig-obj-highlight))" }} />
           </div>
         ) : null}
         <h4 className="text-base font-semibold text-foreground">{item.title}</h4>
         <p className="text-sm leading-relaxed text-foreground">{item.story}</p>
-        <div className="rounded-lg border border-border bg-muted p-3">
+        <div className={cn("rounded-lg border border-border bg-card p-3", depthFallback)} style={quietStyle}>
           <p className={labelClass}>Impact</p>
           <p className="text-sm font-medium text-foreground">{item.impact}</p>
         </div>
@@ -589,23 +846,24 @@ function IncidentSlide({
           >
             <div className="space-y-3" data-testid={`reveal-${incident}`}>
               <RevealMarker incident={incident} onReveal={onReveal} />
-              {item.lesson ? (
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <p className={labelClass}>What this card teaches</p>
-                  <p className="text-sm leading-relaxed text-foreground">{item.lesson}</p>
-                </div>
-              ) : null}
               {item.escape ? (
-                <dl className="grid gap-2 rounded-lg border border-border bg-card p-3 text-sm grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))]">
-                  <div>
-                    <dt className={labelClass}>The question the plan never asked</dt>
-                    <dd className="text-foreground">{item.escape.question}</dd>
+                <dl className="grid gap-2 text-sm grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))]">
+                  {/* The focal part of the card, first in the reveal: the gap the escape went through. */}
+                  <div className={cn(gapFocal, depthFallback)} style={gapFocalStyle} data-testid={`gap-${incident}`}>
+                    <dt className="text-label text-fig-rose-text">The question the plan never asked</dt>
+                    <dd className="text-base font-semibold leading-snug text-foreground">{item.escape.question}</dd>
                   </div>
-                  <div>
+                  <div className={cn("rounded-lg border border-border bg-card p-3", depthFallback)} style={quietStyle}>
                     <dt className={labelClass}>When the check would have run</dt>
                     <dd className="text-foreground">{item.escape.when}</dd>
                   </div>
                 </dl>
+              ) : null}
+              {item.lesson ? (
+                <div className={cn("rounded-lg border border-border bg-card p-3", depthFallback)} style={quietStyle}>
+                  <p className={labelClass}>What this card teaches</p>
+                  <p className="text-sm leading-relaxed text-foreground">{item.lesson}</p>
+                </div>
               ) : null}
               <SourceList sources={item.sources} />
             </div>
@@ -625,7 +883,23 @@ function IncidentSlide({
             <SourceList sources={item.sources} />
           </>
         )}
-        {canPredict && !isRevealed ? <p className="text-xs text-muted-foreground">The lesson and the sources appear with the reveal.</p> : null}
+        {canPredict && !isRevealed ? (
+          /*
+           * Before the reveal, the gap is already on the card: the note sits in a
+           * slot drawn like the gap (the dashed rose rim and lit rose body, raised
+           * and glowing) that the reveal fills. The slot is drawn from md up, where
+           * the right column is shorter than the story beside it; at phone width the
+           * note stays plain so the card keeps its reserved height. Forced colours
+           * and print keep the plain note.
+           */
+          <p
+            data-testid={`gap-slot-${incident}`}
+            className="text-xs text-muted-foreground md:rounded-lg md:text-foreground md:border-2 md:border-dashed md:border-fig-rose md:bg-card md:p-[11px] md:[background-image:var(--slot-body)] md:[box-shadow:var(--slot-shadow)] forced-colors:!border-0 forced-colors:!bg-none forced-colors:!p-0 forced-colors:!shadow-none print:!border-0 print:!bg-none print:!p-0 print:!shadow-none"
+            style={{ "--slot-body": gapFocalStyle.backgroundImage, "--slot-shadow": gapFocalStyle.boxShadow } as React.CSSProperties}
+          >
+            The lesson and the sources appear with the reveal.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -637,12 +911,15 @@ function SummarySlide({
   results,
   revealed,
   onGo,
+  onCommit,
 }: {
   items: HallOfShameItem[];
   options: HallOfShameCheckOption[];
   results: PredictionResults;
   revealed: ReadonlySet<number>;
   onGo: (incident: number) => void;
+  /** The common-thread prediction, for the summary's progress capsule. */
+  onCommit?: (correct: boolean) => void;
 }) {
   const pending = pendingReveals(items.length, revealed);
   const rows = escapeRows(items, revealed).filter((r) => r.escape);
@@ -667,19 +944,24 @@ function SummarySlide({
         <PredictionPrompt
           question="What do the escapes have in common?"
           options={toPredictionOptions(options, "summary")}
+          onCommit={(_, correct) => onCommit?.(correct)}
           className="[@media(pointer:coarse)]:[&_button]:min-h-10"
         >
           <div className="space-y-3" data-testid="summary-reveal">
-            <p className="rounded-lg border border-border bg-card p-3 text-sm font-medium text-foreground">{COMMON_THREAD}</p>
+            {/* The focal part of the summary: the one gap the three escapes share. */}
+            <p className={cn(gapFocal, "text-base font-semibold leading-snug text-foreground", depthFallback)} style={gapFocalStyle} data-testid="summary-gap">
+              {COMMON_THREAD}
+            </p>
             {rows.length > 0 ? (
               <ul className="space-y-2" aria-label="Escape analysis, card by card">
                 {rows.map((row) =>
                   row.escape ? (
-                    <li key={row.incident} className="rounded-lg border border-border bg-card p-3 text-sm">
+                    <li key={row.incident} className={cn("rounded-lg border border-border bg-card p-3 text-sm", depthFallback)} style={quietStyle}>
                       <p className="font-medium text-foreground">{row.title}</p>
                       <dl className="mt-1 grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))]">
-                        <div>
-                          <dt className={labelClass}>The question never asked</dt>
+                        {/* Each card's own gap, at rest: a dashed rose rule in the row's padding, flat, so the shared thread above leads. */}
+                        <div className={cn(gapRest, "self-start")}>
+                          <dt className="text-label text-fig-rose-text">The question never asked</dt>
                           <dd className="text-foreground">{row.escape.question}</dd>
                         </div>
                         <div>
@@ -712,6 +994,7 @@ const PredictCarousel = ({ items, threadOptions }: { items: HallOfShameItem[]; t
   const [index, setIndex] = useState(0);
   const [results, setResults] = useState<PredictionResults>({});
   const [revealed, setRevealed] = useState<ReadonlySet<number>>(() => new Set());
+  const [summaryResult, setSummaryResult] = useState<boolean | undefined>(undefined);
   const current = Math.min(index, Math.max(0, count - 1));
   const slideRefs = useRef<(HTMLElement | null)[]>([]);
   const [focusSlide, setFocusSlide] = useState<number | null>(null);
@@ -760,6 +1043,7 @@ const PredictCarousel = ({ items, threadOptions }: { items: HallOfShameItem[]; t
         "Incident facts come only from the sources on each card, checked on 2026-10-03.",
         "No failure rate is modelled: the 1 in 9 billion figure is Intel's estimate, quoted, not computed from the table.",
       ]}
+      className="fig-panel"
     >
       <div onKeyDown={onKeyDown} aria-roledescription="carousel" role="group" aria-label="Incidents">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
@@ -796,7 +1080,8 @@ const PredictCarousel = ({ items, threadOptions }: { items: HallOfShameItem[]; t
               slideRefs.current[i] = el;
             }}
             tabIndex={-1}
-            className="rounded-xl border border-border bg-card p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4"
+            className={cn("rounded-xl border border-border bg-card p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4", depthFallback)}
+            style={stageStyle}
           >
             {slide.kind === "incident" ? (
               <IncidentSlide
@@ -808,7 +1093,7 @@ const PredictCarousel = ({ items, threadOptions }: { items: HallOfShameItem[]; t
                 isRevealed={revealed.has(slide.incident)}
               />
             ) : (
-              <SummarySlide items={items} options={slide.options} results={results} revealed={revealed} onGo={goAndFocus} />
+              <SummarySlide items={items} options={slide.options} results={results} revealed={revealed} onGo={goAndFocus} onCommit={setSummaryResult} />
             )}
           </article>
         ))}
@@ -817,24 +1102,19 @@ const PredictCarousel = ({ items, threadOptions }: { items: HallOfShameItem[]; t
           {slideAnnouncement(slides[current], items.length)}
         </p>
 
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-1" role="group" aria-label="Choose an incident">
+        <div className="relative mx-auto mt-2 flex w-fit max-w-full flex-wrap items-center justify-center gap-1" role="group" aria-label="Choose an incident">
+          {/* The rail the capsules sit on: a well set into the panel, one line from the first incident to the summary. */}
+          <span aria-hidden className="pointer-events-none absolute inset-x-4 top-1/2 h-2 -translate-y-1/2 rounded-full border border-border forced-colors:hidden" style={wellStyle} />
           {slides.map((slide, i) => (
             <button
               key={`dot-${i}`}
               type="button"
-              className="group inline-flex h-10 min-w-10 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="group relative inline-flex h-10 min-w-10 items-center px-1.5 justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => go(i)}
               aria-label={slide.kind === "incident" ? `Go to incident ${slide.incident + 1}: ${slide.item.title}` : "Go to the common thread"}
               aria-current={i === current ? "true" : undefined}
             >
-              <span
-                aria-hidden
-                className={cn(
-                  "h-2 rounded-full transition-colors motion-reduce:transition-none",
-                  slide.kind === "summary" ? "w-4" : "w-8",
-                  i === current ? "bg-primary" : "bg-border group-hover:bg-muted-foreground",
-                )}
-              />
+              <ProgressCapsule mark={slideMark(slide, results, revealed, items.length, summaryResult)} current={i === current} summary={slide.kind === "summary"} />
             </button>
           ))}
         </div>

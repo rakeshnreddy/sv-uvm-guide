@@ -48,7 +48,8 @@ branch. In short:
 - Parts with no role are neutral glass. A tier tint was tried and removed: in Tiers 3 and 4 it read as a role.
 - Ordered scales (cost, time, severity) use a fuchsia ramp, the one hue family no protected meaning uses.
 - Isometric drawings where the subject has layers.
-- Two settings: rich (the default) and calm (flat parts in the glass frame).
+- Two settings: rich (the default) and calm (flat parts in the glass frame). (Historical: the calm setting has since
+  been removed; figures are drawn rich only. See line 90 and DESIGN.md section 14, "One setting".)
 
 Five visuals of lesson 1 were redrawn to it, with every text string unchanged, and each was reviewed independently
 (the first three through three lenses with a recheck; the last two by one reviewer, with fixes and no recheck):

@@ -8,9 +8,8 @@ import { cn } from "@/lib/utils";
  * class `fig-fx`, so forced colours drop it and the part's own outline, fill
  * class, label and tag (section 13) carry the meaning alone; print drops the
  * blurred layers (`fig-fx-blur`). The strength of each layer comes from the
- * tokens in globals.css, scaled by the calm or rich setting on the page root
- * (`data-fig-style`). Class names are written out in full so Tailwind finds
- * them.
+ * tokens in globals.css; there is one setting, drawn at full strength. Class
+ * names are written out in full so Tailwind finds them.
  */
 
 /** A hue an object can be filled with: a figure hue, or "tier" for a part with no role (neutral glass: no hue). */
