@@ -1013,4 +1013,29 @@ describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) 
       expect(rgbContrast(rgbOf(steps[i]), rgbOf(steps[i - 1])), `fig-ramp-${i + 1} against fig-ramp-${i}`).toBeGreaterThanOrEqual(1.15);
     }
   });
+
+  // Calm quiets a solid ramp mark (the cost arrow of F1A) but not below its floor: at the opacity the .fig-ramp-mark
+  // rule gives it under calm's --fig-level, every step still holds 3:1 against what it is drawn on. Calm has no tier
+  // field, so the surround is a figure surface or a well on one; the stage surfaces are checked too, so the floor
+  // also holds wherever a quieted mark meets a tier field. (At the 60% calm used to give, ramp-1 fell to 2.2:1.)
+  it("a solid ramp mark in the calm setting: every step holds 3:1 against its surround", () => {
+    const rule = /\.fig-ramp-mark\s*\{\s*opacity:\s*calc\(([\d.]+) \+ ([\d.]+) \* var\(--fig-level\)\);/.exec(css);
+    expect(rule, "the .fig-ramp-mark rule scales with --fig-level from a floor").not.toBeNull();
+    const [floor, span] = [parseFloat(rule![1]), parseFloat(rule![2])];
+    expect(floor + span).toBeCloseTo(1, 5);
+    const calmLevel = parseFloat(/\[data-fig-style="calm"\]\s*\{[^}]*--fig-level:\s*([\d.]+)/.exec(css)?.[1] ?? "NaN");
+    const opacity = floor + span * calmLevel;
+    expect(opacity).toBeLessThan(1);
+    const well = hsla(vars["fig-well"]);
+    const surfaces = [...figureSurfaces(vars), ...stageSurfaces(vars)].flatMap(([name, base]) => [
+      [name, base] as [string, Rgb],
+      [`a well on ${name}`, over(rgbOf(well.triplet), well.alpha, base)] as [string, Rgb],
+    ]);
+    for (const [surface, base] of surfaces) {
+      for (const step of [1, 2, 3, 4, 5]) {
+        const mark = over(rgbOf(vars[`fig-ramp-${step}`]), opacity, base);
+        expect(rgbContrast(mark, base), `fig-ramp-${step} at ${opacity} on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
 });
