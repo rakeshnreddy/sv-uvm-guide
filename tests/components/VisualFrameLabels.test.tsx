@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { VISUAL_LABEL_CLASS, VisualFrame, toSentenceCaseLabel } from "@/components/visual-system/VisualFrame";
-import { VisualRecap } from "@/components/visual-system/VisualRecap";
+import { VISUAL_RECAP_GRID_CLASS, VisualRecap } from "@/components/visual-system/VisualRecap";
 
 describe("visual-system labels", () => {
   it("renders labels authored in all lower case or all capitals in sentence case", () => {
@@ -46,5 +46,20 @@ describe("visual-system labels", () => {
     expect(code.className).toContain("bg-code-surface");
     expect(code.className).not.toMatch(/slate/);
     expect(code).toHaveTextContent("logic a;");
+  });
+
+  it("keeps the VisualRecap cells side by side from 280 px each, and from 360 px each only for a picture marked wide", () => {
+    render(
+      <VisualRecap title="Recap title" rule="r" code="c" mistake="m" inTestbench="t">
+        <svg data-recap-picture="wide" data-testid="picture" />
+      </VisualRecap>,
+    );
+    const grid = screen.getByTestId("picture").parentElement?.parentElement;
+    expect(grid?.className).toBe(VISUAL_RECAP_GRID_CLASS);
+    const tracks = VISUAL_RECAP_GRID_CLASS.split(" ").filter((name) => name.includes("grid-cols-"));
+    expect(tracks).toEqual([
+      "grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]",
+      "has-[[data-recap-picture=wide]]:grid-cols-[repeat(auto-fit,minmax(min(100%,360px),1fr))]",
+    ]);
   });
 });
