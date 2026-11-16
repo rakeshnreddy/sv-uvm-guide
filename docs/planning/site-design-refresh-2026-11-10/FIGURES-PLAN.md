@@ -82,12 +82,12 @@ small. A fixer addressed them and a fourth reviewer rechecked. Open after the re
 6. Small: kit label collisions that predate this work (a tag under a step badge, a container label crossed by a
    border); sequence diagrams still read neutral; one "Predict" badge is under 4.5:1 in light mode.
 
-## Decisions the owner still has to make
+## Decisions the owner made (2026-11-15)
 
-1. Is this the direction? (The images above.)
-2. Rich or calm as the default, or rich only.
-3. Fuchsia as the colour of cost and other ordered scales.
-4. A title strip on every figure. It repeats the figure's title visibly, and figures get about 30 px taller.
+1. **Direction:** yes, roll it out lesson by lesson.
+2. **Settings:** rich only. The calm setting is to be removed from the kit, its CSS and its tests.
+3. **Cost and other ordered scales:** keep the fuchsia ramp.
+4. **Title strip:** keep it on every figure.
 
 ## The weekly routine
 
@@ -108,7 +108,7 @@ on through Tier 1. For each lesson:
 6. **Show the owner** before and after in both themes, then release.
 
 The first release must carry the kit's art direction and all of lesson 1 together, after items 1 to 5 above are
-closed and the owner has answered the four decisions.
+closed and the calm setting is removed. The owner sees lesson 1 before and after once more, then it is released.
 
 ## What it costs
 
