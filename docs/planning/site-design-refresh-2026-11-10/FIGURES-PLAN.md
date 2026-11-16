@@ -89,6 +89,22 @@ small. A fixer addressed them and a fourth reviewer rechecked. Open after the re
 3. **Cost and other ordered scales:** keep the fuchsia ramp.
 4. **Title strip:** keep it on every figure.
 
+## No visual left behind (owner, 2026-11-15)
+
+After seeing lesson 1 with four hand-drawn figures still in the old style, the owner said: "for rest of them do not
+miss these kind for all the other lessons." So a lesson is not done, and is not released in the new look, until every
+visual in it is redesigned:
+
+- every hand-drawn `<svg>` figure, including small ones inside recap cards, callouts and `<details>`;
+- every diagram-kit figure (focal part named where the figure has one);
+- the visual of every interactive embedded in the lesson;
+- any other picture: recap pictures, tables drawn as figures, charts.
+
+The check is mechanical, not a judgement: before a lesson's release, list every visual in it (the figure scan plus
+the embeds) and mark each as redesigned or not. The count of "not" must be zero, and the reviewer confirms the list
+against the rendered page, scrolling it from top to bottom in both themes. A figure that is hard to redraw is still
+redrawn; it is never skipped silently. If one truly cannot be done that week, the lesson waits.
+
 ## The weekly routine
 
 Each week, a few lessons in route order, starting with lesson 1 (`F1A_The_Cost_of_Bugs`), then `F1B`, `F1C`, `F2A` and
