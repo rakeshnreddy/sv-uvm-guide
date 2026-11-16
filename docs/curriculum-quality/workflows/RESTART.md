@@ -3,7 +3,81 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here: state at the 2026-11-10 pause (current)
+## Start here: state at the 2026-11-15 wind-down (current)
+
+The owner resumed on 2026-11-15 ("continue ... no quality drop anywhere and complete task") and later the same day set
+this week's usage rule: at 70 % of the all-models weekly limit every agent moves to Fable; at 50 % of the Fable limit,
+wind down with a clean handoff. The session wound down under that rule. Nothing is running. **This block supersedes the
+older blocks below.**
+
+**Live through checkpoint 30 (`2a796f9b`; `main` and `curriculum-quality-program` are the same commit):**
+- **Components:** all 48 of the backlog are built, reviewed, registered and embedded (checkpoints 24 and 25).
+- **Final sweep (the fresh 6b run on the v2 pattern):** all 112 lessons. Tier 1: 19 lessons, 15 fixed, 4 clean
+  (checkpoint 27). Tier 2: 53 lessons, 48 fixed, 5 clean, one top-severity error (checkpoint 26). Tiers 3 and 4: 40
+  lessons, 37 fixed, 3 clean (checkpoint 24). No lesson is left escalated. Small notes are in the run journals and were
+  not applied.
+- **Closure round 1 (checkpoint 28):** route walkers for every step of the three routes, 15 topic critics, three
+  skeptics per material finding. 40 findings confirmed (7 where the course contradicted itself on a fact), all fixed
+  and independently checked; lesson pages gained a route-aware next link.
+- **Figure colours (checkpoint 29):** the diagram kit draws roles, values, edges and states in theme-aware figure
+  tokens; 539 diagram parts carry a design or testbench role; the legend lists every colour in use. See the figures
+  plan named below: the owner wants much more than this.
+- **Placeholder heights (checkpoint 30):** every lazy interactive has a measured height; a full measurement of the
+  released tree (336 pages) has every embed within 4 px.
+
+**Run journals** for all of the above are in `docs/curriculum-quality/data/runs/` (`*-2026-11-15.json`).
+
+**Work left, in order:**
+1. **Closure round 2.** Not done: it was started on Fable twice and stopped, because Fable workers proved far too
+   costly for a read-heavy fan-out. Run it on Opus with `closure-analysis.js` (round 2, told what round 1 found, S1 and
+   S2 only), then `closure-fix.js` for what the skeptics confirm. Round 1 cost 17.8M worker tokens for the analysis and
+   8.1M for the fixes.
+2. **The remaining closure checks** (plan section 5, item 4): CI already runs the build, the bundle gate and the e2e
+   suites on every release; still to do are one whole-site 390 px and contrast sweep, the review of the PROJECT_GUIDE
+   section 3 table, and SESSION_HANDOFF. `TASKS.md` changes only on the owner's instruction.
+3. **Proposals from closure round 1 that need building, not wording** (recorded here, not in `TASKS.md`):
+   - Milestone M2 says "active and passive", but its lab (`uvm-mini-capstone`) grades only the active agent. A graded
+     passive step needs a passive bench and a reference solution.
+   - The placement quiz has no question on scheduling races, clocking blocks, SVA implication or virtual sequences.
+   - The print-only next line and the in-lesson `<NextLesson />` still follow the core path, not the chosen route.
+4. **Follow-ups from the height pass:** widths from 640 to 1023 px use the desktop height and can still move (a fourth
+   height band is a design change); the "Why UVM" lesson still changes page height by 43 px on desktop while every
+   interactive on it is exact; the height tests mostly restate the table (add a test that every variant is the first
+   match for at least one real embed, and port the estimate's fuzz cases).
+5. **Figures, a few lessons every week** (owner, 2026-11-15): see
+   `docs/planning/site-design-refresh-2026-11-10/FIGURES-PLAN.md`.
+
+**Costs measured this week:**
+- Opus workers: about 2.5M tokens per 1 % of the all-models weekly limit.
+- Fable workers: about 5 to 6 points of the Fable gauge per 1M tokens, and about half a point of all-models per Fable
+  point. Measure with one small agent before any Fable fan-out; keep read-heavy fan-outs on Opus.
+- Per unit: final sweep about 0.7M tokens a lesson; a component about 1.5M to build and review; a diagram-role pass
+  about 0.2M a lesson; closure analysis 17.8M a round.
+
+**Branches (all pushed):**
+- `figures/art-direction`: the preview of the new figure art direction. Not released.
+- `figures/hand-drawn-fills`: fill options for hand-drawn figures as a strict subset. Work in progress, not cleared
+  (two serious holes still open in its guard); the art direction may replace it.
+- `figures/colour-2026-11-15`: released as checkpoint 29; history only.
+
+**Tools added this week:**
+- `scripts/measure-lazy-interactive-heights.cjs` (needs the dev server; a full run is 336 pages and takes about two
+  hours; run it as a background shell task, because an agent that returns before its background run ends kills it).
+- `docs/curriculum-quality/workflows/figure-scan.py` and `figure-guard.py` (what a colour pass could do in a lesson; a
+  guard that fails if anything but an allowed role changed).
+- Workflow scripts in this folder: `final-sweep-v2.js` with `make-sweep-args.py`, `closure-analysis.js`,
+  `closure-fix.js`, `figure-roles-pass.js`, `interactive-heights-pass.js`. The last four are templates: fill the
+  `__NAME__` placeholders (paths and lists) before running them.
+
+**Release notes from this week:**
+- The bundle baseline total was raised on 2026-11-15 to the value CI measured (note in `docs/bundle-baseline.json`).
+- A docs-only push is skipped by CI; start a run by hand (`gh workflow run "Required quality gates" --ref
+  curriculum-quality-program`), then fast-forward `main` to that commit.
+- When the main tree holds unrelated uncommitted work, release a finished branch from its own clean worktree instead:
+  rebase it onto the integration branch, run the gates there, push it as `curriculum-quality-program`, wait for CI,
+  fast-forward `main`, then bring the main tree up with `git merge --autostash --ff-only`.
+
+## History: state at the 2026-11-10 pause (superseded by the block above)
 
 The owner resumed on 2026-11-10 with Fable as the lead and a 50 % weekly line. The run paused near 48 % with everything
 reviewed released. Nothing is running. **This block supersedes the older blocks below** wherever they talk about held
