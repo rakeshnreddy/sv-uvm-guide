@@ -607,16 +607,50 @@ function figureSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
 /** The tier share in the outline of a part with no role: none. It is the secondary neutral itself (DESIGN.md section 14). */
 const TIER_MIXES = [0];
 
+/*
+ * How the stage is drawn (.fig-panel::before and the [data-tier] blocks): the
+ * current tier's field at --fig-stage times --fig-stage-tier from the top left,
+ * and the neighbouring tier's field at NEAR_SHARE of that from the bottom
+ * right. The two gradients end before they meet (transparent at 68% and 64%
+ * of their ellipses), so each layer is checked alone at its strongest stop.
+ */
+const STAGE_RULE = /\.fig-panel::before \{[^}]*\}/.exec(css)?.[0] ?? "";
+const NEAR_SHARE = parseFloat(/var\(--fig-stage\) \* ([\d.]+) \* var\(--fig-stage-tier, 1\)/.exec(STAGE_RULE)?.[1] ?? "NaN");
+const TIER_FIELDS = [1, 2, 3, 4].map((n) => {
+  const rule = new RegExp(`\\[data-tier="${n}"\\] \\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  const field = (key: string) => /var\(--field-(\d)\)/.exec(new RegExp(`--${key}: ([^;]+);`).exec(rule)?.[1] ?? "")?.[1];
+  return { tier: n, current: field("tier-current-field"), near: field("tier-near-field"), weight: parseFloat(/--fig-stage-tier: ([\d.]+);/.exec(rule)?.[1] ?? "1") };
+});
+
 /**
  * The stage of a figure panel (DESIGN.md section 14): the liquid frame with
- * each tier's field colour at --fig-stage, its strongest stop, over it.
+ * each tier's current and near field over it, each at its strongest stop.
  */
 function stageSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
   const stage = parseFloat(vars["fig-stage"]);
   return figureSurfaces(vars)
     .filter(([name]) => name.startsWith("frame"))
-    .flatMap(([name, base]) => [1, 2, 3, 4].map((n) => [`stage (field-${n}) on ${name}`, over(rgbOf(vars[`field-${n}`]), stage, base)] as [string, Rgb]));
+    .flatMap(([name, base]) =>
+      TIER_FIELDS.flatMap(({ tier, current, near, weight }) => [
+        [`stage (tier ${tier}, field-${current}) on ${name}`, over(rgbOf(vars[`field-${current}`]), stage * weight, base)] as [string, Rgb],
+        [`stage (tier ${tier}, near field-${near}) on ${name}`, over(rgbOf(vars[`field-${near}`]), stage * NEAR_SHARE * weight, base)] as [string, Rgb],
+      ]),
+    );
 }
+
+describe("the stage model reads the stage rule", () => {
+  it("finds the near share, each tier's two fields and the heavier tiers' weight", () => {
+    expect(NEAR_SHARE).toBe(0.7);
+    expect(TIER_FIELDS.map(({ current, near, weight }) => [current, near, weight])).toEqual([
+      ["1", "2", 1],
+      ["2", "3", 0.7],
+      ["3", "2", 0.7],
+      ["4", "3", 1],
+    ]);
+    expect(STAGE_RULE).toContain("radial-gradient(90% 120% at 0% 0%, hsl(var(--tier-current-field, var(--field-2)) / calc(var(--fig-stage) * var(--fig-stage-tier, 1))), transparent 68%)");
+    expect(STAGE_RULE).toContain("radial-gradient(70% 90% at 100% 100%, hsl(var(--tier-near-field, var(--field-3)) / calc(var(--fig-stage) * 0.7 * var(--fig-stage-tier, 1))), transparent 64%)");
+  });
+});
 
 describe("figure tokens (DESIGN.md section 13)", () => {
   it.each(MODES)("%s mode keeps every figure hue in its family, with a translucent soft fill", (_name, { vars }) => {
