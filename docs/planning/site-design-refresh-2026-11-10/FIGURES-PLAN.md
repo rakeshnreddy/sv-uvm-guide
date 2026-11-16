@@ -37,7 +37,7 @@ eight hand-drawn figures, two kit figures with no roles and six interactives, so
 
 ## The art direction (preview, not released)
 
-Branch `figures/art-direction` (commit `3d1403ee`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
+Branch `figures/art-direction` (commit `9160d480`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
 branch. In short:
 
 - A figure is an instrument panel: a glass panel with a title strip and a legend strip of chips.
@@ -50,8 +50,8 @@ branch. In short:
 - Isometric drawings where the subject has layers.
 - Two settings: rich (the default) and calm (flat parts in the glass frame).
 
-Five visuals of lesson 1 were redrawn to it, with every text string unchanged (the first three were reviewed
-independently; the last two are designed and not yet reviewed):
+Five visuals of lesson 1 were redrawn to it, with every text string unchanged, and each was reviewed independently
+(the first three through three lenses with a recheck; the last two by one reviewer, with fixes and no recheck):
 
 - "Where a bug can be found": five stage plates on the cost ramp, divided by a lit tape-out line.
 - "Which mask layers change for each kind of fix": three isometric stacks; hatched and lit for new masks, solid for
@@ -78,8 +78,7 @@ small. A fixer addressed them and a fourth reviewer rechecked. Open after the re
 4. Only four kit figures name a focal part. The teaching review counted 21 more where the right part is clear, but
    its list was not kept as data; redo that check lesson by lesson.
 5. Four of lesson 1's eight hand-drawn figures are not redrawn (the verification lifecycle, shift left, the career
-   ladder, 100% coverage of an incomplete plan), nor are the visuals of five of its interactives. The two that were
-   redrawn last (the recap strip and the four decisions) still need the independent review.
+   ladder, 100% coverage of an incomplete plan), nor are the visuals of five of its interactives.
 6. Small: kit label collisions that predate this work (a tag under a step badge, a container label crossed by a
    border); sequence diagrams still read neutral; one "Predict" badge is under 4.5:1 in light mode.
 
