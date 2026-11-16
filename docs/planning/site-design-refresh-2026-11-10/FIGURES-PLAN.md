@@ -35,60 +35,46 @@ It is one rule applied everywhere. No figure has a focal point, depth or a panel
 the hand-drawn figures that draw in one colour (about 80 of 313) and the visuals inside interactives. Lesson 1 has
 eight hand-drawn figures, two kit figures with no roles and six interactives, so it was still black and white.
 
-## The art direction (preview, not released)
+## The art direction (released 2026-11-16, checkpoint 31, `d7e15a9e`)
 
-Branch `figures/art-direction` (commit `d6a09c33`, on top of `cb80965f`). The rules are `DESIGN.md` section 14 on that
-branch. In short:
+The rules are `DESIGN.md` section 14. In short:
 
 - A figure is an instrument panel: a glass panel with a title strip and a legend strip of chips.
 - Parts are lit objects: a gradient in their own hue, a rim, a shadow. Strength follows hierarchy: only the focal,
-  selected or state part is fully lit; the rest sit at 40 %.
+  selected or state part is fully lit; the rest sit lower.
 - One focal part, and only when the figure names it (`focus="<node id>"` on a kit figure) or a state marks it. A rule
   that guessed the focal part was tried and removed: of 27 guesses, 7 pointed at the wrong part and 6 were arbitrary.
 - Parts with no role are neutral glass. A tier tint was tried and removed: in Tiers 3 and 4 it read as a role.
 - Ordered scales (cost, time, severity) use a fuchsia ramp, the one hue family no protected meaning uses.
-- Isometric drawings where the subject has layers.
-- Two settings: rich (the default) and calm (flat parts in the glass frame). (Historical: the calm setting has since
-  been removed; figures are drawn rich only. See line 90 and DESIGN.md section 14, "One setting".)
+- Isometric drawings where the subject has layers or levels.
+- One setting (rich). A calm setting was built and then removed at the owner's decision.
 
-Five visuals of lesson 1 were redrawn to it, with every text string unchanged, and each was reviewed independently
-(the first three through three lenses with a recheck; the last two by one reviewer, with fixes and no recheck):
+What is live:
 
-- "Where a bug can be found": five stage plates on the cost ramp, divided by a lit tape-out line.
-- "Which mask layers change for each kind of fix": three isometric stacks; hatched and lit for new masks, solid for
-  reused, dashed wireframe for none yet.
-- The chart in `InteractiveCostOfBugGraph`: ramped bars, the selected stage in a lit cursor column.
-- "The cost ladder with the three fix routes after tape-out" (the recap strip): the five-stages plates with their
-  numbers, and the three fix routes hanging on the tape-out line.
-- "Which masks change for each of the four decisions": the mask-layer stacks, one per decision.
+- The kit draws this look for every kit figure in all 112 lessons.
+- Lesson 1 (`F1A_The_Cost_of_Bugs`) is complete: its eight hand-drawn figures, its two kit figures and the visuals
+  of its six interactives (20 visuals), each designed around one idea and independently reviewed. Every text string
+  in its redrawn figures is unchanged (the word proof, 97 checks).
+- Reserved heights were measured again on the new look (all 112 lessons, three widths) and corrected for the ten
+  interactives it resized.
 
-Before and after images (both themes) were sent to the owner on 2026-11-15; copies are in
-`test-results/design-previews/figures-art/` (not committed).
+### Open after the release
 
-### Reviewed, and what is still open
-
-Three independent reviewers (design; what each figure teaches; robustness) found 38 items: 1 serious, 20 material, 17
-small. A fixer addressed them and a fourth reviewer rechecked. Open after the recheck:
-
-1. Six interactives that embed kit figures render 15 to 63 px taller than their reserved heights (the legend is now a
-   strip of chips): FirstBugHuntGame, SelfCheckBenchLab, TimeSlotTraceVisualizer, TemporalLogicExplorer,
-   SvaSequenceWaveformVisualizer, TlmConnectionBuilderVisualizer. About 30 components embed kit figures; all need
-   measuring again with `scripts/measure-lazy-interactive-heights.cjs` after the branch is rebased.
-2. (Closed on the branch after the review: in the calm setting ramp marks now keep 3:1, pinned by a test.)
-3. The cost chart's controls still move when a stage is picked at 1280 px wide and on phones (fixed at 1440 and 1100).
-4. Only four kit figures name a focal part. The teaching review counted 21 more where the right part is clear, but
-   its list was not kept as data; redo that check lesson by lesson.
-5. All eight of lesson 1's hand-drawn figures are now redrawn. The last four (the verification lifecycle, shift left,
-   the career ladder, 100% coverage of an incomplete plan) were checked by their designer only and still need the
-   independent three-lens review. The visuals of five of the lesson's interactives are not redesigned yet
-   (DesignGapChart, FixPathDecisionLab, HallOfShameCarousel, ShiftLeftTimeline, BoundaryProbe).
-6. Small: kit label collisions that predate this work (a tag under a step badge, a container label crossed by a
-   border); sequence diagrams still read neutral; one "Predict" badge is under 4.5:1 in light mode.
+1. Light mode: the stage tint is at the ceiling the contrast floors allow (0.075), so panels still read mainly
+   through their border and title strip. More presence needs the colour field to reach further into the panel (a
+   change to the shared panel rule and to the contrast model in the tests).
+2. Phones: wide kit figures still scroll sideways inside their frame with text under 11 px (lesson 1's sequence
+   diagram and triage tree are examples). The kit needs a phone layout; this predates the art direction.
+3. The cost chart's axis labels are under 11 px; larger labels overlap at narrow widths, so the labels need their
+   own redesign.
+4. Only a handful of kit figures name a focal part (`focus`). Each lesson's pass sets it from the caption.
+5. Kit label collisions that predate this work (a tag under a step badge, a container label crossed by a border).
+6. The recap card's code line is cut off at the right edge in lesson 1 (a layout question for the shared recap card).
 
 ## Decisions the owner made (2026-11-15)
 
 1. **Direction:** yes, roll it out lesson by lesson.
-2. **Settings:** rich only. The calm setting is to be removed from the kit, its CSS and its tests.
+2. **Settings:** rich only. (Done: the calm setting is removed.)
 3. **Cost and other ordered scales:** keep the fuchsia ramp.
 4. **Title strip:** keep it on every figure.
 
@@ -126,8 +112,8 @@ on through Tier 1. For each lesson:
    --render`, the kit, layout and contrast tests, `tsc`, and a height measurement for any interactive that changed.
 6. **Show the owner** before and after in both themes, then release.
 
-The first release must carry the kit's art direction and all of lesson 1 together, after items 1 to 5 above are
-closed and the calm setting is removed. The owner sees lesson 1 before and after once more, then it is released.
+Lesson 1 and the kit went out together as checkpoint 31. Each later lesson is released when every visual in it is
+done (see "No visual left behind").
 
 ## What it costs
 

@@ -10,7 +10,8 @@ this week's usage rule: at 70 % of the all-models weekly limit every agent moves
 wind down with a clean handoff. The session wound down under that rule. Nothing is running. **This block supersedes the
 older blocks below.**
 
-**Live through checkpoint 30 (`2a796f9b`; `main` and `curriculum-quality-program` are the same commit):**
+**Live through checkpoint 31 (`d7e15a9e`, the figure art direction and lesson 1; checkpoint 30 was `2a796f9b`; `main`
+and `curriculum-quality-program` are the same commit):**
 - **Components:** all 48 of the backlog are built, reviewed, registered and embedded (checkpoints 24 and 25).
 - **Final sweep (the fresh 6b run on the v2 pattern):** all 112 lessons. Tier 1: 19 lessons, 15 fixed, 4 clean
   (checkpoint 27). Tier 2: 53 lessons, 48 fixed, 5 clean, one top-severity error (checkpoint 26). Tiers 3 and 4: 40
@@ -55,7 +56,8 @@ older blocks below.**
   about 0.2M a lesson; closure analysis 17.8M a round.
 
 **Branches (all pushed):**
-- `figures/art-direction`: the preview of the new figure art direction. Not released.
+- `figures/art-direction`: released on 2026-11-16 as checkpoint 31 (`d7e15a9e`: the figure art direction for every kit
+  figure, and lesson 1 complete in the new look). History only.
 - `figures/hand-drawn-fills`: fill options for hand-drawn figures as a strict subset. Work in progress, not cleared
   (two serious holes still open in its guard); the art direction may replace it.
 - `figures/colour-2026-11-15`: released as checkpoint 29; history only.
