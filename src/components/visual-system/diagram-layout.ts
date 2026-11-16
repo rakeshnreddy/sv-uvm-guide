@@ -401,6 +401,12 @@ export interface GridDiagramSpec {
   gapY?: number;
   /** See RouteOptions.spreadAnchors (default false). */
   spreadAnchors?: boolean;
+  /**
+   * The focal part: the id of the one node the figure is about (DESIGN.md
+   * section 14). Text-free: it changes paint only, never text or geometry. It
+   * must name a node that is not a container.
+   */
+  focus?: string;
 }
 
 export interface GridLayout {
@@ -457,6 +463,11 @@ export function layoutGridDiagram(spec: GridDiagramSpec): GridLayout {
     if (n.col < 0 || n.row < 0) problems.push(`Node "${n.id}" has a negative col or row.`);
     const bad = roleProblem(`Node "${n.id}"`, n.kind, n.role);
     if (bad) problems.push(bad);
+  }
+  if (spec.focus !== undefined) {
+    const focal = spec.nodes.find((n) => n.id === spec.focus);
+    if (!focal) problems.push(`Focus "${spec.focus}" names no node; give the id of the one part the figure is about, or leave it out.`);
+    else if (focal.container) problems.push(`Focus "${spec.focus}" names a container; the focal part is a single part.`);
   }
 
   const containers = spec.nodes.filter((n) => n.container);

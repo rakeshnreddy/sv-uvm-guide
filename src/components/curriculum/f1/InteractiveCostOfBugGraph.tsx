@@ -112,7 +112,9 @@ function DelayLadder({ index }: { index: number }) {
               <div className={cn("mt-1 h-2 w-full rounded-sm", active ? "bg-background" : "bg-muted")} aria-hidden data-testid={`delay-bar-track-${s.id}`}>
                 <div
                   data-testid={`delay-bar-${s.id}`}
-                  className={cn("h-2 rounded-sm transition-opacity motion-reduce:transition-none", RAMP_BG[rampStep(i)], active ? "ring-[3px]" : "opacity-55", active ? RAMP_RING[rampStep(i)] : null)}
+                  // Every bar keeps its ramp step at full strength: dimming the others would make the selected stage look like the costliest. The row, the pointer and the ring carry the selection.
+                  // The transparent border draws the bar's length in forced colours, where backgrounds are dropped.
+                  className={cn("h-2 rounded-sm border border-transparent", RAMP_BG[rampStep(i)], active ? "ring-[3px]" : null, active ? RAMP_RING[rampStep(i)] : null)}
                   style={{ width: `${costBarFraction(s) * 100}%` }}
                 />
               </div>
@@ -155,7 +157,8 @@ function CostExplorer() {
 
   // Bar chart geometry (log scale: one step per order of magnitude).
   const W = 320;
-  const H = 170;
+  // Tall enough to fill the card beside the readout, whose height is fixed for the longest text.
+  const H = 200;
   const top = 26;
   const bottom = 26;
   const left = 8;
@@ -213,7 +216,8 @@ function CostExplorer() {
       </div>
 
       <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
-        <figure className="flex min-w-0 flex-col justify-center rounded-xl border border-border bg-card p-3">
+        {/* Top-aligned: the chart stays where it is while the readout beside it changes length. */}
+        <figure className="flex min-w-0 flex-col rounded-xl border border-border bg-card p-3">
           {view === "delay" ? (
             <DelayLadder index={index} />
           ) : (
@@ -233,12 +237,12 @@ function CostExplorer() {
                     <feGaussianBlur stdDeviation="5" />
                   </filter>
                 </defs>
-                {/* One faint rule per order of magnitude: each bar ends on the next rule up. */}
+                {/* One faint rule per order of magnitude, from the bar that reaches it to the right edge: "this level", not an axis grid. */}
                 <g aria-hidden className="fig-fx">
-                  {COST_STAGES.map((s) => (
+                  {COST_STAGES.map((s, i) => (
                     <line
                       key={s.id}
-                      x1={left}
+                      x1={barX(i) + barW}
                       x2={W - left}
                       y1={H - bottom - barHeight(s)}
                       y2={H - bottom - barHeight(s)}
@@ -281,8 +285,8 @@ function CostExplorer() {
                         width={w}
                         height={h}
                         rx={3}
-                        className={cn("transition-[fill-opacity] motion-reduce:transition-none", RAMP_FILL[step], RAMP_STROKE[step])}
-                        fillOpacity={active ? 1 : 0.6}
+                        // Full strength for every bar, so the ramp reads in order whichever stage is selected; solid in forced colours, the selected one outlined.
+                        className={cn("fig-solid", active ? "fig-selected" : null, RAMP_FILL[step], RAMP_STROKE[step])}
                         strokeWidth={1.5}
                       />
                       <rect aria-hidden x={x} y={y} width={w} height={h} rx={3} fill={`url(#${fx}-shade)`} stroke="none" className="fig-fx pointer-events-none" />
@@ -320,11 +324,12 @@ function CostExplorer() {
           )}
         </figure>
 
-        <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
+        {/* One height for the longest readout, so neither the chart card nor the controls below move as the stage changes. */}
+        <div className="min-h-[17.5rem] min-w-0 space-y-3 rounded-xl border border-border bg-card p-3 text-sm" aria-live="polite">
           <div>
             <p className="text-label text-muted-foreground">Found at</p>
             <p className="flex items-center gap-2.5 text-lg font-semibold text-foreground">
-              <span aria-hidden data-testid="stage-swatch" className={cn("h-2.5 w-2.5 flex-none rounded-[3px] ring-[3px]", RAMP_BG[rampStep(index)], RAMP_RING[rampStep(index)])} />
+              <span aria-hidden data-testid="stage-swatch" className={cn("h-2.5 w-2.5 flex-none rounded-[3px] border border-transparent ring-[3px]", RAMP_BG[rampStep(index)], RAMP_RING[rampStep(index)])} />
               {stage.label}
             </p>
           </div>

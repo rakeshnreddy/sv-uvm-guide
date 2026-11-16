@@ -58,6 +58,8 @@ interface CycleWaveformProps {
   cycleWidth?: number;
   /** Show the title in a strip at the top of the panel (DESIGN.md section 14). The MDX kit sets it. */
   showTitle?: boolean;
+  /** Show the caption inside the panel (the default). The MDX kit turns it off and sets the caption below the panel, as every kit figure has it. */
+  showCaption?: boolean;
   className?: string;
 }
 
@@ -202,6 +204,7 @@ export function CycleWaveform({
   title,
   cycleWidth = 44,
   showTitle = false,
+  showCaption = true,
   className,
 }: CycleWaveformProps) {
   const id = useId();
@@ -220,7 +223,7 @@ export function CycleWaveform({
   return (
     <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="timing">
       {showTitle ? <FigureTitleBar title={title} /> : null}
-      <DiagramScrollFrame label={title} initiallyScrolls={false} className="fig-stage ring-inset">
+      <DiagramScrollFrame label={title} initiallyScrolls={false} className="fig-stage">
         <svg
           width={width}
           height={height}
@@ -399,7 +402,7 @@ export function CycleWaveform({
           )}
         </svg>
       </DiagramScrollFrame>
-      <figcaption className="fig-caption text-xs text-muted-foreground">{caption}</figcaption>
+      {showCaption ? <figcaption className="fig-caption text-xs text-muted-foreground">{caption}</figcaption> : null}
       {/* sr-only on a wrapper: tables ignore the 1px width sr-only relies on and would overflow. */}
       <div className="sr-only">
       <table>

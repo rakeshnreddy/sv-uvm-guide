@@ -579,6 +579,57 @@ describe('text-free colour roles (DESIGN.md section 13, "Assigning roles in less
     expect(head.querySelector('line')!.getAttribute('class')).toBe('stroke-fig-violet/50');
   });
 
+  it('shows a focal part only when the figure names one (focus) or a state marks it; it never guesses', () => {
+    const nodes = [
+      { id: 'a', label: 'a', kind: 'driver' as const, col: 0, row: 0 },
+      { id: 'b', label: 'b', kind: 'monitor' as const, col: 2, row: 0 },
+      { id: 'hub', label: 'hub', kind: 'scoreboard' as const, col: 1, row: 1 },
+    ];
+    // Two data lines arrive at the hub: the old rule ("where the most data lines arrive") would have picked it.
+    const edges = [
+      { from: 'a', to: 'hub', style: 'data' as const },
+      { from: 'b', to: 'hub', style: 'data' as const },
+    ];
+    const plain = render(<ArchitectureDiagram title="No focus" caption="c" nodes={nodes} edges={edges} />);
+    expect(plain.container.querySelector('[data-fig-focus]')).toBeNull();
+    // Every part rests at 40% of its hue, and nothing glows.
+    expect([...plain.container.querySelectorAll('[data-fig-level]')].map((g) => g.getAttribute('data-fig-level'))).toEqual(['rest', 'rest', 'rest']);
+    expect(plain.container.querySelector('.fig-glow, .fig-glow-soft')).toBeNull();
+    const plainText = plain.container.querySelector('svg')!.textContent;
+    plain.unmount();
+
+    const named = render(<ArchitectureDiagram title="No focus" caption="c" nodes={nodes} edges={edges} focus="a" />);
+    const focal = named.container.querySelectorAll('[data-fig-focus]');
+    expect(focal).toHaveLength(1);
+    expect(focal[0].textContent).toContain('a');
+    expect(focal[0].querySelector('rect')!.getAttribute('stroke-width')).toBe('2.5');
+    // Its own colour, never a state colour; the one full-strength body and the one glow.
+    expect(focal[0].querySelector('rect')!.getAttribute('class')).toContain('stroke-fig-amber');
+    expect([...named.container.querySelectorAll('[data-fig-level="full"]')]).toHaveLength(1);
+    expect(named.container.querySelectorAll('.fig-glow')).toHaveLength(1);
+    // Text-free: the words and the geometry are those of the figure without it.
+    expect(named.container.querySelector('svg')!.textContent).toBe(plainText);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    named.unmount();
+
+    // A focus that names no part, or a container, is reported on the page.
+    const bad = render(<ArchitectureDiagram title="Bad focus" caption="c" nodes={nodes} edges={edges} focus="zz" />);
+    expect(screen.getByRole('alert').textContent).toContain('Focus "zz" names no node');
+    expect(bad.container.querySelector('[data-fig-focus]')).toBeNull();
+    bad.unmount();
+    render(<ArchitectureDiagram title="Container focus" caption="c" nodes={[{ id: 'box', label: 'box', col: 0, row: 0, colSpan: 2, container: true }, { id: 'a', label: 'a', col: 0, row: 0 }]} focus="box" />);
+    expect(screen.getByRole('alert').textContent).toContain('names a container');
+  });
+
+  it('keeps the focus key on one rule across the kit, check-mdx and the figure guard', () => {
+    const guard = fs.readFileSync('docs/curriculum-quality/workflows/figure-guard.py', 'utf8');
+    const checkMdx = fs.readFileSync('scripts/check-mdx.mjs', 'utf8');
+    expect(guard).toContain('FOCUS_TAG = "ArchitectureDiagram"');
+    expect(guard).toContain('cuts.append((ws, e, ("focus", value)))');
+    expect(checkMdx).toContain('only <ArchitectureDiagram> takes a focal part');
+    expect(fs.readFileSync('src/components/visual-system/BlockDiagram.tsx', 'utf8')).not.toContain('focalNodeId');
+  });
+
   it('keeps the side-overridable kinds on one list across the kit, check-mdx and the figure tools', () => {
     const colours = fs.readFileSync('src/components/visual-system/figure-colours.ts', 'utf8');
     const guard = fs.readFileSync('docs/curriculum-quality/workflows/figure-guard.py', 'utf8');

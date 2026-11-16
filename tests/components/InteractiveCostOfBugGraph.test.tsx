@@ -98,9 +98,9 @@ describe("InteractiveCostOfBugGraph: cost / delay toggle", () => {
   it("both views draw the same log-scale bar lengths from costBarFraction", () => {
     render(<InteractiveCostOfBugGraph />);
     reveal();
-    // Cost view: the SVG plot area is 170 - 26 - 26 = 118 units tall.
+    // Cost view: the SVG plot area is 200 - 26 - 26 = 148 units tall (the chart was made taller to fill its card; the lengths stay in proportion).
     for (const s of COST_STAGES) {
-      expect(Number(screen.getByTestId(`cost-bar-${s.id}`).getAttribute("height"))).toBeCloseTo(costBarFraction(s) * 118, 6);
+      expect(Number(screen.getByTestId(`cost-bar-${s.id}`).getAttribute("height"))).toBeCloseTo(costBarFraction(s) * 148, 6);
     }
     fireEvent.click(screen.getByRole("radio", { name: "Delay" }));
     for (const s of COST_STAGES) {

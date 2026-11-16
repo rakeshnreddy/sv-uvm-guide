@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  * them.
  */
 
-/** A hue an object can be filled with: a figure hue, or "tier" for a part with no role. */
+/** A hue an object can be filled with: a figure hue, or "tier" for a part with no role (neutral glass: no hue). */
 export type DepthHue = "slate" | "cyan" | "rose" | "amber" | "violet" | "indigo" | "teal" | "emerald" | "tier";
 
 /** Sets `color` to the hue's deep body colour; the gradient stops read it as currentColor. */
@@ -26,7 +26,8 @@ const bodyInk: Record<DepthHue, string> = {
   indigo: "text-fig-indigo-body",
   teal: "text-fig-teal-body",
   emerald: "text-fig-emerald-body",
-  // Clear glass with a little of the tier in it (fig-grad-quiet sets the colour and the lower strength).
+  // Neutral glass: the primary colour over the card (fig-grad-quiet sets the colour and its strength). No hue,
+  // because every tier hue sits on a role hue and would read as that role.
   tier: "fig-grad-quiet",
 };
 
@@ -56,8 +57,29 @@ export const railInk: Record<DepthHue, string> = {
   tier: "text-fig-generic",
 };
 
+/**
+ * How strongly an object takes its hue. Strength follows hierarchy, not role:
+ * "full" for the focal part and a part in a state, "rest" (40%) for every
+ * other part, so a figure of many parts in one role stays quiet and the one
+ * part that matters is the only saturated body.
+ */
+export type DepthLevel = "full" | "rest";
+
+/** The hue's line colour as a stroke, for the band of a call in the caller's hue; a caller with no role keeps the neutral line colour. */
+export const traceStroke: Record<DepthHue, string> = {
+  slate: "stroke-fig-slate",
+  cyan: "stroke-fig-cyan",
+  rose: "stroke-fig-rose",
+  amber: "stroke-fig-amber",
+  violet: "stroke-fig-violet",
+  indigo: "stroke-fig-indigo",
+  teal: "stroke-fig-teal",
+  emerald: "stroke-fig-emerald",
+  tier: "stroke-foreground/75",
+};
+
 /** Paint references into the defs that <FigureDepthDefs id> draws. */
-export const depthFill = (id: string, hue: DepthHue) => `url(#${id}-obj-${hue})`;
+export const depthFill = (id: string, hue: DepthHue, level: DepthLevel = "full") => `url(#${id}-${level === "rest" ? "rest" : "obj"}-${hue})`;
 export const rimStroke = (id: string) => `url(#${id}-rim)`;
 export const levelFill = (id: string) => `url(#${id}-level)`;
 export const shadowFilter = (id: string) => `url(#${id}-shadow)`;
@@ -65,7 +87,7 @@ export const glowFilter = (id: string) => `url(#${id}-glow)`;
 
 /**
  * The gradients and filters one drawing needs: an object gradient per hue in
- * use (lighter at the top), the lit top rim, the fill under a high one-bit
+ * use (lighter at the top) at both strengths, the lit top rim, the fill under a high one-bit
  * level, and the two blurs (one pass each for all shadows and all glows, so a
  * figure costs two filter passes however many parts it has).
  */
@@ -74,10 +96,16 @@ export function FigureDepthDefs({ id, hues, width, height, level = false }: { id
   return (
     <>
       {[...new Set(hues)].map((hue) => (
-        <linearGradient key={hue} id={`${id}-obj-${hue}`} x1="0" y1="0" x2="0" y2="1" className={bodyInk[hue]}>
-          <stop offset="0" className="fig-stop-top" />
-          <stop offset="1" className="fig-stop-bottom" />
-        </linearGradient>
+        <React.Fragment key={hue}>
+          <linearGradient id={`${id}-obj-${hue}`} x1="0" y1="0" x2="0" y2="1" className={bodyInk[hue]}>
+            <stop offset="0" className="fig-stop-top" />
+            <stop offset="1" className="fig-stop-bottom" />
+          </linearGradient>
+          <linearGradient id={`${id}-rest-${hue}`} x1="0" y1="0" x2="0" y2="1" className={cn(bodyInk[hue], hue === "tier" ? null : "fig-grad-rest")}>
+            <stop offset="0" className="fig-stop-top" />
+            <stop offset="1" className="fig-stop-bottom" />
+          </linearGradient>
+        </React.Fragment>
       ))}
       <linearGradient id={`${id}-rim`} x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" className="fig-rim-top" />
@@ -104,11 +132,11 @@ export function FigureDepthDefs({ id, hues, width, height, level = false }: { id
  * through a translucent fill) and the gradient in the part's hue. Drawn before
  * the part's own group, whose soft fill and outline go on top.
  */
-export function ObjectBody({ id, hue, x, y, w, h, rx }: { id: string; hue: DepthHue; x: number; y: number; w: number; h: number; rx: number }) {
+export function ObjectBody({ id, hue, x, y, w, h, rx, level = "full" }: { id: string; hue: DepthHue; x: number; y: number; w: number; h: number; rx: number; level?: DepthLevel }) {
   return (
-    <g aria-hidden className="fig-fx">
+    <g aria-hidden className="fig-fx" data-fig-level={level}>
       <rect x={x} y={y} width={w} height={h} rx={rx} className="fill-card" stroke="none" />
-      <rect x={x} y={y} width={w} height={h} rx={rx} fill={depthFill(id, hue)} stroke="none" />
+      <rect x={x} y={y} width={w} height={h} rx={rx} fill={depthFill(id, hue, level)} stroke="none" />
     </g>
   );
 }

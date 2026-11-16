@@ -47,7 +47,7 @@ export function StepWaveform({ signals, snapshots, currentIndex, onSelect, axisL
 
   return (
     <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="timing">
-      <DiagramScrollFrame label={"Waveform"} initiallyScrolls={false} className="fig-stage ring-inset">
+      <DiagramScrollFrame label={"Waveform"} initiallyScrolls={false} className="fig-stage">
         <svg
           width={width}
           height={height}

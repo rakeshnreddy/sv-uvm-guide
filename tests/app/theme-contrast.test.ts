@@ -83,6 +83,13 @@ const GLASS_TOKENS = [
   // Figure art direction (DESIGN.md section 14): strengths (plain numbers) and translucent colours.
   "fig-obj-top",
   "fig-obj-bottom",
+  "fig-quiet-top",
+  "fig-quiet-bottom",
+  "fig-level-fill",
+  "fig-trace-flat",
+  "fig-face-top",
+  "fig-face-left",
+  "fig-face-right",
   "fig-obj-highlight",
   "fig-obj-shadow",
   "fig-well",
@@ -597,8 +604,8 @@ function figureSurfaces(vars: Record<string, string>): Array<[string, Rgb]> {
   ];
 }
 
-/** The tier share in the rim of a part with no role: --fig-tier-mix in rich and in calm (DESIGN.md section 14). */
-const TIER_MIXES = [0.46, 0.28];
+/** The tier share in the outline of a part with no role: none. It is the secondary neutral itself (DESIGN.md section 14). */
+const TIER_MIXES = [0];
 
 /**
  * The stage of a figure panel (DESIGN.md section 14): the liquid frame with
@@ -694,8 +701,8 @@ describe.each(MODES)("%s mode figure contrast", (_name, { vars }) => {
     for (const hue of ["cyan", "rose"]) expect(rgbContrast(digits, rgbOf(vars[`fig-${hue}-text`])), `${hue} badge`).toBeGreaterThanOrEqual(4.5);
   });
 
-  // Section 14 raised the tier share from a fixed 20% to --fig-tier-mix: 46% in rich, 28% in calm.
-  it.each(TIERS)("%s: the tier tint for nodes with no role (46% or 28% tier in the secondary colour) holds 3:1 as a stroke", (tier) => {
+  // The outline carries no tier share (section 13 gave it 20% and section 14 tried 46%, which read as a role hue).
+  it.each(TIERS)("%s: the outline of nodes with no role (the secondary colour) holds 3:1 as a stroke", (tier) => {
     for (const share of TIER_MIXES) {
       const stroke = over(rgbOf(vars[tier]), share, rgbOf(vars["muted-foreground"]));
       for (const [surface, base] of [...figureSurfaces(vars), ...stageSurfaces(vars)]) {
@@ -800,13 +807,15 @@ describe("figure art direction (DESIGN.md section 14)", () => {
     const read = (block: string, key: string) => parseFloat(new RegExp(`--${key}:\\s*([\\d.]+)`).exec(block)?.[1] ?? "NaN");
     expect(read(rich, "fig-level")).toBe(1);
     expect(read(rich, "fig-glow-level")).toBe(1);
-    for (const key of ["fig-level", "fig-glow-level"]) {
-      expect(read(calm, key), key).toBeGreaterThan(0);
-      expect(read(calm, key), key).toBeLessThan(1);
-    }
-    expect(TIER_MIXES).toEqual([read(rich, "fig-tier-mix") / 100, read(calm, "fig-tier-mix") / 100]);
+    expect(read(rich, "fig-field")).toBe(1);
+    // Calm is the glass frame with flat parts: a fifth of the depth, no glow and no field.
+    expect(read(calm, "fig-level")).toBeGreaterThan(0);
+    expect(read(calm, "fig-level")).toBeLessThanOrEqual(0.25);
+    expect(read(calm, "fig-glow-level")).toBe(0);
+    expect(read(calm, "fig-field")).toBe(0);
+    expect(art).not.toContain("--fig-tier-mix");
     const config = readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
-    expect(config).toContain('generic: "color-mix(in srgb, hsl(var(--tier-current)) var(--fig-tier-mix, 46%), hsl(var(--muted-foreground)))"');
+    expect(config).toContain('generic: "hsl(var(--muted-foreground))"');
     expect(config).toContain("role(`fig-${hue}-body`)");
     expect(config).toContain("role(`fig-ramp-${step}`)");
   });
@@ -825,7 +834,7 @@ describe("figure art direction (DESIGN.md section 14)", () => {
       expect(h, `fig-${hue}-body`).toBeGreaterThanOrEqual(lo);
       expect(h, `fig-${hue}-body`).toBeLessThanOrEqual(hi);
     }
-    for (const key of ["fig-obj-top", "fig-obj-bottom", "fig-stage", "fig-glow", "fig-trace"]) {
+    for (const key of ["fig-obj-top", "fig-obj-bottom", "fig-quiet-top", "fig-quiet-bottom", "fig-stage", "fig-glow", "fig-trace", "fig-level-fill", "fig-trace-flat", "fig-face-top", "fig-face-left", "fig-face-right"]) {
       expect(parseFloat(vars[key]), key).toBeGreaterThan(0);
       expect(parseFloat(vars[key]), key).toBeLessThanOrEqual(1);
     }
@@ -902,9 +911,9 @@ describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) 
     }
   });
 
-  it.each([1, 2, 3, 4])("a part with no role in a tier %s lesson (clear glass: the field colour at 40% of the object strengths): label, sublabel and rim hold their floors", (n) => {
-    for (const alpha of ends) {
-      const body = over(rgbOf(vars[`field-${n}`]), alpha * 0.4, rgbOf(vars.card));
+  it.each([1, 2, 3, 4])("a part with no role in a tier %s lesson (neutral glass: the primary colour at --fig-quiet-top and -bottom over the card): label, sublabel and rim hold their floors", (n) => {
+    for (const alpha of [parseFloat(vars["fig-quiet-top"]), parseFloat(vars["fig-quiet-bottom"])]) {
+      const body = over(rgbOf(vars.foreground), alpha, rgbOf(vars.card));
       expect(rgbContrast(rgbOf(vars.foreground), body), `label at ${alpha}`).toBeGreaterThanOrEqual(4.5);
       expect(rgbContrast(over(rgbOf(vars.foreground), 0.8, body), body), `sublabel at ${alpha}`).toBeGreaterThanOrEqual(4.5);
       for (const share of TIER_MIXES) {
@@ -937,6 +946,51 @@ describe.each(MODES)("%s mode figure art direction contrast", (_name, { vars }) 
       expect(rgbContrast(rgbOf(vars[`fig-${hue}`]), body), `outline at ${alpha}`).toBeGreaterThanOrEqual(3);
     }
     expect(rgbLuminance(rampBody(ends[0]))).toBeGreaterThan(rgbLuminance(rampBody(ends[1])));
+  });
+
+  // A hue inside a drawing always means a role, a state or the ramp. Every tier hue sits on a role hue (tier 1 teal on
+  // expected and register, tier 3 violet on design, tier 4 amber on testbench), so a part with no role must carry none.
+  it.each([1, 2, 3, 4])("a part with no role in a tier %s lesson reads as neutral: its body has no hue and its outline is the secondary neutral, far less saturated than any role", (n) => {
+    const saturation = ([r, g, b]: Rgb) => {
+      const max = Math.max(r, g, b) / 255;
+      const min = Math.min(r, g, b) / 255;
+      const l = (max + min) / 2;
+      return max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+    };
+    for (const alpha of [parseFloat(vars["fig-quiet-top"]), parseFloat(vars["fig-quiet-bottom"])]) {
+      const body = over(rgbOf(vars.foreground), alpha, rgbOf(vars.card));
+      // No more hue than the card it lies on has (plus rounding).
+      expect(saturation(body), `body at ${alpha}`).toBeLessThanOrEqual(saturation(rgbOf(vars.card)) + 0.03);
+    }
+    for (const share of TIER_MIXES) {
+      const rim = over(rgbOf(vars[`tier-${n}`]), share, rgbOf(vars["muted-foreground"]));
+      expect(saturation(rim), `outline at ${share}`).toBeLessThanOrEqual(saturation(rgbOf(vars["muted-foreground"])) + 0.001);
+      // And every role outline is far more saturated, so the two never read as one family.
+      for (const hue of ["amber", "violet", "indigo", "teal"]) expect(saturation(rgbOf(vars[`fig-${hue}`])) - saturation(rim), `fig-${hue} against the outline at ${share}`).toBeGreaterThan(0.25);
+    }
+    const art = css.slice(css.indexOf("Figure art direction (DESIGN.md section 14). A figure is an instrument"));
+    expect(/\.fig-grad-quiet \{\s*color: hsl\(var\(--foreground\)\);/.test(art)).toBe(true);
+    const colours = readFileSync(path.join(process.cwd(), "src/components/visual-system/figure-colours.ts"), "utf8");
+    expect(colours).toMatch(/structural: \{ stroke: "stroke-muted-foreground"/);
+  });
+
+  it.each(ART_HUES)("a port label on an object in fig-%s (the primary colour at 80%) holds 4.5:1 at both ends of the gradient", (hue) => {
+    for (const alpha of ends) {
+      const body = objectFill(vars, hue, alpha);
+      expect(rgbContrast(over(rgbOf(vars.foreground), 0.8, body), body), `port label at ${alpha}`).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(readFileSync(path.join(process.cwd(), "src/components/visual-system/BlockDiagram.tsx"), "utf8")).toMatch(/textAnchor=\{anchor\} className="fill-foreground\/80 font-mono text-\[9px\]"/);
+  });
+
+  it("a high one-bit level keeps 3:1 against the lit fill under it: the screen, the cyan soft fill, the fill that deepens toward the level and the level's band", () => {
+    const well = hsla(vars["fig-well"]);
+    const soft = hsla(vars["fig-cyan-fill"]);
+    const cyan = rgbOf(vars["fig-cyan"]);
+    for (const [surface, base] of [...figureSurfaces(vars), ...stageSurfaces(vars)]) {
+      const screen = over(rgbOf(well.triplet), well.alpha, base);
+      const lit = over(cyan, parseFloat(vars["fig-trace-flat"]), over(cyan, parseFloat(vars["fig-level-fill"]), over(rgbOf(soft.triplet), soft.alpha, screen)));
+      expect(rgbContrast(cyan, lit), `level on its fill on ${surface}`).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("the ordered ramp: fuchsia (outside every protected family), each step 3:1 on every surface, ordered by lightness, its text 4.5:1", () => {

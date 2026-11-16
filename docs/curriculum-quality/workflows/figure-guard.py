@@ -10,6 +10,10 @@ A file passes only if, after removing
   <ArchitectureDiagram nodes={...}> and the participant objects of a
   <SequenceDiagram participants={...}> (role: "design", "role": 'testbench'…;
   one role key per object),
+- the focus="<node id>" attribute of an <ArchitectureDiagram> (the focal part
+  of DESIGN.md section 14: paint only, no text or geometry; one per figure,
+  double-quoted, and it must be the id of a node of that figure that is not a
+  container),
 - every data-fig="…" attribute whose tokens are all allowed (at most one role,
   plus "tint" or "solid"), written as a top-level attribute of an opening tag
   of a shape, text, <g>, <marker> or <use> inside an <svg>…</svg>, one
@@ -66,6 +70,11 @@ KIND_ROLE = {"generic": None, "dut": "design", "interface": "interface", "reg": 
 # them. Mirrors SIDE_OVERRIDABLE_KINDS in figure-colours.ts (a unit test keeps
 # them equal). On every other tagged kind a disagreeing role is an error.
 SIDE_OVERRIDABLE_KINDS = ("fifo", "reg")
+
+# The focal part: a text-free attribute of an <ArchitectureDiagram> that names one of its nodes.
+FOCUS_TAG = "ArchitectureDiagram"
+KIT_TAGS = ("ArchitectureDiagram", "SequenceDiagram", "TimingDiagram")
+FOCUS_VALUE = re.compile(r"[A-Za-z_][\w.-]*\Z")
 
 ROLE_PROP = re.compile(r"""["']?role["']?\s*:\s*(?:"([^"]*)"|'([^']*)')""")
 KIND_PROP = re.compile(r"""["']?kind["']?\s*:\s*(?:"([^"]*)"|'([^']*)')""")
@@ -509,6 +518,34 @@ def normalise(text, label):
             continue
         attrs = parse_attrs(masked, ta + 1 + len(tag), tb)
         names = {n: (q, v) for n, q, v, _, _ in attrs}
+        # focus: the focal part of a kit architecture figure. It changes paint only, so it is removed before the comparison.
+        if tag in KIT_TAGS:
+            found = [(q, v, s, e) for n, q, v, s, e in attrs if n == "focus"]
+            if len(found) > 1:
+                errors.append(f"{label}:{lineno(ta)}: <{tag}> has more than one focus attribute; a figure has one focal part")
+            for q, value, s, e in found[:1]:
+                ln = lineno(s)
+                if tag != FOCUS_TAG:
+                    errors.append(f"{label}:{ln}: focus on <{tag}>: only <{FOCUS_TAG}> takes a focal part")
+                elif q != '"' or not FOCUS_VALUE.match(value or ""):
+                    errors.append(f'{label}:{ln}: write focus as focus="<node id>" with double quotes')
+                else:
+                    nq, nodes = names.get("nodes", (None, None))
+                    ids = {}
+                    if nq == "{" and nodes:
+                        for obj in re.finditer(r"\{[^{}]*\}", nodes):
+                            m = re.search(r"""(?<![\w-])["']?id["']?\s*:\s*(?:"([^"]*)"|'([^']*)')""", obj.group(0))
+                            if m:
+                                ids[m.group(1) or m.group(2)] = bool(re.search(r"""(?<![\w-])["']?container["']?\s*:\s*true\b""", obj.group(0)))
+                    if value not in ids:
+                        errors.append(f'{label}:{ln}: focus="{value}" names no node of this figure')
+                    elif ids[value]:
+                        errors.append(f'{label}:{ln}: focus="{value}" names a container; the focal part is a single part')
+                    else:
+                        ws = s
+                        while ws > ta and masked[ws - 1].isspace():
+                            ws -= 1
+                        cuts.append((ws, e, ("focus", value)))
         if sum(1 for n, *_ in attrs if n == "data-fig") > 1:
             errors.append(f"{label}:{lineno(ta)}: <{tag}> has more than one data-fig attribute (the last one wins in JSX); keep one")
             continue
@@ -635,7 +672,7 @@ def check(base_text, cur_text, label="file", strict=False):
         notes = meaning_notes(base_marks, cur_marks, cur_norm, label)
         if notes and strict:
             return False, f"{label}: --strict: roles or data-fig the base had were dropped or changed\n" + "\n".join(notes) + "\n(run without --strict if the change is deliberate, and say why in review)"
-        msg = f"{label}: ok (only allowed roles and data-fig differ from the base)"
+        msg = f"{label}: ok (only allowed roles, focus and data-fig differ from the base)"
         if notes:
             msg += "\n" + "\n".join(notes) + "\n(the words and geometry are unchanged, but a reviewer should check these meaning changes)"
         return True, msg
@@ -728,7 +765,18 @@ def selftest():
         ("...and role design on a fifo whose label says kind: 'driver' passes", label_base.replace('kind: "fifo", col: 2', 'kind: "fifo", role: "design", col: 2'), True),
         ("a changed kind on a side-overridable node fails", side_base.replace('label: "write buffer", kind: "fifo"', 'label: "write buffer", kind: "generic", role: "design"'), False),
     ]
-    cases = [
+    focus_cases = [
+        ("a focus that names a node of an ArchitectureDiagram passes", base.replace('  title="Bus"\n', '  title="Bus"\n  focus="s"\n'), True),
+        ("a focus written on the tag's first line passes", base.replace("<ArchitectureDiagram\n", '<ArchitectureDiagram focus="m"\n'), True),
+        ("a focus that names no node fails", base.replace('  title="Bus"\n', '  title="Bus"\n  focus="zz"\n'), False),
+        ("a focus that names a container fails", base.replace('{ id: "s", label: "Slave", col: 1, row: 0 }', '{ id: "s", label: "Slave", col: 1, row: 0, container: true }').replace('  title="Bus"\n', '  title="Bus"\n  focus="s"\n'), False),
+        ("a focus on a SequenceDiagram fails", base.replace('  title="Call"\n', '  title="Call"\n  focus="a"\n'), False),
+        ("a focus in single quotes fails", base.replace('  title="Bus"\n', "  title=\"Bus\"\n  focus='s'\n"), False),
+        ("a focus written as an expression fails", base.replace('  title="Bus"\n', '  title="Bus"\n  focus={"s"}\n'), False),
+        ("two focus attributes fail", base.replace('  title="Bus"\n', '  title="Bus"\n  focus="s"\n  focus="m"\n'), False),
+        ("a focus together with a changed word fails", base.replace('  title="Bus"\n', '  title="Bus line"\n  focus="s"\n'), False),
+    ]
+    cases = focus_cases + [
         ("allowed kit roles in two quotings pass", base.replace('kind: "generic", col: 0', 'kind: "generic", role: "design", col: 0').replace('label: "Slave", col', "label: \"Slave\", role: 'design', col").replace('{ id: "a", label: "A" }', '{ id: "a", label: "A", role: "testbench" }').replace('"label": "B" }', '"label": "B", "role": "design" }'), True),
         ("a role written first in its object passes", base.replace('{ id: "m",', '{ role: "design", id: "m",'), True),
         ("solid with a role on a filled mark passes", base.replace('fillOpacity="0.6" />', 'fillOpacity="0.6" data-fig="testbench solid" />').replace('fill="currentColor">Testbench', 'fill="currentColor" data-fig="testbench">Testbench'), True),

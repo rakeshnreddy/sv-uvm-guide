@@ -148,8 +148,9 @@ const config: Config = {
         // and fig-generic, the neutral tint of the current tier for nodes with no role.
         fig: {
           ...figColours(),
-          // The tier share is --fig-tier-mix (DESIGN.md section 14): 46% in rich, 28% in calm.
-          generic: "color-mix(in srgb, hsl(var(--tier-current)) var(--fig-tier-mix, 46%), hsl(var(--muted-foreground)))",
+          // The outline of a part with no role is the secondary neutral itself (DESIGN.md section 14). It took a
+          // share of the tier colour before; every tier hue sits on a role hue, so that share read as a role.
+          generic: "hsl(var(--muted-foreground))",
           // The ordered ramp for cost, time, severity and stage (DESIGN.md section 14).
           ...Object.fromEntries([1, 2, 3, 4, 5].map((step) => [`ramp-${step}`, role(`fig-ramp-${step}`)])),
           "ramp-text": role("fig-ramp-text"),

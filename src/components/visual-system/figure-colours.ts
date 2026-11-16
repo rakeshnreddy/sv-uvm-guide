@@ -219,8 +219,8 @@ export const roleStyles: Record<FigureRole, RoleStyle> = {
 
 /**
  * The hue an object is filled and lit with (DESIGN.md section 14): the role's
- * own hue, or "tier" (clear glass with a little of the lesson's tier in it)
- * for a part with no role. A state's hue wins, as its colours do.
+ * own hue, or "tier" (neutral glass, no hue) for a part with no role. A
+ * state's hue wins, as its colours do.
  */
 export const roleHue: Record<FigureRole, DepthHue> = {
   design: "violet",
@@ -261,8 +261,8 @@ export const edgeTones: Record<EdgeTone, { stroke: string; marker: string; marke
   controlPlain: { stroke: "stroke-foreground/75", marker: "fill-foreground/75", markerStroke: "stroke-foreground/75", chip: "fill-muted", chipEdge: "stroke-border", text: "fill-foreground" },
   // Call order and causality (dashed): the strong neutral, so flowcharts stay calm.
   causal: { stroke: "stroke-foreground/75", marker: "fill-foreground/75", markerStroke: "stroke-foreground/75", chip: "fill-muted", chipEdge: "stroke-border", text: "fill-foreground" },
-  // Structure and plain connections: the tier tint of parts with no role, no arrowhead. It recedes behind the data lines.
-  structural: { stroke: "stroke-fig-generic", marker: "fill-fig-generic", markerStroke: "stroke-fig-generic", chip: "fill-muted", chipEdge: "stroke-border", text: "fill-foreground" },
+  // Structure and plain connections: the secondary neutral, no arrowhead. No hue: a tier tint here would read as a role (DESIGN.md section 14).
+  structural: { stroke: "stroke-muted-foreground", marker: "fill-muted-foreground", markerStroke: "stroke-muted-foreground", chip: "fill-muted", chipEdge: "stroke-border", text: "fill-foreground" },
   active: { stroke: "stroke-fig-cyan", marker: "fill-fig-cyan", markerStroke: "stroke-fig-cyan", chip: "fill-fig-cyan-fill", chipEdge: "stroke-fig-cyan/50", text: "fill-fig-cyan-text" },
   error: { stroke: "stroke-fig-rose", marker: "fill-fig-rose", markerStroke: "stroke-fig-rose", chip: "fill-fig-rose-fill", chipEdge: "stroke-fig-rose/50", text: "fill-fig-rose-text" },
   dim: { stroke: "stroke-foreground/25", marker: "fill-foreground/25", markerStroke: "stroke-foreground/25", chip: "fill-muted", chipEdge: "stroke-border", text: "fill-muted-foreground" },

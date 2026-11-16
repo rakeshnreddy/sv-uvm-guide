@@ -117,6 +117,17 @@ interface BlockDiagramProps {
    */
   showTitle?: boolean;
   /**
+   * The focal part (DESIGN.md section 14): the id of the one part the figure
+   * is about, named by its author. It takes its hue at full strength, a
+   * heavier outline, a deeper shadow and a glow; it keeps its own colour and
+   * never takes a state colour. With none, a part in a state (or the selected
+   * part) is the focus, and failing that the data lines lead. The kit does not
+   * guess: a rule such as "where the most lines arrive" picks hubs, not the
+   * part the caption is about. An id that names no leaf part is ignored here
+   * (the grid layout reports it).
+   */
+  focusId?: string | null;
+  /**
    * Accessible role of the SVG. "img" (static pictures: the MDX kit) names it
    * with <title> and describes it with <desc>; "group" (the default, for
    * visualizers with live state or selectable nodes) uses aria-label and keeps
@@ -383,31 +394,6 @@ function StateMark({ node, state, width, height }: { node: DiagramNode; state: "
   );
 }
 
-/**
- * The focal part of a figure with no state (DESIGN.md section 14): the one
- * part where the most data lines arrive (two or more, and no tie), which is
- * where the figure's flows meet (a compare, a scoreboard, a multiplexor). It
- * rises and takes a soft glow in its own hue; it never takes a state colour.
- * A figure that shows a state (active, error, ok) has its focus already, and
- * a figure with no such meeting point has none: its data lines lead.
- */
-export function focalNodeId(nodes: DiagramNode[], ports: DiagramPort[], edges: DiagramEdge[]): string | null {
-  if (nodes.some((n) => n.state === "active" || n.state === "error" || n.state === "ok")) return null;
-  const leafOf = (ref: string) => {
-    const node = nodes.find((n) => n.id === ref) ?? nodes.find((n) => n.id === ports.find((p) => p.id === ref)?.nodeId);
-    return node && !node.container && (node.state ?? "normal") === "normal" ? node.id : null;
-  };
-  const arrivals = new Map<string, number>();
-  for (const edge of edges) {
-    if (edge.style !== "data" || edge.state === "dim") continue;
-    const to = leafOf(edge.to);
-    if (to) arrivals.set(to, (arrivals.get(to) ?? 0) + 1);
-  }
-  const ranked = [...arrivals.entries()].sort((a, b) => b[1] - a[1]);
-  if (!ranked.length || ranked[0][1] < 2 || (ranked.length > 1 && ranked[1][1] === ranked[0][1])) return null;
-  return ranked[0][0];
-}
-
 /** One filled and one open arrowhead per edge colour, so each arrowhead takes its line's colour. */
 export function EdgeMarkers({ id }: { id: string }) {
   return (
@@ -449,6 +435,7 @@ export function BlockDiagram({
   showLegend = false,
   showRoleKey = false,
   showTitle = false,
+  focusId = null,
   role = "group",
   description,
   spreadAnchors = false,
@@ -467,7 +454,7 @@ export function BlockDiagram({
   );
   const ordered = [...nodes].sort((a, b) => Number(Boolean(b.container)) - Number(Boolean(a.container)));
   // Depth (DESIGN.md section 14): which hue each part is lit in, which part is the focus, which parts rise.
-  const focalId = focalNodeId(nodes, ports, edges);
+  const focalId = nodes.some((n) => n.id === focusId && !n.container && (n.state ?? "normal") === "normal") ? focusId : null;
   const hueOf = (node: DiagramNode): DepthHue | null => {
     const state = node.state ?? "normal";
     if (state === "dim") return null;
@@ -481,6 +468,10 @@ export function BlockDiagram({
   const leaves = ordered.filter((n) => !n.container);
   const lit = leaves.filter((n) => hueOf(n) !== null);
   const glowing = lit.filter((n) => n.id === focalId || (n.state !== undefined && n.state !== "normal"));
+  // Strength follows hierarchy: the focal part, a part in a state and the selected part take their hue whole; the rest keep 40% of it.
+  const levelOf = (node: DiagramNode) => (node.id === focalId || node.id === selectedId || (node.state !== undefined && node.state !== "normal") ? "full" : "rest");
+  // A line that carries data, and any line in a state, is a lit trace: a soft band in its colour under it.
+  const litEdge = (edge: DiagramEdge) => edge.state !== "dim" && (edge.style === "data" || edge.state === "active" || edge.state === "error");
   const a11y =
     role === "img"
       ? { role: "img", "aria-labelledby": `${id}-title`, "aria-describedby": description ? `${id}-desc` : undefined }
@@ -489,7 +480,7 @@ export function BlockDiagram({
   return (
     <figure className={cn("glass-liquid fig-panel", className)} data-figure-kit="block">
       {showTitle ? <FigureTitleBar title={title} /> : null}
-      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage ring-inset">
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage">
         <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth }} className="block h-auto w-full" {...a11y}>
           {role === "img" ? <title id={`${id}-title`}>{title}</title> : null}
           {role === "img" && description ? <desc id={`${id}-desc`}>{description}</desc> : null}
@@ -514,8 +505,21 @@ export function BlockDiagram({
           </g>
           <g aria-hidden className="fig-fx fig-fx-blur" filter={glowFilter(id)}>
             {glowing.map((n) => (
-              <ObjectGlow key={n.id} hue={hueOf(n) as DepthHue} x={n.x} y={n.y} w={n.w} h={n.h} rx={radiusOf(n)} soft={n.id === focalId || n.state === "ok"} />
+              <ObjectGlow key={n.id} hue={hueOf(n) as DepthHue} x={n.x} y={n.y} w={n.w} h={n.h} rx={radiusOf(n)} soft={n.state === "ok"} />
             ))}
+          </g>
+          {/* The bands of the lit traces lie under the parts, so a band ends at a part's edge and never shows on its outline or fill. */}
+          <g aria-hidden className="fig-fx">
+            {edges.map((edge, i) =>
+              litEdge(edge) ? (
+                <path
+                  key={edge.id}
+                  d={`M${routes[i].map((p) => p.join(",")).join(" L")}`}
+                  className={cn("fig-trace", edgeTones[edgeToneOf(edge.style, edge.state, edgeTouchesTestbench(edge, nodes, ports))].stroke)}
+                  strokeWidth={7}
+                />
+              ) : null,
+            )}
           </g>
 
           {ordered.map((node) => {
@@ -540,7 +544,7 @@ export function BlockDiagram({
                   height={node.h}
                   rx={radius}
                   className={stateLook ? stateLook.box : node.container ? (nestedContainers.has(node.id) ? look.containerNested : look.container) : look.box}
-                  strokeWidth={strong ? 2.2 : 1.5}
+                  strokeWidth={strong ? 2.2 : node.id === focalId ? 2.5 : 1.5}
                   strokeDasharray={node.container ? "6 4" : undefined}
                 />
                 {node.container ? (
@@ -621,12 +625,13 @@ export function BlockDiagram({
                 ) : null}
               </>
             );
-            const under = hue ? <ObjectBody id={id} hue={hue} x={node.x} y={node.y} w={node.w} h={node.h} rx={radius} /> : null;
+            const under = hue ? <ObjectBody id={id} hue={hue} x={node.x} y={node.y} w={node.w} h={node.h} rx={radius} level={levelOf(node)} /> : null;
+            const focus = node.id === focalId ? "" : undefined;
             if (!selectable)
               return (
                 <React.Fragment key={node.id}>
                   {under}
-                  <g data-fig-role={nodeRole}>{body}</g>
+                  <g data-fig-role={nodeRole} data-fig-focus={focus}>{body}</g>
                 </React.Fragment>
               );
             return (
@@ -634,6 +639,7 @@ export function BlockDiagram({
               {under}
               <g
                 data-fig-role={nodeRole}
+                data-fig-focus={focus}
                 role="button"
                 tabIndex={0}
                 aria-pressed={selected}
@@ -662,11 +668,8 @@ export function BlockDiagram({
             const tone = edgeTones[toneKey];
             // Plain connections are drawn at 1.5 px; styles with an arrowhead keep the width the geometry measures.
             const baseWidth = style.marker ? style.width : Math.max(1.5, style.width);
-            // A line that carries data, and any line in a state, is a lit trace: a soft band in its colour under it.
-            const lit = edge.state !== "dim" && (edge.style === "data" || edge.state === "active" || edge.state === "error");
             return (
               <g key={edge.id}>
-                {lit ? <path aria-hidden d={`M${pts.map((p) => p.join(",")).join(" L")}`} className={cn("fig-fx fig-trace", tone.stroke)} strokeWidth={7} /> : null}
                 <polyline
                   points={pts.map((p) => p.join(",")).join(" ")}
                   fill="none"
@@ -700,8 +703,9 @@ export function BlockDiagram({
             return (
               <g key={port.id}>
                 <PortGlyph port={port} at={at} />
+                {/* The primary colour at 80%, as the sublabel is: a port label often lies on a lit part, where the secondary colour falls under 4.5:1. */}
                 {port.label ? (
-                  <text x={labelX} y={labelY} textAnchor={anchor} className="fill-muted-foreground font-mono text-[9px]">
+                  <text x={labelX} y={labelY} textAnchor={anchor} className="fill-foreground/80 font-mono text-[9px]">
                     {port.label}
                   </text>
                 ) : null}

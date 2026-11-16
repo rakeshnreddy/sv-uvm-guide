@@ -60,6 +60,13 @@ interface ArchitectureDiagramProps {
   legend?: boolean;
   /** Spread edges that meet the same side of a node along that side instead of one centre point. */
   spreadAnchors?: boolean;
+  /**
+   * The focal part: the id of the one node the figure is about, taken from its
+   * caption (DESIGN.md section 14). It is drawn at full strength with a glow;
+   * every other part is quieter. Text-free: no word, tag or position changes.
+   * Leave it out when the caption is about a flow or about several equal parts.
+   */
+  focus?: string;
   className?: string;
 }
 
@@ -95,8 +102,8 @@ function describeArchitecture(nodes: GridNode[], ports: GridPort[] = [], edges: 
   return parts.join(" ");
 }
 
-export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, legend, spreadAnchors, className }: ArchitectureDiagramProps) {
-  const layout = layoutGridDiagram({ nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, spreadAnchors });
+export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, legend, spreadAnchors, focus, className }: ArchitectureDiagramProps) {
+  const layout = layoutGridDiagram({ nodes, ports, edges, cellWidth, cellHeight, gapX, gapY, spreadAnchors, focus });
   const showLegend = legend ?? Boolean((ports && ports.length) || (edges && edges.length));
   return (
     <figure className={cn("not-prose my-6", className)} data-diagram="architecture">
@@ -114,6 +121,7 @@ export function ArchitectureDiagram({ title, caption, nodes, ports, edges, cellW
         showLegend={showLegend}
         showRoleKey
         showTitle
+        focusId={focus}
       />
       {layout.problems.length ? <DiagramProblems problems={layout.problems} /> : null}
       {SHOW_LAYOUT_WARNINGS && layout.warnings.length ? <DiagramProblems variant="layout" problems={layout.warnings.map((w) => w.message)} /> : null}
@@ -156,9 +164,11 @@ export function TimingDiagram({ title, caption, edges, signals, markers, highlig
         highlights={highlights}
         cycleWidth={cycleWidth}
         showTitle
+        showCaption={false}
       />
       {problems.length ? <DiagramProblems problems={problems} /> : null}
-      {typeof caption === "string" ? null : <Caption>{caption}</Caption>}
+      {/* One caption position for every kind of kit figure: below the panel, at the lesson's caption size. */}
+      <Caption>{caption}</Caption>
     </figure>
   );
 }

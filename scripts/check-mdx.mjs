@@ -339,6 +339,21 @@ for (const file of files) {
                 if (own && own !== role) errors.push(`<${node.name}> ${name} has kind "${kind}" (${own}) with role "${role}" at body line ${line}; drop the role or make them agree (only ${SIDE_OVERRIDABLE_KINDS.join(", ")} may take either side)`);
               }
             }
+            // The focal part (DESIGN.md section 14): a literal id of one node of an <ArchitectureDiagram> that is not a container.
+            const focus = attr("focus");
+            if (focus) {
+              if (node.name !== "ArchitectureDiagram") errors.push(`<${node.name}> has a focus at body line ${line}; only <ArchitectureDiagram> takes a focal part`);
+              else if (typeof focus.value !== "string" || !focus.value) errors.push(`<ArchitectureDiagram> focus must be a literal node id (focus="id") at body line ${line}`);
+              else {
+                const value = attr("nodes")?.value;
+                const code = typeof value === "object" && value ? value.value : "";
+                const focal = objectsIn(String(code))
+                  .map((obj) => ({ keys: topLevelKeys(obj), container: /(?<![\w-])["']?container["']?\s*:\s*true\b/.test(obj) }))
+                  .find((o) => o.keys.get("id") === focus.value);
+                if (!focal) errors.push(`<ArchitectureDiagram> focus="${focus.value}" names no node of the figure at body line ${line}`);
+                else if (focal.container) errors.push(`<ArchitectureDiagram> focus="${focus.value}" names a container at body line ${line}; the focal part is a single part`);
+              }
+            }
             // A role belongs on a node or participant only; on an edge, port or message the kit ignores it.
             for (const name of ["edges", "ports", "messages"]) {
               const value = attr(name)?.value;

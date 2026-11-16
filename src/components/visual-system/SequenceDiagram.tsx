@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { DiagramLegend, DiagramScrollFrame, nodeKindTags, roleKeyEntries } from "./BlockDiagram";
 import { layoutSequence, PHONE_FIT_WIDTH, SEQ_CHAR_W, SEQ_SELF_TEXT_DX, type SequenceMessage, type SequenceParticipant } from "./diagram-layout";
 import { assignedRoleWords, effectiveRole, roleHue, roleStyles, tagChipWidth } from "./figure-colours";
-import { depthFill, FigureDepthDefs, FigureTitleBar, ObjectRim, ObjectShadow, railInk, shadowFilter } from "./figure-depth";
+import { depthFill, FigureDepthDefs, FigureTitleBar, ObjectRim, ObjectShadow, railInk, shadowFilter, traceStroke } from "./figure-depth";
 
 interface SequenceDiagramProps {
   title: string;
@@ -114,7 +114,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
     <div className={cn("space-y-2", className)} data-figure-kit="sequence">
       <div className="glass-liquid fig-panel">
       {showTitle ? <FigureTitleBar title={title} /> : null}
-      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage ring-inset">
+      <DiagramScrollFrame label={title} initiallyScrolls={minWidth > PHONE_FIT_WIDTH} className="fig-stage">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           style={{ minWidth }}
@@ -213,13 +213,16 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
               );
             }
             const stroke = toneStroke[m.tone];
+            // The band of a call is lit in the caller's role hue (the line and its head stay as they are); a call in a state keeps the state's colour.
+            const caller = participants.findIndex((p) => lifelineX[p.id] === m.x1);
+            const band = m.tone === "normal" && caller >= 0 ? traceStroke[hues[caller]] : stroke;
             const prefix = numbered && m.step !== null ? `${m.step}. ` : "";
             const textClass = cn("font-mono text-[10.5px] [font-variant-ligatures:none]", toneText[m.tone]);
             if (m.kind === "self") {
               const x = m.x1;
               return (
                 <g key={m.index}>
-                  <path aria-hidden d={`M${x},${m.y + 4} H${x + 34} V${m.y + 24} H${x + 6}`} className={cn("fig-fx fig-trace", stroke)} strokeWidth={6} />
+                  <path aria-hidden d={`M${x},${m.y + 4} H${x + 34} V${m.y + 24} H${x + 6}`} className={cn("fig-fx fig-trace", band)} strokeWidth={6} />
                   <path
                     d={`M${x},${m.y + 4} H${x + 34} V${m.y + 24} H${x + 6}`}
                     fill="none"
@@ -243,7 +246,7 @@ export function SequenceDiagram({ title, participants, messages, numbered = true
             return (
               <g key={m.index}>
                 {/* A call is a lit trace; a return (dashed) and an async send (open head) stay plain lines, so the three still differ at a glance. */}
-                {m.kind === "call" ? <path aria-hidden d={`M${m.x1},${m.y} H${m.x2 - dir * 6}`} className={cn("fig-fx fig-trace", stroke)} strokeWidth={6} /> : null}
+                {m.kind === "call" ? <path aria-hidden d={`M${m.x1},${m.y} H${m.x2 - dir * 6}`} className={cn("fig-fx fig-trace", band)} strokeWidth={6} /> : null}
                 <line
                   x1={m.x1}
                   x2={m.x2 - dir * 2}
