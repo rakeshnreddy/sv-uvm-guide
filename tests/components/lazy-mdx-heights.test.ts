@@ -50,6 +50,21 @@ describe("placeholder heights measured on 2026-11-15 for the Tier 1 interactives
     expect(heights("HallOfShameCarousel", { predict: true })).toEqual({ height: 927, midHeight: 927, mobileHeight: 1476 });
   });
 
+  it("reserves the measured F1B visual heights and their shared sorter variants", () => {
+    expect(heights("FirstBugHuntGame")).toEqual({ height: 796, midHeight: 796, mobileHeight: 972 });
+    expect(heights("VerificationMethodsExplorer")).toEqual({ height: 1108, midHeight: 1108, mobileHeight: 1415 });
+    expect(heights("VerificationMethodologiesDiagram")).toEqual({ height: 1162, midHeight: 1162, mobileHeight: 1803 });
+    expect(heights("ScenarioSorter", { deck: "verification-methods" })).toEqual({ height: 546, midHeight: 546, mobileHeight: 826 });
+    expect(heights("VerificationMethodsExplorer", { preset: "f1b-assumptions" })).toEqual({ height: 952, midHeight: 952, mobileHeight: 1331 });
+    expect(heights("ScenarioSorter", { deck: "uvm-name-layers" })).toEqual({ height: 440, midHeight: 440, mobileHeight: 580 });
+    expect(heights("ScenarioSorter", { deck: "uvm-compile-triage" })).toEqual({ height: 582, midHeight: 600, mobileHeight: 814 });
+    expect(heights("ScenarioSorter", { deck: "sv-features" })).toEqual({ height: 526, midHeight: 526, mobileHeight: 834 });
+    expect(heights("ScenarioSorter", { deck: "ipc-tools" })).toEqual({ height: 478, midHeight: 478, mobileHeight: 710 });
+    expect(heights("ScenarioSorter", { deck: "function-body" })).toEqual({ height: 490, midHeight: 490, mobileHeight: 582 });
+    expect(heights("ScenarioSorter", { deck: "task-or-function" })).toEqual({ height: 322, midHeight: 322, mobileHeight: 524 });
+    expect(heights("ScenarioSorter", { deck: "regression-log" })).toEqual({ height: 604, midHeight: 604, mobileHeight: 704 });
+  });
+
   it("picks the variant for each preset, mode or section an instance opens", () => {
     expect(heights("DataTypeComparisonChart", { section: "defaults" })).toEqual({ height: 523, midHeight: 523, mobileHeight: 809 });
     expect(heights("DataTypeComparisonChart", { section: "widths" })).toEqual({ height: 1354, midHeight: 1354, mobileHeight: 2189 });

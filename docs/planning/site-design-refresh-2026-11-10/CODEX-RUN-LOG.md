@@ -131,6 +131,14 @@ An isolated timeline chip appeared to pass. In the complete lesson, the lower pi
 
 All entries belong to the reviewer. The JSON preserves the exact selectors, source coordinates and measured values.
 
-## Task 1 — F1B queued after calibration
+## Task 1 — F1B passed
 
 The base capture at `ccac0347` covers 15 default embed states and 19 visual crops per theme. The shared info-highlight band at MDX line 129 is a Kit request. The F1B redesign follows the Task 0 calibration commit. The earlier F1C capture is retained for Task 2.
+
+The first drawing pass is in the working tree. It covers the three SVGs, seven distinct visual interactives, and the compare focus in the shared diagram. Verification and after sheets are pending.
+
+The first redesign gate passed G2, G3, G4, G7, G9 and G10. The follow-up puts the mutation matrix on the same visual stage, separates overlapping plot marks, and increases the closure chart labels. Updated the reserved heights and the height test from 342 embeds across 21 pages. The follow-up gate is running. The independent viewport review found zero page overflow at 1440, 1280, 768 and 390 px, and the keyboard check found a visible focus ring.
+
+The second gate passed inventory, words, model and data, rendering, phone text size, literal color, all 342 height checks and page errors. The remaining contrast findings were the closure callout crossing the rare-bin line and the directed-grid bug cross on an overly bright neutral fill. Moved the callout and corrected the neutral fill. An existing ClosureBudgetLab test timed out during concurrent browser work and passed in 1.7 seconds in isolation. Its expectation and timeout are unchanged.
+
+The final F1B gate passed G1–G10. It measured 1,336 texts at 4.98:1 or higher and 876 marks at 3.60:1 or higher. All 342 embed measurements were within 4 px. The 32 Vitest files passed all 1,275 tests. The independent review passed all seven configurations, and both 19-visual comparison sheets are in `test-results/design-previews/codex/F1B_The_Verification_Mindset/`. F1C follows.

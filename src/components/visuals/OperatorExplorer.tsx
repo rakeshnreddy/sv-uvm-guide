@@ -8,7 +8,6 @@ import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
 import { ValueChip } from "@/components/visual-system/ValueChip";
 import { VisualFrame } from "@/components/visual-system/VisualFrame";
-import { valueStyles } from "@/components/visual-system/visual-language";
 import {
   bitAt,
   bitsOf,
@@ -130,11 +129,13 @@ function matchingPreset(spec: OperatorSpec, inputs: OperatorInputs): OperatorPre
   );
 }
 
+const bitRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+
 function bitClass(b: Bit4): string {
-  if (b === "x") return valueStyles.unknown.className;
-  if (b === "z") return valueStyles.highz.className;
-  if (b === "1") return valueStyles.one.className;
-  return valueStyles.zero.className;
+  if (b === "x") return cn(bitRim, "border-fig-rose text-fig-rose-text bg-[repeating-linear-gradient(135deg,hsl(var(--fig-rose)/0.18)_0_4px,transparent_4px_8px)]");
+  if (b === "z") return cn(bitRim, "border-dashed border-fig-amber text-fig-amber-text bg-[linear-gradient(180deg,hsl(var(--fig-amber-body)/var(--fig-obj-top)),hsl(var(--fig-amber-body)/var(--fig-obj-bottom)))]");
+  if (b === "1") return cn(bitRim, "border-fig-cyan text-fig-cyan-text bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))]");
+  return cn(bitRim, "border-fig-slate text-fig-slate-text bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/var(--fig-obj-top)),hsl(var(--fig-slate-body)/var(--fig-obj-bottom)))]");
 }
 
 const Code = ({ children }: { children: React.ReactNode }) => (
@@ -189,14 +190,14 @@ function Strip({ value, label, marks }: { value: SvValue; label: string; marks?:
   const all = bitsOf(value);
   const markNote = marks && Object.keys(marks).length ? `; marked bits: ${Object.entries(marks).map(([i, m]) => `${i} ${m}`).join(", ")}` : "";
   return (
-    <span role="img" aria-label={`${label}: ${formatCompact(reinterpret(value, false))}${markNote}`} className="inline-flex flex-wrap gap-px font-mono [font-variant-ligatures:none]">
+    <span role="img" aria-label={`${label}: ${formatCompact(reinterpret(value, false))}${markNote}`} className="fig-stage inline-flex flex-wrap gap-px rounded-md !p-0 bg-[hsl(var(--fig-well))] font-mono [font-variant-ligatures:none]">
       {all.map((b, k) => {
         const index = value.width - 1 - k;
         const mark = marks?.[index];
         return (
           <span key={k} className={cn("flex w-5 flex-col items-center", index % 4 === 3 && k !== 0 && "ml-1")}>
             <span className={cn("flex h-6 w-5 items-center justify-center rounded-[3px] border text-xs font-semibold", bitClass(b), mark && "border-dashed")}>{b}</span>
-            <span aria-hidden className="h-3 text-[9px] leading-3 text-muted-foreground">
+            <span aria-hidden className="h-3 text-[11px] leading-3 text-muted-foreground">
               {mark ?? ""}
             </span>
           </span>
@@ -481,7 +482,7 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
         )}
       </p>
       <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Merge table, scrollable" tabIndex={0}>
-        <table className="border-collapse text-left font-mono text-xs [font-variant-ligatures:none]">
+        <table className="fig-stage border-collapse bg-[hsl(var(--fig-well))] text-left font-mono text-xs [font-variant-ligatures:none]">
           <caption className="mb-1 text-left font-sans text-xs text-muted-foreground">{det.merged ? "Merged bit by bit with Table 11-20" : "Table 11-20 for comparison: this run does not use it"}</caption>
           <thead>
             <tr className="text-muted-foreground">
@@ -537,7 +538,7 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
   return (
     <div className="space-y-2 text-sm">
       <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Bit vector functions table, scrollable" tabIndex={0}>
-        <table className="border-collapse text-left font-mono text-xs [font-variant-ligatures:none]">
+        <table className="fig-stage border-collapse bg-[hsl(var(--fig-well))] text-left font-mono text-xs [font-variant-ligatures:none]">
           <caption className="mb-1 text-left font-sans text-xs text-muted-foreground">
             The four §20.9 convenience functions on <Code>{name}</Code> = {formatCompact(reinterpret(state, false))}
           </caption>
@@ -553,7 +554,7 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
             {report.map((r) => {
               const highlighted = spec.id === "onehot-guarded" ? r.fn === "$onehot" || r.fn === "$isunknown" : r.fn === current;
               return (
-                <tr key={r.fn} className={cn("border-t border-border/60", highlighted && "bg-cyan-500/10")} aria-current={highlighted ? "true" : undefined}>
+                <tr key={r.fn} className={cn("border-t border-fig-generic", highlighted && "bg-fig-cyan-fill")} aria-current={highlighted ? "true" : undefined}>
                   <td className="px-2 py-1">
                     {highlighted ? <span aria-hidden>▶ </span> : null}
                     {r.fn}({name})
@@ -776,6 +777,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
 
   return (
     <VisualFrame
+      className="fig-panel"
       label="Four-state operator explorer"
       eyebrow="Experiment"
       title="Four-state operator explorer"

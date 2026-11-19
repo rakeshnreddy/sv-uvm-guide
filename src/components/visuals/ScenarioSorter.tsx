@@ -96,7 +96,7 @@ function ChoiceButton({
       className={cn(
         choiceButton,
         option.mono && monoText,
-        !locked && "border-border/70 bg-background/60 hover:bg-muted",
+        !locked && "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))] hover:bg-muted",
         locked && !revealed && (chosen ? "border-amber-500/70 bg-amber-500/10" : "border-border/50 opacity-70"),
         revealed && option.verdict === "correct" && "border-emerald-500/70 bg-emerald-500/10",
         revealed && option.verdict === "partial" && "border-amber-500/70 bg-amber-500/10",
@@ -858,6 +858,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
 
   return (
     <VisualFrame
+      className="fig-panel"
       label={deck.label}
       eyebrow={`${copy.eyebrow} · ${copy.itemNoun} ${current + 1} of ${total}`}
       title={heading}
@@ -886,7 +887,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
             <span>{copy.predictHint}</span>
           </p>
         )}
-        <div className={layout.className} role="group" aria-label={copy.groupLabel} data-testid={`${prefix}-bins`}>
+        <div className={cn("fig-stage rounded-xl bg-[hsl(var(--fig-well))]", layout.className)} role="group" aria-label={copy.groupLabel} data-testid={`${prefix}-bins`}>
           {layout.options.map((option) => (
             <ChoiceButton
               key={option.id}
@@ -931,7 +932,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
         */}
         <div
           data-testid={revealed ? `${prefix}-sorter-feedback` : undefined}
-          className={cn(revealed && "space-y-2 rounded-xl border border-border bg-card p-3 text-sm")}
+          className={cn(revealed && "fig-stage space-y-2 rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))] p-3 text-sm")}
         >
           {/* Empty once the card is revealed; hidden then so it adds no gap above the verdict. */}
           <div aria-live="polite" hidden={revealed} data-testid={`${prefix}-live`}>

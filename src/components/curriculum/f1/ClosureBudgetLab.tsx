@@ -61,9 +61,9 @@ const inputClass =
   "h-10 min-w-0 flex-1 rounded-md border border-border/70 bg-background/60 px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** The shared primitives size some buttons below 40 px (segments, text links): size them for touch from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
-const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
+const frameClass = "fig-panel [@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
 /** Waived = striped, never solid: a decision, not coverage. */
-const stripes = "bg-[repeating-linear-gradient(135deg,rgb(245_158_11/0.55)_0_4px,transparent_4px_8px)]";
+const stripes = "bg-[repeating-linear-gradient(135deg,hsl(var(--fig-amber)/0.55)_0_4px,transparent_4px_8px)]";
 
 // ---------------------------------------------------------------------------
 // Chart
@@ -100,44 +100,44 @@ function ClosureChart({ state, titleId, descId }: { state: ClosureState; titleId
       <title id={titleId}>Expected coverage and the seeded run against random samples, log scale</title>
       {[0, 0.5, 1].map((c) => (
         <g key={c}>
-          <line x1={M.left} x2={W - M.right} y1={y(c)} y2={y(c)} stroke="currentColor" strokeOpacity={0.15} />
-          <text x={M.left - 4} y={y(c) + 3.5} fontSize={10} textAnchor="end" fill="currentColor" fillOpacity={0.75}>
+          <line x1={M.left} x2={W - M.right} y1={y(c)} y2={y(c)} stroke="currentColor" strokeOpacity={0.15} className="fig-fx" />
+          <text x={M.left - 4} y={y(c) + 3.5} fontSize={14} textAnchor="end" fill="currentColor">
             {formatPercent(c)}
           </text>
         </g>
       ))}
       {ticks.map((tick) => (
         <g key={tick.n} data-tick={tick.n}>
-          <line x1={x(tick.n)} x2={x(tick.n)} y1={M.top + PH} y2={M.top + PH + 4} stroke="currentColor" strokeOpacity={0.5} />
+          <line x1={x(tick.n)} x2={x(tick.n)} y1={M.top + PH} y2={M.top + PH + 4} stroke="currentColor" strokeWidth={1.5} />
           {tick.label !== null ? (
-            <text x={x(tick.n)} y={M.top + PH + 15} fontSize={10} textAnchor={tick.anchor} fill="currentColor" fillOpacity={0.75}>
+            <text x={x(tick.n)} y={M.top + PH + 15} fontSize={14} textAnchor={tick.anchor} fill="currentColor">
               {tick.label}
             </text>
           ) : null}
         </g>
       ))}
-      <text x={M.left + PW / 2} y={H - 4} fontSize={10} textAnchor="middle" fill="currentColor" fillOpacity={0.75}>
+      <text x={M.left + PW / 2} y={H - 4} fontSize={14} textAnchor="middle" fill="currentColor">
         random samples (log scale)
       </text>
       {closeX !== null && closeX <= W - M.right ? (
         <g>
-          <line x1={closeX} x2={closeX} y1={M.top} y2={M.top + PH} stroke="currentColor" strokeOpacity={0.45} strokeDasharray="3 3" />
-          <text x={Math.min(closeX, W - M.right) - 3} y={M.top + PH - 6} fontSize={9.5} textAnchor="end" fill="currentColor">
+          <line x1={closeX} x2={closeX} y1={M.top} y2={M.top + PH} stroke="currentColor" className="stroke-fig-ramp-5" strokeWidth={1.8} strokeDasharray="3 3" />
+          <text x={Math.min(closeX, W - M.right) - 3} y={M.top + PH - 6} fontSize={14} textAnchor="end" fill="currentColor">
             {`close ≈ ${formatSamples(expectations.all)}`}
           </text>
         </g>
       ) : null}
-      <path d={expectedPath} fill="none" strokeWidth={2.2} className="stroke-cyan-600 dark:stroke-cyan-400" />
-      <path d={runPath} fill="none" strokeWidth={1.8} strokeDasharray="5 3" className="stroke-amber-600 dark:stroke-amber-400" />
+      <path d={expectedPath} fill="none" strokeWidth={2.2} className="stroke-fig-teal" />
+      <path d={runPath} fill="none" strokeWidth={1.8} strokeDasharray="5 3" className="stroke-fig-ramp-4" />
       {state.directed ? (
         <g>
-          <circle cx={x(state.samplesUsed)} cy={y(withDirected)} r={4} className="fill-emerald-600 dark:fill-emerald-400" />
-          <text x={x(state.samplesUsed) - 6} y={y(withDirected) + 14} fontSize={9.5} textAnchor="end" fill="currentColor">
+          <circle cx={x(state.samplesUsed)} cy={y(withDirected)} r={4} className="fig-solid fill-fig-emerald" />
+          <text x={x(state.samplesUsed) - 6} y={y(withDirected) + 14} fontSize={14} textAnchor="end" fill="currentColor">
             directed
           </text>
         </g>
       ) : (
-        <circle cx={x(finalRun.n)} cy={y(finalRun.coverage)} r={3} className="fill-amber-600 dark:fill-amber-400" />
+        <circle cx={x(finalRun.n)} cy={y(finalRun.coverage)} r={3} className="fig-solid fill-fig-ramp-4" />
       )}
     </svg>
   );
@@ -156,7 +156,7 @@ function binText(bin: ClosureSummary["bins"][number]): string {
 
 function BinGrid({ summary }: { summary: ClosureSummary }) {
   return (
-    <ul aria-label="Bins" className="flex flex-wrap gap-1.5">
+    <ul aria-label="Bins" className="fig-stage flex flex-wrap gap-1.5">
       {summary.bins.map((bin) => (
         <li
           key={bin.id}
@@ -164,10 +164,10 @@ function BinGrid({ summary }: { summary: ClosureSummary }) {
           data-status={bin.status}
           className={cn(
             "flex h-8 min-w-8 items-center justify-center rounded-md border px-1 text-xs font-semibold",
-            bin.status === "covered" && "border-emerald-600/60 bg-emerald-500/25 text-foreground",
-            bin.status === "waived" && cn("border-amber-600/70 text-foreground", stripes),
-            bin.status === "hole" && "border-rose-500/70 bg-transparent text-rose-700 dark:text-rose-300",
-            bin.status === "not-in-model" && "border-dashed border-slate-500/70 text-muted-foreground",
+            bin.status === "covered" && "border-fig-emerald bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-foreground",
+            bin.status === "waived" && cn("border-fig-amber text-foreground", stripes),
+            bin.status === "hole" && "border-fig-rose bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-rose-text",
+            bin.status === "not-in-model" && "border-dashed border-fig-slate text-muted-foreground",
             bin.kind === "rare" && "ring-1 ring-offset-1 ring-offset-background ring-foreground/40",
           )}
         >
@@ -187,7 +187,7 @@ function Bar({ label, value, waived = 0, text, animate }: { label: string; value
         <span className="text-muted-foreground">{text}</span>
       </div>
       <div aria-hidden className="mt-1 flex h-3 w-full overflow-hidden rounded-full border border-border/70 bg-muted/40">
-        <div className={cn("h-full bg-emerald-500/80", animate && "transition-[width] duration-500 motion-reduce:transition-none")} style={{ width: `${value * 100}%` }} />
+        <div className={cn("h-full bg-fig-emerald-fill", animate && "transition-[width] duration-500 motion-reduce:transition-none")} style={{ width: `${value * 100}%` }} />
         {waived > 0 ? <div className={cn("h-full", stripes)} style={{ width: `${waived * 100}%` }} /> : null}
       </div>
     </div>
@@ -288,7 +288,7 @@ function Workbench({ initial, intro }: { initial: ClosureState["config"]; intro:
         </div>
       </dl>
 
-      <figure className={cn(panel, "space-y-2")}>
+      <figure className={cn(panel, "fig-stage space-y-2 bg-[hsl(var(--fig-well))]")}>
         <ClosureChart state={state} titleId={titleId} descId={descId} />
         <figcaption className="space-y-1 text-xs text-muted-foreground">
           <span className="flex flex-wrap gap-x-4 gap-y-1">

@@ -169,24 +169,24 @@ interface TallyRow {
 
 /** Order and wording of the tally. Glyphs match the waveform markers. */
 const TALLY_ROWS: TallyRow[] = [
-  { key: "nonvacuous", glyph: "✓", label: "Nonvacuous successes (a real check that held)", barClassName: "bg-emerald-500/25 text-emerald-900 dark:text-emerald-100" },
-  { key: "failures", glyph: "✕", label: "Failures", barClassName: "bg-rose-500/25 text-rose-900 dark:text-rose-100" },
-  { key: "vacuous", glyph: "○", label: "Vacuous successes: not a pass or a failure (§16.14.8)", barClassName: "bg-slate-400/25 text-slate-800 dark:text-slate-200" },
-  { key: "disabled", glyph: "⊘", label: "Disabled by rst", barClassName: "bg-sky-500/20 text-sky-900 dark:text-sky-100" },
-  { key: "pending", glyph: "…", label: "Still open when the run ends", barClassName: "bg-amber-500/25 text-amber-900 dark:text-amber-100" },
+  { key: "nonvacuous", glyph: "✓", label: "Nonvacuous successes (a real check that held)", barClassName: "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-emerald-text" },
+  { key: "failures", glyph: "✕", label: "Failures", barClassName: "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-rose-text" },
+  { key: "vacuous", glyph: "○", label: "Vacuous successes: not a pass or a failure (§16.14.8)", barClassName: "bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/var(--fig-obj-top)),hsl(var(--fig-slate-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-slate-text" },
+  { key: "disabled", glyph: "⊘", label: "Disabled by rst", barClassName: "bg-[hsl(var(--fig-well))] text-foreground" },
+  { key: "pending", glyph: "…", label: "Still open when the run ends", barClassName: "bg-[linear-gradient(180deg,hsl(var(--fig-amber-body)/var(--fig-obj-top)),hsl(var(--fig-amber-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-amber-text" },
 ];
 
 /** Proportional picture of one tally. The table beside it carries the same numbers for screen readers. */
 function TallyBar({ label, tally }: { label: string; tally: AttemptTally }) {
   return (
-    <div className="flex items-center gap-2" aria-hidden>
+    <div className="fig-stage flex items-center gap-2" aria-hidden>
       <span className="w-12 shrink-0 text-xs font-semibold text-muted-foreground">{label}</span>
       <div className="flex h-7 min-w-0 flex-1 overflow-hidden rounded-md border border-border/70">
         {TALLY_ROWS.filter((row) => tally[row.key] > 0).map((row) => (
           <div
             key={row.key}
             style={{ flexGrow: tally[row.key], flexBasis: 0 }}
-            className={cn("flex min-w-[2rem] items-center justify-center border-r border-border/40 font-mono text-xs last:border-r-0", row.barClassName)}
+            className={cn("flex min-w-[2rem] items-center justify-center border-r border-fig-generic font-mono text-xs last:border-r-0", row.barClassName)}
           >
             {row.glyph} {tally[row.key]}
           </div>
@@ -454,7 +454,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
   }));
 
   return (
-    <div data-testid="first-bug-hunt-game">
+    <div data-testid="first-bug-hunt-game" className="fig-panel">
       <VisualFrame
         label="First bug hunt: a 3-bit counter"
         eyebrow="Debug it"

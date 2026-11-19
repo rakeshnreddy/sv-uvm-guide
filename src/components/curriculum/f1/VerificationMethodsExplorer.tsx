@@ -161,7 +161,7 @@ function MethodsGrid({ caption, summary, dSlice, cell, testId }: MethodsGridProp
     : "Select a cell for its details. Arrow keys move between cells.";
 
   return (
-    <div className="space-y-2" data-testid={testId}>
+    <div className="fig-stage space-y-2" data-testid={testId}>
       <table className="w-full table-fixed border-separate border-spacing-[2px] text-center" aria-describedby={summaryId}>
         <caption className="mb-1 text-left text-xs text-muted-foreground">{caption}</caption>
         <thead>
@@ -219,16 +219,16 @@ function MethodsGrid({ caption, summary, dSlice, cell, testId }: MethodsGridProp
                       className={cn(
                         "relative flex h-9 w-full min-w-0 items-center justify-center rounded-md border text-xs leading-none text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                         mono,
-                        g.excluded ? "border-dashed border-slate-400/70 bg-slate-500/10 text-muted-foreground" : "border-border/60",
-                        bug && !masked && "border-2 border-rose-500 dark:border-rose-400",
-                        masked && "border-2 border-dashed border-amber-500",
-                        selected === key && "ring-2 ring-cyan-500",
-                        g.hit && "bg-rose-500/25",
+                        g.excluded ? "border-dashed border-fig-slate bg-fig-slate-fill text-muted-foreground" : "border-fig-generic",
+                        bug && !masked && "border-2 border-fig-rose",
+                        masked && "border-2 border-dashed border-fig-amber",
+                        selected === key && "ring-2 ring-fig-cyan",
+                        g.hit && "bg-fig-rose-fill",
                       )}
-                      style={!g.excluded && !g.hit && g.fill > 0 ? { backgroundColor: `rgba(6, 182, 212, ${(0.12 + 0.55 * g.fill).toFixed(3)})` } : undefined}
+                      style={!g.excluded && !g.hit && g.fill > 0 ? { backgroundColor: `hsl(var(--fig-ramp-4) / ${(0.12 + 0.40 * g.fill).toFixed(3)})` } : undefined}
                     >
                       <span aria-hidden="true">{g.mark}</span>
-                      {g.ring ? <span aria-hidden="true" className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 dark:bg-violet-300" /> : null}
+                      {g.ring ? <span aria-hidden="true" className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-fig-violet" /> : null}
                     </button>
                   </td>
                 );
@@ -533,23 +533,23 @@ function ProbabilityCurve({ params, budget }: { params: RandomParams; budget: Cy
     pts.push(`${x(n).toFixed(1)},${y(curve[n]).toFixed(1)}`);
   }
   return (
-    <figure className="m-0">
+    <figure className="fig-stage m-0 rounded-xl bg-[hsl(var(--fig-well))]">
       <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full max-w-[420px]" role="img" aria-label={curveText(params)}>
-        <line x1={L} y1={y(0)} x2={W - 8} y2={y(0)} className="stroke-muted-foreground/50" />
-        <line x1={L} y1={y(0)} x2={L} y2={y(1)} className="stroke-muted-foreground/50" />
+        <line x1={L} y1={y(0)} x2={W - 8} y2={y(0)} className="stroke-fig-generic" strokeWidth={1.5} />
+        <line x1={L} y1={y(0)} x2={L} y2={y(1)} className="stroke-fig-generic" strokeWidth={1.5} />
         {[0, 0.5, 1].map((p) => (
-          <text key={p} x={L - 4} y={y(p) + 3} textAnchor="end" className="fill-muted-foreground text-[9px]">
+          <text key={p} x={L - 4} y={y(p) + 3} textAnchor="end" className="fill-foreground text-[12.5px]">
             {p * 100}%
           </text>
         ))}
         {[1, 10, 100, 1000].map((n) => (
-          <text key={n} x={x(n)} y={H - 6} textAnchor="middle" className="fill-muted-foreground text-[9px]">
+          <text key={n} x={x(n)} y={H - 6} textAnchor="middle" className="fill-foreground text-[12.5px]">
             {n.toLocaleString("en-US")}
           </text>
         ))}
-        <polyline points={pts.join(" ")} fill="none" className="stroke-cyan-600 dark:stroke-cyan-400" strokeWidth={2} />
+        <polyline points={pts.join(" ")} fill="none" className="stroke-fig-ramp-4" strokeWidth={2.5} />
         {CYCLE_BUDGETS.map((n) => (
-          <circle key={n} cx={x(n)} cy={y(curve[n])} r={n === budget ? 4.5 : 3} className={n === budget ? "fill-rose-600 dark:fill-rose-400" : "fill-cyan-600 dark:fill-cyan-400"} />
+          <circle key={n} cx={x(n)} cy={y(curve[n])} r={n === budget ? 4.5 : 3} className={n === budget ? "fig-solid fill-fig-cyan" : "fig-solid fill-fig-ramp-4"} />
         ))}
       </svg>
       <figcaption className="text-xs text-muted-foreground">x: cycles after reset (log scale). y: share of seeds that have reached the bug. Exact, from a Markov chain over count.</figcaption>
@@ -836,7 +836,7 @@ export default function VerificationMethodsExplorer({ preset = "f1b-methods", in
       }
       fidelity="model"
       assumptions={[...METHODS_ASSUMPTIONS]}
-      className={cn(touch, reduced && "[&_*]:!transition-none")}
+      className={cn("fig-panel", touch, reduced && "[&_*]:!transition-none")}
     >
       <SegmentedControl label="Method" value={tab} onChange={setTab} options={(Object.keys(TAB_LABELS) as VerificationMethodsTab[]).map((t) => ({ value: t, label: TAB_LABELS[t] }))} />
       <DSliceControl value={dSlice} onChange={setDSlice} tab={tab} />

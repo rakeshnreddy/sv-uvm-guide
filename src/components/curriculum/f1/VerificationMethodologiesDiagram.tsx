@@ -23,6 +23,8 @@ interface Methodology {
   summary: string;
 }
 
+const stageCaps = ["bg-fig-ramp-1", "bg-fig-ramp-2", "bg-fig-ramp-3", "bg-fig-ramp-4", "bg-fig-ramp-5"];
+
 export const FLOW_STAGES: FlowStage[] = [
   { id: "spec", label: "Specification", description: "Requirements and architecture. Reviewed and turned into a verification plan." },
   { id: "rtl", label: "RTL", description: "The synthesizable SystemVerilog model of the design." },
@@ -105,7 +107,7 @@ const VerificationMethodologiesDiagram = () => {
   const active = METHODOLOGIES[playback.index];
 
   return (
-    <div data-testid="verification-methodologies-diagram">
+    <div data-testid="verification-methodologies-diagram" className="fig-panel">
       <VisualFrame
         label="Verification methods mapped to the design flow"
         eyebrow="Choosing the right tool for the job"
@@ -117,7 +119,7 @@ const VerificationMethodologiesDiagram = () => {
           "Emulation and FPGA prototyping run synthesized RTL, so they sit at the RTL stage, not the netlist stage.",
         ]}
       >
-        <ol className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]" aria-label="Design flow stages">
+        <ol className="fig-stage grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,120px),1fr))]" aria-label="Design flow stages">
           {FLOW_STAGES.map((stage, i) => {
             const isActive = stage.id === active.stage;
             const count = METHODOLOGIES.filter((m) => m.stage === stage.id).length;
@@ -126,10 +128,11 @@ const VerificationMethodologiesDiagram = () => {
                 key={stage.id}
                 aria-current={isActive ? "step" : undefined}
                 className={cn(
-                  "rounded-xl border p-3 text-xs transition-colors motion-reduce:transition-none",
-                  isActive ? "border-cyan-500 bg-cyan-500/10" : "border-border/70 bg-background/40",
+                  "relative overflow-hidden rounded-xl border p-3 text-xs transition-colors motion-reduce:transition-none",
+                  isActive ? "border-fig-cyan bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]" : "border-fig-generic bg-[hsl(var(--fig-well))]",
                 )}
               >
+                <span className={cn("absolute inset-x-0 top-0 h-0.5", stageCaps[i])} aria-hidden />
                 <p className="flex items-center gap-1 font-semibold text-foreground">
                   <span className="text-muted-foreground" aria-hidden>
                     {i + 1}.
@@ -137,7 +140,7 @@ const VerificationMethodologiesDiagram = () => {
                   {stage.label}
                 </p>
                 <p className="mt-1 text-muted-foreground">{stage.description}</p>
-                <p className={cn("mt-2 font-medium", isActive ? "text-cyan-800 dark:text-cyan-200" : "text-muted-foreground")}>
+                <p className={cn("mt-2 font-medium", isActive ? "text-fig-cyan-text" : "text-muted-foreground")}>
                   {isActive ? (
                     <>
                       <span aria-hidden>▶ </span>

@@ -122,45 +122,46 @@ function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
   const act = shown.map((c) => c.actual);
   const exp = shown.map((c) => c.compared);
   const glyph = (o: string) => (o === "pass" ? "✓" : o === "fail" ? "✕" : "–");
-  const tone = (o: string) => (o === "pass" ? "fill-emerald-600 dark:fill-emerald-400" : o === "fail" ? "fill-rose-600 dark:fill-rose-400" : "fill-muted-foreground");
+  const tone = (o: string) => (o === "pass" ? "fill-fig-emerald" : o === "fail" ? "fill-fig-rose" : "fill-muted-foreground");
   const c = run.checks[upTo];
   const label = `Waveform for checks 0 to ${upTo}: count (ACT, solid) and expected (EXP, dashed). At check ${upTo}, count is ${showSample(c.actual)} and expected is ${showSample(c.compared)}; results so far PASS=${c.passSoFar} FAIL=${c.failSoFar}.`;
   return (
-    <figure className="rounded-xl border border-border bg-card p-2">
+    <figure className="fig-stage rounded-xl border border-border bg-[hsl(var(--fig-well))]">
       <svg viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full" role="img" aria-label={label}>
         {/* X lane and value grid */}
-        <rect x={LEFT} y={TOP} width={n * CW} height={X_LANE} className="fill-rose-500/10" />
-        <text x={LEFT - 4} y={TOP + X_LANE / 2 + 3.5} fontSize={11} textAnchor="end" className="fill-rose-700 dark:fill-rose-300">
+        <rect x={LEFT} y={TOP} width={n * CW} height={X_LANE} className="fig-band fill-fig-rose-fill" />
+        <text x={LEFT - 4} y={TOP + X_LANE / 2 + 3.5} fontSize={15} textAnchor="end" className="fill-fig-rose-text">
           X
         </text>
         {[0, 7].map((v) => (
           <g key={v}>
-            <line x1={LEFT} x2={LEFT + n * CW} y1={y(v)} y2={y(v)} className="stroke-border" strokeDasharray="1 3" />
-            <text x={LEFT - 4} y={y(v) + 3.5} fontSize={11} textAnchor="end" className="fill-muted-foreground">
+            <line x1={LEFT} x2={LEFT + n * CW} y1={y(v)} y2={y(v)} className="fig-fx stroke-border" strokeDasharray="1 3" />
+            <text x={LEFT - 4} y={y(v) + 3.5} fontSize={15} textAnchor="end" className="fill-foreground">
               {v}
             </text>
           </g>
         ))}
         {shown.map((ch) => (
           <g key={ch.index}>
-            <line x1={x(ch.index)} x2={x(ch.index)} y1={TOP} y2={plotTop + 7 * LEVEL + 8} className="stroke-border" strokeDasharray="2 2" />
+            <line x1={x(ch.index)} x2={x(ch.index)} y1={TOP} y2={plotTop + 7 * LEVEL + 8} className="fig-fx stroke-border" strokeDasharray="2 2" />
             <text x={x(ch.index)} y={14} fontSize={12} textAnchor="middle" className={tone(ch.outcome)}>
               {glyph(ch.outcome)}
             </text>
           </g>
         ))}
-        <path d={path(exp)} fill="none" strokeWidth={2} strokeDasharray="4 3" className="stroke-amber-600 dark:stroke-amber-300" />
-        <path d={path(act)} fill="none" strokeWidth={1.6} className="stroke-cyan-700 dark:stroke-cyan-300" />
-        <line x1={x(upTo)} x2={x(upTo)} y1={TOP - 4} y2={plotTop + 7 * LEVEL + 10} strokeWidth={1.5} className="stroke-foreground/70" />
+        <path d={path(act)} fill="none" strokeWidth={5.8} className="stroke-fig-indigo" />
+        <path d={path(exp)} fill="none" strokeWidth={4} strokeDasharray="4 3" className="fig-fx stroke-card" />
+        <path d={path(exp)} fill="none" strokeWidth={2.5} strokeDasharray="4 3" className="stroke-fig-teal" />
+        <line x1={x(upTo)} x2={x(upTo)} y1={TOP - 4} y2={plotTop + 7 * LEVEL + 6} strokeWidth={2} className="stroke-fig-cyan" />
         {[0, Math.floor((n - 1) / 2), n - 1].map((i) => (
-          <text key={i} x={x(i)} y={height - 3} fontSize={11} textAnchor="middle" className="fill-muted-foreground">
+          <text key={i} x={x(i)} y={height - 3} fontSize={15} textAnchor="middle" className="fill-foreground">
             {i}
           </text>
         ))}
       </svg>
       <figcaption className="mt-1 text-xs text-muted-foreground">
-        x-axis: check k, taken at the falling edge {`10 + 10k`} ns. <span className="text-cyan-700 dark:text-cyan-300">── ACT</span> is count;{" "}
-        <span className="text-amber-700 dark:text-amber-300">- - EXP</span> is the value the compare uses. Top row: ✓ pass, ✕ fail, – no compare ran. The shaded lane is X.
+        x-axis: check k, taken at the falling edge {`10 + 10k`} ns. <span className="text-fig-indigo-text">── ACT</span> is count;{" "}
+        <span className="text-fig-teal-text">- - EXP</span> is the value the compare uses. Top row: ✓ pass, ✕ fail, – no compare ran. The shaded lane is X.
       </figcaption>
     </figure>
   );
@@ -320,7 +321,7 @@ function MutationRun({ config, announce }: { config: BenchConfig; announce: (t: 
       )}
       <AnatomyDiagram run={run} />
       {isLast ? (
-        <div className={panel} data-testid="mutant-verdicts">
+        <div className={cn(panel, "fig-stage")} data-testid="mutant-verdicts">
           <p className="text-label text-muted-foreground">
             {dut.mutant ? "Did the check catch the mutant?" : `Can ${COMPARE_FORMS[config.form].label} fail? Each mutant with this compare:`}
           </p>
@@ -418,20 +419,22 @@ function MatrixView({ announce }: { announce: (t: string) => void }) {
         Each row is the lesson bench with one compare form; each column swaps in one mutant. Press a cell to predict whether that bench prints a failure. A mutant counts as caught only when
         the same bench prints FAIL=0 on the correct DUT.
       </p>
-      <MutationMatrix
-        label="Compare forms against mutants"
-        rows={rows}
-        columns={columns}
-        cells={cells}
-        predictions={predictions}
-        onPredict={(r, c, v) => setPredictions((p) => ({ ...p, [cellKey(r, c)]: v }))}
-        revealed={revealed}
-        onCellSelect={(r, c) => setSelected(cellKey(r, c))}
-        selectedCell={selected}
-        rowHeader="Compare form"
-        columnTotals
-        className={touchButtons}
-      />
+      <div data-figure-kit="matrix" className="fig-stage !p-0 bg-[hsl(var(--fig-well))]">
+        <MutationMatrix
+          label="Compare forms against mutants"
+          rows={rows}
+          columns={columns}
+          cells={cells}
+          predictions={predictions}
+          onPredict={(r, c, v) => setPredictions((p) => ({ ...p, [cellKey(r, c)]: v }))}
+          revealed={revealed}
+          onCellSelect={(r, c) => setSelected(cellKey(r, c))}
+          selectedCell={selected}
+          rowHeader="Compare form"
+          columnTotals
+          className={touchButtons}
+        />
+      </div>
       {!revealed ? (
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -456,7 +459,7 @@ function MatrixView({ announce }: { announce: (t: string) => void }) {
         </p>
       )}
       {selectedVerdict ? (
-        <div className={panel} data-testid="matrix-detail">
+        <div className={cn(panel, "fig-stage")} data-testid="matrix-detail">
           <p className="text-sm font-semibold text-foreground">
             {COMPARE_FORMS[selectedVerdict.form].label} against {BENCH_DUTS[selectedVerdict.mutant].short}
           </p>
@@ -531,12 +534,12 @@ function CoverageResults({ run }: { run: BenchRun }) {
   const hitFor: Partial<Record<string, number>> = { always: code.lineHits.always, reset: code.lineHits.reset, wrap: code.lineHits.wrap, incr: code.lineHits.incr };
   const verdictClass =
     verdict.verdict === "no-evidence"
-      ? "border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+      ? "border-fig-amber bg-fig-amber-fill text-fig-amber-text"
       : verdict.verdict === "fail"
-        ? "border-rose-500/60 bg-rose-500/10 text-rose-800 dark:text-rose-200"
-        : "border-emerald-500/60 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100";
+        ? "border-fig-rose bg-fig-rose-fill text-fig-rose-text"
+        : "border-fig-emerald bg-fig-emerald-fill text-fig-emerald-text";
   return (
-    <div className="space-y-3" data-testid="coverage-results">
+    <div className="fig-stage space-y-3" data-testid="coverage-results">
       <CodeTrace
         label="up_counter with hits per line"
         lines={benchRtlLines(run.config.dut).map((l) => ({ key: l.key, text: l.text, owner: "design" }))}
@@ -544,7 +547,7 @@ function CoverageResults({ run }: { run: BenchRun }) {
           const hits = line.key ? hitFor[line.key] : undefined;
           if (hits === undefined) return null;
           return (
-            <span className={cn(mono, "inline-block min-w-[2.5rem] rounded border px-1 text-right text-xs", hits === 0 ? "border-rose-400 text-rose-300" : "border-slate-500 text-slate-200")} aria-label={`${hits} hits`}>
+            <span className={cn(mono, "inline-block min-w-[2.5rem] rounded border px-1 text-right text-xs", hits === 0 ? "border-fig-rose text-code-foreground" : "border-code-border text-code-foreground")} aria-label={`${hits} hits`}>
               {hits}×
             </span>
           );
@@ -561,7 +564,7 @@ function CoverageResults({ run }: { run: BenchRun }) {
           </p>
           <ul className="mt-1 space-y-0.5 text-xs">
             {code.branches.map((b) => (
-              <li key={b.id} className={b.hits === 0 ? "text-rose-700 dark:text-rose-300" : "text-muted-foreground"}>
+              <li key={b.id} className={b.hits === 0 ? "text-fig-rose-text" : "text-muted-foreground"}>
                 <span className={mono}>{b.label}</span>: {b.hits}
               </li>
             ))}
@@ -582,7 +585,7 @@ function CoverageResults({ run }: { run: BenchRun }) {
           <p className="text-label text-muted-foreground">Functional coverage against the plan</p>
           <ul className="mt-1 space-y-1 text-sm" aria-label="Plan items with hit counts">
             {PLAN_ITEMS.map((p) => (
-              <li key={p.id} className={cn("flex items-baseline justify-between gap-2", fn.hits[p.id] === 0 ? "text-rose-700 dark:text-rose-300" : "text-foreground")}>
+              <li key={p.id} className={cn("flex items-baseline justify-between gap-2", fn.hits[p.id] === 0 ? "text-fig-rose-text" : "text-foreground")}>
                 <span>
                   {p.label}
                   {!p.scenario ? <span className="text-xs text-muted-foreground"> (evidence)</span> : null}
@@ -720,7 +723,7 @@ export default function CounterBenchLab({ mode = "mutation", preset }: CounterBe
   const announce = useCallback((t: string) => setLive(t), []);
   const t = TITLES[mode] ?? TITLES.mutation;
   return (
-    <VisualFrame label={t.label} eyebrow="Experiment" title={t.title} summary={t.summary} fidelity="model" assumptions={COUNTER_BENCH_ASSUMPTIONS} className={cn("min-w-0", reduced && "[&_*]:!transition-none")}>
+    <VisualFrame label={t.label} eyebrow="Experiment" title={t.title} summary={t.summary} fidelity="model" assumptions={COUNTER_BENCH_ASSUMPTIONS} className={cn("fig-panel min-w-0", reduced && "[&_*]:!transition-none")}>
       <LiveRegion text={live} />
       {mode === "matrix" ? <MatrixView announce={announce} /> : mode === "coverage" ? <CoverageView announce={announce} /> : <MutationView preset={preset} announce={announce} />}
     </VisualFrame>
