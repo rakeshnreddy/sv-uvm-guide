@@ -124,6 +124,8 @@ interface RingsProps {
   word?: string;
 }
 
+const revisionRims = ["border-t-fig-ramp-1", "border-t-fig-ramp-2", "border-t-fig-ramp-3", "border-t-fig-ramp-4", "border-t-fig-ramp-5", "border-t-fig-ramp-5"];
+
 /** Tables 22-1 (innermost) to 22-6 (outermost); rings in the chosen set are lit. */
 export function KeywordRings({ specifier, entered, excluded = false, word }: RingsProps) {
   const included = new Set<TableId>(specifier ? SPECIFIER_INFO[specifier].tables : []);
@@ -143,20 +145,20 @@ export function KeywordRings({ specifier, entered, excluded = false, word }: Rin
       <div
         className={cn(
           "rounded-xl border-2 p-1.5 sm:p-2",
-          lit ? "border-cyan-500/70 bg-cyan-500/[0.06]" : "border-dashed border-border/70 bg-transparent",
-          isEntry && "border-amber-500 ring-2 ring-amber-500/40",
+          lit ? cn("border-fig-generic bg-card bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]", revisionRims[index]) : "border-dashed border-fig-generic bg-card",
+          isEntry && "ring-2 ring-fig-cyan",
         )}
         data-testid={`ring-${table.id}`}
         data-lit={lit}
         data-entry={isEntry}
       >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 pb-1 text-xs">
-          <span className={cn("font-semibold", lit ? "text-foreground" : "text-muted-foreground")}>Table {table.id}</span>
-          <span className={cn(mono, "text-muted-foreground")}>{table.revision}</span>
-          <span className="tabular-nums text-muted-foreground">+{table.words.length}</span>
-          {table.id === "22-2" && noconfig ? <span className="text-amber-800 dark:text-amber-200">−{NOCONFIG_EXCLUDED.length} config words (22.14.4)</span> : null}
+          <span className="font-semibold text-foreground">Table {table.id}</span>
+          <span className={cn(mono, "text-foreground")}>{table.revision}</span>
+          <span className="tabular-nums text-foreground">+{table.words.length}</span>
+          {table.id === "22-2" && noconfig ? <span className="text-fig-rose-text">−{NOCONFIG_EXCLUDED.length} config words (22.14.4)</span> : null}
           {isEntry ? (
-            <span className="rounded bg-amber-500/20 px-1 font-semibold text-amber-900 dark:text-amber-100">
+            <span className="rounded bg-fig-cyan-fill px-1 font-semibold text-foreground">
               ◆ {word} entered here{excluded ? ", excluded by noconfig" : ""}
             </span>
           ) : null}
@@ -167,7 +169,7 @@ export function KeywordRings({ specifier, entered, excluded = false, word }: Rin
   };
 
   return (
-    <figure className="space-y-1" aria-label="Cumulative keyword sets">
+    <figure className="fig-stage !p-0 space-y-1 rounded-xl bg-[hsl(var(--fig-well))]" aria-label="Cumulative keyword sets">
       <div role="img" aria-label={description}>
         {ring(KEYWORD_TABLES.length - 1)}
       </div>
@@ -384,17 +386,17 @@ function StackView({ step, base }: { step: RegionStep; base: KeywordSetting }) {
   const baseInEffect = step.stack.length === 0;
   const bottomLabel = settingLabel(base);
   return (
-    <div className={cn(panel, "space-y-2")} data-testid="keyword-stack">
+    <div className={cn(panel, "fig-stage !p-3 space-y-2 bg-[hsl(var(--fig-well))]")} data-testid="keyword-stack">
       <p className="text-label text-muted-foreground">Keyword-set stack</p>
       <ol className="flex flex-col-reverse gap-1.5" aria-label="Keyword-set stack, bottom first">
-        <li className={cn("rounded-lg border border-dashed px-2 py-1 text-xs", baseInEffect ? "border-cyan-500/70 bg-cyan-500/10 font-semibold text-foreground" : "border-border/70 text-muted-foreground")}>
+        <li className={cn("rounded-lg border border-dashed px-2 py-1 text-xs", baseInEffect ? "border-fig-cyan bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] font-semibold text-foreground" : "border-fig-generic text-muted-foreground")}>
           bottom: {bottomLabel}
           {baseInEffect ? <span className="ml-1">◀ in effect</span> : null}
         </li>
         {step.stack.map((s, i) => {
           const top = i === step.stack.length - 1;
           return (
-            <li key={`${s}-${i}`} className={cn("rounded-lg border px-2 py-1 text-xs", top ? "border-cyan-500/70 bg-cyan-500/10 font-semibold text-foreground" : "border-border/70 text-muted-foreground")}>
+            <li key={`${s}-${i}`} className={cn("rounded-lg border px-2 py-1 text-xs", top ? "border-fig-cyan bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] font-semibold text-foreground" : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-muted-foreground")}>
               <code className={mono}>{`"${s}"`}</code>
               {top ? <span className="ml-1">◀ in effect</span> : null}
             </li>
@@ -586,7 +588,7 @@ const LANES: { id: LineageStop["lane"]; label: string }[] = [
 function TableBars({ highlight }: { highlight: TableId | null }) {
   const max = Math.max(...KEYWORD_TABLES.map((t) => t.words.length));
   return (
-    <figure className="space-y-1">
+    <figure className="fig-stage !p-0 space-y-1 rounded-xl bg-[hsl(var(--fig-well))]">
       <ul className="space-y-1" aria-label="Words added by each keyword table">
         {KEYWORD_TABLES.map((t) => {
           const lit = t.id === highlight;
@@ -596,7 +598,7 @@ function TableBars({ highlight }: { highlight: TableId | null }) {
                 Table {t.id}
               </span>
               <span className="h-3 rounded bg-muted/40" aria-hidden>
-                <span className={cn("block h-3 rounded", lit ? "bg-amber-500" : "bg-cyan-500/40")} style={{ width: `${Math.max(2, (t.words.length / max) * 100)}%` }} />
+                <span className={cn("block h-3 rounded fig-solid bg-fig-ramp-3 shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", lit && "outline outline-2 outline-offset-2 outline-fig-cyan")} style={{ width: `${Math.max(2, (t.words.length / max) * 100)}%` }} />
               </span>
               <span className="text-right tabular-nums text-muted-foreground">
                 {t.words.length}
@@ -644,7 +646,7 @@ function LineageView() {
           <PlaybackControls playback={playback} stepCount={LINEAGE_STOPS.length} stepNoun="Stop" describeStep={(i) => LINEAGE_STOPS[i].label} />
           <LiveSummary text={`${stop.label}. ${stop.documents.join(" and ")}. ${tableSentence(stop)}`} testId="lineage-live" />
 
-          <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs" role="group" aria-label="Standards by designation year; choose one to jump to it">
+          <div className="fig-stage !p-0 grid grid-cols-[2.75rem_minmax(0,1fr)_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs bg-[hsl(var(--fig-well))]" role="group" aria-label="Standards by designation year; choose one to jump to it">
             <span aria-hidden />
             {LANES.map((l) => (
               <span key={l.id} className="pb-1 text-label text-muted-foreground" aria-hidden>
@@ -671,7 +673,7 @@ function LineageView() {
                           className={cn(
                             "min-h-9 rounded-lg border px-2 py-1 text-left leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                             s.ieee ? "border-solid" : "border-dashed italic",
-                            current ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
+                            current ? "border-fig-cyan bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] font-semibold text-foreground" : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-muted-foreground hover:bg-muted",
                           )}
                         >
                           <span className="break-words">{s.label}</span>
@@ -739,7 +741,7 @@ function LineageView() {
 /** F1C: which identifiers are reserved, region by region, and the standards each keyword table belongs to. */
 export default function KeywordSetExplorer({ mode = "checker", preset }: KeywordSetExplorerProps) {
   return (
-    <div data-testid="keyword-set-explorer" data-mode={mode}>
+    <div data-testid="keyword-set-explorer" data-mode={mode} className="fig-panel !overflow-visible bg-[hsl(var(--fig-well))]">
       {mode === "regions" ? <RegionsView preset={preset} /> : mode === "lineage" ? <LineageView /> : <CheckerView preset={preset} />}
     </div>
   );

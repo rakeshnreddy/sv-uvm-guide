@@ -217,8 +217,8 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
     })
     .join("; ");
   return (
-    <figure className={cn("rounded-xl border border-border bg-card p-2", className)}>
-      <div className="overflow-x-auto">
+    <figure className={cn("fig-stage rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))] p-2", className)}>
+      <div className="fig-stage !p-0 overflow-x-auto">
         <svg
           viewBox={`0 0 620 ${height}`}
           role="img"
@@ -227,22 +227,25 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
         >
           {niceTicks(maxTime).map((t) => (
             <g key={t}>
-              <line x1={xOf(t)} x2={xOf(t)} y1={top - 6} y2={height - 6} className="stroke-border" strokeWidth={1} />
-              <text x={xOf(t)} y={top - 10} fontSize={12} textAnchor="middle" fill="currentColor" fillOpacity={0.6}>
+              {t !== step.time ? (
+                <line x1={xOf(t)} x2={xOf(t)} y1={top - 6} y2={height - 6} className="stroke-fig-generic" strokeWidth={1} />
+              ) : null}
+              <text x={xOf(t)} y={top - 10} fontSize={12} textAnchor="middle" fill="currentColor">
                 {t}
               </text>
             </g>
           ))}
-          <text x={8} y={top - 10} fontSize={12} fill="currentColor" fillOpacity={0.6}>
+          <text x={8} y={top - 10} fontSize={12} fill="currentColor">
             t (ns) →
           </text>
+          <line x1={xOf(step.time)} x2={xOf(step.time)} y1={top - 4} y2={height - 4} strokeDasharray="4 3" className="stroke-fig-cyan-text" strokeWidth={2} />
           {lanes.map((lane, i) => {
             const y = top + i * rowH + rowH / 2;
             const state = stateOf(lane.pid);
             const started = lane.started;
             const barEnd = Math.max(lane.end, started ?? lane.end);
             const barClass =
-              state === "killed" ? "fill-rose-500/70" : state === "done" ? "fill-emerald-500/60" : state === "blocked" ? "fill-amber-500/60" : "fill-cyan-500/70";
+              state === "killed" ? "fill-fig-rose" : state === "done" ? "fill-fig-emerald" : state === "blocked" ? "fill-fig-amber" : "fill-fig-cyan";
             const focused = step.pid === lane.pid;
             return (
               <g key={lane.pid}>
@@ -257,11 +260,11 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
                   {lane.label.length > 15 ? `${lane.label.slice(0, 14)}…` : lane.label}
                 </text>
                 {started === undefined ? (
-                  <line x1={xOf(lane.created)} x2={xOf(lane.end)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-muted-foreground" strokeWidth={2} />
+                  <line x1={xOf(lane.created)} x2={xOf(lane.end)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-fig-generic" strokeWidth={2} />
                 ) : (
                   <>
                     {started > lane.created ? (
-                      <line x1={xOf(lane.created)} x2={xOf(started)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-muted-foreground" strokeWidth={2} />
+                      <line x1={xOf(lane.created)} x2={xOf(started)} y1={y} y2={y} strokeDasharray="3 3" className="stroke-fig-generic" strokeWidth={2} />
                     ) : null}
                     <rect x={xOf(started)} y={y - 4} width={Math.max(3, xOf(barEnd) - xOf(started))} height={8} rx={3} className={barClass} />
                   </>
@@ -269,25 +272,24 @@ export function ProcessLanes({ result, index, className }: { result: SimResult; 
                 {lane.marks
                   .filter((m) => m.kind === "print")
                   .map((m, k) => (
-                    <circle key={k} cx={xOf(m.time)} cy={y} r={3} className="fill-background stroke-cyan-600 dark:stroke-cyan-300" strokeWidth={1.5} />
+                    <circle key={k} cx={xOf(m.time)} cy={y} r={3} className="fill-background stroke-fig-cyan" strokeWidth={1.5} />
                   ))}
                 {state === "done" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-emerald-700 dark:fill-emerald-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-fig-emerald-text">
                     ✓
                   </text>
                 ) : state === "killed" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-rose-700 dark:fill-rose-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-fig-rose-text">
                     ✕
                   </text>
                 ) : state === "blocked" ? (
-                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-amber-700 dark:fill-amber-300">
+                  <text x={xOf(lane.end) + 5} y={y + 4} fontSize={12} className="fill-fig-amber-text">
                     ⏸
                   </text>
                 ) : null}
               </g>
             );
           })}
-          <line x1={xOf(step.time)} x2={xOf(step.time)} y1={top - 4} y2={height - 4} strokeDasharray="4 3" className="stroke-cyan-600 dark:stroke-cyan-300" strokeWidth={1.5} />
         </svg>
       </div>
       <figcaption className="px-1 pt-1 text-xs text-muted-foreground">

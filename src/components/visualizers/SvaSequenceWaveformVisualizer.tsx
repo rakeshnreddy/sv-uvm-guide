@@ -255,6 +255,7 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
 
   return (
     <VisualFrame
+      className="fig-panel"
       label="SVA trace lab"
       eyebrow="Experiment"
       title="SVA trace lab: one attempt per clock edge"
@@ -385,9 +386,9 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
 
         <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
           <CodeTrace label={mode === "debug" && showFix ? "Fixed assertion (generated)" : "Assertion under test (generated)"} lines={codeLines} className="min-w-0" />
-          <div className="min-w-0 space-y-2 text-sm">
-            <p className="text-muted-foreground">
-              Legend: <span aria-hidden>✓</span> pass · <span aria-hidden>✕</span> fail · <span aria-hidden>○</span> vacuous success (not a pass or a failure) · <span aria-hidden>…</span> pending · <span aria-hidden>⊘</span> disabled. The marker sits on the attempt&apos;s start edge; <code>→5</code> means the result is decided at edge 5.
+          <div className="fig-stage !p-0 min-w-0 space-y-2 text-sm">
+            <p className="text-muted-foreground rounded-md bg-[hsl(var(--fig-well))]">
+              Legend: <span aria-hidden className="text-fig-emerald-text">✓</span> pass · <span aria-hidden className="text-fig-rose-text">✕</span> fail · <span aria-hidden className="text-fig-slate-text">○</span> vacuous success (not a pass or a failure) · <span aria-hidden className="text-fig-amber-text">…</span> pending · <span aria-hidden className="text-fig-generic">⊘</span> disabled. The marker sits on the attempt&apos;s start edge; <code>→5</code> means the result is decided at edge 5.
             </p>
             <button
               type="button"
@@ -553,7 +554,7 @@ function SvaTraceLab({ initialPreset, modes, signalNames }: SvaSequenceWaveformV
 function AttemptExplanation({ attempt, predicted, spec }: { attempt: SvaAttempt; predicted?: AttemptStatus; spec: SvaSpec }) {
   const diagnosis = predicted ? diagnoseAttempt(spec, attempt, predicted) : null;
   return (
-    <div aria-live="polite" className={cn("rounded-xl border p-3 text-sm", statusClass[attempt.status])}>
+    <div aria-live="polite" className={cn("fig-stage rounded-xl border p-3 text-sm bg-[hsl(var(--fig-well))]", statusClass[attempt.status])}>
       <p className="font-semibold">
         <span aria-hidden>{statusGlyph[attempt.status]} </span>
         Attempt A{attempt.start} starts at edge {attempt.start}:{" "}

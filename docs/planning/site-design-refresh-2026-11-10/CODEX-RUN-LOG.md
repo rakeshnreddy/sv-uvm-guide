@@ -142,3 +142,15 @@ The first redesign gate passed G2, G3, G4, G7, G9 and G10. The follow-up puts th
 The second gate passed inventory, words, model and data, rendering, phone text size, literal color, all 342 height checks and page errors. The remaining contrast findings were the closure callout crossing the rare-bin line and the directed-grid bug cross on an overly bright neutral fill. Moved the callout and corrected the neutral fill. An existing ClosureBudgetLab test timed out during concurrent browser work and passed in 1.7 seconds in isolation. Its expectation and timeout are unchanged.
 
 The final F1B gate passed G1–G10. It measured 1,336 texts at 4.98:1 or higher and 876 marks at 3.60:1 or higher. All 342 embed measurements were within 4 px. The 32 Vitest files passed all 1,275 tests. The independent review passed all seven configurations, and both 19-visual comparison sheets are in `test-results/design-previews/codex/F1B_The_Verification_Mindset/`. F1C follows.
+
+## Task 2 — F1C passed
+
+F1B was committed as `515cb383`. F1C resumes from the stored `8ca1bdba` baseline and 17 before crops in each theme. The reordered work starts with the recap stack, then the language comparison, assertion trace, keyword explorer and procedural simulator. The sorter stage shipped with F1B.
+
+The first F1C drawing pass is in the working tree. The source word proof is clean. The 390 px recap review found the verification label crossing its plate edge, so the plate was widened and the label recentered. The full gate then measured the shared-route heights and rendered colors.
+
+The first complete F1C run passed nine gates. G5 reported 44 readings below the floors and four clipped phone samples. The follow-up uses opaque layered plates and stronger labels in the keyword rings, clears the recap label from the rim, and gives the procedural timeline and process lanes readable semantic strokes and measurable scroll stages. The full repeat is running. No reserve or test expectation changed in the first run.
+
+The second F1C run cleared every text and clipped sample. It still found two light-theme readings where the cyan process cursor sat directly on its neutral tick (2.19:1 at 1440 px and 1.91:1 at 390 px). The cursor now replaces the gridline at the same time coordinate. Both comparison sheets are refreshed, and a supplementary baseline comparison confirmed identical text and aria across 13 fully revealed interactive instances in each theme.
+
+The final F1C gate passed G1–G10 against `8ca1bdba`. All 17 visuals are in the new look. The final matrix measured at least 5.77:1 text and 3.37:1 marks, with all 411 reserved-height measurements within 4 px. All 1,066 targeted tests passed without updated expectations. The independent browser pass verified the keyboard path and all seven viewport and media configurations. Both final sheets include the fully revealed keyword timeline. The kit findings and container-focus request are in the lesson report. F2A Core Data Types is next.

@@ -80,6 +80,7 @@ const ProceduralBlocksSimulator = ({ scenario: requested, scenarios, initialVari
 
   return (
     <VisualFrame
+      className="fig-panel"
       label="Procedural blocks simulator"
       eyebrow={timeZero ? "Time zero" : "Procedures over time"}
       title={timeZero ? "Who is already waiting when the first change happens?" : "initial, always and final across simulation time"}
@@ -203,7 +204,7 @@ function TimeZeroLab({ preset, initialVariant }: { preset: TimeZeroPreset; initi
   return (
     <>
       <p className="text-sm text-muted-foreground">{preset.summary}</p>
-      <div className="space-y-2">
+      <div className="fig-stage !p-0 space-y-2 rounded-xl bg-[hsl(var(--fig-well))]">
         <CodeTrace
           label="Code (read-only, generated from the model) · the choice sits in the code line"
           className={CODE_LINE_CHOICE_STACK}
@@ -414,9 +415,9 @@ function LegalOrderGroups({
         }`}
       />
       {preset.watch.length ? (
-        <div role="group" aria-label="Outcome waveforms" className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
+        <div role="group" aria-label="Outcome waveforms" className="fig-stage !p-0 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
           {exploration.outcomes.map((group, i) => (
-            <div key={group.signature} className="min-w-0 rounded-xl border border-border/70 bg-background/50 p-2">
+            <div key={group.signature} className="min-w-0 rounded-xl border border-fig-generic p-2 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]">
               <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {multi ? outcomeTitle(preset, runs[i] ?? group.result, i).title : "Every order"}
               </p>
@@ -456,20 +457,20 @@ function ValueTimeline({ result, names, decls }: { result: SimResult; names: str
   const height = top + names.length * rowH + 16;
   const label = names.map((n) => describeHistory(result, n, decls.get(n), { spoken: true })).join("; ");
   return (
-    <figure className="min-w-0">
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 300 ${height}`} role="img" aria-label={`Over simulation time: ${label}.`} className="w-full min-w-[240px] text-foreground">
+    <figure className="min-w-0 rounded-lg bg-[hsl(var(--fig-well))]">
+      <div className="fig-stage !p-0 overflow-x-auto">
+        <svg viewBox={`0 0 300 ${height}`} role="img" aria-label={`Over simulation time: ${label}.`} className="w-full min-w-[280px] text-foreground">
           <defs>
             <pattern id={patternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="6" height="6" fill="rgba(244,63,94,0.12)" />
-              <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(244,63,94,0.7)" strokeWidth="2" />
+              <rect width="6" height="6" className="fill-fig-rose-fill" />
+              <line x1="0" y1="0" x2="0" y2="6" className="stroke-fig-rose" strokeWidth="2" />
             </pattern>
           </defs>
           {layout.rows.map((row, r) => {
             const y = top + r * rowH;
             return (
               <g key={row.name}>
-                <text x={4} y={y + rowH / 2} fontSize={11} fill="currentColor" dominantBaseline="middle" className="font-mono">
+                <text x={4} y={y + rowH / 2} fontSize={12} fill="currentColor" dominantBaseline="middle" className="font-mono">
                   {row.name}
                 </text>
                 {row.segments.map((seg, k) => (
@@ -481,11 +482,11 @@ function ValueTimeline({ result, names, decls }: { result: SimResult; names: str
                       height={rowH - 8}
                       rx={2}
                       fill={seg.unknown ? `url(#${patternId})` : undefined}
-                      className={seg.unknown ? "stroke-rose-500/80" : "fill-cyan-500/15 stroke-cyan-600 dark:stroke-cyan-300"}
+                      className={seg.unknown ? "stroke-fig-rose" : "fill-fig-indigo-fill stroke-fig-indigo"}
                       strokeWidth={1}
                     />
                     {seg.labelFits ? (
-                      <text x={seg.from + 4} y={y + rowH / 2} fontSize={10} fill="currentColor" dominantBaseline="middle" className="font-mono">
+                      <text x={seg.from + 4} y={y + rowH / 2} fontSize={12} fill="currentColor" dominantBaseline="middle" className="font-mono">
                         {seg.label}
                       </text>
                     ) : null}
@@ -494,13 +495,13 @@ function ValueTimeline({ result, names, decls }: { result: SimResult; names: str
               </g>
             );
           })}
-          <line x1={layout.endX} x2={layout.endX} y1={top} y2={top + names.length * rowH} stroke="currentColor" strokeOpacity={0.5} strokeDasharray="3 3" />
+          <line x1={layout.endX} x2={layout.endX} y1={top} y2={top + names.length * rowH} className="stroke-fig-generic" strokeWidth={1.6} strokeDasharray="3 3" />
           {layout.ticks.map((t) => (
-            <text key={t.time} x={t.x} y={height - 3} fontSize={9} textAnchor="middle" fill="currentColor" fillOpacity={0.6}>
+            <text key={t.time} x={t.x} y={height - 3} fontSize={12} textAnchor="middle" fill="currentColor">
               {t.time}
             </text>
           ))}
-          <line x1={TIMELINE_X0} x2={TIMELINE_X1} y1={height - 13} y2={height - 13} stroke="currentColor" strokeOpacity={0.15} />
+          <line x1={TIMELINE_X0} x2={TIMELINE_X1} y1={height - 13} y2={height - 13} className="stroke-fig-generic" />
         </svg>
       </div>
       <figcaption className="text-[11px] text-muted-foreground">

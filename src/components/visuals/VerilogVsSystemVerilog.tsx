@@ -98,7 +98,7 @@ export default function VerilogVsSystemVerilog() {
   const current = COMPARISON[feature];
 
   return (
-    <div data-testid="verilog-vs-sv">
+    <div data-testid="verilog-vs-sv" className="fig-panel !overflow-visible">
       <VisualFrame
         label="Verilog versus SystemVerilog comparison"
         eyebrow="Compare"
@@ -124,15 +124,15 @@ export default function VerilogVsSystemVerilog() {
           ))}
         </div>
 
-        <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]" aria-live="polite">
-          <div className="min-w-0 rounded-xl border border-border bg-card p-3">
+        <div className="fig-stage !p-0 grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]" aria-live="polite">
+          <div className="min-w-0 rounded-xl border border-fig-generic border-t-2 border-t-fig-ramp-1 p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]">
             <p className="mb-2 text-sm font-semibold text-foreground">Verilog (IEEE 1364-2001)</p>
             <pre className={codeClass} tabIndex={0} role="region" aria-label="Verilog example">
               <code>{current.verilog.code}</code>
             </pre>
             <p className="mt-2 text-sm text-muted-foreground">{current.verilog.desc}</p>
           </div>
-          <div className="min-w-0 rounded-xl border border-cyan-500/40 bg-cyan-500/[0.04] p-3">
+          <div className="min-w-0 rounded-xl border border-fig-generic border-t-2 border-t-fig-ramp-5 p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]">
             <p className="mb-2 text-sm font-semibold text-foreground">SystemVerilog (IEEE 1800)</p>
             <pre className={codeClass} tabIndex={0} role="region" aria-label="SystemVerilog example">
               <code>{current.sv.code}</code>
