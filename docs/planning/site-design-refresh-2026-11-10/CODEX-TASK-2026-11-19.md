@@ -215,3 +215,25 @@ End with a report the owner can paste to the reviewer:
 3. Every test expectation you changed, every "Kit request", everything blocked or not done.
 4. The exact commands the reviewer should run to verify: for each finished lesson,
    `node scripts/figure-gates.cjs <lesson> --base <ref>`.
+
+## Addendum 1 (2026-11-19, from the reviewer): findings in the diagram kit never block a lesson
+
+You stopped lesson `F1B` because its first timing diagram's information band uses literal `sky` classes and
+measures 1.49:1 in light mode. That is a real fault in the kit, and you were right not to edit the kit. It does
+not block the lesson. Apply the following from now on.
+
+1. **Scope of G5, G6 and G7.** They pass or fail on what you redesign: hand-drawn figures and the visuals of
+   interactives. For diagram-kit figures (`ArchitectureDiagram`, `SequenceDiagram`, `TimingDiagram` and anything
+   drawn by `src/components/visual-system/**`) the gate still measures and prints what it finds, as `KIT NOTE`
+   lines, and those lines do not fail the gate.
+2. **What counts as a mark in G5.** A mark is a stroke, a glyph or a solid fill that carries meaning. A soft tint
+   behind other content (a highlight band, a tray's fill, a stage) is not a mark and has no 3:1 floor of its own;
+   text that sits on a tint must still hold 4.5:1 against it.
+3. **Kit requests.** Put every kit finding in the lesson report under "Kit requests" with the file, the line and
+   the measured numbers. The first entry is the timing band: literal `sky` classes, 1.49:1 in light mode. The
+   reviewer fixes the kit separately.
+4. **Update the gate first.** Change `scripts/figure-gates.cjs` to follow points 1 and 2, keep its three mutation
+   proofs passing (a changed label, a literal colour and a shrunken text in a hand-drawn figure must still fail),
+   and commit that on its own.
+5. **Resume with `F1B`,** not `F1C`. Its base capture is already taken. Correct the run log if it records `F1B`
+   as blocked.
