@@ -237,3 +237,60 @@ not block the lesson. Apply the following from now on.
    and commit that on its own.
 5. **Resume with `F1B`,** not `F1C`. Its base capture is already taken. Correct the run log if it records `F1B`
    as blocked.
+
+## Addendum 2 (2026-11-19, from the reviewer): Task 0 is not accepted yet; calibrate the gate on lesson 1 first
+
+Your gate fails the finished reference lesson (`F1A`) on G5, G6 and G7. Task 0's acceptance was that lesson 1
+passes. A gate that fails the reference can never pass a new lesson, so nothing after it can be closed. The
+mutation proofs are good; the calibration is not. I read your report
+(`reports/F1A_The_Cost_of_Bugs.json`); this is what it shows and what to change. Do this before any lesson, keep
+it short, and commit it on its own.
+
+**G5 (252 findings, 102 of them at 1.0:1 to 1.2:1).** Almost all are not marks:
+
+- 161 are faces of isometric solids (`polygon fig-face-*`, `fig-solid`). A face is shading. It sits on another
+  face of the same object, so it measures 1:1 by construction. Judge a solid by its **outline against what
+  surrounds the whole object**, once per object, not face by face.
+- 42 are in the two kit diagrams ("One bug, two loops", the triage tree). Per Addendum 1 these are `KIT NOTE`s.
+- About 30 are page furniture inside interactives, not the visual: dividers and tracks drawn with the `border` and
+  `muted` tokens, chips, the "Predict" badge of the shared prediction prompt. Scope G5 to the visual itself: the
+  figure's `<svg>`, or in an interactive the element that holds its chart, diagram, timeline or stage. Buttons,
+  tabs, sliders, prompts and cards around it are the site's UI and have their own tests
+  (`tests/app/theme-contrast.test.ts`).
+- Text that is deliberately inactive (a disabled control, a "not reached on this path" branch) is exempt, as in
+  WCAG. Detect it by `aria-disabled`, `disabled`, or the component's own inactive class, not by guessing.
+- What is left after that (your report has 19 findings at 3:1 or above, such as "moved right (dashed)" and
+  "passed tape-out") may be real. Do not hide them. List each under "Reference findings for the reviewer" in the
+  run log with the visual, the text, the theme, the width and the ratio.
+
+Check your numbers against the method that was used to review lesson 1: `reference-scripts/contrast4.cjs`. For
+lesson 1's hand-drawn figures it measured text at 4.81:1 or more and marks at 4.12:1 or more. If your gate gives a
+lower number for the same element, find out which of the two samples the wrong pixels, and say so in the log.
+
+**G6 (26 findings).** All are the cost chart's axis labels at 8.5 px, a known fault of lesson 1 that the reviewer
+owns, plus one symbol in a card picture. G6 is about words and numbers; a lone symbol glyph (✕ ✓ ▼ ▶ ●) is a mark,
+not text.
+
+**G7 (49 findings, all Tailwind palette classes in five component files).** Rule 6 is about what you draw. Scan
+the lesson's figure markup, and in component files only the lines your change adds or modifies against the base
+ref. Palette classes on lines you did not touch are printed as "existing palette classes" and do not fail. For
+lesson 1 run it against its base (`cb80965f`): any palette class on a line that lesson 1's redesign added is a
+real finding; list it for the reviewer.
+
+**Known exceptions, in a file, never silent.** Add `scripts/figure-gates.exceptions.json`. Each entry names the
+gate, the lesson or component, the element (label or selector), the measured value, the reason and who owns the
+fix. The gate prints each as `KNOWN` and does not fail on it. Seed it only with what this addendum names for lesson
+1: the cost chart's axis labels (G6), and whatever real G5 and G7 findings remain in lesson 1 after the scoping
+above, each listed individually, owner "reviewer". For any later lesson you may not add an exception yourself:
+fix the visual, or mark the lesson "needs a reviewer decision" in the log and move on.
+
+**Acceptance for Task 0, restated.**
+
+1. `node scripts/figure-gates.cjs content/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx --base cb80965f --skip G3`
+   ends with every gate PASS, with its `KNOWN` and `KIT NOTE` lines printed.
+2. The three mutation proofs still fail as before (a changed label, a literal colour and a shrunken text in a
+   hand-drawn figure), and add a fourth: lower one text colour in a hand-drawn figure of a scratch copy until it is
+   under 4.5:1; G5 must fail on it.
+3. Paste the four outputs and the "Reference findings for the reviewer" list into the run log.
+
+Then continue with `F1B` as Addendum 1 says. Spend the rest of the window on lessons, not on the gate.
