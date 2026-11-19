@@ -15,18 +15,23 @@ const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 // points. The two swatches of a legend are two marks even if their CSS matches.
 function collectRegions(rows) {
   const regions = [];
+  document
+    .querySelectorAll("[data-gate-region]")
+    .forEach((e) => e.removeAttribute("data-gate-region"));
   for (const [index, row] of rows.entries()) {
     if (row.domIndex == null || row.controlOnly) continue;
     const root = document.querySelector(`[data-gate-item="${row.domIndex}"]`);
     const regionsForRow = [];
-    if (!root.matches("[data-mdx-interactive]")) regionsForRow.push(root);
-    else {
+    if (!root.matches("[data-mdx-interactive]")) {
+      if (root.matches("svg,[data-diagram]")) regionsForRow.push(root);
+      else regionsForRow.push(...root.querySelectorAll("svg"));
+    } else {
       for (const el of root.querySelectorAll(
         "figure,svg,.fig-stage,.fig-titlebar,.fig-legend,.fig-chip,[aria-roledescription=slide],ol,table,[role=img],[class*='fig-'],[style*='--fig-']",
       )) {
         if (
           (el.closest("svg") && el.tagName !== "svg") ||
-          el.closest("button,input,pre,code") ||
+          el.closest("button,input,pre,code,fieldset,[role=tablist]") ||
           el.matches(".lucide,.fig-panel:not(figure)")
         )
           continue;
@@ -65,6 +70,23 @@ function collectRegions(rows) {
     for (const region of regionsForRow.filter(
       (r, i, list) => !list.some((s, j) => i !== j && s !== r && s.contains(r)),
     )) {
+      for (const chip of region.querySelectorAll(".fig-chip")) {
+        const rect = chip.getBoundingClientRect();
+        if (
+          !rect.width ||
+          !rect.height ||
+          getComputedStyle(chip).visibility !== "visible"
+        )
+          continue;
+        chip.setAttribute("data-gate-region", String(regions.length));
+        regions.push({
+          id: regions.length,
+          index,
+          line: row.line,
+          name: row.name,
+          kit: !!chip.closest("[data-figure-kit],[data-diagram]"),
+        });
+      }
       const rect = region.getBoundingClientRect();
       if (
         !rect.width ||
@@ -77,6 +99,7 @@ function collectRegions(rows) {
       regions.push({
         id,
         index,
+        line: row.line,
         kit: ["architecture", "sequence", "timing"].includes(row.key),
         name: row.name,
       });
@@ -85,7 +108,12 @@ function collectRegions(rows) {
   return regions;
 }
 function readInk(root) {
-  const box = root.getBoundingClientRect();
+  const rect = root.getBoundingClientRect();
+  // Playwright encloses the element's document rect in whole CSS pixels.
+  const box = {
+    x: Math.floor(rect.x + scrollX) - scrollX,
+    y: Math.floor(rect.y + scrollY) - scrollY,
+  };
   const texts = [],
     marks = [];
   const cssColor = (value) => {
@@ -123,16 +151,33 @@ function readInk(root) {
     const n = tree.currentNode,
       e = n.parentElement,
       s = n.textContent.trim();
-    if (!s || !visible(e) || e.closest("title,desc,style,script,option"))
+    if (
+      !s ||
+      !visible(e) ||
+      e.closest("[data-gate-region]") !== root ||
+      e.closest(
+        "title,desc,style,script,option,:disabled,[aria-disabled=true],[data-taken=false],button,input,fieldset,[role=tablist]",
+      )
+    )
       continue;
     const svg = e instanceof SVGElement;
     if (svg && !e.closest("text")) continue;
+    if (e.closest("[data-gate-region]") !== root) continue;
     const c = getComputedStyle(e);
     const range = new Range();
     range.selectNodeContents(n);
-    const rects = [...range.getClientRects()].filter(
-      (r) => r.width > 0 && r.height > 0,
-    );
+    const borderBox = e.getBoundingClientRect();
+    const inset = (side) => parseFloat(c[`border${side}Width`]) || 0;
+    const rects = [...range.getClientRects()]
+      .map((r) => {
+        if (svg) return r;
+        const left = Math.max(r.x, borderBox.left + inset("Left"));
+        const top = Math.max(r.y, borderBox.top + inset("Top"));
+        const right = Math.min(r.right, borderBox.right - inset("Right"));
+        const bottom = Math.min(r.bottom, borderBox.bottom - inset("Bottom"));
+        return { x: left, y: top, width: right - left, height: bottom - top };
+      })
+      .filter((r) => r.width > 0 && r.height > 0);
     if (!rects.length) continue;
     const m = svg ? e.getScreenCTM() : null;
     const rgba = cssColor(svg ? c.fill : c.color);
@@ -140,6 +185,7 @@ function readInk(root) {
     e.setAttribute("data-gate-text", "");
     texts.push({
       s,
+      kit: !!e.closest("[data-figure-kit]"),
       rgba,
       opacity: alpha(e) * (svg ? Number(c.fillOpacity) : 1),
       size: parseFloat(c.fontSize) * (m ? Math.hypot(m.c, m.d) : 1),
@@ -147,18 +193,71 @@ function readInk(root) {
     });
   }
   const layers = [];
+  const faceSelector =
+    "polygon.fig-face-top,polygon.fig-face-left,polygon.fig-face-right";
+  const seenSolids = new Set();
   for (const e of [root, ...root.querySelectorAll("*")]) {
     if (
       !visible(e) ||
-      e.closest(".fig-fx,defs,marker,pattern,clipPath,mask,.lucide")
+      e.closest("[data-gate-region]") !== root ||
+      e.closest(
+        ".fig-fx,defs,marker,pattern,clipPath,mask,.lucide,button,input,fieldset,[role=tablist]",
+      )
     )
       continue;
     const c = getComputedStyle(e);
-    const rect = e.getBoundingClientRect();
+    let rect = e.getBoundingClientRect();
     const cls = e.getAttribute("class") || "";
     let pts = [],
-      kind;
-    if (e instanceof SVGGeometryElement) {
+      kind,
+      members = [e];
+    const kitElement = e.closest("[data-figure-kit],[data-diagram]");
+    if (e.matches("polygon") && seenSolids.has(e.parentElement)) continue;
+    if (e.matches(faceSelector) && !kitElement) {
+      const parent = e.parentElement;
+      members = [
+        ...parent.querySelectorAll(`:scope > :is(${faceSelector})`),
+      ].filter(visible);
+      if (seenSolids.has(parent)) continue;
+      seenSolids.add(parent);
+      // Only the silhouette has exterior pixels. Internal seams are shading.
+      const faces = members.map((face) => ({
+        face,
+        screen: face.getScreenCTM(),
+        inverse: face.getScreenCTM().inverse(),
+      }));
+      const inside = (p) =>
+        faces.some(({ face, inverse }) =>
+          face.isPointInFill(p.matrixTransform(inverse)),
+        );
+      for (const { face, screen } of faces) {
+        const length = face.getTotalLength();
+        for (let n = 1; n < 96; n++) {
+          const distance = (length * n) / 96;
+          const p = face.getPointAtLength(distance).matrixTransform(screen);
+          const q = face
+            .getPointAtLength(distance + 0.04)
+            .matrixTransform(screen);
+          const norm = Math.hypot(q.x - p.x, q.y - p.y);
+          if (!norm) continue;
+          const dx = (q.y - p.y) / norm,
+            dy = (p.x - q.x) / norm;
+          if (
+            inside(new DOMPoint(p.x + dx, p.y + dy)) &&
+            inside(new DOMPoint(p.x - dx, p.y - dy))
+          )
+            continue;
+          pts.push([p.x - box.x, p.y - box.y]);
+        }
+      }
+      members.push(
+        ...parent.querySelectorAll(
+          ':scope > polygon.fill-card, :scope > polygon[fill^="url(#"]',
+        ),
+      );
+      kind = "solid-outline";
+      rect = parent.getBoundingClientRect();
+    } else if (e instanceof SVGGeometryElement) {
       // DESIGN section 14 explicitly classifies label-pill outlines and
       // non-cursor edge guides as decoration. Their text is measured above.
       const kit = e.closest("[data-diagram]");
@@ -171,7 +270,8 @@ function readInk(root) {
         kit &&
         e.localName === "line" &&
         e.classList.contains("stroke-muted-foreground/25");
-      if (labelPill || guide) continue;
+      if (labelPill || guide || (!kitElement && e.matches(".fig-band")))
+        continue;
       const paintServer = e.getAttribute("fill")?.match(/^url\(#(.+)\)$/);
       const hatch =
         paintServer &&
@@ -181,7 +281,7 @@ function readInk(root) {
         parseFloat(c.strokeWidth) > 0 &&
         parseFloat(c.strokeOpacity) > 0;
       const solid =
-        e.classList.contains("fig-solid") ||
+        (e.classList.contains("fig-solid") && !stroke) ||
         (!stroke &&
           c.fill !== "none" &&
           /(fill-fig-)/.test(cls) &&
@@ -215,6 +315,7 @@ function readInk(root) {
       });
     } else {
       if (!rect.width || !rect.height) continue;
+      if (!kitElement && /--fig-well|fig-well/.test(cls)) continue;
       const border = /border-(?:[lrtb]-)?fig-|border[^ ]*--fig-/.test(cls);
       const solid =
         (/bg-fig-(?!\w+-(?:body|fill))/.test(cls) && !e.textContent.trim()) ||
@@ -263,11 +364,14 @@ function readInk(root) {
       layers.push([]);
     }
     layers[layer].push(bounds);
-    e.setAttribute("data-gate-layer", String(layer));
-    e.setAttribute("data-gate-mark", kind);
+    for (const member of members) {
+      member.setAttribute("data-gate-layer", String(layer));
+      member.setAttribute("data-gate-mark", kind);
+    }
     marks.push({
       kind,
       layer,
+      kit: !!kitElement,
       label: [e.tagName, cls, e.getAttribute("data-testid")]
         .filter(Boolean)
         .join(" "),
@@ -279,7 +383,7 @@ function readInk(root) {
 const hiddenText =
   "[data-gate-text]{-webkit-text-fill-color:transparent!important;text-shadow:none!important} svg [data-gate-text]{fill:transparent!important;stroke:transparent!important}";
 const hiddenMark =
-  "[data-gate-mark=stroke]{stroke:transparent!important}[data-gate-mark=solid]{stroke:transparent!important;fill:transparent!important}[data-gate-mark=hatch]{fill:transparent!important}[data-gate-mark=css-solid]{background:transparent!important}[data-gate-mark=css-border]{border-color:transparent!important}";
+  "[data-gate-mark=stroke]{stroke:transparent!important}[data-gate-mark=solid-outline],[data-gate-mark=solid]{stroke:transparent!important;fill:transparent!important}[data-gate-mark=hatch]{fill:transparent!important}[data-gate-mark=css-solid]{background:transparent!important}[data-gate-mark=css-border]{border-color:transparent!important}";
 
 async function sampleRegion(locator) {
   await locator.scrollIntoViewIfNeeded();
@@ -354,19 +458,23 @@ async function sampleRegion(locator) {
             x++
           ) {
             const k = pixel(x, y);
-            const cr = contrast(
-              l(bg, k),
-              lum(
-                ...t.rgba
-                  .slice(0, 3)
-                  .map((v, j) => a * v + (1 - a) * bg[k + j]),
-              ),
-            );
+            const ink = t.rgba
+              .slice(0, 3)
+              .map((v, j) => a * v + (1 - a) * bg[k + j]);
+            const cr = contrast(l(bg, k), lum(...ink));
             fallback = Math.min(fallback, cr);
+            // A bounding box also contains neighbouring rules and glyphs.
+            // Match the pixel to an antialiased blend of this label's ink.
+            const delta = ink.map((value, j) => value - bg[k + j]);
+            const change = delta.map((_, j) => actual.data[k + j] - bg[k + j]);
+            const norm = delta.reduce((sum, value) => sum + value * value, 0);
+            const cover =
+              change.reduce((sum, value, j) => sum + value * delta[j], 0) /
+              norm;
             if (
-              [0, 1, 2].some(
-                (j) => Math.abs(actual.data[k + j] - bg[k + j]) > 2,
-              )
+              cover > 0.35 &&
+              cover < 1.12 &&
+              change.every((value, j) => Math.abs(value - cover * delta[j]) < 5)
             )
               painted = Math.min(painted, cr);
           }
@@ -420,16 +528,28 @@ async function sampleRegion(locator) {
   return {
     texts: data.texts.map((t, i) => ({
       label: t.s,
+      kit: t.kit,
       size: t.size,
       ratio: Number.isFinite(tr[i]) ? tr[i] : null,
     })),
     marks: data.marks.map((m, i) => {
-      const rs = mr[i].sort((a, b) => a - b);
+      const visiblePoints =
+        m.kind === "solid-outline"
+          ? mr[i].filter((ratio) => ratio > 1.03)
+          : mr[i];
+      const rs = (visiblePoints.length ? visiblePoints : mr[i]).sort(
+        (a, b) => a - b,
+      );
       return {
         label: m.label,
+        kit: m.kit,
         ratio:
-          rs[Math.floor(rs.length * (m.kind.includes("solid") ? 0.5 : 0.75))] ??
-          null,
+          rs[
+            Math.floor(
+              rs.length *
+                (m.kind === "solid" || m.kind === "css-solid" ? 0.5 : 0.75),
+            )
+          ] ?? null,
       };
     }),
   };

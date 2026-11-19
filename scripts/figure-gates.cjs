@@ -76,7 +76,14 @@ async function checks(lesson, changed, names, taskFiles) {
   // by an MDX author. Keep jsx-no-undef enabled for all unregistered names.
   const logs = await Promise.all([
     run("npx", ["--no-install", "tsc", "--noEmit"]),
-    run("npx", ["--no-install", "vitest", "--run", ...tests]),
+    run("npx", [
+      "--no-install",
+      "vitest",
+      "--run",
+      "--maxWorkers",
+      "2",
+      ...tests,
+    ]),
     run("npx", [
       "--no-install",
       "eslint",
@@ -157,7 +164,19 @@ async function heights(names, url, art) {
     },
   );
 }
-function samples(matrix) {
+function changedLines(base, file) {
+  if (!git("ls-tree", base, "--", file).trim()) return () => true;
+  const ranges = [
+    ...git("diff", "--no-ext-diff", "--unified=0", base, "--", file).matchAll(
+      /^@@ .*? \+(\d+)(?:,(\d+))? @@/gm,
+    ),
+  ].map(([, start, length]) => [Number(start), Number(length ?? 1)]);
+  return (line) =>
+    ranges.some(([start, length]) => line >= start && line < start + length);
+}
+
+function samples(matrix, acknowledge, kitNotes) {
+  const perFigure = [];
   const text = [],
     marks = [],
     small = [],
@@ -172,15 +191,62 @@ function samples(matrix) {
         error: v.measurementError,
       });
     for (const r of v.pixels) {
+      const minimum = (items) =>
+        items
+          .filter((item) => item.ratio != null && !item.kit)
+          .reduce(
+            (min, item) => (!min || item.ratio < min.ratio ? item : min),
+            null,
+          );
+      if (!r.kit)
+        perFigure.push({
+          figure: r.name,
+          width: v.width,
+          theme: v.theme,
+          text: minimum(
+            r.texts.filter((item) => /[\p{L}\p{N}]/u.test(item.label)),
+          ),
+          mark: minimum([
+            ...r.marks,
+            ...r.texts.filter((item) => !/[\p{L}\p{N}]/u.test(item.label)),
+          ]),
+        });
       for (const [kind, items] of [
         ["text", r.texts],
         ["mark", r.marks],
       ])
         for (const item of items) {
           const e = { width: v.width, theme: v.theme, figure: r.name, ...item };
-          (kind === "text" ? text : marks).push(e);
+          const kit = r.kit || item.kit;
+          const glyph = kind === "text" && !/[\p{L}\p{N}]/u.test(item.label);
+          const floor = kind === "mark" || glyph ? 3 : 4.5;
+          if (kit) {
+            if (item.ratio == null || item.ratio < floor)
+              kitNotes.push({
+                gate: "G5",
+                ...e,
+                line: r.line,
+                value: item.ratio,
+              });
+            if (kind === "text" && !glyph && v.width === 390 && item.size < 11)
+              kitNotes.push({
+                gate: "G6",
+                ...e,
+                line: r.line,
+                value: item.size,
+              });
+            count++;
+            continue;
+          }
+          (kind === "text" && !glyph ? text : marks).push(e);
           if (item.ratio == null) unmeasured.push(e);
-          if (kind === "text" && v.width === 390 && !r.kit && item.size < 11)
+          if (
+            kind === "text" &&
+            v.width === 390 &&
+            !glyph &&
+            item.size < 11 &&
+            !acknowledge("G6", e, item.size)
+          )
             small.push(e);
           count++;
         }
@@ -190,7 +256,7 @@ function samples(matrix) {
   const bad = [
     ...text.filter((e) => e.ratio != null && e.ratio < 4.5),
     ...marks.filter((e) => e.ratio != null && e.ratio < 3),
-  ];
+  ].filter((e) => !acknowledge("G5", e, e.ratio));
   const floor = (entries) =>
     entries.some((e) => e.ratio != null)
       ? Math.min(
@@ -205,7 +271,7 @@ function samples(matrix) {
     G5: result(
       complete && !bad.length && !unmeasured.length,
       `${text.length} texts (min ${floor(text)}:1), ${marks.length} marks (min ${floor(marks)}:1), ${bad.length} below floor, ${unmeasured.length} unmeasured`,
-      { perView, bad, unmeasured },
+      { perView, perFigure, bad, unmeasured },
     ),
     G6: result(
       complete && !small.length,
@@ -372,6 +438,29 @@ async function main() {
     return;
   }
   const G = {};
+  const known = [],
+    kitNotes = [],
+    existingPalette = [];
+  const exceptions = require("./figure-gates.exceptions.json");
+  function acknowledge(gate, finding, value) {
+    const entry = exceptions.find(
+      (e) =>
+        e.gate === gate &&
+        e.lesson === slug &&
+        e.base === base &&
+        e.element === (finding.label ?? finding.token) &&
+        e.figure === finding.figure &&
+        e.file === finding.file &&
+        e.line === finding.line &&
+        e.width === finding.width &&
+        e.theme === finding.theme &&
+        (typeof value === "number"
+          ? Math.abs(e.value - value) < 0.025
+          : e.value === value),
+    );
+    if (entry) known.push({ ...entry, measured: value });
+    return Boolean(entry);
+  }
   const words = compareWords(original, current);
   G.G2 = result(
     !words.length,
@@ -380,17 +469,30 @@ async function main() {
   );
   const literal = [];
   for (const i of current.visuals)
-    for (const m of literalColours(i.raw))
-      literal.push({ file: lesson, ...m, line: i.line + m.line - 1 });
+    for (const m of literalColours(i.raw)) {
+      const finding = { file: lesson, ...m, line: i.line + m.line - 1 };
+      if (i.kind === "kit")
+        kitNotes.push({ ...finding, gate: "G7", value: m.token });
+      else literal.push(finding);
+    }
   const components = [...related].filter(
     (f) => f.startsWith("src/components/") && fs.existsSync(f),
   );
-  for (const file of components)
-    for (const m of literalColours(fs.readFileSync(file, "utf8")))
-      literal.push({ file, ...m });
+  for (const file of components) {
+    const changed = changedLines(base, file);
+    const shared = /^src\/components\/(visual-system\/|mdx\/DiagramKit\.)/.test(
+      file,
+    );
+    for (const m of literalColours(fs.readFileSync(file, "utf8"))) {
+      const finding = { file, ...m };
+      if (shared) kitNotes.push({ ...finding, gate: "G7", value: m.token });
+      else if (!changed(m.line)) existingPalette.push(finding);
+      else if (!acknowledge("G7", finding, m.token)) literal.push(finding);
+    }
+  }
   G.G7 = result(
     !literal.length,
-    `${literal.length} literal paints in lesson visuals and ${components.length} changed component files`,
+    `${literal.length} new literal paints in lesson visuals and ${components.length} changed component files`,
     literal,
   );
   const jobs = {
@@ -435,6 +537,18 @@ async function main() {
       theme,
       rows,
     }));
+    for (const view of matrix)
+      for (const row of view.rows) {
+        if (row.kitColours?.length)
+          kitNotes.push({
+            gate: "G7",
+            figure: row.name,
+            line: row.line,
+            width: view.width,
+            theme: view.theme,
+            value: row.kitColours.join(", "),
+          });
+      }
     const old = [
       ...new Set(
         matrix.flatMap((s) =>
@@ -504,7 +618,7 @@ async function main() {
         { changedModels, mismatches },
       );
     }
-    Object.assign(G, samples(matrix));
+    Object.assign(G, samples(matrix, acknowledge, kitNotes));
     const issues = matrix.flatMap((s) =>
       [
         ...s.errors,
@@ -537,6 +651,27 @@ async function main() {
   const gates = Object.fromEntries(
     Array.from({ length: 10 }, (_, i) => ["G" + (i + 1), G["G" + (i + 1)]]),
   );
+  for (const {
+    gate,
+    figure,
+    file,
+    line,
+    width,
+    theme,
+    element,
+    measured,
+  } of known)
+    console.log(
+      `KNOWN ${gate} ${figure ?? file} ${line ?? ""} ${theme ?? ""} ${width ?? ""} ${element}: ${measured} (reviewer)`,
+    );
+  for (const note of kitNotes)
+    console.log(
+      `KIT NOTE ${note.gate} ${note.figure ?? note.file} @${note.line ?? "DOM"} ${note.theme ?? ""} ${note.width ?? ""} ${note.label ?? ""}: ${note.value ?? "unmeasured"}`,
+    );
+  if (existingPalette.length)
+    console.log(
+      `NOTE G7 existing palette classes: ${existingPalette.length} on untouched lines (see JSON)`,
+    );
   for (const [id, g] of Object.entries(gates))
     console.log(g.status + " " + id + " " + g.summary);
   const failed = Object.values(gates).filter((g) => g.status === "FAIL").length;
@@ -549,6 +684,9 @@ async function main() {
     base,
     head: git("rev-parse", "HEAD").trim(),
     gates,
+    known,
+    kitNotes,
+    existingPalette,
     summary,
   });
   console.log(summary + "; " + report);

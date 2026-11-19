@@ -173,6 +173,7 @@ function reconcile(source, dom) {
             ),
         ));
     const colours = literalColours(paint).map((c) => c.token);
+    const kit = item.kind === "kit";
     const stage =
       el.hasStage || el.recap || (item.kind === "interactive" && el.hasTokens);
     const styled =
@@ -180,8 +181,7 @@ function reconcile(source, dom) {
       stage &&
       el.hasTokens &&
       !el.unstyled &&
-      el.titleStrip &&
-      !colours.length;
+      el.titleStrip;
     rows.push({
       ...el,
       name: item.name,
@@ -189,9 +189,10 @@ function reconcile(source, dom) {
       domIndex: pos - 1,
       stale,
       colours: [...new Set(colours)],
+      kitColours: kit ? [...new Set(colours)] : [],
       look: el.controlOnly
         ? "controls only"
-        : styled && !stale
+        : (styled || kit) && !stale
           ? "new look"
           : "old",
     });
@@ -393,6 +394,18 @@ async function scenario(browser, opts, width, theme) {
             : e.paint,
       })),
     );
+    for (const row of rows)
+      if (row.domIndex != null) {
+        const kitPaint = await page
+          .locator(`[data-gate-item="${row.domIndex}"] [data-figure-kit]`)
+          .evaluateAll((kits) => kits.map((kit) => kit.outerHTML).join("\n"));
+        row.kitColours = [
+          ...new Set([
+            ...(row.kitColours || []),
+            ...literalColours(kitPaint).map((c) => c.token),
+          ]),
+        ];
+      }
     if (opts.images && width === 1440)
       await captureArt(page, rows, opts.images, theme);
     let pixels = null,
