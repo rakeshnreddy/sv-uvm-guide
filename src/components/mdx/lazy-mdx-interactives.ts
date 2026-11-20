@@ -532,7 +532,7 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   // The base is section="widths"; the defaults drills are much shorter.
   DataTypeComparisonChart: {
     height: 1354,
-    midHeight: 1354,
+    midHeight: 1370,
     mobileHeight: 2189,
     variants: [{ when: propIs("section", "defaults"), height: 523, midHeight: 523, mobileHeight: 809 }],
   },
@@ -629,7 +629,7 @@ export const lazyMdxInteractiveMeta: Partial<Record<LazyMdxInteractiveName, Lazy
   ShiftLeftTimeline: { height: 1235, midHeight: 1235, mobileHeight: 2201 },
   StringMethodExplorer: { height: 574, midHeight: 574, mobileHeight: 690 },
   // The game opens on its short start card.
-  PacketSorterGame: { height: 364, midHeight: 364, mobileHeight: 552 },
+  PacketSorterGame: { height: 380, midHeight: 380, mobileHeight: 568 },
   // The base is mode="decide" with the default case; the custom case and the kata are taller.
   FixPathDecisionLab: {
     height: 635,

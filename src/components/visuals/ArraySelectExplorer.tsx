@@ -97,8 +97,8 @@ function Notes({ notes }: { notes: string[] }) {
   );
 }
 
-const hatch = "border-rose-500/80 text-rose-700 dark:text-rose-200 bg-[repeating-linear-gradient(135deg,rgba(244,63,94,0.18)_0_4px,transparent_4px_8px)]";
-const lit = "border-cyan-500 bg-cyan-500/20 font-semibold text-foreground ring-2 ring-cyan-500/60";
+const hatch = "border-fig-rose text-fig-rose-text bg-[repeating-linear-gradient(135deg,hsl(var(--fig-rose-fill))_0_4px,transparent_4px_8px)]";
+const lit = "border-fig-cyan bg-fig-cyan-fill font-semibold text-foreground ring-2 ring-fig-cyan";
 
 /* ------------------------------------------------------------------ */
 /* select mode                                                         */
@@ -117,15 +117,17 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
     const bits = wordBits(decl.word([]), 32);
     const segments: BitSegment[] = [3, 2, 1, 0].map((lane) => ({ hi: lane * 8 + 7, lo: lane * 8, label: revealed ? `w[${lane}]` : "lane" }));
     return (
-      <div className="space-y-2">
-        <BitStrip
-          bits={bits}
-          label={`${decl.declText}, one 32-bit vector`}
-          segments={segments}
-          highlight={Array.from(read)}
-          highlightLabel={`read by ${result.expr}`}
-          bitNumbers
-        />
+      <div className="fig-stage !p-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]">
+        <span className="contents" data-figure-kit>
+          <BitStrip
+            bits={bits}
+            label={`${decl.declText}, one 32-bit vector`}
+            segments={segments}
+            highlight={Array.from(read)}
+            highlightLabel={`read by ${result.expr}`}
+            bitNumbers
+          />
+        </span>
         {revealed && result.missingElements.length ? (
           <p className={cn("rounded-md border px-2 py-1 font-mono text-xs", hatch)}>
             elements {result.missingElements[0]} to {result.missingElements[result.missingElements.length - 1]} of [3:0]: do not exist, read x
@@ -139,15 +141,15 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
     const indices = rangeIndices(decl.unpacked[0]);
     const bad = revealed && result.invalid && !result.invalid.packed ? result.invalid.index : undefined;
     return (
-      <div role="img" aria-label={`${decl.declText}: four separate 8-bit elements${revealed ? `; ${result.expr} ${result.rows.length ? `reads element${result.rows.length > 1 ? "s" : ""} ${result.rows.map((r) => r[0]).join(" and ")}` : "reads no element"}` : ""}`} className="flex flex-wrap gap-2">
+      <div role="img" aria-label={`${decl.declText}: four separate 8-bit elements${revealed ? `; ${result.expr} ${result.rows.length ? `reads element${result.rows.length > 1 ? "s" : ""} ${result.rows.map((r) => r[0]).join(" and ")}` : "reads no element"}` : ""}`} className="fig-stage !p-0 flex flex-wrap gap-2 rounded-lg bg-[hsl(var(--fig-well))]">
         {indices.map((i) => (
-          <div key={i} className={cn("min-w-16 rounded-lg border px-2 py-1.5 text-center font-mono text-xs [font-variant-ligatures:none]", isRowRead([i]) ? lit : "border-slate-400/60 bg-slate-500/10")}>
+          <div key={i} className={cn("min-w-16 rounded-lg border px-2 py-1.5 text-center font-mono text-xs [font-variant-ligatures:none]", isRowRead([i]) ? lit : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]")}>
             <div className="text-xs text-muted-foreground">{revealed ? `b[${i}]` : "element"}</div>
             {hex2(decl.word([i]))}
           </div>
         ))}
         {bad !== undefined ? (
-          <div className={cn("min-w-16 rounded-lg border border-dashed px-2 py-1.5 text-center font-mono text-xs", state === "logic" ? hatch : "border-slate-400/80")}>
+          <div className={cn("min-w-16 rounded-lg border border-dashed px-2 py-1.5 text-center font-mono text-xs", state === "logic" ? hatch : "border-fig-generic")}>
             <div className="text-xs">{typeof bad === "object" ? "" : `b[${c.items[0].kind === "index" ? (c.items[0].name ?? bad) : bad}]`}</div>
             no element
           </div>
@@ -161,7 +163,7 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
     const bitInByte = result.kind === "bit" && read.size === 1 ? Array.from(read)[0] : undefined;
     return (
       <div className="space-y-2">
-        <div className="max-w-full overflow-x-auto">
+        <div className="fig-stage !p-0 max-w-full overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))]">
           <table aria-label={`${decl.declText}: 16 words in rows, four byte lanes in columns`} className="border-separate border-spacing-0.5 font-mono text-xs [font-variant-ligatures:none]">
             <thead>
               <tr>
@@ -169,7 +171,7 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
                   word
                 </th>
                 {[3, 2, 1, 0].map((lane) => (
-                  <th key={lane} scope="col" className="px-1 font-normal text-muted-foreground">
+                  <th key={lane} scope="col" className="px-1 font-normal text-foreground">
                     {revealed ? `[${lane}]` : `${lane * 8 + 7}:${lane * 8}`}
                   </th>
                 ))}
@@ -184,7 +186,7 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
                       {revealed ? `mem[${i}]` : i}
                     </th>
                     {[3, 2, 1, 0].map((lane) => (
-                      <td key={lane} className={cn("rounded border px-1.5 py-0.5 text-center", rowLit && lanesRead.has(lane) ? lit : rowLit ? "border-cyan-500/50 bg-cyan-500/5" : "border-border/50")}>
+                      <td key={lane} className={cn("rounded border px-1.5 py-0.5 text-center", rowLit && lanesRead.has(lane) ? lit : rowLit ? "border-fig-indigo bg-fig-indigo-fill" : "border-border/50")}>
                         {hex2(memByte(i, lane))}
                       </td>
                     ))}
@@ -195,14 +197,16 @@ function SelectDrawing({ c, state, result, revealed }: { c: SelectCase; state: S
           </table>
         </div>
         {revealed && bitInByte !== undefined && result.rows[0] ? (
-          <BitStrip
-            bits={wordBits(memByte(result.rows[0][0], Math.floor(bitInByte / 8)), 8)}
-            label={`mem[${result.rows[0][0]}][${Math.floor(bitInByte / 8)}]`}
-            msbIndex={7}
-            highlight={[bitInByte % 8]}
-            highlightLabel={`read: bit ${bitInByte} of mem[${result.rows[0][0]}]`}
-            bitNumbers
-          />
+          <span className="contents" data-figure-kit>
+            <BitStrip
+              bits={wordBits(memByte(result.rows[0][0], Math.floor(bitInByte / 8)), 8)}
+              label={`mem[${result.rows[0][0]}][${Math.floor(bitInByte / 8)}]`}
+              msbIndex={7}
+              highlight={[bitInByte % 8]}
+              highlightLabel={`read: bit ${bitInByte} of mem[${result.rows[0][0]}]`}
+              bitNumbers
+            />
+          </span>
         ) : null}
       </div>
     );
@@ -255,7 +259,9 @@ function SelectReveal({ result }: { result: SelectResult }) {
         ) : null}
       </dl>
       {v && v.shape === "packed" && v.bits.length > 1 && !result.twoStateUnstated && !v.intLike ? (
-        <BitStrip bits={v.bits as Bit[]} label={`${result.expr}, the value read`} />
+        <span className="contents" data-figure-kit>
+          <BitStrip bits={v.bits as Bit[]} label={`${result.expr}, the value read`} />
+        </span>
       ) : null}
       <ol className="list-decimal space-y-1 pl-5 text-muted-foreground" aria-label="Why">
         {result.steps.map((s) => (
@@ -400,16 +406,20 @@ function PartMode({ initialCase, initialSlider }: { initialCase: string; initial
         </div>
       ) : null}
       <Given lines={[`${d.declText} = ${formatBits(vectorBits(d))};`, ...(base === "x" ? ["i holds 'x"] : [])]} />
-      <BitStrip
-        bits={vectorBits(d)}
-        label={`${d.declText}, ${isAscending(d) ? "ascending: bit 0 is the most significant" : "descending: bit 31 is the most significant"}`}
-        ascending={isAscending(d)}
-        msbIndex={d.msb}
-        segments={segments}
-        highlight={inRangeRead}
-        highlightLabel={`read by ${result.expr}`}
-        bitNumbers
-      />
+      <div className="fig-stage !p-0 rounded-lg bg-[hsl(var(--fig-well))]">
+        <span className="contents" data-figure-kit>
+          <BitStrip
+            bits={vectorBits(d)}
+            label={`${d.declText}, ${isAscending(d) ? "ascending: bit 0 is the most significant" : "descending: bit 31 is the most significant"}`}
+            ascending={isAscending(d)}
+            msbIndex={d.msb}
+            segments={segments}
+            highlight={inRangeRead}
+            highlightLabel={`read by ${result.expr}`}
+            bitNumbers
+          />
+        </span>
+      </div>
       <PredictionPrompt key={resetKey} resetKey={resetKey} question={<>Which bits does {code(result.expr)} read?</>} options={options}>
         <RevealSignal onChange={onReveal} />
         <div className="space-y-3 text-sm">
@@ -428,10 +438,12 @@ function PartMode({ initialCase, initialSlider }: { initialCase: string; initial
             <dd>{result.place}</dd>
           </dl>
           {result.bits.length ? (
-            <BitStrip
-              bits={result.bits}
-              label={`${result.expr}, the value read${result.indices.length ? `, bits ${result.indices[0]} to ${result.indices[result.indices.length - 1]} of ${d.name}` : ""}`}
-            />
+            <span className="contents" data-figure-kit>
+              <BitStrip
+                bits={result.bits}
+                label={`${result.expr}, the value read${result.indices.length ? `, bits ${result.indices[0]} to ${result.indices[result.indices.length - 1]} of ${d.name}` : ""}`}
+              />
+            </span>
           ) : null}
           <p className="text-muted-foreground">{result.explanation}</p>
           <Notes notes={result.notes} />
@@ -451,14 +463,14 @@ function PartMode({ initialCase, initialSlider }: { initialCase: string; initial
 
 function DimColumn({ title, active, children }: { title: string; active: boolean; children: React.ReactNode }) {
   return (
-    <div className={cn("min-w-0 rounded-lg border p-2", active ? "border-cyan-500 bg-cyan-500/10" : "border-border/60")}>
+    <div className={cn("min-w-0 rounded-lg border p-2", active ? "border-fig-cyan bg-fig-cyan-fill" : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]")}>
       <p className={cn("mb-1 font-mono text-xs [font-variant-ligatures:none]", active ? "font-semibold text-foreground" : "text-muted-foreground")}>{title}</p>
       {children}
     </div>
   );
 }
 
-const chip = "inline-flex min-w-8 items-center justify-center rounded border border-slate-400/60 bg-slate-500/10 px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]";
+const chip = "inline-flex min-w-8 items-center justify-center rounded border border-fig-generic bg-card px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]";
 
 /** Nested columns, slowest-varying dimension first. The chosen dimension is outlined; nothing here shows a query result. */
 function QueryLayout({ target, dimension }: { target: QueryTarget; dimension: number }) {
@@ -529,7 +541,7 @@ function QueryLayout({ target, dimension }: { target: QueryTarget; dimension: nu
     );
   };
   return (
-    <div role="group" aria-label={`${target.declText}: dimensions as nested columns, dimension 1 first`} className="grid gap-2 sm:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
+    <div role="group" aria-label={`${target.declText}: dimensions as nested columns, dimension 1 first`} className="fig-stage !p-0 grid gap-2 sm:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
       {target.dims.map((_, k) => (target.rows && k === 1 ? (
         <DimColumn key={k} title={dimTitle(k)} active={dimension === k + 1}>
           <span className="text-xs text-muted-foreground">ragged rows: {target.rows.map((r) => `key ${r.key} holds ${r.length}`).join(", ")}</span>
@@ -743,7 +755,7 @@ export default function ArraySelectExplorer({ mode = "select", preset, className
   const { preset: p, unknown } = resolvePreset(m, preset);
   const frame = FRAME[m];
   return (
-    <VisualFrame label={frame.label} eyebrow="Experiment" title={frame.title} summary={frame.summary} fidelity="model" assumptions={ARRAY_SELECT_ASSUMPTIONS} className={className}>
+    <VisualFrame label={frame.label} eyebrow="Experiment" title={frame.title} summary={frame.summary} fidelity="model" assumptions={ARRAY_SELECT_ASSUMPTIONS} className={cn("fig-panel !overflow-visible", className)}>
       {unknown ? (
         <p role="note" className="text-xs text-rose-700 dark:text-rose-300">
           Preset “{preset}” is not one of {ARRAY_SELECT_PRESETS.filter((x) => x.mode === m).map((x) => x.id).join(", ")}; showing {p.id}.

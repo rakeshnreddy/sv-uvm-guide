@@ -148,15 +148,17 @@ const PICTURE: { bit: Bit4; title: string; meaning: string }[] = [
 
 function FourValuePicture() {
   return (
-    <figure className="rounded-xl border border-border bg-card p-3">
+    <figure className="fig-stage !p-3 rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))]">
       <figcaption className="mb-2 text-label text-muted-foreground">
         The picture: every 4-state bit holds one of four values
       </figcaption>
       <ul className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
         {PICTURE.map((p) => (
-          <li key={p.bit} className="flex items-start gap-2 rounded-lg border border-border/60 p-2">
-            <ValueChip value={chipValue(p.bit)} />
-            <span className="text-xs text-muted-foreground">
+          <li key={p.bit} className="flex items-start gap-2 rounded-lg border border-fig-generic p-2 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
+            <span className="contents" data-figure-kit>
+              <ValueChip value={chipValue(p.bit)} />
+            </span>
+            <span className="text-xs text-foreground">
               <strong className="block text-foreground">{p.title}</strong>
               {p.meaning}
             </span>
@@ -230,7 +232,9 @@ function OperatorsTab() {
         <div className="space-y-3" aria-live="polite">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-mono [font-variant-ligatures:none]">y = {expr} =</span>
-            <ValueChip name="y" value={chipValue(result)} />
+            <span className="contents" data-figure-kit>
+              <ValueChip name="y" value={chipValue(result)} />
+            </span>
           </div>
           <Why>{explainBitwise(op, a, unary ? undefined : b)}</Why>
           <TruthTable op={op} a={a} b={b} />
@@ -244,7 +248,7 @@ function TruthTable({ op, a, b }: { op: OperatorChoice; a: Bit4; b: Bit4 }) {
   const caption = `${BITWISE_TABLE_NAMES[op]} of IEEE 1800-2023: ${op === "~" ? "~a" : `a ${op} b`} for every 4-state input`;
   if (op === "~") {
     return (
-      <div className="overflow-x-auto">
+      <div className="fig-stage !p-0 overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))]">
         <table className="min-w-[240px] border-collapse text-center font-mono text-sm [font-variant-ligatures:none]">
           <caption className="mb-1 text-left text-xs text-muted-foreground">{caption}</caption>
           <thead>
@@ -269,7 +273,7 @@ function TruthTable({ op, a, b }: { op: OperatorChoice; a: Bit4; b: Bit4 }) {
   }
   const tbl = BITWISE_TABLES[op];
   return (
-    <div className="overflow-x-auto">
+    <div className="fig-stage !p-0 overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))]">
       <table className="min-w-[260px] border-collapse text-center font-mono text-sm [font-variant-ligatures:none]">
         <caption className="mb-1 text-left text-xs text-muted-foreground">{caption}. Rows are a, columns are b.</caption>
         <thead>
@@ -301,9 +305,9 @@ function TableCell({ value, current }: { value: Bit4; current: boolean }) {
   return (
     <td
       aria-current={current ? "true" : undefined}
-      className={cn("border border-border/60 px-2 py-1", current && "outline outline-2 -outline-offset-2 outline-cyan-500")}
+      className={cn("border border-border/60 px-2 py-1", current && "bg-fig-cyan-fill outline outline-2 -outline-offset-2 outline-fig-cyan")}
     >
-      <span className={cn("inline-block min-w-6 rounded border px-1", valueStyles[classifyValue(value)].className)}>{value}</span>
+      <span className={cn("inline-block min-w-6 rounded border px-1", valueStyles[classifyValue(value)].className, value === "x" && "text-fig-rose-text dark:text-fig-rose-text")}>{value}</span>
       {current ? <span className="sr-only"> (your case)</span> : null}
     </td>
   );
@@ -418,7 +422,9 @@ function EqualityTab() {
               <li key={expr} className="rounded-lg border border-border/60 p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <code className="font-mono text-sm [font-variant-ligatures:none]">{expr}</code>
-                  <ValueChip value={chipValue(r.result)} />
+                  <span className="contents" data-figure-kit>
+                    <ValueChip value={chipValue(r.result)} />
+                  </span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">{r.why}</p>
               </li>
@@ -544,7 +550,9 @@ function IfPanel({ construct, a, setA }: { construct: "if" | "ifnot" | "ternary"
       <PredictionPrompt resetKey={`${construct}:${a}`} question={<>What is <code className="font-mono">y</code>?</>} options={options}>
         <div className="space-y-2 text-sm" aria-live="polite">
           <div className="flex flex-wrap items-center gap-2">
-            <ValueChip name="y" value={chipValue(result)} />
+            <span className="contents" data-figure-kit>
+              <ValueChip name="y" value={chipValue(result)} />
+            </span>
             {construct !== "ternary" ? (
               <span className="text-muted-foreground">
                 condition <code className="font-mono">{construct === "ifnot" ? "!a" : "a"}</code> = {cond[0]} → <strong className="text-foreground">{branch}</strong> branch
@@ -729,27 +737,35 @@ function VectorConditionPanel({ construct, bits, setBits }: { construct: ScalarC
         options={options}
       >
         <div className="space-y-3 text-sm" aria-live="polite">
-          <BitStrip
-            bits={bits}
-            label="e"
-            bitNumbers
-            highlight={r.oneBits}
-            highlightLabel="known 1"
-          />
-          <ul className="space-y-2">
+          <span className="contents" data-figure-kit>
+            <BitStrip
+              bits={bits}
+              label="e"
+              bitNumbers
+              highlight={r.oneBits}
+              highlightLabel="known 1"
+            />
+          </span>
+          <ul className="fig-stage !p-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]">
             <li className="flex flex-wrap items-center gap-2">
               <code className="font-mono [font-variant-ligatures:none]">e != 0</code>
-              <ValueChip value={chipValue(r.notEqualZero)} />
+              <span className="contents" data-figure-kit>
+                <ValueChip value={chipValue(r.notEqualZero)} />
+              </span>
               <span className="text-muted-foreground">if (e) is the same test as if (e != 0) (§12.4).</span>
             </li>
             {r.negated !== undefined ? (
               <li className="flex flex-wrap items-center gap-2">
                 <code className="font-mono [font-variant-ligatures:none]">!e</code>
-                <ValueChip value={chipValue(r.negated)} />
+                <span className="contents" data-figure-kit>
+                  <ValueChip value={chipValue(r.negated)} />
+                </span>
               </li>
             ) : null}
             <li className="flex flex-wrap items-center gap-2">
-              <ValueChip name="y" value={chipValue(r.y)} />
+              <span className="contents" data-figure-kit>
+                <ValueChip name="y" value={chipValue(r.y)} />
+              </span>
               {r.branch ? (
                 <span className="text-muted-foreground">
                   <strong className="text-foreground">{r.branch}</strong> branch
@@ -938,7 +954,13 @@ function TwoStateTab() {
               const changed = bit !== after;
               return (
                 <span key={i} className="inline-flex items-center gap-1 rounded-md border border-border/60 px-1.5 py-1 font-mono text-xs [font-variant-ligatures:none]">
-                  <ValueChip value={chipValue(bit)} />→<ValueChip value={chipValue(after)} changed={changed} />
+                  <span className="contents" data-figure-kit>
+                    <ValueChip value={chipValue(bit)} />
+                  </span>
+                  {"→"}
+                  <span className="contents" data-figure-kit>
+                    <ValueChip value={chipValue(after)} changed={changed} />
+                  </span>
                 </span>
               );
             })}
@@ -963,7 +985,7 @@ function DefaultsTable() {
     { decl: "int i;", bits: defaultVariableValue("int") },
   ];
   return (
-    <div className="overflow-x-auto">
+    <div className="fig-stage !p-0 overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))]">
       <table className="min-w-[260px] border-collapse text-left text-sm">
         <caption className="mb-1 text-left text-xs text-muted-foreground">Value before any assignment (Table 6-7): 4-state starts at x, 2-state at 0</caption>
         <thead>
@@ -1004,6 +1026,7 @@ export default function LogicStateDiagram({ initialTab, initialConstruct, tabs, 
   };
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="Four-state value explorer"
       eyebrow="Picture + experiment"
       title="Four values, one unknown"

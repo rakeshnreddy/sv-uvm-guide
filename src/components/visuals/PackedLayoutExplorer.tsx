@@ -230,14 +230,14 @@ function StripPanel({ children, footer, label, className, reveal }: { children: 
     if (ref.current && reveal?.length) scrollBitIntoView(ref.current, reveal[0]);
   }, [ref, reveal]);
   return (
-    <div className={cn("min-w-0 rounded-xl border border-border bg-card p-2", className)}>
+    <div className={cn("fig-stage !p-2 min-w-0 rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))] p-2", className)}>
       {/* The padding is on the scroller, so a cell's ring at the edge is not clipped by it. */}
       <div
         ref={ref}
         role="region"
         aria-label={overflowing ? `${label} (scrolls sideways)` : label}
         tabIndex={overflowing ? 0 : undefined}
-        className="min-w-0 overflow-x-auto p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="fig-stage !p-1 min-w-0 overflow-x-auto p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className="w-max min-w-full" data-testid="strip-scroll">
           {children}
@@ -655,15 +655,17 @@ function StructMode({ preset: presetId }: { preset?: string }) {
             ) : null
           }
         >
-          <BitStrip
-            bits={toBits(value)}
-            label={`${varName}, ${preset.typeName}`}
-            segments={segments}
-            bitNumbers
-            changed={run.changed}
-            extendedFrom={run.extendedFrom}
-            droppedFrom={run.droppedFrom}
-          />
+          <span className="contents" data-figure-kit>
+            <BitStrip
+              bits={toBits(value)}
+              label={`${varName}, ${preset.typeName}`}
+              segments={segments}
+              bitNumbers
+              changed={run.changed}
+              extendedFrom={run.extendedFrom}
+              droppedFrom={run.droppedFrom}
+            />
+          </span>
         </StripPanel>
       ) : (
         <div className="space-y-3" data-testid="struct-unpacked-view">
@@ -934,7 +936,9 @@ function UnionRowView({
         {name}
         {row.width === width ? (
           <div className="flex justify-end">
-            <BitStrip bits={toBits(readUnionPiece(value, row))} label={`${varName}.${row.path}`} msbIndex={row.hi} bitNumbers changed={changed} />
+            <span className="contents" data-figure-kit>
+              <BitStrip bits={toBits(readUnionPiece(value, row))} label={`${varName}.${row.path}`} msbIndex={row.hi} bitNumbers changed={changed} />
+            </span>
           </div>
         ) : (
           <p className="sticky left-0 w-fit rounded-[3px] border border-dashed border-slate-400/60 px-2 py-1 text-xs text-muted-foreground">{row.width} bits: where they sit appears once you answer</p>
@@ -965,15 +969,16 @@ function UnionRowView({
         ) : null}
         {/* Each piece is drawn as its member reads it, so a 2-state piece shows 0 where the 4-state union holds x, as the status line does (§7.3.1, §6.11.2). */}
         {row.pieces.map((p) => (
-          <BitStrip
-            key={p.path}
-            bits={toBits(readUnionPiece(value, p))}
-            label={`${varName}.${p.path}`}
-            msbIndex={p.hi}
-            bitNumbers
-            segments={[{ hi: p.hi, lo: p.lo, label: p.label }]}
-            changed={changed.filter((b) => b >= p.lo && b <= p.hi)}
-          />
+          <span key={p.path} className="contents" data-figure-kit>
+            <BitStrip
+              bits={toBits(readUnionPiece(value, p))}
+              label={`${varName}.${p.path}`}
+              msbIndex={p.hi}
+              bitNumbers
+              segments={[{ hi: p.hi, lo: p.lo, label: p.label }]}
+              changed={changed.filter((b) => b >= p.lo && b <= p.hi)}
+            />
+          </span>
         ))}
       </div>
     </div>
@@ -1467,7 +1472,9 @@ function TaggedMode() {
             </>
           }
         >
-          <BitStrip bits={picture.bits} label={`v, ${type.name} packed`} bitNumbers segments={picture.segments} undefinedBits={picture.undefinedBits} />
+          <span className="contents" data-figure-kit>
+            <BitStrip bits={picture.bits} label={`v, ${type.name} packed`} bitNumbers segments={picture.segments} undefinedBits={picture.undefinedBits} />
+          </span>
         </StripPanel>
       ) : null}
 
@@ -1827,7 +1834,7 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
 
 export default function PackedLayoutExplorer({ mode = "struct", preset }: PackedLayoutExplorerProps) {
   return (
-    <div data-testid="packed-layout-explorer" data-mode={mode} className="min-w-0">
+    <div data-testid="packed-layout-explorer" data-mode={mode} className="fig-panel !overflow-visible min-w-0">
       {mode === "union" ? <UnionMode preset={preset} /> : mode === "tagged" ? <TaggedMode /> : mode === "mutation" ? <MutationMode /> : mode === "debug" ? <DebugMode preset={preset} /> : <StructMode preset={preset} />}
     </div>
   );

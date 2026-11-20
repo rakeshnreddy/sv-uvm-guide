@@ -93,7 +93,7 @@ const DataTypeQuiz: React.FC<DataTypeQuizProps> = ({ questions }) => {
 
   return (
     <>
-      <Card className="my-8 border-primary/40 bg-background/90 shadow-xl" data-testid="data-type-quiz">
+      <Card className="fig-panel !overflow-visible my-8 border-fig-generic bg-background/90 shadow-xl" data-testid="data-type-quiz">
         <CardHeader className="space-y-4">
           <CardTitle className="text-2xl">Data Type Detective</CardTitle>
           <p className="text-sm text-muted-foreground">
@@ -106,13 +106,13 @@ const DataTypeQuiz: React.FC<DataTypeQuizProps> = ({ questions }) => {
                 {Math.min(currentQuestion + 1, totalQuestions)}/{totalQuestions}
               </span>
             </div>
-            <Progress value={progress} aria-label="Quiz progress" />
+            <Progress value={progress} aria-label="Quiz progress" className="fig-stage !p-0 bg-[hsl(var(--fig-well))] [&>div]:bg-fig-ramp-4 motion-reduce:[&>div]:transition-none" />
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
           {!isQuizFinished ? (
             <div className="space-y-5" data-testid="quiz-question">
-              <div className="rounded-lg border bg-muted/20 p-5">
+              <div className="rounded-lg border border-fig-generic p-5 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
                 <p className="text-sm font-medium text-muted-foreground">Scenario</p>
                 <h3 className="mt-2 text-lg font-semibold">{question.question}</h3>
               </div>
@@ -143,7 +143,7 @@ const DataTypeQuiz: React.FC<DataTypeQuizProps> = ({ questions }) => {
               </div>
               {showFeedback ? (
                 <div
-                  className={cn("rounded-lg border p-4 text-sm", isCorrect ? "border-emerald-500 bg-emerald-500/10" : "border-destructive bg-destructive/10")}
+                  className={cn("rounded-lg border p-4 text-sm", isCorrect ? "border-fig-emerald bg-fig-emerald-fill" : "border-fig-rose bg-fig-rose-fill")}
                   data-testid="quiz-feedback"
                   aria-live="polite"
                 >

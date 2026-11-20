@@ -186,7 +186,7 @@ const DataTypeExplorer: React.FC = () => {
   };
 
   return (
-    <div data-testid="curriculum-data-type-explorer">
+    <div data-testid="curriculum-data-type-explorer" className="fig-panel !overflow-visible">
       <VisualFrame
         label="Data type sandbox"
         eyebrow="Explore"
@@ -213,7 +213,7 @@ const DataTypeExplorer: React.FC = () => {
               role="group"
               aria-label={`${descriptor.label} bits`}
               data-testid="bit-visualizer"
-              className={cn("grid max-w-[320px] gap-1", descriptor.width > 4 ? "grid-cols-8" : "grid-cols-4")}
+              className={cn("fig-stage !p-0 grid max-w-[320px] gap-1 rounded-lg bg-[hsl(var(--fig-well))]", descriptor.width > 4 ? "grid-cols-8" : "grid-cols-4")}
             >
               {bits.map((value, index) => {
                 const bitNumber = descriptor.width - 1 - index;
@@ -235,7 +235,7 @@ const DataTypeExplorer: React.FC = () => {
                 );
               })}
             </div>
-            <p className="font-mono text-sm [font-variant-ligatures:none]" data-testid="value-readout">
+            <p className="fig-stage !p-0 rounded-md bg-[hsl(var(--fig-well))] font-mono text-sm [font-variant-ligatures:none]" data-testid="value-readout">
               {formatLiteral(bits)}
               <span className="block font-sans text-xs text-muted-foreground">{numericReadout(bits, info.signed)}</span>
             </p>
@@ -270,7 +270,7 @@ const DataTypeExplorer: React.FC = () => {
           </div>
 
           <aside className="min-w-0 space-y-3 text-sm">
-            <dl className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-4">
+            <dl className="fig-stage !p-4 space-y-2 rounded-lg border border-fig-generic p-4 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Family</dt>
                 <dd className="font-medium" data-testid="property-family">{descriptor.family}</dd>
@@ -296,7 +296,7 @@ const DataTypeExplorer: React.FC = () => {
                 </dd>
               </div>
             </dl>
-            <div className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-4">
+            <div className="fig-stage !p-4 space-y-2 rounded-lg border border-fig-generic p-4 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
               <p data-testid="type-rule">{descriptor.summary}</p>
               <p>
                 <strong className="text-foreground">Who may write it: </strong>

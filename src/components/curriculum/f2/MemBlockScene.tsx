@@ -19,6 +19,7 @@
  * result reads) and rendering; it adds no select semantics.
  */
 
+import { useTheme } from "next-themes";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Html, OrbitControls } from "@react-three/drei";
@@ -368,8 +369,16 @@ function tokenColour(name: string, fallback: number): THREE.Color {
   if (typeof window === "undefined") return colour;
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const m = raw.match(/^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/);
-  if (m) colour.setHSL(Number(m[1]) / 360, Number(m[2]) / 100, Number(m[3]) / 100);
+  if (m) colour.setHSL(Number(m[1]) / 360, Number(m[2]) / 100, Number(m[3]) / 100, THREE.SRGBColorSpace);
   return colour;
+}
+
+function bitColours(): Record<Bit, THREE.Color> {
+  return {
+    "0": tokenColour("--fig-slate", BIT_COLOURS["0"]),
+    "1": tokenColour("--fig-cyan", BIT_COLOURS["1"]),
+    x: tokenColour("--fig-rose", BIT_COLOURS.x),
+  };
 }
 
 /** Keeps the whole block in view at the canvas's current aspect, at the smallest distance that fits. */
@@ -394,6 +403,7 @@ function CameraFit({ bounds, target }: { bounds: Bounds; target: [number, number
 function BitCubes({ decl, read }: { decl: ArrayDecl; read: MemReadSet }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((s) => s.invalidate);
+  const { resolvedTheme } = useTheme();
   const W = wordWidth(decl);
   const drawers = useMemo(() => rangeIndices(decl.unpacked[0]), [decl]);
   const spots = useMemo(() => Array.from({ length: W }, (_, p) => cubeSpot(decl, p)), [decl, W]);
@@ -406,7 +416,8 @@ function BitCubes({ decl, read }: { decl: ArrayDecl; read: MemReadSet }) {
     if (!m || typeof m.setMatrixAt !== "function") return;
     const matrix = new THREE.Matrix4();
     const colour = new THREE.Color();
-    const dim = new THREE.Color(DIM_TOWARD);
+    const dim = tokenColour(resolvedTheme === "light" ? "--muted" : "--background", DIM_TOWARD);
+    const colours = bitColours();
     let n = 0;
     drawers.forEach((i) => {
       const bits = drawerBits(decl, i);
@@ -416,7 +427,7 @@ function BitCubes({ decl, read }: { decl: ArrayDecl; read: MemReadSet }) {
         const h = b === "1" ? 1 : ZERO_HEIGHT;
         matrix.makeScale(1, h, 1).setPosition(spots[p].x, y - (1 - h) / 2, spots[p].z);
         m.setMatrixAt(n, matrix);
-        colour.setHex(BIT_COLOURS[b]);
+        colour.copy(colours[b]);
         if (isDimmed(read, i, p)) colour.lerp(dim, 0.72);
         m.setColorAt(n, colour);
         n += 1;
@@ -425,7 +436,7 @@ function BitCubes({ decl, read }: { decl: ArrayDecl; read: MemReadSet }) {
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
     if (typeof invalidate === "function") invalidate();
-  }, [W, decl, drawers, invalidate, read, spots]);
+  }, [W, decl, drawers, invalidate, read, resolvedTheme, spots]);
 
   useEffect(
     () => () => {
@@ -457,6 +468,7 @@ function Outline({ box, colour }: { box: OutlineBox; colour: THREE.Color }) {
 
 function GhostDrawer({ decl, y, bits }: { decl: ArrayDecl; y: number; bits: readonly Bit[] }) {
   const W = bits.length;
+  const colours = bitColours();
   return (
     <group>
       {bits.map((b, k) => {
@@ -465,7 +477,7 @@ function GhostDrawer({ decl, y, bits }: { decl: ArrayDecl; y: number; bits: read
         return (
           <mesh key={k} position={[s.x, y - (1 - h) / 2, s.z]} scale={[1, h, 1]}>
             <boxGeometry args={[CUBE_WIDTH, 1, CUBE_DEPTH]} />
-            <meshStandardMaterial color={BIT_COLOURS[b]} transparent opacity={0.55} />
+            <meshStandardMaterial color={colours[b]} transparent opacity={0.55} />
           </mesh>
         );
       })}
@@ -483,7 +495,7 @@ function Label({ position, align, strong, testId, children }: { position: [numbe
         className={cn(
           "block whitespace-pre font-mono text-xs leading-none [font-variant-ligatures:none]",
           align === "right" ? "-translate-x-full -translate-y-1/2 pr-1" : "-translate-y-1/2 pl-1",
-          strong ? "font-semibold text-code-foreground" : "text-code-muted",
+          strong ? "font-semibold text-foreground" : "text-muted-foreground",
         )}
       >
         {children}
@@ -525,7 +537,8 @@ export function useMemBlockFrame(decl: ArrayDecl): { bounds: Bounds; target: [nu
 
 export function MemBlockCanvasContents({ decl, result, revealed, reducedMotion }: { decl: ArrayDecl; result: SelectResult; revealed: boolean; reducedMotion: boolean }) {
   const read = useMemo(() => memReadSet(result, revealed), [result, revealed]);
-  const outline = useMemo(() => tokenColour("--code-foreground", FALLBACK_OUTLINE), []);
+  const { resolvedTheme } = useTheme();
+  const outline = tokenColour(resolvedTheme === "light" ? "--fig-cyan-text" : "--fig-cyan", FALLBACK_OUTLINE);
   const { bounds, target } = useMemBlockFrame(decl);
   const drawers = useMemo(() => rangeIndices(decl.unpacked[0]), [decl]);
   const box = memOutlineBox(decl, read, result);
@@ -580,9 +593,9 @@ export function memBlockResultText(result: SelectResult, read: MemReadSet): stri
 
 const mono = "font-mono [font-variant-ligatures:none]";
 /** Rose hatching is the visual-language encoding for x. */
-const hatch = "border-rose-500/80 text-rose-700 dark:text-rose-200 bg-[repeating-linear-gradient(135deg,rgba(244,63,94,0.18)_0_4px,transparent_4px_8px)]";
+const hatch = "border-fig-rose text-fig-rose-text bg-[repeating-linear-gradient(135deg,hsl(var(--fig-rose-fill))_0_4px,transparent_4px_8px)]";
 /** A read cell: neutral raised surface, a strong outline and a text marker, so it cannot be read as a signal value. */
-const readCell = "border-2 border-foreground bg-muted font-semibold text-foreground";
+const readCell = "border-2 border-fig-cyan bg-fig-cyan-fill font-semibold text-foreground";
 
 export function MemBlockTable({ decl, result, revealed }: { decl: ArrayDecl; result: SelectResult; revealed: boolean }) {
   const read = memReadSet(result, revealed);
@@ -591,7 +604,7 @@ export function MemBlockTable({ decl, result, revealed }: { decl: ArrayDecl; res
   const four = decl.base === "logic";
   return (
     <div className="space-y-2" data-testid="mem-block-table">
-      <div role="region" aria-label="Text view of mem" tabIndex={0} className="max-w-full overflow-x-auto rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <div role="region" aria-label="Text view of mem" tabIndex={0} className="fig-stage !p-0 max-w-full overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <table className={cn("border-separate border-spacing-0.5 text-xs", mono)}>
           <caption className="pb-1 text-left font-sans text-xs text-muted-foreground">
             Text view: {decl.declText}, one row per drawer and one column per byte lane, in hex. It shows the same state as the 3D view.
@@ -602,7 +615,7 @@ export function MemBlockTable({ decl, result, revealed }: { decl: ArrayDecl; res
                 Drawer
               </th>
               {lanes.map((l) => (
-                <th key={l.index} scope="col" className="px-1 font-normal text-muted-foreground">
+                <th key={l.index} scope="col" className="px-1 font-normal text-foreground">
                   {revealed ? `[${l.index}]` : `${l.hi}:${l.lo}`}
                 </th>
               ))}
@@ -621,7 +634,7 @@ export function MemBlockTable({ decl, result, revealed }: { decl: ArrayDecl; res
                     const cellLit = rowLit && lit.has(l.index);
                     const marker = cellLit ? laneReadMarker(read, l) : null;
                     return (
-                      <td key={l.index} className={cn("rounded border px-1.5 py-0.5 text-center", cellLit ? readCell : "border-border/60 text-foreground")}>
+                      <td key={l.index} className={cn("rounded border px-1.5 py-0.5 text-center", cellLit ? readCell : "border-fig-indigo bg-fig-indigo-fill text-foreground")}>
                         {formatBits(laneBits(bits, l))}
                         {marker ? <span className="sr-only"> {marker}</span> : null}
                       </td>
@@ -636,7 +649,7 @@ export function MemBlockTable({ decl, result, revealed }: { decl: ArrayDecl; res
                   {read.ghost.label}
                 </th>
                 {lanes.map((l) => (
-                  <td key={l.index} className={cn("rounded border border-dashed px-1.5 py-0.5 text-center", four ? hatch : "border-slate-400/80 bg-slate-500/10 text-foreground")}>
+                  <td key={l.index} className={cn("rounded border border-dashed px-1.5 py-0.5 text-center", four ? hatch : "border-fig-slate bg-fig-slate-fill text-foreground")}>
                     {formatBits(laneBits(read.ghost!.bits, l))}
                   </td>
                 ))}
@@ -709,14 +722,16 @@ export function MemBlockReveal({ decl, result }: { decl: ArrayDecl; result: Sele
         ) : null}
       </dl>
       {drawer !== null && v?.shape === "packed" ? (
-        <BitStrip
-          bits={drawerBits(decl, drawer)}
-          label={`${decl.name}[${drawer}], the drawer read`}
-          segments={segments}
-          highlight={result.wordBits}
-          highlightLabel={`read by ${result.expr}`}
-          bitNumbers
-        />
+        <span className="contents" data-figure-kit>
+          <BitStrip
+            bits={drawerBits(decl, drawer)}
+            label={`${decl.name}[${drawer}], the drawer read`}
+            segments={segments}
+            highlight={result.wordBits}
+            highlightLabel={`read by ${result.expr}`}
+            bitNumbers
+          />
+        </span>
       ) : null}
       <ol className="list-decimal space-y-1 pl-5 text-muted-foreground" aria-label="Why">
         {result.steps.map((s) => (
@@ -831,10 +846,10 @@ export function MemBlockMode({ view, height = 420, initialCase = "mem5" }: MemBl
               data-testid="mem-block-viewport"
               role="img"
               aria-label={summary}
-              className="relative isolate h-[260px] min-w-0 cursor-move overflow-hidden rounded-xl border border-code-border bg-code-surface sm:h-[var(--mem-block-h)]"
+            className="fig-stage !p-0 relative isolate h-[260px] min-w-0 cursor-move overflow-hidden rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))] sm:h-[var(--mem-block-h)]"
               style={{ "--mem-block-h": heightCss } as React.CSSProperties}
             >
-              <WebGLFallbackBoundary fallback={<p className="p-3 text-xs text-code-foreground">The 3D view could not start here. The text view shows the same state.</p>}>
+              <WebGLFallbackBoundary fallback={<p className="p-3 text-xs text-foreground">The 3D view could not start here. The text view shows the same state.</p>}>
                 {/* CameraFit places the camera; this position is only the first frame's. */}
                 <Canvas camera={{ position: [20, 4, 40], fov: CAMERA_FOV }} dpr={[1, 1.5]} frameloop="demand">
                   <MemBlockCanvasContents decl={decl} result={result} revealed={revealed} reducedMotion={reducedMotion} />

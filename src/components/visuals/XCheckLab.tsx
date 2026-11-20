@@ -223,6 +223,7 @@ function CheckerLab({ preset }: { preset?: string }) {
 
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="X check lab: which counter moves"
       eyebrow="Experiment · predict, then step"
       title="Does the X get counted?"
@@ -444,6 +445,7 @@ function DebugLab() {
 
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="X check lab: the reset bug nobody saw"
       eyebrow="Debug it · find, fix, predict"
       title="The reset bug nobody saw"
@@ -451,7 +453,7 @@ function DebugLab() {
       fidelity="model"
       assumptions={XCHECK_ASSUMPTIONS}
     >
-      <CodeTrace label="status_reg and tb_top" lines={lines} activeKey={suspect ? suspect.lineKey : undefined} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="status_reg and tb_top" lines={lines} activeKey={suspect ? suspect.lineKey : undefined} />
 
       <section aria-label="Find the lines" className="space-y-2">
         <p className="text-sm font-semibold text-foreground">Which lines create the x, erase it, and would still hide it? Pick suspects one by one.</p>
@@ -544,7 +546,7 @@ function DebugLab() {
             </PredictionPrompt>
           ) : null}
           {logShown ? (
-            <div data-testid="debug-log" className="space-y-2">
+            <div data-testid="debug-log" className="fig-stage !p-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]">
               <pre aria-label="Simulation log" className={cn("overflow-x-auto rounded-lg border border-border/70 bg-code-surface px-3 py-2 text-xs text-code-foreground", mono)}>
                 {run.log.map((l) => (l.kind === "error" ? `Error @ edge ${l.edge}: ${l.text}` : l.text)).join("\n")}
               </pre>

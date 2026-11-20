@@ -154,3 +154,27 @@ The first complete F1C run passed nine gates. G5 reported 44 readings below the 
 The second F1C run cleared every text and clipped sample. It still found two light-theme readings where the cyan process cursor sat directly on its neutral tick (2.19:1 at 1440 px and 1.91:1 at 390 px). The cursor now replaces the gridline at the same time coordinate. Both comparison sheets are refreshed, and a supplementary baseline comparison confirmed identical text and aria across 13 fully revealed interactive instances in each theme.
 
 The final F1C gate passed G1–G10 against `8ca1bdba`. All 17 visuals are in the new look. The final matrix measured at least 5.77:1 text and 3.37:1 marks, with all 411 reserved-height measurements within 4 px. All 1,066 targeted tests passed without updated expectations. The independent browser pass verified the keyboard path and all seven viewport and media configurations. Both final sheets include the fully revealed keyword timeline. The kit findings and container-focus request are in the lesson report. F2A Core Data Types is next.
+
+## Task 3 — F2A Core Data Types passed
+
+F1C was committed as `f671ae67`. The Task 3 inventory and teaching intent are in `reports/F2A_Core_Data_Types.md`. Baseline capture is running at `f671ae67` for the nine hand-drawn figures, eight kit diagrams and 23 visual embeds. No F2A source has changed.
+
+The baseline capture finished at `f671ae67` with 27 default states and 40 before crops per theme. The nine hand-drawn figures now use the figure panel and role tokens, and the source word proof is clean. The first browser geometry pass found several labels to reposition. Work on the visual embeds is in progress.
+
+The first F2A gate is running against `f671ae67`. The initial static contrast pass was used to separate overlapping outlines in the packed-vector drawing, clear the memory selection label from its lane and retain the dashed absent-carry cue with a legible figure. The shared visuals use the existing figure tokens, including the memory cube’s CSS-backed colors. No source changes for a later lesson have started.
+
+The first F2A height sweep measured 372 embeds. Its only outlier was the already-existing PacketSorterGame on a shared F2B route. The separate visual is unchanged. Its measured desktop, mid and phone height reserves and test pin were updated from 364/364/552 to 380/380/568. The full gate is still collecting browser evidence.
+
+The first full F2A run passed G2, G3, G4, G7 and G10. A dev-server refresh interrupted every pixel capture. The frame inventory fixes are applied, and the per-bit net resolution result keeps its amber tool-dependent cue as required by its existing test. The second full run is measuring a stable code snapshot.
+
+The repeat height sweep passed all 372 measurements, and both focused test files passed all 36 tests. The before crops were regenerated from the same archived baseline with sticky site navigation hidden for screenshots. The second full contrast matrix and a static-only confirmation are running.
+
+The stable F2A run passed eight gates. G5 reported 64 text readings below 4.5:1 and G6 reported 266 undersized labels from the shared BitStrip. The standalone static-figure repeat had zero contrast or size findings. The authored table tags and labels have been corrected, and the existing shared BitStrip and ValueChip render sites are marked as kit regions without changing the kit. The table reserve is being remeasured before the next full gate.
+
+The four-state badge now has room for its label inside the double outline. Chromium measured its widths chart at 1354/1370/2189 px, so its mid reserve and test pin now use 1370 px. The final full gate and matching after crops are running. No F2A commit has been made.
+
+Both 40-visual comparison sheets are saved. A separate software-WebGL browser pass rendered the memory scene at 365 × 418 px in each theme, revealed the selected drawer, and logged no page errors. The standard screenshots show the 2D fallback, which preserves the same state. The latest full pixel sweep is still running.
+
+The complete pixel sweep passed G5 and G6. It measured 3,784 authored texts at 4.98:1 or above and 1,760 authored marks at 3.51:1 or above. The only failed gate was G9, where ESLint required the existing list key to move to the new kit wrapper in PackedLayoutExplorer’s union view. The key is fixed and the acceptance rerun is underway.
+
+The acceptance run passed G1–G10 at `f671ae67`. All 40 visuals are in the new look. The confirmed floor is 4.98:1 for authored text and 3.51:1 for marks. All 372 shared-route height measurements fell within 4 px, and all 1,335 targeted Vitest tests passed. The independent review passed seven viewport and media configurations with visible keyboard focus and zero errors. The report records both changed reserve expectations and all Kit requests. Structs, Unions, and Enums is next.

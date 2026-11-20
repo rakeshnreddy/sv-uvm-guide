@@ -98,16 +98,18 @@ interface ValueStripProps {
 
 function ValueStrip({ value, label, extendedFrom, signBit, droppedFrom, highlight, highlightLabel }: ValueStripProps) {
   return (
-    <BitStrip
-      bits={bitsOf(value)}
-      label={label}
-      valueText={formatCompact(reinterpret(value, false))}
-      extendedFrom={extendedFrom}
-      signBit={signBit}
-      droppedFrom={droppedFrom}
-      highlight={highlight}
-      highlightLabel={highlightLabel}
-    />
+    <span className="contents" data-figure-kit>
+      <BitStrip
+        bits={bitsOf(value)}
+        label={label}
+        valueText={formatCompact(reinterpret(value, false))}
+        extendedFrom={extendedFrom}
+        signBit={signBit}
+        droppedFrom={droppedFrom}
+        highlight={highlight}
+        highlightLabel={highlightLabel}
+      />
+    </span>
   );
 }
 
@@ -168,11 +170,13 @@ function NumberField({ label, value, min, max, onCommit }: { label: string; valu
 // Trace steps
 // ---------------------------------------------------------------------------
 
+const evaluationRims = ["border-t-fig-ramp-1", "border-t-fig-ramp-2", "border-t-fig-ramp-3", "border-t-fig-ramp-4", "border-t-fig-ramp-5"];
+
 /** `badge` marks a step that decides the result (`stepBadges`): the trap in a trap variant, the cure or the point in any other. */
 function StepCard({ index, title, why, clause, badge, children }: { index: number; title: React.ReactNode; why: string; clause: string; badge?: StepBadge | null; children?: React.ReactNode }) {
   const trap = badge === "trap";
   return (
-    <li className={cn("rounded-xl border bg-background/50 p-3", !badge ? "border-border/70" : trap ? "border-amber-500/60" : "border-cyan-500/60")}>
+    <li className={cn("rounded-xl border p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", !badge ? "border-fig-generic" : trap ? "border-fig-rose" : "border-fig-cyan", evaluationRims[Math.min(index, evaluationRims.length) - 1])}>
       <div className="flex flex-wrap items-baseline gap-2">
         <span className="text-label text-muted-foreground">Step {index}</span>
         <span className="text-sm font-semibold text-foreground">{title}</span>
@@ -180,7 +184,7 @@ function StepCard({ index, title, why, clause, badge, children }: { index: numbe
           <span
             className={cn(
               "rounded px-1.5 py-0.5 text-label",
-              trap ? "bg-amber-500/20 text-amber-900 dark:text-amber-100" : "bg-cyan-500/15 text-cyan-900 dark:text-cyan-100",
+              trap ? "bg-fig-rose-fill text-fig-rose-text" : "bg-fig-cyan-fill text-fig-cyan-text",
             )}
           >
             {trap ? "⚠ trap" : "key step"}
@@ -188,7 +192,7 @@ function StepCard({ index, title, why, clause, badge, children }: { index: numbe
         ) : null}
         <span className="ml-auto rounded border border-border/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{clause}</span>
       </div>
-      {children ? <div className="mt-2 space-y-2 overflow-x-auto">{children}</div> : null}
+      {children ? <div className="fig-stage !p-0 mt-2 space-y-2 overflow-x-auto">{children}</div> : null}
       <p className="mt-2 text-sm text-muted-foreground">
         <strong className="text-foreground">Why: </strong>
         <Prose text={why} />
@@ -439,6 +443,7 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
 
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="Expression trap lab"
       eyebrow="Experiment"
       title="Expression trap lab: width and sign"
@@ -502,7 +507,7 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
         </fieldset>
       ) : null}
 
-      <CodeTrace label="The code" lines={lines} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={lines} />
 
       <div>
         <p role="status" aria-label="Prediction verdict" className="sr-only">
@@ -582,7 +587,7 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
                     · hatched = x · dashed amber = z.
                   </p>
 
-                  <ol className="space-y-3" aria-label="Evaluation steps">
+                  <ol className="fig-stage !p-0 space-y-3 rounded-lg bg-[hsl(var(--fig-well))]" aria-label="Evaluation steps">
                     <OperandsStep operands={result.operands} />
                     {result.steps.map((step, i) => (
                       <TraceStep key={`${step.kind}-${i}`} step={step} index={i + 2} badge={badges[i]} />

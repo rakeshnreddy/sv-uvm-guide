@@ -67,7 +67,7 @@ describe("placeholder heights measured on 2026-11-15 for the Tier 1 interactives
 
   it("picks the variant for each preset, mode or section an instance opens", () => {
     expect(heights("DataTypeComparisonChart", { section: "defaults" })).toEqual({ height: 523, midHeight: 523, mobileHeight: 809 });
-    expect(heights("DataTypeComparisonChart", { section: "widths" })).toEqual({ height: 1354, midHeight: 1354, mobileHeight: 2189 });
+    expect(heights("DataTypeComparisonChart", { section: "widths" })).toEqual({ height: 1354, midHeight: 1370, mobileHeight: 2189 });
     expect(heights("LiteralDecoder", { preset: "truncated-hex" }).height).toBe(1161);
     expect(heights("LiteralDecoder", { preset: "hex-ff" }).height).toBe(1027);
     expect(heights("SystemVerilog3DVisualizer", { initialScene: "queue" }).height).toBe(668);
@@ -121,7 +121,7 @@ describe("placeholder heights measured on 2026-11-15 for all interactives", () =
     expect(heights("DesignGapChart")).toEqual({ height: 758, midHeight: 754, mobileHeight: 603 });
     expect(heights("ShiftLeftTimeline")).toEqual({ height: 1235, midHeight: 1235, mobileHeight: 2201 });
     expect(heights("StringMethodExplorer")).toEqual({ height: 574, midHeight: 574, mobileHeight: 690 });
-    expect(heights("PacketSorterGame")).toEqual({ height: 364, midHeight: 364, mobileHeight: 552 });
+    expect(heights("PacketSorterGame")).toEqual({ height: 380, midHeight: 380, mobileHeight: 568 });
 
     expect(heights("FixPathDecisionLab", { mode: "decide" })).toEqual({ height: 635, midHeight: 635, mobileHeight: 1062 });
     expect(heights("FixPathDecisionLab", { mode: "kata" })).toEqual({ height: 1934, midHeight: 1934, mobileHeight: 3138 });

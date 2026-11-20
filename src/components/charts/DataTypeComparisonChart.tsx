@@ -48,7 +48,7 @@ const stateTag = (r: DataTypeRow) => (r.states === 4 ? "4-state" : r.states === 
 export const BAR_CLASS = {
   four: "fill-muted stroke-foreground",
   two: "fill-card stroke-foreground",
-  other: "fill-muted stroke-border",
+  other: "fill-muted stroke-fig-generic",
 } as const;
 
 export const barClassFor = (r: DataTypeRow) => (r.states === 4 ? BAR_CLASS.four : r.states === 2 ? BAR_CLASS.two : BAR_CLASS.other);
@@ -80,8 +80,8 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
   const bitW = barMax / 64;
   const signWord = (r: DataTypeRow) => (r.signed === true ? ", signed" : r.signed === false ? ", unsigned" : "");
   return (
-    <figure className="min-w-0 space-y-2">
-      <div className="overflow-x-auto">
+    <figure className="fig-stage !p-0 min-w-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]">
+      <div className="fig-stage !p-0 overflow-x-auto">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           style={{ minWidth: minRenderWidth }}
@@ -127,7 +127,7 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
                 {signCell ? (
                   <rect data-testid="width-bar-sign-bit" x={labelW} y={y} width={bitW} height={barH} className="fill-foreground" />
                 ) : null}
-                <text x={labelW + w + labelGap} y={y + barH / 2 + fontSize * 0.35} fontSize={fontSize} data-testid="width-chart-value" className="fill-muted-foreground">
+                <text x={labelW + w + labelGap} y={y + barH / 2 + fontSize * 0.35} fontSize={fontSize} data-testid="width-chart-value" className="fill-foreground">
                   {r.width}
                   {` · ${stateTag(r)}`}
                 </text>
@@ -151,42 +151,44 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
 
 function ComparisonTable() {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/70">
-      <table className="w-full border-collapse text-left text-xs">
-        <caption className="px-3 pt-3 text-left text-label text-muted-foreground">
-          Common data types (IEEE 1800-2023 Table 6-7, Table 6-8)
-        </caption>
-        <thead>
-          <tr className="border-b border-border/70 bg-muted/30">
-            {["Declaration", "Kind", "States", "Bits", "Default sign", "Value with no initializer", "Note"].map((h) => (
-              <th key={h} scope="col" className="px-3 py-2 font-semibold text-foreground">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {DATA_TYPE_ROWS.map((r) => (
-            <tr key={r.id} className="border-b border-border/40 align-top">
-              <th scope="row" className="px-3 py-2 font-mono font-semibold text-foreground [font-variant-ligatures:none]">
-                {r.example}
-              </th>
-              <td className="px-3 py-2">{r.kind === "net" ? "net" : "variable"}</td>
-              <td className="px-3 py-2">
-                <span className={cn("rounded px-1.5 py-0.5", r.states === 4 ? "border-[3px] border-double border-foreground/70" : r.states === 2 ? "border border-foreground/70" : "border border-transparent")}>
-                  {statesText(r)}
-                </span>
-              </td>
-              <td className="px-3 py-2">{widthText(r)}</td>
-              <td className="px-3 py-2">{signedText(r)}</td>
-              <td className="px-3 py-2 font-mono [font-variant-ligatures:none]">
-                {r.defaultText} <span className="font-sans text-xs text-muted-foreground">({r.clause})</span>
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">{r.note}</td>
+    <div className="fig-stage !p-0 rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))]">
+      <div className="fig-stage !p-0 overflow-x-auto">
+        <table className="w-full border-collapse text-left text-xs">
+          <caption className="px-3 pt-3 text-left text-label text-muted-foreground">
+            Common data types (IEEE 1800-2023 Table 6-7, Table 6-8)
+          </caption>
+          <thead>
+            <tr className="border-b border-border/70 bg-muted/30">
+              {["Declaration", "Kind", "States", "Bits", "Default sign", "Value with no initializer", "Note"].map((h) => (
+                <th key={h} scope="col" className="px-3 py-2 font-semibold text-foreground">
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {DATA_TYPE_ROWS.map((r) => (
+              <tr key={r.id} className="border-b border-border/40 align-top">
+                <th scope="row" className="px-3 py-2 font-mono font-semibold text-foreground [font-variant-ligatures:none]">
+                  {r.example}
+                </th>
+                <td className="px-3 py-2">{r.kind === "net" ? "net" : "variable"}</td>
+                <td className="px-3 py-2">
+                  <span className={cn("inline-block whitespace-nowrap rounded px-1.5 text-foreground leading-3", r.states === 4 ? "border-[3px] border-double border-foreground/70" : r.states === 2 ? "border border-foreground/70" : "border border-transparent")}>
+                    {statesText(r)}
+                  </span>
+                </td>
+                <td className="px-3 py-2">{widthText(r)}</td>
+                <td className="px-3 py-2">{signedText(r)}</td>
+                <td className="px-3 py-2 font-mono [font-variant-ligatures:none]">
+                  {r.defaultText} <span className="font-sans text-xs text-muted-foreground">({r.clause})</span>
+                </td>
+                <td className="px-3 py-2 text-muted-foreground">{r.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -253,7 +255,7 @@ function PredictValues({ drills }: { drills: ValueDrill[] }) {
   const [drillId, setDrillId] = useState(drills[0].id);
   const drill = drills.find((d) => d.id === drillId) ?? drills[0];
   return (
-    <section aria-label="Predict the value" className="space-y-3">
+    <section aria-label="Predict the value" className="fig-stage !p-0 space-y-3 rounded-lg bg-[hsl(var(--fig-well))]">
       <p className="text-sm font-semibold text-foreground">Predict the value</p>
       <SegmentedControl label="Declaration to test" mono options={drills.map((d) => ({ value: d.id, label: d.code.split("\n")[0] }))} value={drill.id} onChange={setDrillId} />
       <pre className="overflow-x-auto rounded-lg bg-code-surface p-3 font-mono text-[12.5px] leading-5 text-code-foreground [font-variant-ligatures:none]">
@@ -280,7 +282,7 @@ const DataTypeComparisonChart: React.FC<DataTypeComparisonChartProps> = ({ secti
   const showDrills = section !== "widths";
 
   return (
-    <div data-testid="data-type-chart" data-section={section} className="w-full">
+    <div data-testid="data-type-chart" data-section={section} className="fig-panel !overflow-visible w-full">
       <VisualFrame label={copy.label} eyebrow={copy.eyebrow} title={copy.title} summary={copy.summary} fidelity="model" assumptions={copy.assumptions}>
         {section === "all" ? (
           <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">

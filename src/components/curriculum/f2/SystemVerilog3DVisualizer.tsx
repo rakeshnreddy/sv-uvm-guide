@@ -142,7 +142,7 @@ export function PackedArray2D({ packed, unpacked, highlight }: { packed: number[
   const cells = Math.min(P, MAX_CELLS);
   return (
     <div className="space-y-2" data-testid="packed-2d">
-      <div className="overflow-x-auto">
+      <div className="fig-stage !p-0 overflow-x-auto rounded-lg bg-[hsl(var(--fig-well))]">
         <table className="min-w-[300px] border-separate border-spacing-1 font-mono text-xs [font-variant-ligatures:none]">
           <caption className="pb-1 text-left font-sans text-xs text-muted-foreground">
             One row per unpacked element (left index varies slowest). Packed bits are drawn MSB first.
@@ -167,7 +167,7 @@ export function PackedArray2D({ packed, unpacked, highlight }: { packed: number[
                         aria-label={hit ? `my_array${uc.map((c) => `[${c}]`).join("")}${pc.map((c) => `[${c}]`).join("")}, logical bit ${logical}, highlighted` : undefined}
                         className={cn(
                           "rounded border px-1 text-center",
-                          hit ? "border-pink-500 bg-pink-500/20 font-bold text-foreground" : "border-border/60 text-muted-foreground",
+                          hit ? "border-fig-cyan bg-fig-cyan-fill font-bold text-foreground" : "border-fig-indigo bg-fig-indigo-fill text-foreground",
                         )}
                       >
                         {pc.map((c) => `[${c}]`).join("")}
@@ -345,7 +345,7 @@ export function SystemVerilog3DVisualizer({ className, height = 420, initialScen
       summary="Drive each structure and watch it in 3D, or switch to the 2D view, which shows exactly the same state as text."
       fidelity="model"
       assumptions={ASSUMPTIONS}
-      className={cn("bg-card", className)}
+      className={cn("fig-panel !overflow-visible bg-card", className)}
     >
       <div data-testid="sv-3d-visualizer" className="space-y-4">
         <div className={cn("space-y-4", TOUCH_BUTTONS)}>
@@ -383,7 +383,7 @@ export function SystemVerilog3DVisualizer({ className, height = 420, initialScen
               data-testid="sv-3d-viewport"
               role={view === "3d" ? "img" : undefined}
               aria-label={view === "3d" ? `3D view. ${stateSummary}` : undefined}
-              className={cn("relative min-w-0 overflow-hidden rounded-xl border", view === "3d" ? "cursor-move border-code-border bg-code-surface" : "border-border/70 bg-background/50 p-3")}
+              className={cn("fig-stage !p-0 relative min-w-0 overflow-hidden rounded-xl border border-fig-generic", view === "3d" ? "cursor-move bg-code-surface" : "!p-3 bg-[hsl(var(--fig-well))]")}
               style={view === "3d" ? { height } : undefined}
             >
               {view === "3d" ? (

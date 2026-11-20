@@ -112,11 +112,11 @@ function StepBody({ step, decode }: { step: LiteralStep; decode: LiteralDecode }
     <>
       <p className="text-sm text-foreground">{step.text}</p>
       {step.id === "tokens" ? (
-        <ul aria-label="Parts of the literal" className="mt-2 flex flex-wrap gap-2">
+        <ul aria-label="Parts of the literal" className="fig-stage !p-0 mt-2 flex flex-wrap gap-2 rounded-lg bg-[hsl(var(--fig-well))]">
           {decode.parts.map((part) => (
-            <li key={part.role} className="rounded-lg border border-border bg-muted px-2 py-1">
+            <li key={part.role} className="rounded-lg border border-fig-generic px-2 py-1 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
               <span className={cn("block text-sm font-medium text-foreground", mono)}>{part.text}</span>
-              <span className="block text-xs text-muted-foreground">{part.note}</span>
+              <span className="block text-xs text-foreground">{part.note}</span>
             </li>
           ))}
         </ul>
@@ -179,7 +179,7 @@ function StepThrough({ decode, focusOnMount }: { decode: LiteralDecode; focusOnM
       <p className="text-xs text-muted-foreground tabular-nums">
         Step {index + 1} of {steps.length}: {current.title}
       </p>
-      <ol className="space-y-2" aria-label="Decoding steps">
+      <ol className="fig-stage !p-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]" aria-label="Decoding steps">
         {visible.map((step, i) => {
           const isCurrent = i === index;
           return (
@@ -187,7 +187,7 @@ function StepThrough({ decode, focusOnMount }: { decode: LiteralDecode; focusOnM
               key={step.id}
               data-testid={`step-${step.id}`}
               aria-current={isCurrent ? "step" : undefined}
-              className={cn("rounded-lg border p-3", isCurrent ? "border-border border-l-2 border-l-primary bg-muted" : "border-border bg-card")}
+              className={cn("rounded-lg border p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", isCurrent ? "border-fig-cyan border-l-2" : "border-fig-generic")}
             >
               <p className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">
@@ -329,7 +329,7 @@ export default function LiteralDecoder({ preset = "hex-ff", target, presets, all
       summary="A literal's size, base, s flag and digits decide its own bits (IEEE 1800-2023 §5.7.1); the target then extends or truncates them (§10.7). Pick a literal and a target, predict the bits, then step through the decoding."
       fidelity="model"
       assumptions={LITERAL_ASSUMPTIONS}
-      className={cn(frameClass, className)}
+      className={cn(frameClass, "fig-panel !overflow-visible", className)}
     >
       <div className={cn(panel, "space-y-3", touchButtons)}>
         <div className="space-y-1">
@@ -366,7 +366,7 @@ export default function LiteralDecoder({ preset = "hex-ff", target, presets, all
       </div>
 
       {code ? (
-        <figure className="overflow-hidden rounded-xl border border-code-border bg-code-surface text-code-foreground">
+        <figure className="fig-stage !p-0 overflow-hidden rounded-xl border border-code-border bg-code-surface text-code-foreground">
           <figcaption className="border-b border-code-border px-3 py-2 text-xs text-code-muted">Code</figcaption>
           <pre className={cn("overflow-x-auto p-3 text-sm leading-6", mono)} data-testid="literal-code">
             {code.join("\n")}

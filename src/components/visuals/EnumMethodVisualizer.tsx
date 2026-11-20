@@ -114,7 +114,7 @@ export default function EnumMethodVisualizer({ initialTab = "methods", declarati
   const frame = FRAME[tab];
 
   return (
-    <VisualFrame label="Enum method explorer" eyebrow="Experiment" title={frame.title} summary={frame.summary} fidelity="model" assumptions={frame.assumptions} className={touchTargets}>
+    <VisualFrame label="Enum method explorer" eyebrow="Experiment" title={frame.title} summary={frame.summary} fidelity="model" assumptions={frame.assumptions} className={cn("fig-panel !overflow-visible", touchTargets)}>
       <SegmentedControl
         label="Enum explorer view"
         value={tab}
@@ -262,7 +262,7 @@ function MethodsView() {
         </div>
       </div>
 
-      <ol className="flex flex-wrap gap-2" aria-label="Enum members in declaration order">
+      <ol className="fig-stage !p-0 flex flex-wrap gap-2 rounded-xl bg-[hsl(var(--fig-well))]" aria-label="Enum members in declaration order">
         {MEMBERS.map((m, i) => {
           const isCurrent = current === i;
           const isReturned = result?.returns.kind === "enum" && result.returns.value === i;
@@ -271,8 +271,9 @@ function MethodsView() {
               key={m}
               className={cn(
                 "rounded-lg border px-3 py-2 font-mono text-sm [font-variant-ligatures:none]",
-                isCurrent ? "border-violet-500 bg-violet-500/10 text-foreground" : "border-border/70 text-muted-foreground",
-                isReturned && "ring-2 ring-cyan-400",
+                "bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]",
+                isCurrent ? "border-fig-cyan" : "border-fig-generic",
+                isReturned && "ring-2 ring-fig-cyan",
               )}
             >
               {m} = {i}
@@ -282,7 +283,7 @@ function MethodsView() {
           );
         })}
         {!isMember(t, current) ? (
-          <li className="rounded-lg border border-dashed border-rose-500/70 px-3 py-2 font-mono text-sm text-rose-700 dark:text-rose-200">
+          <li className="rounded-lg border border-dashed border-fig-rose bg-fig-rose-fill px-3 py-2 font-mono text-sm text-fig-rose-text">
             {formatEnumValue(t, current)} <span className="ml-1 text-xs">◀ s</span>
           </li>
         ) : null}
@@ -555,11 +556,11 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
   const line = enumNumberLine(resolved);
   const errorNames = new Set(resolved.members.filter((m) => m.inError).map((m) => m.name));
   return (
-    <figure className={cn(panel, "space-y-2")}>
+    <figure className={cn(panel, "fig-stage !p-3 space-y-2 border-fig-generic bg-[hsl(var(--fig-well))]")}>
       <figcaption className="text-label text-subtle">Values on a number line, in value order</figcaption>
       {line.slots.length > LONG_LINE_SLOTS ? <p className="text-xs text-muted-foreground sm:hidden">Scroll the line sideways to see every value.</p> : null}
       <ol
-        className="grid grid-flow-col auto-cols-[minmax(min-content,1fr)] gap-1 overflow-x-auto pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="fig-stage !p-0 grid grid-flow-col auto-cols-[minmax(min-content,1fr)] gap-1 overflow-x-auto pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={label}
         // A line that can scroll sideways takes keyboard focus so the arrow keys can scroll it.
         tabIndex={line.slots.length > LONG_LINE_SLOTS ? 0 : undefined}
@@ -577,15 +578,15 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
               }
               className={cn(
                 "flex min-h-24 min-w-[2.75rem] flex-col items-stretch justify-end gap-1 rounded-md border p-1 text-center",
-                s.kind === "gap" ? "border-dashed border-border text-muted-foreground" : collision ? "border-2 border-danger" : "border-border",
-                pointer === s.from && "ring-2 ring-ring",
+                s.kind === "gap" ? "border-dashed border-fig-generic text-muted-foreground" : collision ? "border-2 border-fig-rose bg-fig-rose-fill" : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]",
+                pointer === s.from && "ring-2 ring-fig-cyan",
               )}
             >
               {s.kind === "gap" ? (
                 <span className="text-xs">no member</span>
               ) : (
                 s.members.map((name) => (
-                  <span key={name} className={cn("whitespace-nowrap rounded border px-1 py-0.5 text-xs", mono, errorNames.has(name) ? "border-danger text-danger" : "border-border bg-muted text-foreground")}>
+                  <span key={name} className={cn("whitespace-nowrap rounded border px-1 py-0.5 text-xs", mono, errorNames.has(name) ? "border-fig-rose text-fig-rose-text" : "border-fig-generic bg-card text-foreground")}>
                     {errorNames.has(name) ? <span aria-hidden>✕ </span> : null}
                     {name}
                   </span>
@@ -626,7 +627,7 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
 
 function ValueTable({ resolved, grade }: { resolved: ResolvedEnum; grade: EnumDeclGrade | null }) {
   return (
-    <ul className="space-y-2" aria-label="Each name, its value and the rule that gave it">
+    <ul className="fig-stage !p-0 space-y-2 rounded-xl bg-[hsl(var(--fig-well))]" aria-label="Each name, its value and the rule that gave it">
       {resolved.members.map((m) => {
         const row = grade?.perMember.find((p) => p.name === m.name);
         const said = row && row.predicted !== null && row.predicted !== undefined ? row : null;

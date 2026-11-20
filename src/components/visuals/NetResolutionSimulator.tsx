@@ -151,49 +151,51 @@ function StrengthLadder({ net, drivers, result, charge }: { net: NetType; driver
     );
   };
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[300px] border-collapse text-sm">
-        <caption className="mb-1 text-left text-xs text-muted-foreground">
-          Strength ladder (Table 28-7). Each driver sits on its strength row, on the side of the value it drives; an x driver sits on both sides.
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col" className="border border-border/60 px-2 py-1 text-left">drives 0</th>
-            <th scope="col" className="border border-border/60 px-2 py-1">strength</th>
-            <th scope="col" className="border border-border/60 px-2 py-1 text-right">drives 1</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const at = shown.filter((drv) => drv.value !== "z" && STRENGTH_LEVEL[drv.strength] === row.level);
-            const zeros = at.filter((drv) => drv.value === "0" || drv.value === "x");
-            const ones = at.filter((drv) => drv.value === "1" || drv.value === "x");
-            const off = row.level === 0 ? shown.filter((drv) => drv.value === "z") : [];
-            const isWin = winningLevel !== null && row.level === winningLevel && !row.charge;
-            const isCharge = row.charge && result && result.ok && result.strength === (row.name.split(" ")[0] as ChargeStrength);
-            return (
-              <tr key={row.name} className={cn((isWin || isCharge) && "bg-cyan-500/10")}>
-                <td className="border border-border/60 px-2 py-1">
-                  <div className="flex flex-wrap gap-1">{zeros.map((drv) => token(drv, "0"))}</div>
-                </td>
-                <th scope="row" className={cn("border border-border/60 px-2 py-1 text-center text-xs font-medium", (isWin || isCharge) ? "text-foreground" : "text-muted-foreground")}>
-                  {(isWin || isCharge) ? <span aria-hidden>▶ </span> : null}
-                  {row.name} ({row.level})
-                  {isWin ? <span className="sr-only">, strongest level present</span> : null}
-                  {isCharge ? <span className="sr-only">, stored charge</span> : null}
-                  {charge && row.charge && row.name.startsWith(charge) ? <span className="block text-xs">declared charge</span> : null}
-                </th>
-                <td className="border border-border/60 px-2 py-1">
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {ones.map((drv) => token(drv, "1"))}
-                    {off.map((drv) => token(drv, "z"))}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="fig-stage !p-0 rounded-lg bg-[hsl(var(--fig-well))]">
+      <div className="fig-stage !p-0 overflow-x-auto">
+        <table className="w-full min-w-[300px] border-collapse text-sm">
+          <caption className="mb-1 text-left text-xs text-muted-foreground">
+            Strength ladder (Table 28-7). Each driver sits on its strength row, on the side of the value it drives; an x driver sits on both sides.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" className="border border-border/60 px-2 py-1 text-left">drives 0</th>
+              <th scope="col" className="border border-border/60 px-2 py-1">strength</th>
+              <th scope="col" className="border border-border/60 px-2 py-1 text-right">drives 1</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const at = shown.filter((drv) => drv.value !== "z" && STRENGTH_LEVEL[drv.strength] === row.level);
+              const zeros = at.filter((drv) => drv.value === "0" || drv.value === "x");
+              const ones = at.filter((drv) => drv.value === "1" || drv.value === "x");
+              const off = row.level === 0 ? shown.filter((drv) => drv.value === "z") : [];
+              const isWin = winningLevel !== null && row.level === winningLevel && !row.charge;
+              const isCharge = row.charge && result && result.ok && result.strength === (row.name.split(" ")[0] as ChargeStrength);
+              return (
+                <tr key={row.name} className={cn((isWin || isCharge) && "bg-fig-cyan-fill")}>
+                  <td className="border border-border/60 px-2 py-1">
+                    <div className="flex flex-wrap gap-1">{zeros.map((drv) => token(drv, "0"))}</div>
+                  </td>
+                  <th scope="row" className={cn("border border-border/60 px-2 py-1 text-center text-xs font-medium", (isWin || isCharge) ? "text-foreground" : "text-muted-foreground")}>
+                    {(isWin || isCharge) ? <span aria-hidden>▶ </span> : null}
+                    {row.name} ({row.level})
+                    {isWin ? <span className="sr-only">, strongest level present</span> : null}
+                    {isCharge ? <span className="sr-only">, stored charge</span> : null}
+                    {charge && row.charge && row.name.startsWith(charge) ? <span className="block text-xs">declared charge</span> : null}
+                  </th>
+                  <td className="border border-border/60 px-2 py-1">
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {ones.map((drv) => token(drv, "1"))}
+                      {off.map((drv) => token(drv, "z"))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -387,7 +389,7 @@ function DriversMode({ initialPreset }: { initialPreset?: string }) {
         ) : null}
       </div>
       <StrengthLadder net={net} drivers={drivers} result={revealed && result.ok ? result : null} charge={net === "trireg" ? charge : undefined} />
-      <CodeTrace label="The code" lines={codeLines(lines)} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(lines)} />
       <PredictionPrompt resetKey={key} question={<>What does <code className="font-mono">y</code> resolve to?</>} options={options}>
         <OnReveal revealKey={key} onReveal={setRevealedKey} />
         <ResultBanner result={result} />
@@ -503,7 +505,7 @@ function WholeVariableLab() {
           />
         </div>
       </div>
-      <CodeTrace label="The code" lines={codeLines(["logic a, b;", `${decl} y;`, ...p.code])} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(["logic a, b;", `${decl} y;`, ...p.code])} />
       <PredictionPrompt resetKey={`${decl}:${pattern}`} question="What does the tool do with this code?" options={options}>
         <div aria-live="polite" className="space-y-2 text-sm">
           <div
@@ -590,7 +592,7 @@ function OpenDrainPanel() {
           </div>
         ))}
       </div>
-      <CodeTrace label="The code" lines={codeLines(lines)} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(lines)} />
       <PredictionPrompt resetKey={key} question={<>What does <code className="font-mono">{OD_NET}</code> read?</>} options={options}>
         <OnReveal revealKey={key} onReveal={markSeen} />
         <div className="space-y-3">
@@ -603,45 +605,47 @@ function OpenDrainPanel() {
           <StrengthLadder net="tri1" drivers={drivers.map(effectiveDriver)} result={result} />
         </div>
       </PredictionPrompt>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[280px] border-collapse text-sm">
-          <caption className="mb-1 text-left text-xs text-muted-foreground">All four combinations. A row fills in once you have predicted it.</caption>
-          <thead>
-            <tr>
-              {OPEN_DRAIN_IDS.map((id) => (
-                <th key={id} scope="col" className="border border-border/60 px-2 py-1 text-left font-mono font-medium [font-variant-ligatures:none]">
-                  {id}
-                </th>
-              ))}
-              <th scope="col" className="border border-border/60 px-2 py-1 font-mono font-medium">{OD_NET}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const k = comboKey(r.pullLow);
-              const shown = seen.includes(k);
-              return (
-                <tr key={k} className={cn(k === key && "bg-amber-500/10")}>
-                  {r.pullLow.map((p, i) => (
-                    <td key={OPEN_DRAIN_IDS[i]} className="border border-border/60 px-2 py-1 text-xs">
-                      {p ? "pulls low" : "lets go"}
+      <div className="fig-stage !p-0 rounded-lg bg-[hsl(var(--fig-well))]">
+        <div className="fig-stage !p-0 overflow-x-auto">
+          <table className="w-full min-w-[280px] border-collapse text-sm">
+            <caption className="mb-1 text-left text-xs text-muted-foreground">All four combinations. A row fills in once you have predicted it.</caption>
+            <thead>
+              <tr>
+                {OPEN_DRAIN_IDS.map((id) => (
+                  <th key={id} scope="col" className="border border-border/60 px-2 py-1 text-left font-mono font-medium [font-variant-ligatures:none]">
+                    {id}
+                  </th>
+                ))}
+                <th scope="col" className="border border-border/60 px-2 py-1 font-mono font-medium">{OD_NET}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const k = comboKey(r.pullLow);
+                const shown = seen.includes(k);
+                return (
+                  <tr key={k} className={cn(k === key && "bg-fig-cyan-fill")}>
+                    {r.pullLow.map((p, i) => (
+                      <td key={OPEN_DRAIN_IDS[i]} className="border border-border/60 px-2 py-1 text-xs">
+                        {p ? "pulls low" : "lets go"}
+                      </td>
+                    ))}
+                    <td className="border border-border/60 px-2 py-1 text-center">
+                      {shown && r.result.ok ? (
+                        <span className="inline-flex items-center gap-1">
+                          <ValueChip value={chipValue(r.result.value)} />
+                          <span className="font-mono text-xs">{r.result.label}</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">predict first</span>
+                      )}
                     </td>
-                  ))}
-                  <td className="border border-border/60 px-2 py-1 text-center">
-                    {shown && r.result.ok ? (
-                      <span className="inline-flex items-center gap-1">
-                        <ValueChip value={chipValue(r.result.value)} />
-                        <span className="font-mono text-xs">{r.result.label}</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">predict first</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
       {allSeen ? (
         <p className="rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 text-sm" aria-live="polite">
@@ -790,7 +794,7 @@ function BitwiseLab() {
           </label>
         ))}
       </fieldset>
-      <CodeTrace label="The code" lines={codeLines(lines)} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(lines)} />
       {chosen.length === 0 ? (
         <p className="text-sm text-muted-foreground">Tick at least one writer, then predict.</p>
       ) : (
@@ -809,7 +813,7 @@ function BitwiseLab() {
               {check.outcome === "compile-error" ? "✕ " : check.outcome === "tool-dependent" ? "? " : "✓ "}
               {check.message}
             </div>
-            <ul className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))]" aria-label={`Writers of each bit of ${V}`}>
+            <ul className="fig-stage !p-0 grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))] rounded-lg bg-[hsl(var(--fig-well))]" aria-label={`Writers of each bit of ${V}`}>
               {(check.bits ?? []).map((bit) => {
                 // Each card is coloured from its own bit's check, so an open bit stays amber even when another bit has an error.
                 const bitOutcome = bit.check?.outcome;
@@ -821,10 +825,10 @@ function BitwiseLab() {
                     className={cn(
                       "rounded-lg border p-2",
                       bitOutcome === "compile-error"
-                        ? "border-rose-500/70 bg-rose-500/10"
+                        ? "border-fig-rose bg-fig-rose-fill"
                         : bitOutcome === "tool-dependent"
-                          ? "border-amber-500/70 bg-amber-500/10"
-                          : "border-emerald-500/50 bg-emerald-500/[0.06]",
+                          ? "border-dashed border-fig-amber bg-fig-amber-fill"
+                          : "border-fig-emerald bg-fig-emerald-fill",
                     )}
                     data-outcome={bitOutcome ?? "no-writer"}
                   >
@@ -841,7 +845,7 @@ function BitwiseLab() {
                             <span
                               className={cn(
                                 "rounded px-1.5 py-0.5 text-label",
-                                continuous ? "bg-cyan-500/20 text-cyan-900 dark:text-cyan-100" : "bg-violet-500/20 text-violet-900 dark:text-violet-100",
+                                continuous ? "border border-fig-generic" : "border border-dashed border-fig-generic",
                               )}
                             >
                               {continuous ? "continuous" : "procedural"}
@@ -951,7 +955,7 @@ function PortKindLab() {
           <SegmentedControl label="Port kind keyword" mono value={keyword} onChange={setKeyword} options={KIND_KEYWORDS} />
         </div>
       </div>
-      <CodeTrace label="The code" lines={codeLines(["module m (", `  ${r.declared}`, ");"])} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(["module m (", `  ${r.declared}`, ");"])} />
       <p className="text-xs text-muted-foreground">
         Rules for the first port of an ANSI port list with <code className="font-mono">`default_nettype wire</code>. A later port that omits direction, kind and data type inherits them from the previous port (§23.2.2.3). Only the 4-state type logic is offered, because a net needs a 4-state data type (§6.7.1).
       </p>
@@ -1031,49 +1035,51 @@ function TriregMode() {
           <SegmentedControl label="trireg charge strength" mono value={charge} onChange={setCharge} options={CHARGE_STRENGTHS.map((c) => ({ value: c, label: c }))} />
         </div>
       </div>
-      <CodeTrace label="The code" lines={codeLines(lines)} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="The code" lines={codeLines(lines)} />
       <PredictionPrompt resetKey={`${charge}:${first}`} question={<>At <code className="font-mono">t = 10 ns</code> every driver is z. What does the trireg <code className="font-mono">y</code> read?</>} options={options}>
         <div className="space-y-3" aria-live="polite">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[300px] border-collapse text-sm">
-              <caption className="mb-1 text-left text-xs text-muted-foreground">The same drivers on a trireg and on a wire. Time is simulation time.</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="border border-border/60 px-2 py-1 text-left">t</th>
-                  <th scope="col" className="border border-border/60 px-2 py-1 text-left">drivers</th>
-                  <th scope="col" className="border border-border/60 px-2 py-1">trireg y</th>
-                  <th scope="col" className="border border-border/60 px-2 py-1">wire y</th>
-                </tr>
-              </thead>
-              <tbody>
-                {steps.map((s, i) => {
-                  const t = trireg[i];
-                  const w = wire[i];
-                  return (
-                    <tr key={s.time} className={cn(i === 1 && "bg-amber-500/10")}>
-                      <th scope="row" className="border border-border/60 px-2 py-1 text-left font-mono font-normal">{s.time}</th>
-                      <td className="border border-border/60 px-2 py-1 text-xs text-muted-foreground">{s.story}</td>
-                      <td className="border border-border/60 px-2 py-1 text-center">
-                        {t.ok ? (
-                          <span className="inline-flex items-center gap-1">
-                            <ValueChip value={chipValue(t.value)} />
-                            <span className="font-mono text-xs">{t.label}</span>
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="border border-border/60 px-2 py-1 text-center">
-                        {w.ok ? (
-                          <span className="inline-flex items-center gap-1">
-                            <ValueChip value={chipValue(w.value)} />
-                            <span className="font-mono text-xs">{strengthLabel(w.value, w.strength)}</span>
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="fig-stage !p-0 rounded-lg bg-[hsl(var(--fig-well))]">
+            <div className="fig-stage !p-0 overflow-x-auto">
+              <table className="w-full min-w-[300px] border-collapse text-sm">
+                <caption className="mb-1 text-left text-xs text-muted-foreground">The same drivers on a trireg and on a wire. Time is simulation time.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className="border border-border/60 px-2 py-1 text-left">t</th>
+                    <th scope="col" className="border border-border/60 px-2 py-1 text-left">drivers</th>
+                    <th scope="col" className="border border-border/60 px-2 py-1">trireg y</th>
+                    <th scope="col" className="border border-border/60 px-2 py-1">wire y</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {steps.map((s, i) => {
+                    const t = trireg[i];
+                    const w = wire[i];
+                    return (
+                      <tr key={s.time} className={cn(i === 1 && "bg-fig-cyan-fill")}>
+                        <th scope="row" className="border border-border/60 px-2 py-1 text-left font-mono font-normal">{s.time}</th>
+                        <td className="border border-border/60 px-2 py-1 text-xs text-muted-foreground">{s.story}</td>
+                        <td className="border border-border/60 px-2 py-1 text-center">
+                          {t.ok ? (
+                            <span className="inline-flex items-center gap-1">
+                              <ValueChip value={chipValue(t.value)} />
+                              <span className="font-mono text-xs">{t.label}</span>
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="border border-border/60 px-2 py-1 text-center">
+                          {w.ok ? (
+                            <span className="inline-flex items-center gap-1">
+                              <ValueChip value={chipValue(w.value)} />
+                              <span className="font-mono text-xs">{strengthLabel(w.value, w.strength)}</span>
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
           <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
             {trireg.map((t, i) => (t.ok ? <li key={steps[i].time}><strong className="text-foreground">{steps[i].time}:</strong> {t.why}</li> : null))}
@@ -1093,6 +1099,7 @@ export default function NetResolutionSimulator({ initialMode, pattern, preset }:
   const [mode, setMode] = useState<Mode>(initialMode ?? (pattern ? "legality" : "drivers"));
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="Net resolution simulator"
       eyebrow="Experiment"
       title="Who wins the wire?"

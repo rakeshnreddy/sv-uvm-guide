@@ -36,6 +36,7 @@ export default function StringMethodExplorer() {
 
   return (
     <VisualFrame
+      className="fig-panel !overflow-visible"
       label="String method explorer"
       eyebrow="Experiment"
       title="String methods, edges included"
@@ -102,7 +103,7 @@ export default function StringMethodExplorer() {
           activeKey="call"
         />
       ) : null}
-      <div className="min-h-12 rounded-lg border border-border/70 bg-background/50 p-3 text-sm" aria-live="polite">
+      <div className="fig-stage !p-3 min-h-12 rounded-lg border border-fig-generic p-3 text-sm bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]" aria-live="polite">
         {result ? (
           <>
             <p className="font-mono [font-variant-ligatures:none]">
