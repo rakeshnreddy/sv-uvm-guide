@@ -239,3 +239,88 @@ The focused coverage-chart repeat verified G2, G5–G7, G11–G13 and G15–G17 
 All five released lessons completed full runs. The first F1A run passed G9. While rerunning F1A alongside other Chromium captures, one existing expert-index test hit its 120 s timeout. The isolated expert-index retry passed all nine tests, with the formerly timed-out anchor assertion taking 62.2 s. The complete Core Data Types run is retained. A redundant second full run was stopped after the visual-only repeat started, and its interrupted output is separate from the complete result.
 
 Task A calibration is recorded in `REVIEW-QUEUE.md`. All five full reruns completed, and each retains its measured findings and links. F1A, F1B and Structs had full repeats during calibration. The final G11–G17 repeats on F1C and Core Data Types are linked separately. The remaining optional repeats were stopped. The focused retest of F1A’s opening stages recognized their layered bodies and passed legend and ramp checks. Its missing focal declaration still fails G14 in both themes. No released lesson source was edited. Task B starts with the saved Operators and Expressions patch.
+
+## Task 2 — Task B: F2A Operators and Expressions
+
+Task A was pushed as `11cc5cc6`. The saved patch applied cleanly with `git apply --3way` in a temporary detached worktree. The main worktree remains at the released source while the visual plan is prepared. The new baseline at `11cc5cc6a036` captured 23 default interactive states and all 28 before crops in both themes.
+
+The opening bowl’s first focused gate passed wording, contrast, phone font size, palette, legend, depth, states, ramp and focal outline. G11 and G12 identified a clipped equation box and crowding near the bowl rims. The spacing is being revised with the small bowl on the right at all widths, as required by its description.
+
+The opening bowl passed all eleven focused gates on attempt two. Across the eight views there were zero G11 or G12 findings, zero small phone labels, at least 5.96:1 for measured text and 4.47:1 for measured marks. Both themes and all widths were inspected against the before design. The caption contract and checklist are recorded. The lesson is still in progress.
+
+The side-by-side tree comparison passed all eleven focused gates on attempt two. Widening the right flags leaf fixed the label contact. The repeat found zero G11 and G12 issues, with text at 5.74:1 or above and marks at 3.99:1 or above. Its caption contract and eight manually inspected crops are retained. The precedence explorer is next.
+
+The first precedence and power-chain checks passed all focused gates except G5. Both found the light-theme Predict badge at 4.49–4.50:1 before rounding. The badge now uses the amber figure text token. The height check sampled 69 instances with zero above 4 px and zero failed pages. All 63 ExpressionTreeExplorer component and model tests passed. The corrected contrast is being rechecked in both presets.
+
+Both precedence presets passed all eleven focused gates after the badge contrast fix. Minimum text readings were 5.94:1 for the first instance and 5.93:1 for power-chain. Their measured marks were at least 4.30:1 and 4.32:1. The default and revealed first preset was checked at all eight reading settings. The new version declares the prediction expression as its focal part; the revealed root stays the strongest node. The kit’s three-lane diagram follows.
+
+“One vector, three families” passed its focused gate with 68 kit notes. The lesson sets the common operand as focus. Kit notes cover 8.55–10.35 px phone labels, 1.00:1 readings on three flow marks, and edge labels over flow lines at the four review widths. The rightmost column is reachable by horizontal scrolling at 390 px. The report records the request and caption mapping. Next is the reduction preset of OperatorExplorer.
+
+The reduction preset passed its first focused run. The default operand is now a connected strip with a body sized to the bits. The cyan final row is the focal part after reveal. The connected-strip repeat is running. The first re-gate of F1B reproduced its existing G14 and G15 findings on the bit-count preset. The other OperatorExplorer routes and heights are being checked.
+
+The connected reduction strip and the revealed fold passed all eleven focused gates at the required widths and themes, with measured text at 5.55:1 and marks at 3.68:1 or above. The shared retests reproduced G14 on the F2A index and F2E and the recorded F1B G14/G15 findings. The 234 height measurements had zero above 4 px and zero failed pages. All 123 OperatorExplorer tests passed. The equality preset is next.
+
+The first equality run passed ten of the eleven focused gates, including geometry, depth and focal outline. G5 measured the x cell against its indigo operand body at 4.13:1 in light mode on the main lesson and the released F2A index. The hatch now has a neutral base under it. The two presets are being rechecked before moving on.
+
+Equality passed all eleven focused checks on this lesson, the released F2A index and F2E. The initial fix covered the editable bit. The successful third run used the same neutral base under the revealed ValueChip hatch, raising the measured minimum text to 4.94:1. The two themes and all widths were reviewed. The equality height sweep measured 234 instances across four routes, none over 4 px. The next visual is the opcode decoder comparison.
+
+The first opcode decoder gate passed ten checks and exposed two literal paint classes on a reformatted catch-all row (G7). The phone measurement also found a new row in the selector, adding 48 px on both pages that embed compare mode. The catch-all row now uses figure tokens and the selector keeps its original available width inside the new rim. The repeat checks both routes and the main lesson’s second prediction reveal.
+
+The decoder passed its focused gate after the selector-width fix, and the height check found zero outliers across 108 instances on six pages. A separate two-reveal Chromium audit confirmed both expected branches and zero clipping or overlap, then measured low contrast in the revealed wildcard badges, unknown chips and muted row text. Those labels now use the figure text tokens over more readable surfaces. The complete reveal and shared presets are being rechecked.
+
+The opcode decoder passed all eleven focused gates. The final two-reveal audit opened the chip details at 2× device scale and found zero geometry, text contrast or mark contrast violations in all eight settings. The two branch results were confirmed. The Flow Control compare embed passed; its qualifiers embed still has the earlier G14 art and stage findings. TypeScript and the MDX pipeline passed, and all 215 DecisionLab and model tests passed before the final paint-only corrections. The default and both revealed columns have current crops.
+
+The first set-membership run passed ten focused checks. G2 reported a two-theme mismatch in the revealed accessibility snapshot. An isolated comparison of the rendered instance produced identical figure strings and all 45 aria entries against the base. The first phone height was 8 px over reserve; the phone-only padding correction is now being rechecked in the lesson and the shared routes.
+
+Set membership passed all eleven gates after compacting the phone padding. The repeat had zero G2 differences, verified both themes at all four widths and measured text at 5.28:1 or above and marks at 3.67:1 or above. The F2A index equality repeat also passed. Across four routes, all 234 measured heights were within 4 px. The expression-width presets are now being checked.
+
+Both expression-width presets passed their focused gates. The eight-bit shift’s second reveal confirmed the eight-bit context bowl and separate 32-bit self-determined amount. Its expanded geometry and contrast audit passed at all eight settings. The height check measured 69 instances on three pages, all within 4 px. The signedness shift scenario is next.
+
+The first shift-fill run passed all eleven gates with 26 kit observations on BitStrip. Chromium confirmed the three stored results in both themes: 7, −1, and 2147483647. A separate control check found the light selected label below its contrast floor and verified the corrected text at 6.76:1 in light and 13.62:1 in dark. The final focused capture is running. All 186 height readings across four routes were within 4 px. One shared retest was interrupted by hot reload and is being repeated.
+
+The final shift-fill gate passed all eleven checks with no authored findings. The exact results and all eight before/after screen settings are retained. The selected label measured 6.76:1 in light and 13.62:1 in dark. The kit request records its 9 px sign label and the 1.66:1 and 1.83:1 readings. The shared route rechecks continue while the next kit figure is inspected.
+
+The signedness decision diagram passed all eleven focused gates with 64 kit notes. The existing dashed paths still lead to signed and unsigned outcomes. The lesson supplies the unsigned branch as focus. The report records phone labels from 8.55 to 10.36 px, low-contrast marks, edge-pill intersections and the arrowhead swatch mismatch. Both themes were inspected at all four widths. Signed comparison is next.
+
+Signed comparison now uses the verified two-theme variant treatment. The revealed ACT plate is cyan and the existing EXP plate keeps a dashed teal rim. The comparison gate, shared route rechecks and height measurements are running.
+
+Signed comparison passed all eleven focused gates. The measured text floor was 5.07:1, and the mark floor was 3.96:1. Chromium confirmed results 1, 0, and 0 at the three variants in both themes. The height check stayed within 4 px across 186 readings. All 427 signedness and expression-model tests passed. The next variant is part-select.
+
+Part-select passed all eleven focused gates. Chromium confirmed −8, 248 and −8 in the three original variants in both themes. Minimum authored text and mark contrast were 5.03:1 and 3.96:1. All 186 height readings across the four routes were within 4 px. Concatenation is next.
+
+Concatenation passed every focused gate in both themes at all four widths. Its connected inputs and joined output were reviewed, including the high and low four-bit groups. Authored text measured at least 4.59:1 and marks at least 3.02:1. Shared route checks are running. The shift operator is next.
+
+The initial operator shift run passed all eleven focused checks. Direct browser tests confirmed the marked high bit is S for the signed 1100 result and 0 for the unsigned 0100 result in both themes. The first phone height check exceeded its reserve, so the shift’s phone padding has been compacted. Its focused gate and four-route height recheck are running.
+
+The shift diagram passed all eleven focused gates. The final phone adjustment kept all 234 height measurements across four routes within 4 px. The shift amount remains distinct from the operand, and the marked high bit matched the original signed and unsigned shift examples in both themes. The byte reversal is next.
+
+The byte reversal passed all eleven focused checks after the crossing adjustment. Eight before and after views show 12, 34, 56, 78 reversing to 78, 56, 34, 12 with the original digits intact. Minimum text and mark contrast were 11.75:1 and 3.58:1. The stream-target diagram is next.
+
+The five stream-target cases passed all eleven focused gates after retaining a dashed missing-field slot. Both themes at all four widths show the left-aligned 32-bit stream, four queue elements, ignored low bits, and both size errors. Text and marks measured at least 6.56:1 and 3.76:1. The streaming lab is next.
+
+The first streaming lab passed all eleven focused checks with eight informational G7 kit lines. Both themes and all four widths were compared before and after reveal. Chromium confirmed eight zeros on the right of the 40-bit target, the 24-bit fit error, the three MSB-first unpacked fields, the 24-bit source error, and the remainder order. All 21 component tests passed. All 69 reserved heights were within 4 px. The streaming operator explorer is next.
+
+The streaming operator explorer passed all eleven focused gates after strengthening its cyan output rims. Chromium reproduced the six caption results in both themes. All 123 existing operator component tests passed. The F2E phone repeat resolved one live-reload mount error and confirmed all 234 heights across the four routes within 4 px. The released F2A equality recheck passed. F1B reproduced its existing G14 and G15 findings. The F2E equality recheck is running. The cast lab is next.
+
+The released F2E equality recheck passed after the streaming explorer changes. The bit-stream cast lab passed all eleven focused gates and the two-reveal geometry and authored contrast audit in eight views. Chromium confirmed the unchanged normal, zero-converted and equal-size values and both invalid casts. All 94 component and stream-model tests passed, and all 69 heights were within 4 px. The conditional explorer is next.
+
+### Clean handoff · 2026-11-20
+
+Paused at the owner's request after the cast lab. The first 20 of 28 visuals passed their focused gates. The remaining eight start with the conditional explorer. Its unchanged default and revealed captures already cover both themes at all four widths. The full G1–G17 run, review sheets and lesson commit remain pending. Task A is pushed at `11cc5cc6` and ready for independent review.
+
+The reversible patch holds all six edited source files. The draft report, seven fresh base captures, and gate logs are saved under `test-results/design-previews/codex/F2A_Core_Data_Types--operators-and-expressions/wip/`. Before and after crops and height measurements remain in the enclosing lesson directory. The original Task 1 patch is still available there under its original name. The Task 2 patch was checked in reverse before restoring the source and in the forward direction afterwards.
+
+Restore the Operators and Expressions work from this checkpoint before editing the conditional visual.
+
+```bash
+docs=docs/planning/site-design-refresh-2026-11-10
+slug=F2A_Core_Data_Types--operators-and-expressions
+wip=test-results/design-previews/codex/$slug/wip
+lesson=content/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions.mdx
+git apply --check "$wip/task-2-operators-and-expressions.patch"
+git apply "$wip/task-2-operators-and-expressions.patch"
+cp "$wip/task-2-report-draft.md" "$docs/reports/$slug.md"
+cp "$wip/task-2-baselines/"*.base.json "$docs/reports/"
+```
+
+After editing the conditional explorer, run `node scripts/figure-gates.cjs "$lesson" --base 11cc5cc6 --only OperatorExplorer@863`. Continue through the checklist in the draft report. After the last visual, run `node scripts/figure-gates.cjs "$lesson" --base 11cc5cc6` before committing the lesson.

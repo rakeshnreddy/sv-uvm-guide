@@ -1,10 +1,16 @@
 # Figure review queue
 
 - Last finished lesson · F2A Structs, Unions, and Enums, released in checkpoint 32
-- Lesson in progress · none
-- Working tree · clean at the Task A commit
+- Lesson in progress · F2A Operators and Expressions paused after the first 20 of 28 visuals passed their focused gates
+- Working tree · Clean at handoff, with the lesson patch and evidence saved locally
 
 Checkpoint 32 is in `origin/curriculum-quality-program` at `669f7d7b`.
+
+## Ready for review
+
+Task A is in `11cc5cc6`. The run log records the seven mutation proofs, the clean fixture, the refused-server and report-isolation checks, and the full reruns of the five released lessons. Findings from those reruns are below.
+
+The Operators and Expressions patch is available for an interim review in `test-results/design-previews/codex/F2A_Core_Data_Types--operators-and-expressions/wip/task-2-operators-and-expressions.patch`. The same folder has `task-2-report-draft.md`, `task-2-baselines/` and `task-2-gate-logs/`. The adjacent before and after folders contain the captures. The full lesson gate and commit remain pending. The conditional operator is the next visual.
 
 ## Found in released lessons
 
@@ -368,4 +374,4 @@ G14 separates missing focal declarations from default artwork that could not be 
 
 ## Finished lessons
 
-Task B begins with Operators and Expressions after Task A is committed.
+Task B has reached 20 focused passes in Operators and Expressions. The [run log](CODEX-RUN-LOG.md) contains the resume commands and the full acceptance command.
