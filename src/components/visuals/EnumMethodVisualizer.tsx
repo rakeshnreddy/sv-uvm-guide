@@ -740,7 +740,7 @@ function CastsView({ announce, packedExplorerHref }: { announce: (text: string) 
           options={RAW_CHOICES.map((r) => ({ value: String(r), label: `raw = ${r}${isMember(OPCODE, r) ? " (a member)" : " (not a member)"}` }))}
         />
       </div>
-      <ol className="space-y-3" aria-label="Statements that put raw into op">
+      <ol className="fig-stage !p-0 space-y-3 rounded-xl bg-[hsl(var(--fig-well))]" aria-label="Statements that put raw into op">
         {rows.map((row) => (
           <CastRowCard key={`${raw}-${row.id}`} row={row} raw={raw} announce={announce} packedExplorerHref={packedExplorerHref} />
         ))}
@@ -766,7 +766,7 @@ function CastRowCard({ row, raw, announce, packedExplorerHref }: { row: CastRow;
     announce(`${row.code} ${picked ? (correct ? "Correct." : "Not quite.") : ""} ${result} ${row.why}`);
   };
   return (
-    <li className={cn(panel, "space-y-2")}>
+    <li className={cn(panel, "space-y-2 border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]")}>
       <div className="flex flex-wrap items-center gap-2">
         <code className={cn("max-w-full break-words rounded-md border border-code-border bg-code-surface px-2 py-1 text-sm text-code-foreground", mono)}>
           {row.code}

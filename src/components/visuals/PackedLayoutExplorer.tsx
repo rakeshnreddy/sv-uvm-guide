@@ -1408,9 +1408,11 @@ function TaggedMode() {
         </button>
       </div>
 
-      <div className="flex flex-wrap items-start gap-2">
-        <ValueChip name="tag" value={tagName ?? "undefined"} changed={false} />
-        <span data-testid="tagged-value" className="inline-flex items-center gap-1.5 rounded-md border border-indigo-400/60 bg-indigo-500/10 px-2 py-0.5 font-mono text-sm text-indigo-800 dark:text-indigo-100">
+      <div className="fig-stage !p-0 flex flex-wrap items-start gap-2 rounded-lg bg-[hsl(var(--fig-well))]">
+        <span className="contents" data-figure-kit>
+          <ValueChip name="tag" value={tagName ?? "undefined"} changed={false} />
+        </span>
+        <span data-testid="tagged-value" className="inline-flex items-center gap-1.5 rounded-md border border-fig-indigo bg-fig-indigo-fill px-2 py-0.5 font-mono text-sm text-foreground shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]">
           <span className="text-xs opacity-90">value</span>
           <span className="font-semibold">{valueText}</span>
         </span>
@@ -1543,9 +1545,9 @@ function MutationMode() {
       fidelity="model"
       assumptions={[...PACKED_LAYOUT_ASSUMPTIONS, "Each cell runs the whole tb_top with that one edit applied; a check 'catches' the edit when it prints FAIL."]}
     >
-      <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+      <div className="fig-stage !p-0 grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
         {MUTATIONS.map((m) => (
-          <div key={m.id} className="rounded-lg border border-border/70 p-3 text-sm">
+          <div key={m.id} className={cn("rounded-lg border p-3 text-sm bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", revealed && m.id === selected.col ? "border-fig-cyan" : "border-fig-generic")}>
             <p className="font-semibold text-foreground">{m.label}</p>
             <p className="text-xs text-muted-foreground">{m.description}</p>
             <pre className="mt-2 overflow-x-auto rounded bg-code-surface p-2 font-mono text-xs leading-4 text-code-foreground [font-variant-ligatures:none]">
@@ -1570,20 +1572,25 @@ function MutationMode() {
         </ul>
       </details>
 
-      <MutationMatrix
-        label="Checks against mutations"
-        rows={TB_CHECKS.map((c) => ({ id: c.id, label: c.label }))}
-        columns={MUTATIONS.map((m) => ({ id: m.id, label: m.label }))}
-        cells={cells}
-        predictions={graded}
-        onPredict={(rowId, colId, value) => setPredictions((p) => ({ ...p, [cellKey(rowId, colId)]: value }))}
-        revealed={revealed}
-        onCellSelect={(rowId, colId) => setSelected({ row: rowId, col: colId as MutationId })}
-        selectedCell={revealed ? cellKey(selected.row, selected.col) : undefined}
-        rowHeader="Check"
-        columnNoun="mutation"
-        columnTotals
-      />
+      <div className="fig-stage !p-0 rounded-xl bg-[hsl(var(--fig-well))]">
+        <div data-figure-kit>
+          <MutationMatrix
+            className="fig-stage !p-0"
+            label="Checks against mutations"
+            rows={TB_CHECKS.map((c) => ({ id: c.id, label: c.label }))}
+            columns={MUTATIONS.map((m) => ({ id: m.id, label: m.label }))}
+            cells={cells}
+            predictions={graded}
+            onPredict={(rowId, colId, value) => setPredictions((p) => ({ ...p, [cellKey(rowId, colId)]: value }))}
+            revealed={revealed}
+            onCellSelect={(rowId, colId) => setSelected({ row: rowId, col: colId as MutationId })}
+            selectedCell={revealed ? cellKey(selected.row, selected.col) : undefined}
+            rowHeader="Check"
+            columnNoun="mutation"
+            columnTotals
+          />
+        </div>
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {!revealed ? (
@@ -1722,7 +1729,7 @@ function DebugMode({ preset: presetId }: { preset?: string }) {
     >
       <SegmentedControl label="Scenario" options={CLINIC_SCENARIOS.map((s) => ({ value: s.id, label: s.title }))} value={scenario.id} onChange={choose} />
 
-      <CodeTrace label="Log, as found" lines={asFound.log.map((t, i) => ({ text: t, key: `a${i}` }))} />
+      <CodeTrace className="fig-stage !p-0 border-fig-generic" label="Log, as found" lines={asFound.log.map((t, i) => ({ text: t, key: `a${i}` }))} />
 
       <div ref={causePromptRef} className={feedbackFocusRing}>
         <PredictionPrompt key={`${scenario.id}-${gen}`} question="What is the root cause?" options={toOptions(scenario.causes, "prose")} resetKey={`${scenario.id}-${gen}`}>

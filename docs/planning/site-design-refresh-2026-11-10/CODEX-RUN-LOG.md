@@ -178,3 +178,19 @@ Both 40-visual comparison sheets are saved. A separate software-WebGL browser pa
 The complete pixel sweep passed G5 and G6. It measured 3,784 authored texts at 4.98:1 or above and 1,760 authored marks at 3.51:1 or above. The only failed gate was G9, where ESLint required the existing list key to move to the new kit wrapper in PackedLayoutExplorer’s union view. The key is fixed and the acceptance rerun is underway.
 
 The acceptance run passed G1–G10 at `f671ae67`. All 40 visuals are in the new look. The confirmed floor is 4.98:1 for authored text and 3.51:1 for marks. All 372 shared-route height measurements fell within 4 px, and all 1,335 targeted Vitest tests passed. The independent review passed seven viewport and media configurations with visible keyboard focus and zero errors. The report records both changed reserve expectations and all Kit requests. Structs, Unions, and Enums is next.
+
+## Task 4 — F2A Structs, Unions, and Enums passed
+
+Core Data Types was committed as `815e425e`. The Task 4 before capture is running at that commit. The report lists all 21 visuals and their teaching intent before drawing changes. The three interview prompts are included in the embed baseline.
+
+The initial baseline capture found the packet-header PackedLayoutExplorer slot with zero visible characters inside the closed “Worked solution” disclosure. Both themes still rendered all 13 slot containers. Opening only the enclosing disclosure exposed 1,426 visible characters and left the interactive’s internal disclosure count unchanged. The gate now opens closed ancestors only for initially empty slots, before recording their default state. Its ordinary model and word comparisons still apply. A focused regression and the complete before capture are running.
+
+The capture correction is committed as `72d3385d`. The six gate unit tests and focused ESLint check passed. Capture succeeded with 13 default states and 21 clean before crops per theme. The baseline ref remains `815e425e`. The first pass on the seven drawings is in the working tree.
+
+The first full Structs gate passed nine checks, including all 120 reserve measurements and the source and interactive word comparisons. G5 found four low-contrast readings on one generic outline in the opening drawing, between 1.63:1 and 1.74:1. I’m isolating the outline before the repeat. No test expectations changed.
+
+The low reading came from the middle enum row, whose top and bottom strokes lay directly over neighboring strokes. The three named members now have one outer frame and two shared dividers. The dotted extra row sits below the frame. On phones, the “bit 0” label also clears the nearby x glyph. The full repeat and comparison captures are running.
+
+The repeat passed all visual checks, with 812 authored text readings at or above 5.84:1 and 468 authored marks at or above 3.42:1. The completed 21-visual sheets are saved in both themes. G9 reported one 5-second PackedLayoutExplorer test timeout while the captures ran alongside Vitest. The same test passed on the first full run. The full gate is retrying without concurrent screenshot work.
+
+The final Structs gate passed G1–G10 against `815e425e`. The isolated test ran in 557 ms and all 1,004 targeted tests passed on the full retry. All 21 visuals are accounted for. The final G5 floors were 5.84:1 for text and 3.42:1 for marks. G8 verified all 120 reserves across six routes with no expectation changes. The independent review passed all seven configurations with visible keyboard focus, no label collisions or page overflow, and 11.85 px minimum static phone text. The report and both sheets are ready for review. Operators and Expressions is next.
