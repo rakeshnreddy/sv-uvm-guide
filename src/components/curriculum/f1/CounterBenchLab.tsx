@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useId, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { BlockDiagram, type DiagramEdge, type DiagramNode } from "@/components/visual-system/BlockDiagram";
 import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
@@ -47,6 +47,7 @@ import {
   type CounterBenchMode,
   type LabOption,
 } from "@/lib/counter-bench-model";
+import { useSvgFontSize } from "@/hooks/useSvgFontSize";
 import { cn } from "@/lib/utils";
 
 export type { CounterBenchMode };
@@ -102,12 +103,18 @@ const LEFT = 30;
 const TOP = 24;
 const LEVEL = 11;
 const X_LANE = 12;
+/** Space between the X lane and the 7 grid line, so their two labels never touch. */
+const X_GAP = 7;
+/** Axis labels render at about 11.5 px at any width (a 390 px phone draws the waveform about 280 px wide); 15 units is the most the left margin holds. */
+const WAVE_FONT = { min: 6.5, max: 15 } as const;
 
 function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
   const n = run.checks.length;
   const width = LEFT + n * CW + 6;
-  const plotTop = TOP + X_LANE;
-  const height = plotTop + 7 * LEVEL + 24;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const fs = useSvgFontSize(svgRef, width, WAVE_FONT);
+  const plotTop = TOP + X_LANE + X_GAP;
+  const height = plotTop + 7 * LEVEL + 28;
   const x = (i: number) => LEFT + i * CW + CW / 2;
   const y = (v: number | "X") => (v === "X" ? TOP + X_LANE / 2 : plotTop + (7 - v) * LEVEL + 4);
   const path = (values: (number | "X")[]) =>
@@ -127,16 +134,16 @@ function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
   const label = `Waveform for checks 0 to ${upTo}: count (ACT, solid) and expected (EXP, dashed). At check ${upTo}, count is ${showSample(c.actual)} and expected is ${showSample(c.compared)}; results so far PASS=${c.passSoFar} FAIL=${c.failSoFar}.`;
   return (
     <figure className="fig-stage rounded-xl border border-border bg-[hsl(var(--fig-well))]">
-      <svg viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full" role="img" aria-label={label}>
+      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full" role="img" aria-label={label}>
         {/* X lane and value grid */}
         <rect x={LEFT} y={TOP} width={n * CW} height={X_LANE} className="fig-band fill-fig-rose-fill" />
-        <text x={LEFT - 4} y={TOP + X_LANE / 2 + 3.5} fontSize={15} textAnchor="end" className="fill-fig-rose-text">
+        <text x={LEFT - 4} y={TOP + X_LANE / 2 + fs * 0.35} fontSize={fs} textAnchor="end" className="fill-fig-rose-text">
           X
         </text>
         {[0, 7].map((v) => (
           <g key={v}>
             <line x1={LEFT} x2={LEFT + n * CW} y1={y(v)} y2={y(v)} className="fig-fx stroke-border" strokeDasharray="1 3" />
-            <text x={LEFT - 4} y={y(v) + 3.5} fontSize={15} textAnchor="end" className="fill-foreground">
+            <text x={LEFT - 4} y={y(v) + fs * 0.35} fontSize={fs} textAnchor="end" className="fill-foreground">
               {v}
             </text>
           </g>
@@ -154,7 +161,7 @@ function CheckWaveform({ run, upTo }: { run: BenchRun; upTo: number }) {
         <path d={path(exp)} fill="none" strokeWidth={2.5} strokeDasharray="4 3" className="stroke-fig-teal" />
         <line x1={x(upTo)} x2={x(upTo)} y1={TOP - 4} y2={plotTop + 7 * LEVEL + 6} strokeWidth={2} className="stroke-fig-cyan" />
         {[0, Math.floor((n - 1) / 2), n - 1].map((i) => (
-          <text key={i} x={x(i)} y={height - 3} fontSize={15} textAnchor="middle" className="fill-foreground">
+          <text key={i} x={x(i)} y={height - 5} fontSize={fs} textAnchor="middle" className="fill-foreground">
             {i}
           </text>
         ))}

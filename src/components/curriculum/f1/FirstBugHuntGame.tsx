@@ -167,6 +167,10 @@ interface TallyRow {
   barClassName: string;
 }
 
+/** The spec is the expected behaviour: a teal object with a lit rim and a soft shadow (DESIGN.md section 14). */
+const tealObject =
+  "bg-[linear-gradient(180deg,hsl(var(--fig-teal-body)/var(--fig-obj-top)),hsl(var(--fig-teal-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+
 /** Order and wording of the tally. Glyphs match the waveform markers. */
 const TALLY_ROWS: TallyRow[] = [
   { key: "nonvacuous", glyph: "✓", label: "Nonvacuous successes (a real check that held)", barClassName: "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))] text-fig-emerald-text" },
@@ -463,8 +467,8 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
         fidelity="model"
         assumptions={ASSUMPTIONS}
       >
-        <div className="rounded-xl border border-teal-500/50 border-dashed bg-teal-500/[0.05] p-3 text-sm">
-          <p className="text-label text-teal-800 dark:text-teal-200">Spec</p>
+        <div className={cn("rounded-xl border border-fig-teal p-3 text-sm", tealObject)}>
+          <p className="text-label text-fig-teal-text">Spec</p>
           <p className="mt-1 text-foreground">
             After <code className="font-mono [font-variant-ligatures:none]">rst</code> is released,{" "}
             <code className="font-mono [font-variant-ligatures:none]">count</code> increases by 1 on every rising{" "}
@@ -485,6 +489,7 @@ const FirstBugHuntGame = ({ preset = "f1b-verification-mindset" }: FirstBugHuntG
             cursor={edgePick ?? undefined}
             onSelectEdge={edgeFound ? undefined : setEdgePick}
             markers={edgeFound ? specMarkers(buggy) : []}
+            highlights={edgeFound && edgeDiagnosis ? [{ from: edgeDiagnosis.edge, to: edgeDiagnosis.edge, tone: "fail" as const }] : []}
           />
           {edgeDiagnosis ? (
             <p aria-live="polite" className={cn("text-sm", edgeDiagnosis.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>

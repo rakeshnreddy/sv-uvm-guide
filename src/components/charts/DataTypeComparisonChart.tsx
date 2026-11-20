@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useId, useMemo, useState } from "react";
 
 import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
 import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
@@ -78,6 +78,13 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
   const barH = rowH - 8;
   const H = rows.length * rowH + 4;
   const bitW = barMax / 64;
+  const ids = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const bodyId = `dtc-bar-body-${ids}`;
+  const rimId = `dtc-bar-rim-${ids}`;
+  const shadowId = `dtc-bar-shadow-${ids}`;
+  const raiseId = `dtc-bar-raise-${ids}`;
+  /** The 64-bit reference bar that sets the scale: the one raised part. */
+  const focalId = rows.find((r) => r.width === 64)?.id;
   const signWord = (r: DataTypeRow) => (r.signed === true ? ", signed" : r.signed === false ? ", unsigned" : "");
   return (
     <figure className="fig-stage !p-0 min-w-0 space-y-2 rounded-lg bg-[hsl(var(--fig-well))]">
@@ -91,6 +98,45 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
             .map((r) => `${r.id} ${r.width}${r.states === 4 ? ", 4-state" : r.states === 2 ? ", 2-state" : ""}${showSign ? signWord(r) : ""}`)
             .join("; ")}.`}
         >
+          <defs>
+            {/* The tier's neutral tint (no role hue): at rest strength for every bar, whole for the focal one. */}
+            <linearGradient id={bodyId} x2="0" y2="1" className="text-fig-generic fig-grad-rest">
+              <stop className="fig-stop-top" />
+              <stop offset="1" className="fig-stop-bottom" />
+            </linearGradient>
+            <linearGradient id={`${bodyId}-focal`} x2="0" y2="1" className="text-fig-generic">
+              <stop className="fig-stop-top" />
+              <stop offset="1" className="fig-stop-bottom" />
+            </linearGradient>
+            <linearGradient id={rimId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" className="fig-rim-top" />
+              <stop offset="0.7" className="fig-rim-end" />
+            </linearGradient>
+            <filter id={shadowId} filterUnits="userSpaceOnUse" x={-20} y={-20} width={W + 40} height={H + 40}>
+              <feGaussianBlur stdDeviation="1.6" />
+            </filter>
+            <filter id={raiseId} filterUnits="userSpaceOnUse" x={-20} y={-20} width={W + 40} height={H + 40}>
+              <feGaussianBlur stdDeviation="3" />
+            </filter>
+          </defs>
+          {/* The 64-bit scale rail behind every bar, so each length reads against the full value. */}
+          <g className="fig-fx text-foreground" aria-hidden="true" data-testid="width-chart-rails">
+            {rows.map((r, i) => (
+              <rect key={r.id} x={labelW} y={i * rowH + 4} width={barMax} height={barH} rx={3} className="fig-rail" />
+            ))}
+          </g>
+          <g className="fig-fx fig-fx-blur" filter={`url(#${shadowId})`} aria-hidden="true">
+            {rows.map((r, i) =>
+              r.id === focalId ? null : (
+                <rect key={r.id} x={labelW + 1} y={i * rowH + 6} width={Math.max(0, ((r.width as number) / 64) * barMax - 2)} height={barH} rx={3} className="fig-shadow" />
+              ),
+            )}
+          </g>
+          {focalId ? (
+            <g className="fig-fx fig-fx-blur" filter={`url(#${raiseId})`} aria-hidden="true">
+              <rect x={labelW + 2} y={rows.findIndex((r) => r.id === focalId) * rowH + 8} width={barMax - 4} height={barH} rx={3} className="fig-shadow" />
+            </g>
+          ) : null}
           {rows.map((r, i) => {
             const y = i * rowH + 4;
             const w = ((r.width as number) / 64) * barMax;
@@ -110,8 +156,11 @@ function WidthChart({ showSign = false }: { showSign?: boolean }) {
                   height={barH}
                   rx={3}
                   className={barClassFor(r)}
-                  strokeWidth={1}
+                  strokeWidth={r.id === focalId ? 1.6 : 1}
                 />
+                {/* Lit body: neutral glass over the bar's own fill, with a highlight along its top edge. */}
+                <rect x={labelW} y={y} width={w} height={barH} rx={3} fill={`url(#${r.id === focalId ? `${bodyId}-focal` : bodyId})`} stroke="none" className="fig-fx" aria-hidden="true" />
+                <rect x={labelW + 1} y={y + 1} width={Math.max(0, w - 2)} height={barH - 2} rx={2.2} fill="none" stroke={`url(#${rimId})`} strokeWidth={1} className="fig-fx" aria-hidden="true" />
                 {four ? (
                   <rect
                     data-testid="width-bar-inner-outline"

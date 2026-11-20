@@ -50,16 +50,25 @@ export interface ScenarioSorterProps {
   testIdPrefix?: string;
 }
 
+// Figure tokens (DESIGN.md section 14): emerald match, rose mismatch; a partly right answer is a
+// dashed slate outline, not amber, which means Z and the testbench.
 const verdictTone: Record<Verdict, string> = {
-  correct: "text-emerald-700 dark:text-emerald-300",
-  partial: "text-amber-800 dark:text-amber-200",
-  wrong: "text-rose-700 dark:text-rose-300",
+  correct: "text-fig-emerald-text",
+  partial: "text-fig-slate-text",
+  wrong: "text-fig-rose-text",
 };
 const verdictBox: Record<Verdict, string> = {
-  correct: "border-emerald-500/60 bg-emerald-500/10",
-  partial: "border-amber-500/60 bg-amber-500/10",
-  wrong: "border-rose-500/60 bg-rose-500/10",
+  correct: "border-fig-emerald bg-fig-emerald-fill",
+  partial: "border-dashed border-fig-slate bg-fig-slate-fill",
+  wrong: "border-fig-rose bg-fig-rose-fill",
 };
+/** A lit object in one role colour: gradient body, top rim and soft shadow. */
+const objectClass = {
+  cyan: "bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]",
+  emerald: "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]",
+  slate: "bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/var(--fig-obj-top)),hsl(var(--fig-slate-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]",
+  rose: "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]",
+} as const;
 const verdictGlyph: Record<Verdict, string> = { correct: "✓", partial: "◐", wrong: "✕" };
 const verdictSr: Record<Verdict, string> = { correct: "Correct: ", partial: "Partly correct: ", wrong: "Incorrect: " };
 
@@ -97,20 +106,20 @@ function ChoiceButton({
         choiceButton,
         option.mono && monoText,
         !locked && "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))] hover:bg-muted",
-        locked && !revealed && (chosen ? "border-amber-500/70 bg-amber-500/10" : "border-border/50 opacity-70"),
-        revealed && option.verdict === "correct" && "border-emerald-500/70 bg-emerald-500/10",
-        revealed && option.verdict === "partial" && "border-amber-500/70 bg-amber-500/10",
-        revealed && chosen && option.verdict === "wrong" && "border-rose-500/70 bg-rose-500/10",
+        locked && !revealed && (chosen ? cn("border-fig-cyan", objectClass.cyan) : "border-border/50 opacity-70"),
+        revealed && option.verdict === "correct" && cn("border-fig-emerald", objectClass.emerald),
+        revealed && option.verdict === "partial" && cn("border-dashed border-fig-slate", objectClass.slate),
+        revealed && chosen && option.verdict === "wrong" && cn("border-fig-rose", objectClass.rose),
         revealed && !chosen && option.verdict === "wrong" && "border-border/50 opacity-70",
         // The learner's own pick stays recognisable among several ✓ or ◐ options.
         revealed && chosen && "border-2 shadow-sm",
       )}
     >
       {option.label}
-      {locked && !revealed && chosen ? <span className="ml-2 font-sans text-xs text-amber-800 dark:text-amber-200">{copy.pickBadge}</span> : null}
-      {revealed && option.verdict === "correct" ? <span className="ml-2 font-sans text-xs text-emerald-700 dark:text-emerald-300">{copy.bestBadge}</span> : null}
-      {revealed && option.verdict === "partial" ? <span className="ml-2 font-sans text-xs text-amber-800 dark:text-amber-200">{copy.partialBadge}</span> : null}
-      {revealed && chosen && option.verdict === "wrong" ? <span className="ml-2 font-sans text-xs text-rose-700 dark:text-rose-300">{copy.chosenBadge}</span> : null}
+      {locked && !revealed && chosen ? <span className="ml-2 font-sans text-xs text-fig-cyan-text">{copy.pickBadge}</span> : null}
+      {revealed && option.verdict === "correct" ? <span className="ml-2 font-sans text-xs text-fig-emerald-text">{copy.bestBadge}</span> : null}
+      {revealed && option.verdict === "partial" ? <span className="ml-2 font-sans text-xs text-fig-slate-text">{copy.partialBadge}</span> : null}
+      {revealed && chosen && option.verdict === "wrong" ? <span className="ml-2 font-sans text-xs text-fig-rose-text">{copy.chosenBadge}</span> : null}
       {revealed && chosen && option.verdict !== "wrong" ? (
         <span className="ml-2 font-sans text-xs font-semibold text-foreground" data-testid={`${testId}-pick`}>
           {copy.pickBadge}
@@ -191,7 +200,7 @@ function OtherOptions({ card, answer, copy, testId }: { card: SorterCard; answer
         <p className="text-foreground">
           {step ? <span>Step 2: </span> : null}
           {o.mono ? <code className={cn("break-words", monoText)}>{o.label}</code> : <strong>{o.label}</strong>}
-          {o.verdict === "partial" ? <span className="ml-2 text-xs text-amber-800 dark:text-amber-200">{copy.partialBadge}</span> : null}
+          {o.verdict === "partial" ? <span className="ml-2 text-xs text-fig-slate-text">{copy.partialBadge}</span> : null}
         </p>
         <p>{o.feedback}</p>
       </li>
@@ -769,7 +778,7 @@ function SorterGame({ deck, cardIds, binIds, title, prefix }: { deck: ScenarioDe
             {fillTemplate(copy.score, { correct: tally.correct, total })}
           </p>
           {tally.partial > 0 ? (
-            <p className="text-sm text-amber-800 dark:text-amber-200" data-testid={`${prefix}-partial-count`}>
+            <p className="text-sm text-fig-slate-text" data-testid={`${prefix}-partial-count`}>
               {tally.partial} more {tally.partial === 1 ? "was" : "were"} partly correct.
             </p>
           ) : null}

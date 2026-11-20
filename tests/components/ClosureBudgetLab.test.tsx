@@ -240,7 +240,8 @@ describe("ClosureBudgetLab: r2 fixes", () => {
     expect(last).toHaveAttribute("text-anchor", "end");
     expect(last).toHaveTextContent("1,000,000");
     expect(chart.querySelector('[data-tick="100000"] text')).toBeNull();
-  });
+    // 199 runs of 5,000 samples take about 3 s alone: allow for a loaded machine.
+  }, 20_000);
 
   it("checks off says it covers later directed runs too", () => {
     render(<ClosureBudgetLab preset="standalone" />);

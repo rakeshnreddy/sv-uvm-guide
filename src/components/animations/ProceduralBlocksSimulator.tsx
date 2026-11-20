@@ -465,6 +465,11 @@ function ValueTimeline({ result, names, decls }: { result: SimResult; names: str
               <rect width="6" height="6" className="fill-fig-rose-fill" />
               <line x1="0" y1="0" x2="0" y2="6" className="stroke-fig-rose" strokeWidth="2" />
             </pattern>
+            {/* A known value is a neutral plate: these variables can be one bit wide, so indigo (multi-bit) would misstate them. */}
+            <linearGradient id={`${patternId}-plate`} x2="0" y2="1" className="fig-grad-quiet">
+              <stop className="fig-stop-top" />
+              <stop offset="1" className="fig-stop-bottom" />
+            </linearGradient>
           </defs>
           {layout.rows.map((row, r) => {
             const y = top + r * rowH;
@@ -481,8 +486,8 @@ function ValueTimeline({ result, names, decls }: { result: SimResult; names: str
                       width={Math.max(2, seg.to - seg.from)}
                       height={rowH - 8}
                       rx={2}
-                      fill={seg.unknown ? `url(#${patternId})` : undefined}
-                      className={seg.unknown ? "stroke-fig-rose" : "fill-fig-indigo-fill stroke-fig-indigo"}
+                      fill={seg.unknown ? `url(#${patternId})` : `url(#${patternId}-plate)`}
+                      className={seg.unknown ? "stroke-fig-rose" : "stroke-fig-generic"}
                       strokeWidth={1}
                     />
                     {seg.labelFits ? (

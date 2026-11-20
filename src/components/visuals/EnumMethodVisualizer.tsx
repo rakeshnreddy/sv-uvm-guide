@@ -579,7 +579,8 @@ function NumberLine({ resolved, pointer, label = "Number line of the enum values
               className={cn(
                 "flex min-h-24 min-w-[2.75rem] flex-col items-stretch justify-end gap-1 rounded-md border p-1 text-center",
                 s.kind === "gap" ? "border-dashed border-fig-generic text-muted-foreground" : collision ? "border-2 border-fig-rose bg-fig-rose-fill" : "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]",
-                pointer === s.from && "ring-2 ring-fig-cyan",
+                // Inset, so the scroll container (no padding) cannot clip the pointer ring.
+                pointer === s.from && "ring-2 ring-inset ring-fig-cyan",
               )}
             >
               {s.kind === "gap" ? (

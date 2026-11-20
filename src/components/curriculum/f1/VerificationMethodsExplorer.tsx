@@ -60,6 +60,7 @@ import {
   type RandomParams,
   type Row,
 } from "@/lib/verification-methods-model";
+import { useSvgFontSize } from "@/hooks/useSvgFontSize";
 import { cn } from "@/lib/utils";
 
 export type VerificationMethodsTab = "directed" | "random" | "formal";
@@ -519,13 +520,19 @@ function DirectedTab({ dSlice }: { dSlice: number | null }) {
 
 const PREDICT_BUDGET: CycleBudget = 20;
 
+/** Curve labels render at about 11.5 px at any width; 13.5 units is the most the margins hold. */
+const CURVE_FONT = { min: 7.5, max: 13.5 } as const;
+
 function ProbabilityCurve({ params, budget }: { params: RandomParams; budget: CycleBudget }) {
   const curve = useMemo(() => foundProbabilities(params, 1000), [params]);
+  const svgRef = useRef<SVGSVGElement>(null);
   const W = 300;
   const H = 120;
-  const L = 34;
+  const L = 42;
+  const R = 14;
   const B = 22;
-  const x = (n: number) => L + ((W - L - 8) * Math.log10(n)) / 3;
+  const fs = useSvgFontSize(svgRef, W, CURVE_FONT);
+  const x = (n: number) => L + ((W - L - R) * Math.log10(n)) / 3;
   const y = (p: number) => 8 + (H - B - 8) * (1 - p);
   const pts: string[] = [];
   for (let i = 0; i <= 60; i++) {
@@ -534,16 +541,16 @@ function ProbabilityCurve({ params, budget }: { params: RandomParams; budget: Cy
   }
   return (
     <figure className="fig-stage m-0 rounded-xl bg-[hsl(var(--fig-well))]">
-      <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full max-w-[420px]" role="img" aria-label={curveText(params)}>
-        <line x1={L} y1={y(0)} x2={W - 8} y2={y(0)} className="stroke-fig-generic" strokeWidth={1.5} />
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full max-w-[420px]" role="img" aria-label={curveText(params)}>
+        <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} className="stroke-fig-generic" strokeWidth={1.5} />
         <line x1={L} y1={y(0)} x2={L} y2={y(1)} className="stroke-fig-generic" strokeWidth={1.5} />
         {[0, 0.5, 1].map((p) => (
-          <text key={p} x={L - 4} y={y(p) + 3} textAnchor="end" className="fill-foreground text-[12.5px]">
+          <text key={p} x={L - 5} y={y(p) + fs * 0.35} textAnchor="end" fontSize={fs} className="fill-foreground">
             {p * 100}%
           </text>
         ))}
         {[1, 10, 100, 1000].map((n) => (
-          <text key={n} x={x(n)} y={H - 6} textAnchor="middle" className="fill-foreground text-[12.5px]">
+          <text key={n} x={n === 1000 ? W - 2 : x(n)} y={H - 4} textAnchor={n === 1000 ? "end" : "middle"} fontSize={fs} className="fill-foreground">
             {n.toLocaleString("en-US")}
           </text>
         ))}

@@ -38,6 +38,7 @@ import {
   type ClosureState,
   type ClosureSummary,
 } from "@/lib/closure-budget-model";
+import { useSvgFontSize } from "@/hooks/useSvgFontSize";
 import { cn } from "@/lib/utils";
 
 export interface ClosureBudgetLabProps {
@@ -70,12 +71,16 @@ const stripes = "bg-[repeating-linear-gradient(135deg,hsl(var(--fig-amber)/0.55)
 // ---------------------------------------------------------------------------
 
 const W = 340;
-const H = 196;
-const M = { left: 36, right: 10, top: 10, bottom: 34 };
+const H = 200;
+const M = { left: 48, right: 12, top: 10, bottom: 42 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
+/** Chart labels render at about 11.5 px at any chart width (a 390 px phone draws the chart about 280 px wide); 14.5 units is the most the margins hold. */
+const FONT = { min: 7.5, max: 14.5 } as const;
 
 function ClosureChart({ state, titleId, descId }: { state: ClosureState; titleId: string; descId: string }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const fs = useSvgFontSize(svgRef, W, FONT);
   const { config } = state;
   const p = useMemo(() => binProbabilities(config.commonBins, config.rareP), [config.commonBins, config.rareP]);
   const expectations = useMemo(() => closureExpectations(config), [config]);
@@ -94,14 +99,15 @@ function ClosureChart({ state, titleId, descId }: { state: ClosureState; titleId
   const ticks = axisTicks(xMax);
   const closeX = Number.isFinite(expectations.all) ? x(expectations.all) : null;
   const withDirected = summarize(state).coverageOfModel;
+  const tickBaseline = M.top + PH + 4 + fs;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={titleId} aria-describedby={descId} className="block h-auto w-full max-w-[560px]">
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={titleId} aria-describedby={descId} className="block h-auto w-full max-w-[560px]">
       <title id={titleId}>Expected coverage and the seeded run against random samples, log scale</title>
       {[0, 0.5, 1].map((c) => (
         <g key={c}>
           <line x1={M.left} x2={W - M.right} y1={y(c)} y2={y(c)} stroke="currentColor" strokeOpacity={0.15} className="fig-fx" />
-          <text x={M.left - 4} y={y(c) + 3.5} fontSize={14} textAnchor="end" fill="currentColor">
+          <text x={M.left - 5} y={y(c) + fs * 0.35} fontSize={fs} textAnchor="end" fill="currentColor">
             {formatPercent(c)}
           </text>
         </g>
@@ -110,19 +116,19 @@ function ClosureChart({ state, titleId, descId }: { state: ClosureState; titleId
         <g key={tick.n} data-tick={tick.n}>
           <line x1={x(tick.n)} x2={x(tick.n)} y1={M.top + PH} y2={M.top + PH + 4} stroke="currentColor" strokeWidth={1.5} />
           {tick.label !== null ? (
-            <text x={x(tick.n)} y={M.top + PH + 15} fontSize={14} textAnchor={tick.anchor} fill="currentColor">
+            <text x={x(tick.n)} y={tickBaseline} fontSize={fs} textAnchor={tick.anchor} fill="currentColor">
               {tick.label}
             </text>
           ) : null}
         </g>
       ))}
-      <text x={M.left + PW / 2} y={H - 4} fontSize={14} textAnchor="middle" fill="currentColor">
+      <text x={M.left + PW / 2} y={Math.min(H - 4, tickBaseline + fs + 5)} fontSize={fs} textAnchor="middle" fill="currentColor">
         random samples (log scale)
       </text>
       {closeX !== null && closeX <= W - M.right ? (
         <g>
           <line x1={closeX} x2={closeX} y1={M.top} y2={M.top + PH} stroke="currentColor" className="stroke-fig-ramp-5" strokeWidth={1.8} strokeDasharray="3 3" />
-          <text x={Math.min(closeX, W - M.right) - 3} y={M.top + PH - 6} fontSize={14} textAnchor="end" fill="currentColor">
+          <text x={Math.min(closeX, W - M.right) - 3} y={M.top + PH - 9} fontSize={fs} textAnchor="end" fill="currentColor">
             {`close ≈ ${formatSamples(expectations.all)}`}
           </text>
         </g>
@@ -132,7 +138,7 @@ function ClosureChart({ state, titleId, descId }: { state: ClosureState; titleId
       {state.directed ? (
         <g>
           <circle cx={x(state.samplesUsed)} cy={y(withDirected)} r={4} className="fig-solid fill-fig-emerald" />
-          <text x={x(state.samplesUsed) - 6} y={y(withDirected) + 14} fontSize={14} textAnchor="end" fill="currentColor">
+          <text x={x(state.samplesUsed) - 6} y={y(withDirected) + 4 + fs} fontSize={fs} textAnchor="end" fill="currentColor">
             directed
           </text>
         </g>
@@ -293,11 +299,11 @@ function Workbench({ initial, intro }: { initial: ClosureState["config"]; intro:
         <figcaption className="space-y-1 text-xs text-muted-foreground">
           <span className="flex flex-wrap gap-x-4 gap-y-1">
             <span>
-              <span aria-hidden className="mr-1 inline-block h-0.5 w-5 align-middle bg-cyan-600 dark:bg-cyan-400" />
+              <span aria-hidden className="mr-1 inline-block h-0.5 w-5 align-middle bg-fig-teal" />
               expected coverage
             </span>
             <span>
-              <span aria-hidden className="mr-1 inline-block w-5 align-middle border-t-2 border-dashed border-amber-600 dark:border-amber-400" />
+              <span aria-hidden className="mr-1 inline-block w-5 align-middle border-t-2 border-dashed border-fig-ramp-4" />
               {`seeded runs (${state.seedRuns} so far)`}
             </span>
           </span>

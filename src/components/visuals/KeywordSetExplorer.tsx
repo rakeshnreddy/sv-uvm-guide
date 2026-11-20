@@ -124,7 +124,17 @@ interface RingsProps {
   word?: string;
 }
 
-const revisionRims = ["border-t-fig-ramp-1", "border-t-fig-ramp-2", "border-t-fig-ramp-3", "border-t-fig-ramp-4", "border-t-fig-ramp-5", "border-t-fig-ramp-5"];
+/** Lit ring bodies. Table 22-1 is the base list: a neutral lit plate. The five revisions after it climb the fuchsia ramp (DESIGN.md section 14: at most five steps), each a body in its step's -body hue outlined and capped in the full step. */
+const objectShadow = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+const litRing = [
+  "border-fig-generic bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))]",
+  "border-fig-ramp-1 bg-[linear-gradient(180deg,hsl(var(--fig-ramp-1-body)/var(--fig-obj-top)),hsl(var(--fig-ramp-1-body)/var(--fig-obj-bottom)))]",
+  "border-fig-ramp-2 bg-[linear-gradient(180deg,hsl(var(--fig-ramp-2-body)/var(--fig-obj-top)),hsl(var(--fig-ramp-2-body)/var(--fig-obj-bottom)))]",
+  "border-fig-ramp-3 bg-[linear-gradient(180deg,hsl(var(--fig-ramp-3-body)/var(--fig-obj-top)),hsl(var(--fig-ramp-3-body)/var(--fig-obj-bottom)))]",
+  "border-fig-ramp-4 bg-[linear-gradient(180deg,hsl(var(--fig-ramp-4-body)/var(--fig-obj-top)),hsl(var(--fig-ramp-4-body)/var(--fig-obj-bottom)))]",
+  "border-fig-ramp-5 bg-[linear-gradient(180deg,hsl(var(--fig-ramp-5-body)/var(--fig-obj-top)),hsl(var(--fig-ramp-5-body)/var(--fig-obj-bottom)))]",
+];
+const ringCap = ["bg-fig-generic", "bg-fig-ramp-1", "bg-fig-ramp-2", "bg-fig-ramp-3", "bg-fig-ramp-4", "bg-fig-ramp-5"];
 
 /** Tables 22-1 (innermost) to 22-6 (outermost); rings in the chosen set are lit. */
 export function KeywordRings({ specifier, entered, excluded = false, word }: RingsProps) {
@@ -145,7 +155,7 @@ export function KeywordRings({ specifier, entered, excluded = false, word }: Rin
       <div
         className={cn(
           "rounded-xl border-2 p-1.5 sm:p-2",
-          lit ? cn("border-fig-generic bg-card bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]", revisionRims[index]) : "border-dashed border-fig-generic bg-card",
+          lit ? cn("bg-card", litRing[index], objectShadow) : "border-dashed border-fig-generic bg-card",
           isEntry && "ring-2 ring-fig-cyan",
         )}
         data-testid={`ring-${table.id}`}
@@ -153,10 +163,11 @@ export function KeywordRings({ specifier, entered, excluded = false, word }: Rin
         data-entry={isEntry}
       >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 pb-1 text-xs">
-          <span className="font-semibold text-foreground">Table {table.id}</span>
-          <span className={cn(mono, "text-foreground")}>{table.revision}</span>
-          <span className="tabular-nums text-foreground">+{table.words.length}</span>
-          {table.id === "22-2" && noconfig ? <span className="text-fig-rose-text">−{NOCONFIG_EXCLUDED.length} config words (22.14.4)</span> : null}
+          {lit ? <span className={cn("fig-solid h-2.5 w-2.5 shrink-0 rounded-sm", ringCap[index])} aria-hidden /> : null}
+          <span className={cn("font-semibold", lit ? "text-foreground" : "text-muted-foreground")}>Table {table.id}</span>
+          <span className={cn(mono, lit ? "text-foreground" : "text-muted-foreground")}>{table.revision}</span>
+          <span className={cn("tabular-nums", lit ? "text-foreground" : "text-muted-foreground")}>+{table.words.length}</span>
+          {table.id === "22-2" && noconfig ? <span className="text-foreground">−{NOCONFIG_EXCLUDED.length} config words (22.14.4)</span> : null}
           {isEntry ? (
             <span className="rounded bg-fig-cyan-fill px-1 font-semibold text-foreground">
               ◆ {word} entered here{excluded ? ", excluded by noconfig" : ""}
@@ -598,7 +609,7 @@ function TableBars({ highlight }: { highlight: TableId | null }) {
                 Table {t.id}
               </span>
               <span className="h-3 rounded bg-muted/40" aria-hidden>
-                <span className={cn("block h-3 rounded fig-solid bg-fig-ramp-3 shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", lit && "outline outline-2 outline-offset-2 outline-fig-cyan")} style={{ width: `${Math.max(2, (t.words.length / max) * 100)}%` }} />
+                <span className={cn("block h-3 rounded fig-solid shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", lit ? "bg-fig-cyan shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_0_8px_hsl(var(--fig-cyan)/var(--fig-glow))]" : "bg-fig-generic")} style={{ width: `${Math.max(2, (t.words.length / max) * 100)}%` }} />
               </span>
               <span className="text-right tabular-nums text-muted-foreground">
                 {t.words.length}
