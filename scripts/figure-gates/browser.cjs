@@ -304,6 +304,26 @@ function interactiveWords() {
     return { name: slot.getAttribute("data-mdx-interactive"), strings, aria };
   });
 }
+
+// A closed lesson disclosure may suppress innerText for a display:contents
+// slot. Reveal only the enclosing lesson details needed to read the default
+// state. Leave the interactive's own controls and disclosures alone.
+function openDetailsForEmptyEmbeds(slots) {
+  let opened = false;
+  for (const slot of slots) {
+    if (slot.innerText.trim()) continue;
+    for (
+      let detail = slot.parentElement?.closest("details:not([open])");
+      detail;
+      detail = detail.parentElement?.closest("details:not([open])")
+    ) {
+      detail.open = true;
+      opened = true;
+    }
+  }
+  return opened;
+}
+
 async function scenario(browser, opts, width, theme) {
   const ctx = await browser.newContext({
     viewport: { width, height: 1000 },
@@ -340,14 +360,14 @@ async function scenario(browser, opts, width, theme) {
         .evaluate((e, t) => e.getAttribute("data-theme") !== t, theme)
     )
       throw Error("Wrong rendered theme");
-    const texts = await page
-      .locator(article + " [data-mdx-interactive]")
-      .evaluateAll((es) =>
-        es.map((e) => ({
-          name: e.dataset.mdxInteractive,
-          text: e.innerText.replace(/\s+/g, " ").trim(),
-        })),
-      );
+    const slots = page.locator(article + " [data-mdx-interactive]");
+    if (await slots.evaluateAll(openDetailsForEmptyEmbeds)) await settle(page);
+    const texts = await slots.evaluateAll((es) =>
+      es.map((e) => ({
+        name: e.dataset.mdxInteractive,
+        text: e.innerText.replace(/\s+/g, " ").trim(),
+      })),
+    );
     const defaultWords = await page.evaluate(interactiveWords);
     await openDetails(page);
     const overflow = await scrollLesson(page);
@@ -455,4 +475,4 @@ async function inspectBrowser(opts) {
     await browser.close();
   }
 }
-module.exports = { inspectBrowser, reconcile };
+module.exports = { inspectBrowser, openDetailsForEmptyEmbeds, reconcile };

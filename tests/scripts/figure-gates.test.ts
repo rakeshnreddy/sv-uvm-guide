@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { openDetailsForEmptyEmbeds } from "../../scripts/figure-gates/browser.cjs";
 import {
   compareWords,
   inspectSource,
@@ -7,6 +8,29 @@ import {
 
 const draw = (body: string) =>
   `<figure><svg role="img" aria-label="Trace">${body}</svg><figcaption>A trace.</figcaption></figure>`;
+
+it("opens the lesson disclosures needed to read an embed's default text", () => {
+  const fixture = document.createElement("div");
+  fixture.innerHTML = `
+    <details id="lesson"><details id="section"><div id="hidden"><details id="internal"></details></div></details></details>
+    <details id="other"><div id="visible"></div></details>
+  `;
+  const outer = fixture.querySelector<HTMLDetailsElement>("#lesson")!;
+  const section = fixture.querySelector<HTMLDetailsElement>("#section")!;
+  const hidden = fixture.querySelector("#hidden")!;
+  const visible = fixture.querySelector("#visible")!;
+  Object.defineProperty(hidden, "innerText", {
+    get: () => (outer.open && section.open ? "Default value" : ""),
+  });
+  Object.defineProperty(visible, "innerText", { value: "Already readable" });
+
+  expect(openDetailsForEmptyEmbeds([hidden, visible])).toBe(true);
+  expect(outer.open).toBe(true);
+  expect(section.open).toBe(true);
+  expect(fixture.querySelector("#internal")?.hasAttribute("open")).toBe(false);
+  expect(fixture.querySelector("#other")?.hasAttribute("open")).toBe(false);
+  expect(openDetailsForEmptyEmbeds([hidden, visible])).toBe(false);
+});
 
 describe("figure gate word proof", () => {
   it("compares every composition, aria value, caption and ordered repeated label", async () => {
