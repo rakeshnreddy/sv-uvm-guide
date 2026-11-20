@@ -123,3 +123,39 @@ describe("figure gate literal colour scan", () => {
     ).toEqual([]);
   });
 });
+
+describe("per-visual figure gates", () => {
+  it("selects a single source line without losing its inventory index", async () => {
+    const { selectVisuals } = await import("../../scripts/figure-gates/audit.cjs");
+    const visuals = [
+      { key: "drawing", name: "Two curves", line: 12 },
+      { key: "Chart", name: "Chart", line: 24 },
+      { key: "Chart", name: "Chart", line: 40 },
+    ];
+    expect(selectVisuals(visuals, "Chart@40")).toEqual([2]);
+    expect(selectVisuals(visuals, "Two curves")).toEqual([0]);
+    expect(() => selectVisuals(visuals, "Chart")).toThrow(/24.*40/);
+    expect(() => selectVisuals(visuals, "absent")).toThrow(/absent/);
+  });
+
+  it("requires a substantial change to the drawing pixels", async () => {
+    const { artworkDifference } = await import("../../scripts/figure-gates/audit.cjs");
+    const image = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+    const original = [image([40, 40, 40, 60, 60, 60, 120, 120, 120])];
+    expect(artworkDifference(original, original)).toBe(0);
+    expect(artworkDifference(original, [image([40, 40, 40, 62, 62, 62, 119, 119, 119])])).toBe(0);
+    expect(artworkDifference(original, [image([40, 40, 40, 60, 60, 60, 200, 120, 120])])).toBeCloseTo(1 / 3);
+    expect(artworkDifference(undefined, original)).toBeNull();
+    expect(artworkDifference([], original)).toBe(1);
+    expect(artworkDifference(original, [])).toBe(0);
+  });
+
+  it("requires a reason tied to the visual to waive a focal part", async () => {
+    const { focalWaiver } = await import("../../scripts/figure-gates/audit.cjs");
+    const report = "## Two curves\nno focal part: the shape of both curves carries the comparison.\n\n## Another chart\n";
+    expect(focalWaiver(report, { name: "Two curves", line: 20 })).toContain("comparison");
+    expect(focalWaiver(report, { name: "Another chart", line: 38 })).toBeNull();
+    expect(focalWaiver("no focal part: unspecified", { name: "Two curves", line: 20 })).toBeNull();
+    expect(focalWaiver("Chart@20 — no focal part: time is the subject", { name: "Chart", line: 20 })).toContain("time");
+  });
+});

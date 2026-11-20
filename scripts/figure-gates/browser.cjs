@@ -5,6 +5,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { literalColours } = require("./source.cjs");
 const { measure, collectRegions } = require("./pixels.cjs");
+const { allWidths, auditVisual, captureArtwork } = require("./audit.cjs");
 
 const article = "[data-lesson-article]";
 async function settle(page) {
@@ -184,6 +185,7 @@ function reconcile(source, dom) {
       el.titleStrip;
     rows.push({
       ...el,
+      kind: item.kind,
       name: item.name,
       line: item.line,
       domIndex: pos - 1,
@@ -256,6 +258,36 @@ async function reveal(page) {
     if ((await button.isVisible()) && (await button.isEnabled()))
       await button.click();
   await openDetails(page);
+}
+
+async function auditRows(page, rows, theme) {
+  const audits = {};
+  const overlay = await page.addStyleTag({
+    content: "[data-gate-overlay]{visibility:hidden!important}",
+  });
+  try {
+    for (const [index, row] of rows.entries()) {
+      if (row.controlOnly || row.domIndex == null) continue;
+      const visual = page.locator(`[data-gate-item="${row.domIndex}"]`);
+      const target = await visual.evaluate(e => {
+        while (getComputedStyle(e).display === "contents" && e.firstElementChild)
+          e = e.firstElementChild;
+        if (e.getBoundingClientRect().height <= 0) return false;
+        e.setAttribute("data-gate-audit-root", "");
+        return true;
+      });
+      if (!target) continue;
+      const root = page.locator("[data-gate-audit-root]");
+      try {
+        audits[index] = await auditVisual(root, theme);
+      } finally {
+        await root.evaluate(e => e.removeAttribute("data-gate-audit-root"));
+      }
+    }
+  } finally {
+    await overlay.evaluate(e => e.remove());
+  }
+  return audits;
 }
 // Snapshot figure names and descriptions as well as innerText (which omits
 // SVG text). Hydration-generated id values compare by their referenced text.
@@ -371,6 +403,40 @@ async function scenario(browser, opts, width, theme) {
     const defaultWords = await page.evaluate(interactiveWords);
     await openDetails(page);
     const overflow = await scrollLesson(page);
+    await page.evaluate(() => {
+      const lesson = document.querySelector("[data-lesson-article]");
+      for (const e of document.querySelectorAll("body *")) {
+        if (lesson.contains(e) || e.contains(lesson)) continue;
+        if (["sticky", "fixed"].includes(getComputedStyle(e).position))
+          e.setAttribute("data-gate-overlay", "");
+      }
+    });
+    const item = (index) => page.locator(`[data-gate-item="${index}"]`);
+    const artwork = {};
+    const selected = (index) => !opts.indexes || opts.indexes.includes(index);
+    const selectRows = rows => rows.map((row, index) =>
+      selected(index) ? row : { ...row, controlOnly: true });
+    const initial = reconcile(opts.visuals, await page.evaluate(inventory));
+    if (width === 1440) {
+      for (const [index, row] of initial.entries())
+        if (selected(index) && row.domIndex != null && !row.controlOnly)
+          artwork[index] = await captureArtwork(item(row.domIndex));
+    }
+    if (opts.artworkOnly) return { width, theme, artwork, errors };
+    let measurementError = null;
+    let initialAudits = {};
+    let initialFocus = [];
+    if (!opts.capture) {
+      try {
+        initialAudits = await auditRows(page, selectRows(initial), theme);
+        const focused = selectRows(initial).map((row, index) =>
+          initialAudits[index]?.focus ? row : { ...row, controlOnly: true });
+        if (focused.some(row => !row.controlOnly))
+          initialFocus = await measure(page, focused, { focusOnly: true });
+      } catch (error) {
+        measurementError = error.message;
+      }
+    }
     await reveal(page);
     const revealedWords = await page.evaluate(interactiveWords);
     const dom = await page.evaluate(inventory);
@@ -414,8 +480,9 @@ async function scenario(browser, opts, width, theme) {
             : e.paint,
       })),
     );
-    for (const row of rows)
-      if (row.domIndex != null) {
+    const active = selectRows(rows);
+    for (const [index, row] of rows.entries())
+      if (selected(index) && row.domIndex != null) {
         const kitPaint = await page
           .locator(`[data-gate-item="${row.domIndex}"] [data-figure-kit]`)
           .evaluateAll((kits) => kits.map((kit) => kit.outerHTML).join("\n"));
@@ -425,14 +492,20 @@ async function scenario(browser, opts, width, theme) {
             ...literalColours(kitPaint).map((c) => c.token),
           ]),
         ];
+        if (row.kind === "interactive" && artwork[index]?.kitOnly)
+          row.look = "kit-drawn, not redesigned";
       }
     if (opts.images && width === 1440)
       await captureArt(page, rows, opts.images, theme);
-    let pixels = null,
-      measurementError = null;
+    let pixels = [];
+    let audits = {};
     if (!opts.capture) {
       try {
-        pixels = await measure(page, rows);
+        audits = await auditRows(page, active, theme);
+        const contrast = width === 1440 || width === 390;
+        const measured = contrast ? active : active.map((row, index) =>
+          audits[index]?.focus ? row : { ...row, controlOnly: true });
+        pixels = await measure(page, measured, { focusOnly: !contrast });
       } catch (error) {
         measurementError = error.message;
         pixels = [];
@@ -448,6 +521,10 @@ async function scenario(browser, opts, width, theme) {
       defaultWords,
       revealedWords,
       pixels,
+      audits,
+      initialAudits,
+      initialFocus,
+      artwork,
       measurementError,
       overflow: Math.max(overflow, await scrollLesson(page)),
       errors,
@@ -460,7 +537,7 @@ async function inspectBrowser(opts) {
   const browser = await chromium.launch();
   try {
     const results = [];
-    for (const width of opts.capture ? [1440] : [1440, 390]) {
+    for (const width of opts.capture ? [1440] : allWidths) {
       // Independent contexts keep colours and the opened lesson states isolated.
       results.push(
         ...(await Promise.all(

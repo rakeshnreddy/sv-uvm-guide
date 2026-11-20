@@ -107,7 +107,7 @@ function collectRegions(rows) {
   }
   return regions;
 }
-function readInk(root) {
+function readInk(root, focusOnly) {
   const rect = root.getBoundingClientRect();
   // Playwright encloses the element's document rect in whole CSS pixels.
   const box = {
@@ -147,7 +147,7 @@ function readInk(root) {
     return a;
   }
   const tree = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (tree.nextNode()) {
+  while (!focusOnly && tree.nextNode()) {
     const n = tree.currentNode,
       e = n.parentElement,
       s = n.textContent.trim();
@@ -197,7 +197,9 @@ function readInk(root) {
     "polygon.fig-face-top,polygon.fig-face-left,polygon.fig-face-right";
   const seenSolids = new Set();
   for (const e of [root, ...root.querySelectorAll("*")]) {
+    const focal = !!e.closest("[data-fig-focus]:not([data-fig-focus=false])");
     if (
+      (focusOnly && !focal) ||
       !visible(e) ||
       e.closest("[data-gate-region]") !== root ||
       e.closest(
@@ -372,6 +374,7 @@ function readInk(root) {
       kind,
       layer,
       kit: !!kitElement,
+      focal: /outline|stroke|css-border/.test(kind) && focal,
       label: [e.tagName, cls, e.getAttribute("data-testid")]
         .filter(Boolean)
         .join(" "),
@@ -385,9 +388,10 @@ const hiddenText =
 const hiddenMark =
   "[data-gate-mark=stroke]{stroke:transparent!important}[data-gate-mark=solid-outline],[data-gate-mark=solid]{stroke:transparent!important;fill:transparent!important}[data-gate-mark=hatch]{fill:transparent!important}[data-gate-mark=css-solid]{background:transparent!important}[data-gate-mark=css-border]{border-color:transparent!important}";
 
-async function sampleRegion(locator) {
+async function sampleRegion(locator, focusOnly) {
   await locator.scrollIntoViewIfNeeded();
-  const data = await locator.evaluate(readInk);
+  const data = await locator.evaluate(readInk, focusOnly);
+  if (!data.texts.length && !data.marks.length) return { texts: [], marks: [] };
   // Screenshots of the same element have identical origin even far below the
   // fold. Scroll wide kit stages to include both ends of the actual drawing.
   const scrollers = locator.locator(".fig-stage");
@@ -414,7 +418,7 @@ async function sampleRegion(locator) {
         }),
       offset,
     );
-    const geometry = offset ? await locator.evaluate(readInk) : data;
+    const geometry = offset ? await locator.evaluate(readInk, focusOnly) : data;
     const shot = async (style) => {
       const tag = style
         ? await locator.page().addStyleTag({ content: style })
@@ -543,6 +547,7 @@ async function sampleRegion(locator) {
       return {
         label: m.label,
         kit: m.kit,
+        focal: m.focal,
         ratio:
           rs[
             Math.floor(
@@ -554,7 +559,7 @@ async function sampleRegion(locator) {
     }),
   };
 }
-async function measure(page, rows) {
+async function measure(page, rows, { focusOnly = false } = {}) {
   // Sticky site navigation occludes pixels when Playwright scrolls its crop
   // into view. Isolate the artwork without changing document flow or theme.
   await page.evaluate(() => {
@@ -575,7 +580,7 @@ async function measure(page, rows) {
   const out = [];
   for (const r of regions) {
     const el = page.locator(`[data-gate-region="${r.id}"]`);
-    const samples = await sampleRegion(el);
+    const samples = await sampleRegion(el, focusOnly);
     out.push({ ...r, ...samples });
   }
   await overlay.evaluate((e) => e.remove());

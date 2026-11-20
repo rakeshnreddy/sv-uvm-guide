@@ -13,6 +13,8 @@ const {
   literalColours,
 } = require("./figure-gates/source.cjs");
 const { inspectBrowser } = require("./figure-gates/browser.cjs");
+const { allWidths, auditGates, auditResults, requireServer, selectVisuals } =
+  require("./figure-gates/audit.cjs");
 const { git, files, repoAt, run } = require("./figure-gates/repository.cjs");
 
 const plan = "docs/planning/site-design-refresh-2026-11-10";
@@ -175,7 +177,7 @@ function changedLines(base, file) {
     ranges.some(([start, length]) => line >= start && line < start + length);
 }
 
-function samples(matrix, acknowledge, kitNotes) {
+function samples(matrix, acknowledge, kitNotes, isolated = false) {
   const perFigure = [];
   const text = [],
     marks = [],
@@ -266,7 +268,7 @@ function samples(matrix, acknowledge, kitNotes) {
   const complete =
     matrix.length === 4 &&
     matrix.every((v) => !v.measurementError) &&
-    perView.every((v) => v.samples > 0);
+    (isolated || perView.every((v) => v.samples > 0));
   return {
     G5: result(
       complete && !bad.length && !unmeasured.length,
@@ -290,6 +292,7 @@ async function main() {
       base: { type: "string" },
       url: { type: "string", default: "http://localhost:3000" },
       skip: { type: "string" },
+      only: { type: "string" },
       "capture-base": { type: "boolean" },
     },
   });
@@ -303,7 +306,7 @@ async function main() {
     !/^content\/curriculum\/.+\.mdx$/.test(lesson)
   )
     throw Error(
-      "Usage: node scripts/figure-gates.cjs <lesson.mdx> --base <ref> [--url URL] [--capture-base] [--skip G3]",
+      "Usage: node scripts/figure-gates.cjs <lesson.mdx> --base <ref> [--url URL] [--capture-base] [--skip G3] [--only <visual[@line]>]",
     );
   const route = lesson.slice("content/curriculum/".length, -4);
   const slug = route
@@ -330,6 +333,8 @@ async function main() {
     );
   const capture = !!v["capture-base"],
     url = new URL(v.url).origin;
+  if (capture && v.only) throw Error("--capture-base captures the whole lesson");
+  await requireServer(url);
   const reports = path.join(plan, "reports"),
     art = path.join("test-results/design-previews/codex", slug);
   const baseline = path.join(
@@ -342,9 +347,17 @@ async function main() {
     git("show", base + ":" + lesson),
     loaders,
   );
+  const indexes = selectVisuals(current.visuals, v.only);
+  const selected = new Set(indexes);
+  const scopedVisuals = current.visuals.filter((_, index) => selected.has(index));
+  const scopedBefore = original.visuals.filter((_, index) => selected.has(index));
+  const relevant = (source) => new Set(source.visuals.flatMap((item, index) =>
+    item.kind === "interactive" ? [index] : []));
+  const activeEmbeds = [...relevant(current)].flatMap((sourceIndex, embedIndex) =>
+    selected.has(sourceIndex) ? [embedIndex] : []);
   const names = [
     ...new Set(
-      [...original.visuals, ...current.visuals]
+      [...scopedBefore, ...scopedVisuals]
         .filter((i) => i.kind === "interactive")
         .map((i) => i.tag),
     ),
@@ -422,15 +435,16 @@ async function main() {
           { initial: s.defaultWords, revealed: s.revealedWords },
         ]),
       ),
+      artwork: Object.fromEntries(views.map(view => [view.theme, view.artwork])),
     };
-    if (
-      fs.existsSync(baseline) &&
-      fs.readFileSync(baseline, "utf8") !==
-        JSON.stringify(evidence, null, 2) + "\n"
-    )
-      throw Error(
-        "Existing base capture differs. Investigate before replacing it.",
-      );
+    if (fs.existsSync(baseline)) {
+      const prior = JSON.parse(fs.readFileSync(baseline, "utf8"));
+      const { artwork: priorArt, ...priorWords } = prior;
+      const { artwork: newArt, ...newWords } = evidence;
+      if (JSON.stringify(priorWords) !== JSON.stringify(newWords) ||
+        (priorArt && JSON.stringify(priorArt) !== JSON.stringify(newArt)))
+        throw Error("Existing base capture differs. Investigate before replacing it.");
+    }
     write(baseline, evidence);
     console.log(
       `CAPTURED ${views[0].texts.length} default states in both themes at ${base}; ${baseline}; crops in ${art}/before`,
@@ -461,14 +475,19 @@ async function main() {
     if (entry) known.push({ ...entry, measured: value });
     return Boolean(entry);
   }
-  const words = compareWords(original, current);
+  const words = v.only
+    ? compareWords(
+      await inspectSource(scopedBefore[0]?.raw || "", loaders),
+      await inspectSource(scopedVisuals[0].raw, loaders),
+    )
+    : compareWords(original, current);
   G.G2 = result(
     !words.length,
-    `${current.visuals.length} source instances, ${words.length} differences`,
+    `${scopedVisuals.length} source instances, ${words.length} differences`,
     words,
   );
   const literal = [];
-  for (const i of current.visuals)
+  for (const i of scopedVisuals)
     for (const m of literalColours(i.raw)) {
       const finding = { file: lesson, ...m, line: i.line + m.line - 1 };
       if (i.kind === "kit")
@@ -517,7 +536,7 @@ async function main() {
     G9: () => checks(lesson, components, impacted, taskFiles),
   };
   const commands = Promise.all(
-    Object.entries(jobs).map(async ([id, job]) => {
+    (v.only ? [] : Object.entries(jobs)).map(async ([id, job]) => {
       try {
         G[id] = await job();
       } catch (e) {
@@ -525,20 +544,28 @@ async function main() {
       }
     }),
   );
+  let incomplete = false;
+  const saved = fs.existsSync(baseline)
+    ? JSON.parse(fs.readFileSync(baseline, "utf8"))
+    : null;
+  const reportText = path.join(reports, slug + ".md");
   try {
     const matrix = await inspectBrowser({
       visuals: current.visuals,
       route,
       url,
       capture: false,
+      indexes,
     });
+    incomplete = matrix.some(view => view.measurementError);
     const inventory = matrix.map(({ width, theme, rows }) => ({
       width,
       theme,
       rows,
     }));
     for (const view of matrix)
-      for (const row of view.rows) {
+      for (const [index, row] of view.rows.entries()) {
+        if (!selected.has(index)) continue;
         if (row.kitColours?.length)
           kitNotes.push({
             gate: "G7",
@@ -559,15 +586,12 @@ async function main() {
       ),
     ];
     G.G1 = result(
-      !old.length && matrix.length === 4,
+      !old.length && matrix.length === allWidths.length * 2,
       `${current.visuals.length} source instances, ${matrix[0].rows.length} rendered; ${old.length} old` +
         (old.length ? " — " + old.join(", ") : ""),
       inventory,
     );
     if (!v.skip) {
-      const saved = fs.existsSync(baseline)
-        ? JSON.parse(fs.readFileSync(baseline, "utf8"))
-        : null;
       const mismatches = [];
       if (!saved || saved.lesson !== lesson || saved.base !== base)
         mismatches.push("Missing matching --capture-base");
@@ -597,7 +621,9 @@ async function main() {
             ["revealed", view.revealedWords],
           ]) {
             const before = saved.figures?.[view.theme]?.[state] || [];
-            for (let i = 0; i < Math.max(current.length, before.length); i++) {
+            const compare = v.only ? activeEmbeds :
+              Array.from({ length: Math.max(current.length, before.length) }, (_, index) => index);
+            for (const i of compare) {
               if (JSON.stringify(current[i]) !== JSON.stringify(before[i]))
                 words.push(
                   `${view.theme} ${state}: interactive ${current[i]?.name ?? before[i]?.name} #${i + 1} figure text or aria changed`,
@@ -607,7 +633,7 @@ async function main() {
         }
         G.G2 = result(
           !words.length,
-          `${current.visuals.length} source instances, default and revealed interactive figure strings, ${words.length} differences`,
+          `${scopedVisuals.length} source instances, default and revealed interactive figure strings, ${words.length} differences`,
           words,
         );
       }
@@ -618,7 +644,15 @@ async function main() {
         { changedModels, mismatches },
       );
     }
-    Object.assign(G, samples(matrix, acknowledge, kitNotes));
+    Object.assign(G, samples(matrix.filter(view => [1440, 390].includes(view.width)), acknowledge, kitNotes, !!v.only));
+    Object.assign(G, auditResults(matrix, saved, fs.existsSync(reportText) ? fs.readFileSync(reportText, "utf8") : "", kitNotes));
+    if (incomplete) {
+      const errors = matrix.filter(view => view.measurementError)
+        .map(({ width, theme, measurementError }) => ({ width, theme, measurementError }));
+      for (const id of auditGates)
+        if (G[id].status === "PASS")
+          G[id] = result(false, "Browser measurement incomplete: " + errors[0].measurementError, errors);
+    }
     const issues = matrix.flatMap((s) =>
       [
         ...s.errors,
@@ -633,7 +667,8 @@ async function main() {
       issues,
     );
   } catch (e) {
-    for (const id of ["G1", "G3", "G5", "G6", "G10"])
+    incomplete = true;
+    for (const id of ["G1", "G3", "G5", "G6", "G10", ...auditGates])
       G[id] ??= result(
         false,
         "Browser measurement incomplete: " + e.message.split("\n")[0],
@@ -648,8 +683,11 @@ async function main() {
       details: [],
     };
   await commands;
+  const required = v.only
+    ? ["G2", "G5", "G6", "G7", ...auditGates]
+    : Array.from({ length: 17 }, (_, i) => "G" + (i + 1));
   const gates = Object.fromEntries(
-    Array.from({ length: 10 }, (_, i) => ["G" + (i + 1), G["G" + (i + 1)]]),
+    required.map(id => [id, G[id]]),
   );
   for (const {
     gate,
@@ -676,13 +714,16 @@ async function main() {
     console.log(g.status + " " + id + " " + g.summary);
   const failed = Object.values(gates).filter((g) => g.status === "FAIL").length;
   const summary = failed
-    ? `FAIL — ${failed} of 10 gates failed`
+    ? `FAIL — ${failed} of ${required.length} gates failed`
     : "PASS — every required gate passed";
-  const report = path.join(reports, slug + ".json");
+  const qualifier = v.only ? ".only-" + (indexes[0] + 1) : "";
+  const report = path.join(v.only ? art : reports, slug + qualifier + (failed || incomplete ? ".partial" : "") + ".json");
   write(report, {
     lesson,
     base,
     head: git("rev-parse", "HEAD").trim(),
+    ...(v.only ? { only: v.only } : {}),
+    incomplete,
     gates,
     known,
     kitNotes,
@@ -690,7 +731,7 @@ async function main() {
     summary,
   });
   console.log(summary + "; " + report);
-  process.exitCode = failed ? 1 : 0;
+  process.exitCode = incomplete ? 2 : failed ? 1 : 0;
 }
 main().catch((e) => {
   console.error(e.message);

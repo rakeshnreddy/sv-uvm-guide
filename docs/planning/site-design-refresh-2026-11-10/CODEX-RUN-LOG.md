@@ -210,3 +210,32 @@ The first full run passed G2–G10, including 2,472 authored text readings at or
 The short rendered inventory found all 31 slots and zero old visuals in both themes. The four-width geometry repeat cleared the previous collisions and found one new overlap between the opening equation and its bowl headings. The equation moved up four SVG units. All other figures were clear, with the smallest phone labels at 12.57 px. The full repeat is running on the corrected layout.
 
 At the owner's request, review stops at `6cec83ff`, the last accepted lesson commit. Automatic approval review declined the additional geometry check after the stop instruction. The active acceptance repeat and queued browser review were stopped. Task 5 has no acceptance result or commit. Its six source files were restored to the checkpoint. The reversible patch, report draft, baseline and first gate output are saved in `test-results/design-previews/codex/F2A_Core_Data_Types--operators-and-expressions/wip/`. The earlier before crops are one directory up. The next work after review is to reapply the Task 5 patch and continue its acceptance. Task 6 and later remain pending.
+
+## Task 2 — Task A gate calibration underway
+
+Fetched origin and checked out `codex/figures-t1`. Merging `origin/curriculum-quality-program` reported “Already up to date.” The reviewed checkpoint is `669f7d7b`. The dev server started on port 3000. The four reviewed lessons were inspected at their released source.
+
+The nine focused figure-gate tests and ESLint passed. The refusal test against port 1 printed “Figure gate server is unavailable at http://localhost:1. Start it or pass a reachable --url.” and produced no report. The first `--only` check selected one drawing and printed only its eleven gates. Focused results now go to the lesson’s preview directory. A full failed or interrupted result goes to the lesson’s `.partial.json`.
+
+Standalone Chromium scratch control and mutations, from `node scripts/figure-gates/mutation-proofs.cjs`:
+
+```text
+PASS G11–G17 clean scratch figure
+FAIL G11 push an axis label past the SVG viewport — 1 visual views checked, 1 findings — Scratch chart @1: Second label (64.0 px past SVG viewport)
+FAIL G12 place two labels on the same baseline — 1 visual views checked, 1 findings — Scratch chart @1: First label / Second label (58.7 × 10.4 px text overlap)
+FAIL G13 change the swatch dash pattern only — 1 visual views checked, 1 findings — Scratch chart @1: Threshold (no matching mark for 0,107,94 / none)
+FAIL G14 keep the old drawing inside a different frame — 1 visual views checked, 1 findings — Scratch chart @1: default drawing pixels (0.00% changed (floor 5.5%))
+FAIL G15 paint a selected button exactly like its peer — 1 visual views checked, 1 findings — Scratch chart @1: First (1.00:1 against an inactive sibling)
+FAIL G16 reverse the ordered luminance — 1 visual views checked, 1 findings — Scratch chart @1: ramp 2 → 3 (luminance 0.058 → 0.723)
+FAIL G17 lower the focal rim against its background — 1 visual views checked, 1 findings — Scratch chart @1: rect (1.30:1 revealed focal outline)
+```
+
+The default-state drawing crops were captured from temporary clean Git archives at `cb80965f`, `ccac0347`, `8ca1bdba` and `f671ae67`. The capture found artwork for the stages that render in the default state. The original text and revealed-state evidence is retained. The five released lessons are being rerun. Operators and Expressions remains at the saved Task 1 patch.
+
+The final scratch control passes all seven new gates. The G15 mutation removes paint from a selected button’s nested indicator while keeping its outer style unchanged. The unavailable-server proof returned exit 2 and left the accepted report byte-identical. The first released-lesson results are in the queue while the rendered ramp and state calibration runs finish. The live F1A reference loaded with HTTP 200, and its opening figure was inspected.
+
+The focused coverage-chart repeat verified G2, G5–G7, G11–G13 and G15–G17 at the required widths. G16 now keeps the dashed reference separate from the solid curve and samples the stroke’s painted segments. G14 still flags the flat chart. The browser audits inspect the default and revealed states. G14 compares normalized drawing pixels before prediction. Its focal declaration can be tied to a visual by source key and line. G15 compares rendered state indicators inside their parent controls as well as the controls’ own paint.
+
+All five released lessons completed full runs. The first F1A run passed G9. While rerunning F1A alongside other Chromium captures, one existing expert-index test hit its 120 s timeout. The isolated expert-index retry passed all nine tests, with the formerly timed-out anchor assertion taking 62.2 s. The complete Core Data Types run is retained. A redundant second full run was stopped after the visual-only repeat started, and its interrupted output is separate from the complete result.
+
+Task A calibration is recorded in `REVIEW-QUEUE.md`. All five full reruns completed, and each retains its measured findings and links. F1A, F1B and Structs had full repeats during calibration. The final G11–G17 repeats on F1C and Core Data Types are linked separately. The remaining optional repeats were stopped. The focused retest of F1A’s opening stages recognized their layered bodies and passed legend and ramp checks. Its missing focal declaration still fails G14 in both themes. No released lesson source was edited. Task B starts with the saved Operators and Expressions patch.
