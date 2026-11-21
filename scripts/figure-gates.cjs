@@ -27,10 +27,15 @@ const fixedTests = [
   "tests/components/lazy-mdx-heights.test.ts",
   "tests/scripts/figure-gates.test.ts",
 ];
+// Reports are committed to a public repository: never store this machine's folders in them.
+const portable = (text) => text
+  .split(process.execPath).join("node")
+  .split(process.cwd()).join("<repo>")
+  .split(os.homedir()).join("<home>");
 function write(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = file + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+  fs.writeFileSync(tmp, portable(JSON.stringify(value, null, 2)) + "\n");
   fs.renameSync(tmp, file);
 }
 const result = (pass, summary, details) => ({

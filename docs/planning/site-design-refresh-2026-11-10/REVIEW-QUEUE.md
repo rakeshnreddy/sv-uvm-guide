@@ -7,6 +7,30 @@
 
 Checkpoint 32 is in `origin/curriculum-quality-program` at `669f7d7b`.
 
+## Reviewer's verdict (2026-11-21)
+
+The gate tooling and these planning files are released to `main` with this commit. No lesson and no site code
+changed, so nothing a learner sees is different. No lesson was finished in this round.
+
+- **Checked.** The diff since checkpoint 32 touches only `docs/planning`, `scripts/figure-gates*` and
+  `tests/scripts`. The exceptions file is unchanged. `--write-released-baseline` works for the five frozen
+  lessons only. The 3:1 state threshold is unchanged. The gate's 12 unit tests pass and every script parses.
+- **Not checked.** The gate's logic was not read line by line, and no gate run was repeated.
+- **"Look at these first".** The crops of the cost graph (@265) and `OperatorExplorer` (@984) at 390 light were
+  inspected. Both selected controls read as selected: a tinted fill, a coloured border and heavier text, and the
+  cost graph adds the ▶ mark. G15 compares fill with fill only. These are not faults and stay in the baseline.
+  The methodologies diagram (@532) uses the same chip as the cost graph and was not viewed.
+- **Gate note for later.** G15 should accept a border in another colour together with a glyph or a heavier
+  weight as a state cue. Do not change it now.
+- **One thing seen in the crop.** In `OperatorExplorer` at 390 wide, the sentence above the §20.9 table runs past
+  the right edge of the card. Check in the Operators and Expressions lesson that it wraps or scrolls.
+- **Local paths.** The ten gate reports held this machine's folder paths. They are replaced by `<repo>` and
+  `node`, and the gate now writes reports that way.
+- **G9 timeouts.** The two tests pass alone and in CI. Run G9 with nothing else running on the machine.
+
+Next, in this order: the Core Data Types baseline; Operators and Expressions visuals 21 to 28 from the saved
+patch; then `F2B` onward as in the brief.
+
 ## Ready for review
 
 The Addendum 3 gate corrections start at `66fe2d08`. Four released visual baselines are recorded. The F1A scratch proof reported exactly one new finding, a clipped label at 390 px in light mode. The Core Data Types baseline rerun was stopped at handoff and is the remaining capture.
