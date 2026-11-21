@@ -17,7 +17,7 @@ const { inspectBrowser } = require("./figure-gates/browser.cjs");
 const { allWidths, auditGates, auditResults, requireServer, selectVisuals } =
   require("./figure-gates/audit.cjs");
 const { git, files, repoAt, run } = require("./figure-gates/repository.cjs");
-const { releaseStatus, releasedFindings, releasedRoutes } = require("./figure-gates/released.cjs");
+const { releaseStatus, releasedFindings, releasedRoutes, writeReleasedBaseline } = require("./figure-gates/released.cjs");
 
 const plan = "docs/planning/site-design-refresh-2026-11-10";
 const fixedTests = [
@@ -737,10 +737,9 @@ async function main() {
     required.map(id => [id, G[id]]),
   );
   const findings = released ? releasedFindings(gates, crops) : [];
-  if (recordRelease && !incomplete && Object.entries(gates).every(([gate, outcome]) =>
-    outcome.status !== "FAIL" || findings.some(finding => finding.gate === gate))) {
-    fs.writeFileSync(releaseFile, JSON.stringify({ lesson, base, head: git("rev-parse", "HEAD").trim(),
-      findings, decisions, kitNotes: kitNotes.length }, null, 2) + "\n", { flag: "wx" });
+  if (recordRelease && writeReleasedBaseline(releaseFile, {
+    lesson, base, head: git("rev-parse", "HEAD").trim(), gates, findings, decisions, kitNotes, incomplete,
+  })) {
     console.log("Recorded released baseline: " + releaseFile);
   }
   const release = released && fs.existsSync(releaseFile) && !incomplete

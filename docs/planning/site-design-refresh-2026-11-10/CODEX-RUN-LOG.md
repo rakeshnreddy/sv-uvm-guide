@@ -324,3 +324,21 @@ cp "$wip/task-2-baselines/"*.base.json "$docs/reports/"
 ```
 
 After editing the conditional explorer, run `node scripts/figure-gates.cjs "$lesson" --base 11cc5cc6 --only OperatorExplorer@863`. Continue through the checklist in the draft report. After the last visual, run `node scripts/figure-gates.cjs "$lesson" --base 11cc5cc6` before committing the lesson.
+
+### Addendum 3 calibration · 2026-11-21
+
+The requested fetch, checkout and fast-forward pull completed on `codex/figures-t1`. Calibration began at approximately 04:14 Pacific. Commit `66fe2d08` contains the gate corrections, focal records and historical first-reveal captures. The five released lesson sources were untouched.
+
+Chromium passed the clean scratch fixture. Its nine mutations all failed their intended gates, including missing stage depth, flat selected row cells and a clipped label. The 12 gate tests, standalone type check, ESLint and commit hooks passed. Initial full runs exposed a type error in the new test fixture and screenshot timeouts under load. The corrected runs are the source of the new baseline files.
+
+Four visual baselines are recorded. F1B passed with 21 baseline findings and zero new, with one test file passing on its serial retry. F1C passed with eight baseline findings and zero new. F1A recorded 25 visual findings and Structs recorded six. Their full runs measured all eight views. F1A's expert-index test timed out at 120 seconds and Structs' root-metadata test timed out at five seconds on their serial retries. Those G9 failures stay visible outside the visual baselines. F1A's G14 depth and focal checks found zero issues with the historical pixel comparison skipped.
+
+The released-baseline mutation proof clipped `timing reveal?` in a scratch copy of F1A. It added one SVG clip with a right edge at 242 units, activated only in light mode at 390 px, and ran the focused gate against that scratch server. The gate exited 1 with exactly one new finding:
+
+```text
+NEW G11 100% coverage of an incomplete plan@1359 light 390 timing reveal?: extends past SVG clip #released-proof-clip
+```
+
+The owner requested handoff at approximately 05:00 Pacific, within the calibration time box. The active Core Data Types full rerun was stopped before writing a baseline. Its next command is recorded in the review queue. The scratch server was stopped after the proof. The five released lesson source files match checkpoint 32.
+
+Operators and Expressions remains at 20 focused passes out of 28 visuals. The source patch still applies cleanly. Restore it, the draft report and the saved baselines with the commands in the 2026-11-20 handoff above. Start at the conditional explorer, then complete the remaining checklist and run the full gate. No lesson finished in this window.

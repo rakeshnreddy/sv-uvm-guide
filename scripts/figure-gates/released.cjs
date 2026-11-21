@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+
 const releasedRoutes = new Set([
   "T1_Foundational/F1A_The_Cost_of_Bugs/index",
   "T1_Foundational/F1B_The_Verification_Mindset/index",
@@ -47,4 +49,15 @@ function releaseStatus(gates, findings, baseline, visual) {
   return { retained, newFindings, cleared };
 }
 
-module.exports = { releaseStatus, releasedFindings, releasedRoutes };
+function writeReleasedBaseline(file, { lesson, base, head, gates, findings, decisions, kitNotes, incomplete }) {
+  if (incomplete || Object.entries(gates).some(([gate, outcome]) =>
+    outcome.status === "FAIL" && gate !== "G9" && !findings.some(finding => finding.gate === gate))) return false;
+  // The baseline locks visual measurements. Test infrastructure can fail an
+  // otherwise complete run, but relaunching it never replaces those readings.
+  const pendingChecks = gates.G9.status === "FAIL" ? [{ gate: "G9", summary: gates.G9.summary }] : [];
+  fs.writeFileSync(file, JSON.stringify({ lesson, base, head, findings, decisions,
+    kitNotes: kitNotes.length, ...(pendingChecks.length ? { pendingChecks } : {}) }, null, 2) + "\n", { flag: "wx" });
+  return true;
+}
+
+module.exports = { releaseStatus, releasedFindings, releasedRoutes, writeReleasedBaseline };

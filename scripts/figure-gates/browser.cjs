@@ -254,9 +254,17 @@ async function reveal(page) {
     .getByRole("button", {
       name: /reveal without predicting|reveal (?:the )?answer|show without predicting/i,
     });
-  for (const button of await answers.elementHandles())
-    if ((await button.isVisible()) && (await button.isEnabled()))
-      await button.click();
+  for (const button of await answers.elementHandles()) {
+    if (!(await button.isVisible()) || !(await button.isEnabled())) continue;
+    try {
+      await button.click({ timeout: 8000 });
+    } catch (error) {
+      if (error.name !== "TimeoutError") throw error;
+      // Snapshot the first reveal even when an animated frame cannot settle
+      // for pointer automation. This does not bypass a disabled control.
+      await button.evaluate(element => { if (!element.disabled) element.click(); });
+    }
+  }
   await openDetails(page);
 }
 
