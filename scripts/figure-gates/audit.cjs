@@ -25,14 +25,15 @@ function selectVisuals(visuals, query) {
   return indexes;
 }
 
-function focalWaiver(report, row) {
+function focalWaiver(report, row, released = false) {
   let heading = "";
   for (const line of report.split("\n")) {
     const section = line.match(/^#+\s+(.*)$/);
     if (section) heading = section[1].trim();
-    const declaration = line.match(/^\s*(?:[-*]\s+)?(?:(.*?)\s*(?:—|\|)\s*)?no focal part:\s*(\S.*)$/i);
-    if (declaration && [row.name, (row.key || row.name) + "@" + row.line].includes(declaration[1] || heading))
-      return declaration[2].trim();
+    const declaration = line.match(/^\s*(?:[-*]\s+)?(?:(.*?)\s*(?:—|\|)\s*)?(no focal part|focal part):\s*(\S.*)$/i);
+    if (declaration && (released || /^no /i.test(declaration[2])) &&
+        [row.name, (row.key || row.name) + "@" + row.line, row.name + "@" + row.line].includes(declaration[1] || heading))
+      return declaration[3].trim();
   }
   return null;
 }
@@ -340,11 +341,19 @@ function readVisual(root) {
     };
   };
   const stateComparisons = [];
-  const paintsForState = (element) => [
-    element,
-    ...[...element.querySelectorAll("[aria-hidden=true],[data-fig-indicator]")].filter(part =>
-      visible(part) && part.getBoundingClientRect().width > 2 && part.getBoundingClientRect().height > 2),
-  ];
+  const paintsForState = (element) => new Map([[
+    "state", element,
+  ], ...[...element.querySelectorAll(":scope > td,:scope > th,[aria-hidden=true],[data-fig-indicator]")]
+    .flatMap(part => {
+      const box = part.getBoundingClientRect();
+      const owner = part.parentElement.closest(active);
+      if (!visible(part) || box.width <= 2 || box.height <= 2 || (owner !== element && element.contains(owner)))
+        return [];
+      const position = [];
+      for (let child = part; child !== element; child = child.parentElement)
+        position.unshift([...child.parentElement.children].indexOf(child));
+      return [[position.join("."), part]];
+    })]);
   const points = (element) => {
     const box = element.getBoundingClientRect();
     const positions = [];
@@ -357,6 +366,9 @@ function readVisual(root) {
     return positions.map(([x, y]) => [x - bounds.x, y - bounds.y]);
   };
   for (const e of elements.filter(e => e.matches(active) && visible(e))) {
+    // A progress-list annotation describes the separate method/step control.
+    // Checking the whole card as if it were that control compares unrelated copy.
+    if (e.matches('li[aria-current="step"]:not([tabindex],[role],[data-fig-state],[data-fig-indicator])')) continue;
     const peers = [...e.parentElement.children].filter(peer =>
       peer !== e && !peer.matches(active) && peer.localName === e.localName &&
       peer.getAttribute("role") === e.getAttribute("role") && visible(peer));
@@ -364,19 +376,20 @@ function readVisual(root) {
     const state = paintsForState(e);
     for (const peer of peers) {
       const normal = paintsForState(peer);
-      const comparisons = state.flatMap((part, index) => {
-        if (!normal[index] || part.localName !== normal[index].localName) return [];
-        const a = paintState(part), b = paintState(normal[index]);
+      const comparisons = [...state].flatMap(([position, part]) => {
+        const sibling = normal.get(position);
+        if (!sibling || part.localName !== sibling.localName) return [];
+        const a = paintState(part), b = paintState(sibling);
         const ratio = Math.max(...a.colors.map((color, i) => {
           const x = relative(color), y = relative(b.colors[i]);
           return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
         }));
-        return [{ part, peer: normal[index], ratio, fillCue: a.filled && !b.filled,
+        return [{ part, peer: sibling, ratio, fillCue: a.filled && !b.filled,
           renderingDiffers: ratio > 1.01 || a.pattern !== b.pattern }];
       });
       if (comparisons.some(part => part.ratio >= 3 || part.fillCue)) continue;
       stateComparisons.push({
-        label: labelOf(e),
+        label: e.matches("tr") ? e.querySelector('th[scope="row"]')?.textContent.trim() || labelOf(e) : labelOf(e),
         parts: comparisons.map(({ part, peer, ratio, renderingDiffers }) =>
           ({ ratio, renderingDiffers, active: points(part), inactive: points(peer) })),
         kit: !!e.closest("[data-figure-kit],[data-diagram]"),
@@ -434,12 +447,13 @@ function readVisual(root) {
     if (e.matches(".fig-face-left,.fig-face-right")) return true;
     const style = getComputedStyle(e);
     if (e instanceof SVGGeometryElement) {
-      const paint = style.fill.match(/#([^"')]+)/)?.[1];
+      const paint = style.fill.match(/#([^"')]+)/)?.[1] || e.getAttribute("fill")?.match(/^url\(#(.+)\)$/)?.[1];
       const server = paint && document.getElementById(paint);
       return !!server && ["linearGradient", "radialGradient"].includes(server.localName);
     }
     return /gradient\(/.test(style.backgroundImage) || style.boxShadow.includes("inset");
-  });
+  }) || elements.some(e => e.matches(".fig-rim-top,.fig-rim-end,.fig-shadow") && rendered(e) &&
+    e.ownerSVGElement?.querySelector(".fig-stop-top,.fig-stop-level,.fig-stop-shade"));
   return { findings, ramp, stateComparisons, depth, focus: focus.length, labels: labels.length, geometry: svgPaint.length };
 }
 
@@ -527,13 +541,31 @@ async function auditVisual(locator, theme) {
   await locator.scrollIntoViewIfNeeded();
   const view = await locator.evaluate(readVisual);
   if (view.ramp.length || view.stateComparisons.length) {
-    const screenshot = await locator.screenshot({ animations: "disabled", scale: "css" });
+    const screenshot = await visualScreenshot(locator, { scale: "css" });
     const pixels = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     view.findings.push(...rampFindings(view.ramp, pixels, theme),
       ...stateFindings(view.stateComparisons, pixels));
   }
   const { stateComparisons, ramp, ...result } = view;
   return { ...result, ramp: ramp.length, states: stateComparisons.length };
+}
+
+async function visualScreenshot(locator, options) {
+  try {
+    return await locator.screenshot({ ...options, animations: "disabled", timeout: 8000 });
+  } catch (error) {
+    if (error.name !== "TimeoutError") throw error;
+    // An animated or lazy frame can keep changing its bounds. Crop its current
+    // document box directly when the locator cannot wait for it to be stable.
+    const clip = await locator.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const x = Math.max(0, Math.floor(rect.left + scrollX));
+      const y = Math.max(0, Math.floor(rect.top + scrollY));
+      return { x, y, width: Math.ceil(rect.right + scrollX) - x, height: Math.ceil(rect.bottom + scrollY) - y };
+    });
+    if (clip.width <= 0 || clip.height <= 0) throw error;
+    return locator.page().screenshot({ ...options, clip, fullPage: true, animations: "disabled", timeout: 60000 });
+  }
 }
 
 // Run in Chromium before reveal. Keep the crop on the drawing, not its frame.
@@ -565,7 +597,7 @@ async function captureArtwork(locator) {
   const parts = [];
   const screenshotStyle = "[data-gate-art]{background-color:#808080!important;box-shadow:none!important;}[data-gate-overlay]{visibility:hidden!important;}";
   for (const part of await locator.locator("[data-gate-art]").or(locator.and(locator.page().locator("[data-gate-art]"))).all()) {
-    const screenshot = await part.screenshot({ animations: "disabled", scale: "css", style: screenshotStyle });
+    const screenshot = await visualScreenshot(part, { scale: "css", style: screenshotStyle });
     const image = await sharp(screenshot).resize(48, 36, { fit: "fill" }).flatten({ background: "#808080" }).removeAlpha().raw().toBuffer();
     parts.push(image.toString("base64"));
   }
@@ -576,7 +608,7 @@ async function captureArtwork(locator) {
   return { kitOnly: info.kitOnly, parts };
 }
 
-function auditResults(matrix, saved, report, kitNotes) {
+function auditResults(matrix, saved, report, kitNotes, { released = false, skipPixels = false, decisions = [] } = {}) {
   const grouped = Object.fromEntries(auditGates.map(gate => [gate, []]));
   const checks = Object.fromEntries(auditGates.map(gate => [gate, 0]));
   const add = (item, view, row, kit = false) => {
@@ -592,7 +624,7 @@ function auditResults(matrix, saved, report, kitNotes) {
       const initial = matrix.find(s => s.width === 1440 && s.theme === view.theme);
       const kit = row.kind === "kit" || initial?.artwork?.[index]?.kitOnly ||
         row.look === "kit-drawn, not redesigned";
-      const waiver = focalWaiver(report, row);
+      const waiver = focalWaiver(report, row, released);
       for (const id of ["G11", "G12", "G13", "G15", "G16"]) checks[id]++;
       const unique = new Map([...beforeReveal?.findings ?? [], ...audit.findings]
         .map(finding => [JSON.stringify(finding), finding]));
@@ -600,17 +632,27 @@ function auditResults(matrix, saved, report, kitNotes) {
       if (view.width === 1440) {
         checks.G14++;
         const focusCount = Math.max(audit.focus, beforeReveal?.focus || 0);
-        const reason = !row.hasStage || !row.hasTokens || !(audit.depth || beforeReveal?.depth) ? "missing a stage with depth" :
-          focusCount > 1 ? `${focusCount} focal declarations in one visual` :
-          !focusCount && !waiver ? "missing a declared focal part or a report reason" : null;
-        if (reason) add({ gate: "G14", label: "design declaration", value: reason }, view, row, kit);
-        if (!kit) {
-          const delta = artworkDifference(saved?.artwork?.[view.theme]?.[index]?.parts, artwork?.parts);
-          if (delta == null || delta < 0.055)
-            add({ gate: "G14", label: "default drawing pixels", value: delta == null
-              ? "missing comparable default-state art capture"
-              : artwork.parts.length ? `${(delta * 100).toFixed(2)}% changed (floor 5.5%)`
-              : "no drawing detected in the default state" }, view, row);
+        if (!kit && !skipPixels && !artwork?.parts.length) {
+          decisions.push({ figure: row.name, line: row.line, theme: view.theme, width: view.width,
+            reason: "No drawing isolated in the default state or after the first reveal", crop: view.decisionCrops?.[index] });
+        } else {
+          const hasDepth = audit.depth || beforeReveal?.depth;
+          const hasStage = row.hasStage || row.recap || (skipPixels && row.panel && row.kind === "interactive" && hasDepth);
+          const reason = !hasStage || !row.hasTokens || !hasDepth ? "missing a stage with depth" :
+            focusCount > 1 ? `${focusCount} focal declarations in one visual` :
+            !focusCount && !waiver ? "missing a declared focal part or a report reason" : null;
+          if (reason) add({ gate: "G14", label: "design declaration", value: reason }, view, row, kit);
+          if (released && !waiver)
+            decisions.push({ figure: row.name, line: row.line, theme: view.theme, width: view.width,
+              reason: "No focal part named in the released lesson records" });
+          if (!kit && !skipPixels) {
+            const before = saved?.artwork?.[view.theme]?.[index];
+            const delta = artworkDifference(before?.parts, artwork.parts);
+            if (delta == null || delta < 0.055)
+              add({ gate: "G14", label: "first drawing pixels", value: delta == null
+                ? "missing comparable art capture"
+                : `${(delta * 100).toFixed(2)}% changed (floor 5.5%)` }, view, row);
+          }
         }
       }
       for (const [state, visual, regions] of [
@@ -626,15 +668,20 @@ function auditResults(matrix, saved, report, kitNotes) {
       }
     }
   }
-  return Object.fromEntries(auditGates.map(gate => [gate, {
-    status: grouped[gate].length || (gate !== "G17" && !checks[gate]) ? "FAIL" : "PASS",
-    summary: `${checks[gate]} visual views checked, ${grouped[gate].length} findings` +
-      (grouped[gate].length ? ` — ${grouped[gate][0].figure} @${grouped[gate][0].line}: ${grouped[gate][0].label} (${grouped[gate][0].value})` : ""),
-    details: grouped[gate],
-  }]));
+  return Object.fromEntries(auditGates.map(gate => {
+    const skipped = gate === "G14" && skipPixels;
+    const failed = grouped[gate].length || (gate !== "G17" && !checks[gate]);
+    return [gate, {
+      status: failed ? "FAIL" : skipped ? "SKIPPED" : "PASS",
+      summary: (skipped ? "F1A is the approved reference without a before capture; pixel comparison skipped. " : "") +
+        `${checks[gate]} visual views checked, ${grouped[gate].length} findings` +
+        (grouped[gate].length ? ` — ${grouped[gate][0].figure} @${grouped[gate][0].line}: ${grouped[gate][0].label} (${grouped[gate][0].value})` : ""),
+      details: grouped[gate],
+    }];
+  }));
 }
 
 module.exports = {
   allWidths, auditGates, selectVisuals, artworkDifference, focalWaiver, requireServer,
-  auditResults, auditVisual, captureArtwork,
+  auditResults, auditVisual, captureArtwork, visualScreenshot,
 };

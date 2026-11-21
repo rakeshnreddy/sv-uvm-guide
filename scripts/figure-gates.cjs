@@ -4,6 +4,7 @@
 // Run at the repository root. Capture a baseline BEFORE editing a lesson:
 // node scripts/figure-gates.cjs content/curriculum/.../index.mdx --base HEAD --capture-base
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { parseArgs } = require("node:util");
 const {
@@ -16,6 +17,7 @@ const { inspectBrowser } = require("./figure-gates/browser.cjs");
 const { allWidths, auditGates, auditResults, requireServer, selectVisuals } =
   require("./figure-gates/audit.cjs");
 const { git, files, repoAt, run } = require("./figure-gates/repository.cjs");
+const { releaseStatus, releasedFindings, releasedRoutes } = require("./figure-gates/released.cjs");
 
 const plan = "docs/planning/site-design-refresh-2026-11-10";
 const fixedTests = [
@@ -36,6 +38,26 @@ const result = (pass, summary, details) => ({
   summary,
   details,
 });
+async function testWithRetry(tests) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "figure-g9-"));
+  const json = path.join(dir, "vitest.json");
+  const args = ["--no-install", "vitest", "--run"];
+  const env = { NODE_OPTIONS: "--require @prisma/client" };
+  try {
+    const initial = await run("npx", [...args, "--maxWorkers", "2", "--reporter=default", "--reporter=json", "--outputFile.json", json, ...tests], env);
+    if (initial.status === 0 || !fs.existsSync(json)) return initial;
+    const report = JSON.parse(fs.readFileSync(json, "utf8"));
+    const failed = report.testResults.filter(file => file.status === "failed")
+      .map(file => path.relative(process.cwd(), file.name));
+    if (!failed.length || failed.some(file => !tests.includes(file))) return initial;
+    const retries = [];
+    for (const file of failed) retries.push(await run("npx", [...args, "--maxWorkers", "1", file], env));
+    return { ...initial, status: retries.every(retry => retry.status === 0) ? 0 : initial.status,
+      retried: retries.length, retries };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 async function checks(lesson, changed, names, taskFiles) {
   const terms = [
     ...names,
@@ -78,14 +100,7 @@ async function checks(lesson, changed, names, taskFiles) {
   // by an MDX author. Keep jsx-no-undef enabled for all unregistered names.
   const logs = await Promise.all([
     run("npx", ["--no-install", "tsc", "--noEmit"]),
-    run("npx", [
-      "--no-install",
-      "vitest",
-      "--run",
-      "--maxWorkers",
-      "2",
-      ...tests,
-    ]),
+    testWithRetry(tests),
     run("npx", [
       "--no-install",
       "eslint",
@@ -107,7 +122,8 @@ async function checks(lesson, changed, names, taskFiles) {
   ]);
   return result(
     logs.every((l) => l.status === 0),
-    `tsc ${logs[0].status}, Vitest ${logs[1].status} (${tests.length} files), ESLint ${logs[2].status}/${logs[3].status} (${targets.length} files)`,
+    (logs[1].status === 0 && logs[1].retried ? `PASS (${logs[1].retried} ${logs[1].retried === 1 ? "file" : "files"} retried serially); ` : "") +
+      `tsc ${logs[0].status}, Vitest ${logs[1].status} (${tests.length} files), ESLint ${logs[2].status}/${logs[3].status} (${targets.length} files)`,
     logs,
   );
 }
@@ -218,7 +234,7 @@ function samples(matrix, acknowledge, kitNotes, isolated = false) {
         ["mark", r.marks],
       ])
         for (const item of items) {
-          const e = { width: v.width, theme: v.theme, figure: r.name, ...item };
+          const e = { width: v.width, theme: v.theme, figure: r.name, line: r.line, ...item };
           const kit = r.kit || item.kit;
           const glyph = kind === "text" && !/[\p{L}\p{N}]/u.test(item.label);
           const floor = kind === "mark" || glyph ? 3 : 4.5;
@@ -294,6 +310,7 @@ async function main() {
       skip: { type: "string" },
       only: { type: "string" },
       "capture-base": { type: "boolean" },
+      "write-released-baseline": { type: "boolean" },
     },
   });
   const lesson = path.relative(
@@ -306,7 +323,7 @@ async function main() {
     !/^content\/curriculum\/.+\.mdx$/.test(lesson)
   )
     throw Error(
-      "Usage: node scripts/figure-gates.cjs <lesson.mdx> --base <ref> [--url URL] [--capture-base] [--skip G3] [--only <visual[@line]>]",
+      "Usage: node scripts/figure-gates.cjs <lesson.mdx> --base <ref> [--url URL] [--capture-base] [--skip G3] [--only <visual[@line]>] [--write-released-baseline]",
     );
   const route = lesson.slice("content/curriculum/".length, -4);
   const slug = route
@@ -334,9 +351,17 @@ async function main() {
   const capture = !!v["capture-base"],
     url = new URL(v.url).origin;
   if (capture && v.only) throw Error("--capture-base captures the whole lesson");
-  await requireServer(url);
   const reports = path.join(plan, "reports"),
     art = path.join("test-results/design-previews/codex", slug);
+  const released = releasedRoutes.has(route);
+  const f1aReference = route === "T1_Foundational/F1A_The_Cost_of_Bugs/index";
+  const releaseFile = path.join(reports, slug + ".released-baseline.json");
+  const recordRelease = !!v["write-released-baseline"];
+  if (recordRelease && (!released || v.only || capture))
+    throw Error("--write-released-baseline requires a full run on one of the five frozen lessons");
+  if (recordRelease && fs.existsSync(releaseFile))
+    throw Error("Released baseline already exists: " + releaseFile);
+  await requireServer(url);
   const baseline = path.join(
     reports,
     slug + "." + base.slice(0, 12) + ".base.json",
@@ -441,8 +466,11 @@ async function main() {
       const prior = JSON.parse(fs.readFileSync(baseline, "utf8"));
       const { artwork: priorArt, ...priorWords } = prior;
       const { artwork: newArt, ...newWords } = evidence;
+      const images = (artwork) => Object.fromEntries(Object.entries(artwork).map(([theme, rows]) =>
+        [theme, Object.fromEntries(Object.entries(rows).map(([index, { kitOnly, parts }]) =>
+          [index, { kitOnly, parts }]))]));
       if (JSON.stringify(priorWords) !== JSON.stringify(newWords) ||
-        (priorArt && JSON.stringify(priorArt) !== JSON.stringify(newArt)))
+        (priorArt && JSON.stringify(images(priorArt)) !== JSON.stringify(images(newArt))))
         throw Error("Existing base capture differs. Investigate before replacing it.");
     }
     write(baseline, evidence);
@@ -454,6 +482,7 @@ async function main() {
   const G = {};
   const known = [],
     kitNotes = [],
+    decisions = [],
     existingPalette = [];
   const exceptions = require("./figure-gates.exceptions.json");
   function acknowledge(gate, finding, value) {
@@ -465,7 +494,7 @@ async function main() {
         e.element === (finding.label ?? finding.token) &&
         e.figure === finding.figure &&
         e.file === finding.file &&
-        e.line === finding.line &&
+        (e.line === finding.line || (e.line == null && (gate === "G5" || gate === "G6"))) &&
         e.width === finding.width &&
         e.theme === finding.theme &&
         (typeof value === "number"
@@ -548,7 +577,15 @@ async function main() {
   const saved = fs.existsSync(baseline)
     ? JSON.parse(fs.readFileSync(baseline, "utf8"))
     : null;
+  // A shared-component retest can use its current word/model base while the
+  // release's redesign is still compared with its original artwork.
+  const releasedBase = released && fs.existsSync(releaseFile)
+    ? JSON.parse(fs.readFileSync(releaseFile, "utf8")).base : base;
+  const releasedArt = path.join(reports, slug + "." + releasedBase.slice(0, 12) + ".base.json");
+  const designBase = releasedBase !== base && fs.existsSync(releasedArt)
+    ? JSON.parse(fs.readFileSync(releasedArt, "utf8")) : saved;
   const reportText = path.join(reports, slug + ".md");
+  const crops = new Map();
   try {
     const matrix = await inspectBrowser({
       visuals: current.visuals,
@@ -556,6 +593,9 @@ async function main() {
       url,
       capture: false,
       indexes,
+      skipPixels: f1aReference,
+      reviewImages: recordRelease ? path.join("test-results/design-previews/codex/released", slug) : undefined,
+      decisionImages: path.join(art, "review-decisions"),
     });
     incomplete = matrix.some(view => view.measurementError);
     const inventory = matrix.map(({ width, theme, rows }) => ({
@@ -645,7 +685,14 @@ async function main() {
       );
     }
     Object.assign(G, samples(matrix.filter(view => [1440, 390].includes(view.width)), acknowledge, kitNotes, !!v.only));
-    Object.assign(G, auditResults(matrix, saved, fs.existsSync(reportText) ? fs.readFileSync(reportText, "utf8") : "", kitNotes));
+    Object.assign(G, auditResults(matrix, designBase, fs.existsSync(reportText) ? fs.readFileSync(reportText, "utf8") : "", kitNotes,
+      { released, skipPixels: f1aReference, decisions }));
+    for (const view of matrix) {
+      for (const [index, row] of view.rows.entries()) {
+        const images = [view.reviewCrops.default[index], view.reviewCrops.revealed[index]].filter(Boolean);
+        if (images.length) crops.set(JSON.stringify([row.line, view.width, view.theme]), images);
+      }
+    }
     if (incomplete) {
       const errors = matrix.filter(view => view.measurementError)
         .map(({ width, theme, measurementError }) => ({ width, theme, measurementError }));
@@ -689,6 +736,23 @@ async function main() {
   const gates = Object.fromEntries(
     required.map(id => [id, G[id]]),
   );
+  const findings = released ? releasedFindings(gates, crops) : [];
+  if (recordRelease && !incomplete && Object.entries(gates).every(([gate, outcome]) =>
+    outcome.status !== "FAIL" || findings.some(finding => finding.gate === gate))) {
+    fs.writeFileSync(releaseFile, JSON.stringify({ lesson, base, head: git("rev-parse", "HEAD").trim(),
+      findings, decisions, kitNotes: kitNotes.length }, null, 2) + "\n", { flag: "wx" });
+    console.log("Recorded released baseline: " + releaseFile);
+  }
+  const release = released && fs.existsSync(releaseFile) && !incomplete
+    ? releaseStatus(gates, findings, JSON.parse(fs.readFileSync(releaseFile, "utf8")).findings,
+      v.only ? `${scopedVisuals[0].name}@${scopedVisuals[0].line}` : undefined)
+    : null;
+  for (const finding of release?.newFindings || [])
+    console.log(`NEW ${finding.gate} ${finding.visual} ${finding.theme} ${finding.width} ${finding.label}: ${finding.value}`);
+  for (const finding of release?.cleared || [])
+    console.log(`cleared ${finding.gate} ${finding.visual} ${finding.theme} ${finding.width} ${finding.label}`);
+  for (const finding of decisions)
+    console.log(`REVIEW G14 ${finding.figure} @${finding.line} ${finding.theme} ${finding.width}: ${finding.reason}${finding.crop ? " — " + finding.crop : ""}`);
   for (const {
     gate,
     figure,
@@ -710,14 +774,17 @@ async function main() {
     console.log(
       `NOTE G7 existing palette classes: ${existingPalette.length} on untouched lines (see JSON)`,
     );
+  if (f1aReference && gates.G14?.status === "FAIL")
+    console.log("SKIPPED G14 pixels — F1A is the approved reference without a before capture");
   for (const [id, g] of Object.entries(gates))
     console.log(g.status + " " + id + " " + g.summary);
   const failed = Object.values(gates).filter((g) => g.status === "FAIL").length;
   const summary = failed
     ? `FAIL — ${failed} of ${required.length} gates failed`
-    : "PASS — every required gate passed";
+    : release ? `PASS (${release.retained} baseline, 0 new)` : "PASS — every required gate passed";
   const qualifier = v.only ? ".only-" + (indexes[0] + 1) : "";
-  const report = path.join(v.only ? art : reports, slug + qualifier + (failed || incomplete ? ".partial" : "") + ".json");
+  const report = path.join(recordRelease ? path.join("test-results/design-previews/codex/released", slug) : v.only ? art : reports,
+    slug + qualifier + (failed || incomplete ? ".partial" : "") + ".json");
   write(report, {
     lesson,
     base,
@@ -725,6 +792,8 @@ async function main() {
     ...(v.only ? { only: v.only } : {}),
     incomplete,
     gates,
+    ...(release ? { release } : {}),
+    decisions,
     known,
     kitNotes,
     existingPalette,

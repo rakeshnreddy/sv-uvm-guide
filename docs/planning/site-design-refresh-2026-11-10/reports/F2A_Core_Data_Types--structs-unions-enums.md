@@ -249,3 +249,23 @@ The requests cover shared BitStrip and ValueChip palette and phone-size readings
 - **Design.** The opening drawing has three trays at wide widths and one tray per row on phones. The shared outline and separators keep the enum member list clear in both themes. The packed union’s aligned rows read as alternate views of one store.
 - **Teaching.** The wrap path follows declaration order and leaves 5 and 6 hollow on the number line. The tagged layout gives the tag and right-justified member separate treatments. Dashed neutral outlines show undefined bits, while the rose hatch in the opening sketch still represents X.
 - **Robustness.** The four widths, forced colors, print and reduced motion all showed seven static figures and no horizontal overflow or browser errors. The keyboard pass found visible Tab focus, confirmed Enter executes the enum method and opened the packet explorer inside Worked solution. The smallest static phone label measured 11.85 px.
+
+## Focal parts from the released lesson records
+
+Source: the visual inventory and teaching intent in this report. The keys use the released MDX line numbers.
+
+- drawing@17 — focal part: The indigo storage strip linking the shapes
+- PackedLayoutExplorer@507 — focal part: The selected storage field
+- PackedLayoutExplorer@648 — focal part: The indigo raw storage
+- PackedLayoutExplorer@673 — focal part: The cyan active tag
+- drawing@856 — focal part: The cyan wrap along the declaration ring
+- EnumMethodVisualizer@941 — focal part: The highlighted computed entry on the value line
+- EnumMethodVisualizer@957 — focal part: The current and returned member outlines
+- EnumMethodVisualizer@1016 — focal part: The live cast outcome
+- One package, shared by both sides of the bus@1022 — focal part: The shared package node
+- PackedLayoutExplorer@1090 — focal part: The field slice tied to the failing check
+- drawing@1106 — focal part: The indigo packed strip anchoring the three rows
+- PackedLayoutExplorer@1302 — focal part: The failing mutation check
+- drawing@1396 — focal part: The cyan tag at the most significant end
+- PackedLayoutExplorer@1491 — focal part: The empty-name symptom beside the failing check
+- PackedLayoutExplorer@1610 — focal part: The selected packed field with its exact range

@@ -212,3 +212,22 @@ The lesson trains verification engineers to find a faulty check and qualify the 
 - **Robustness.** Chromium passed at 1440, 1280, 768 and 390 px. Forced colors, print and reduced motion each rendered without page overflow or errors. Keyboard traversal showed the method control’s focus ring and Enter activated it. The saved forced-colors and print crops retain the original labels, glyphs and disabled or dashed cues.
 
 The final gate passed 1275 Vitest tests, including the measured height pins. The earlier ClosureBudgetLab timeout cleared without changing the test or its timeout.
+
+## Focal parts from the released lesson records
+
+Source: the visual inventory and final verification in this report. The keys use the released MDX line numbers.
+
+- Anatomy of a self-checking testbench@38 — focal part: The compare node that decides PASS or FAIL
+- FirstBugHuntGame@229 — focal part: The failing assertion that distinguishes the wrapping counter
+- CounterBenchLab@249 — focal part: The waveform cursor at the current check, where the unknown result reaches the verdict
+- drawing@307 — focal part: The last cell in the simultaneous-load row, shared by the three methods
+- VerificationMethodsExplorer@528 — focal part: The bug cell reached by the selected stimulus or assumptions
+- VerificationMethodologiesDiagram@532 — focal part: The current design representation highlighted by the method
+- CounterBenchLab@606 — focal part: The missed scenario in the coverage readout
+- An illegal two-hot state, flagged at the edge it appears@622 — focal part: The failing one-hot check on the illegal edge
+- drawing@664 — focal part: The rare bin that dominates the cost after the common bins fill
+- drawing@771 — focal part: The qualified check that fails with the bug injected
+- Checks 0 to 11: the WRAP_AT(6) mutant against the model, check by check@909 — focal part: Check seven, the first divergence
+- CounterBenchLab@949 — focal part: The waveform cursor at the current check
+- VerificationMethodsExplorer@1013 — focal part: The bug cell that the changed assumption makes unreachable
+- CounterBenchLab@1033 — focal part: The waveform cursor at the current check

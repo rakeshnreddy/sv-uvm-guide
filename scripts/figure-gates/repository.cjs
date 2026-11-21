@@ -58,11 +58,11 @@ function repoAt(ref) {
   }
   return { dependencies };
 }
-function run(exe, args) {
+function run(exe, args, env = {}) {
   return new Promise((resolve) => {
     const child = cp.spawn(exe, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+      env: { ...process.env, ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
     const chunks = [];
     for (const stream of [child.stdout, child.stderr])

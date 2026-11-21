@@ -356,3 +356,32 @@ The gate recorded 588 kit readings. Each row points to a line in `content/curric
 - **What it teaches.** The declaration leaders connect each token to its own explanation. The packed memory diagrams keep the selected word, byte and bit in order. The 32-bit struct fields retain proportional widths, and the two-state and four-state outcomes preserve their glyphs, hatches and dashes.
 - **WebGL.** A supplemental browser pass enabled software WebGL, revealed the selected drawer, and drew the 365 × 418 px scene in both themes without page errors. The ordinary gate and contact sheets show the equivalent 2D view.
 - **Robustness.** Chromium passed all seven configurations across 1440, 1280, 768 and 390 px, including print, forced colors and reduced motion. Tab moved to the next bit with visible focus and Enter cycled its value. The print and forced-colors crops keep the unknown hatch and high-impedance dash distinct. The smallest hand-drawn phone label was 11.36 px.
+
+## Focal parts from the released lesson records
+
+Source: the visual inventory and kit focus notes in this report. The keys use the released MDX line numbers.
+
+- Compile, elaborate, simulate: where errors appear@139 — focal part: The resolved-driver elaboration step
+- LogicStateDiagram@225 — focal part: The selected truth-table cell
+- LiteralDecoder@448 — focal part: The active decoding step
+- OperatorExplorer@469 — focal part: The deciding bit of the operator under test
+- NetResolutionSimulator@640 — focal part: The active strength row
+- drawing@663 — focal part: The hatched X feeding the three paths
+- DataTypeComparisonChart@728 — focal part: The longest bar sets the scale
+- CurriculumDataTypeExplorer@745 — focal part: The stored or resolved bits
+- drawing@759 — focal part: The cyan carry
+- SignednessVisualizer@935 — focal part: The cyan deciding evaluation step
+- drawing@959 — focal part: The cyan w[2] lane
+- ArraySelectExplorer@1021 — focal part: The active read element
+- ArraySelectExplorer@1033 — focal part: The selected range on the source bit strip
+- drawing@1043 — focal part: The selected word, packed byte and bit
+- SystemVerilog3DVisualizer@1128 — focal part: The selected drawer, lane and bit
+- ArraySelectExplorer@1134 — focal part: The cyan selection from drawer to lane to bit
+- EnumMethodVisualizer@1191 — focal part: The cyan current member
+- PackedLayoutExplorer@1266 — focal part: The storage bit strip
+- StringMethodExplorer@1279 — focal part: The result on the raised neutral plate
+- SignednessVisualizer@1298 — focal part: The cyan deciding step for the selected cast
+- 4-state at the boundary, 2-state in the arithmetic@1618 — focal part: The monitor conversion point
+- NetResolutionSimulator@1695 — focal part: The cyan release step
+- Two open-drain devices on one pulled-up line@1716 — focal part: The raised shared SDA node
+- NetResolutionSimulator@1736 — focal part: The cyan selected combination

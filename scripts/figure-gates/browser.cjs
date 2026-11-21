@@ -5,7 +5,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { literalColours } = require("./source.cjs");
 const { measure, collectRegions } = require("./pixels.cjs");
-const { allWidths, auditVisual, captureArtwork } = require("./audit.cjs");
+const { allWidths, auditVisual, captureArtwork, visualScreenshot } = require("./audit.cjs");
 
 const article = "[data-lesson-article]";
 async function settle(page) {
@@ -289,6 +289,29 @@ async function auditRows(page, rows, theme) {
   }
   return audits;
 }
+
+async function reviewCrops(page, rows, audits, pixels, dir, width, theme, state, missing = [], includeFindings = true) {
+  const crops = {};
+  if (!dir) return crops;
+  const early = new Set(["G11", "G12", "G15", "G16", "G17"]);
+  for (const [index, row] of rows.entries()) {
+    if (row.controlOnly || row.domIndex == null) continue;
+    const audit = audits[index];
+    const focal = pixels.filter(item => item.index === index).flatMap(item =>
+      item.marks.filter(mark => mark.focal));
+    const finding = includeFindings && (
+      audit?.findings.some(item => early.has(item.gate) && !item.kit) ||
+      (audit?.focus && (!focal.length || focal.some(mark => !mark.kit && (mark.ratio == null || mark.ratio < 3)))));
+    if (!missing.includes(index) && !finding) continue;
+    const visual = page.locator(`[data-gate-item="${row.domIndex}"]`);
+    const node = (await visual.boundingBox())?.height ? visual : visual.locator(":scope > :visible").first();
+    const image = path.join(dir, `${row.line}-${width}-${theme}-${state}.png`);
+    await visualScreenshot(node, { path: image,
+      style: "[data-gate-overlay]{visibility:hidden!important}" });
+    crops[index] = image;
+  }
+  return crops;
+}
 // Snapshot figure names and descriptions as well as innerText (which omits
 // SVG text). Hydration-generated id values compare by their referenced text.
 function interactiveWords() {
@@ -417,27 +440,36 @@ async function scenario(browser, opts, width, theme) {
     const selectRows = rows => rows.map((row, index) =>
       selected(index) ? row : { ...row, controlOnly: true });
     const initial = reconcile(opts.visuals, await page.evaluate(inventory));
-    if (width === 1440) {
+    if (width === 1440 && !opts.skipPixels) {
       for (const [index, row] of initial.entries())
         if (selected(index) && row.domIndex != null && !row.controlOnly)
-          artwork[index] = await captureArtwork(item(row.domIndex));
+          artwork[index] = { ...await captureArtwork(item(row.domIndex)), state: "default" };
     }
-    if (opts.artworkOnly) return { width, theme, artwork, errors };
     let measurementError = null;
     let initialAudits = {};
     let initialFocus = [];
-    if (!opts.capture) {
+    let initialCrops = {};
+    if (!opts.capture && !opts.artworkOnly) {
       try {
         initialAudits = await auditRows(page, selectRows(initial), theme);
         const focused = selectRows(initial).map((row, index) =>
           initialAudits[index]?.focus ? row : { ...row, controlOnly: true });
         if (focused.some(row => !row.controlOnly))
           initialFocus = await measure(page, focused, { focusOnly: true });
+        initialCrops = await reviewCrops(page, selectRows(initial), initialAudits, initialFocus,
+          opts.reviewImages, width, theme, "default");
       } catch (error) {
         measurementError = error.message;
       }
     }
     await reveal(page);
+    if (width === 1440 && !opts.skipPixels) {
+      const revealed = reconcile(opts.visuals, await page.evaluate(inventory));
+      for (const [index, row] of revealed.entries())
+        if (selected(index) && row.domIndex != null && !row.controlOnly && !artwork[index]?.parts.length)
+          artwork[index] = { ...await captureArtwork(item(row.domIndex)), state: "revealed" };
+    }
+    if (opts.artworkOnly) return { width, theme, artwork, errors };
     const revealedWords = await page.evaluate(interactiveWords);
     const dom = await page.evaluate(inventory);
     const staged = await page.evaluate(
@@ -499,6 +531,7 @@ async function scenario(browser, opts, width, theme) {
       await captureArt(page, rows, opts.images, theme);
     let pixels = [];
     let audits = {};
+    let revealedCrops = {};
     if (!opts.capture) {
       try {
         audits = await auditRows(page, active, theme);
@@ -506,6 +539,10 @@ async function scenario(browser, opts, width, theme) {
         const measured = contrast ? active : active.map((row, index) =>
           audits[index]?.focus ? row : { ...row, controlOnly: true });
         pixels = await measure(page, measured, { focusOnly: !contrast });
+        const missing = width === 1440 && !opts.skipPixels
+          ? active.flatMap((row, i) => row.kind !== "kit" && !artwork[i]?.parts.length ? [i] : []) : [];
+        revealedCrops = await reviewCrops(page, active, audits, pixels,
+          opts.reviewImages || opts.decisionImages, width, theme, "revealed", missing, !!opts.reviewImages);
       } catch (error) {
         measurementError = error.message;
         pixels = [];
@@ -525,6 +562,8 @@ async function scenario(browser, opts, width, theme) {
       initialAudits,
       initialFocus,
       artwork,
+      decisionCrops: revealedCrops,
+      reviewCrops: { default: initialCrops, revealed: revealedCrops },
       measurementError,
       overflow: Math.max(overflow, await scrollLesson(page)),
       errors,

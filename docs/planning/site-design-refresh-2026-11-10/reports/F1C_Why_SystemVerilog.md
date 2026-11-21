@@ -221,3 +221,22 @@ The gate recorded 478 kit readings. Each row points to a line in `content/curric
 - **Design.** The recap’s full-width foundation makes containment readable. The first preview exposed a plate rim under the verification label, so the final plate leaves a clear gutter. The forced-colors crop also prompted a wider gap between the two right-hand outlines. Opaque ring surfaces keep each deeper keyword revision legible and the cyan outline identifies the entry ring.
 - **What it teaches.** The shared kit request/grant waveform retains its attempt lengths and pass/fail markers. The procedural cursor holds the exact time coordinate and replaces the neutral gridline there, so it reads as the current position. Lists, timeline stops and process results stay in their original order.
 - **Robustness.** Chromium passed at 1440, 1280, 768 and 390 px. Forced colors, print and reduced motion rendered without page overflow or errors. Tab selected the next comparison control and Enter activated it. Both lineage predictions could be revealed. A separate before and after comparison checked the fully revealed text and aria of all 13 interactive instances in both themes.
+
+## Focal parts from the released lesson records
+
+Source: the visual inventory and teaching intent in this report. The keys use the released MDX line numbers.
+
+- What contains what: Verilog, SystemVerilog and UVM@25 — focal part: The raised Verilog base
+- How Verilog, SystemVerilog and UVM standards relate@59 — focal part: The IEEE 1800-2009 merge target
+- One compile serves design and testbench@130 — focal part: The shared types_pkg package
+- req |-> ##2 gnt, one passing and one failing attempt@216 — focal part: The passing attempt at edge 3 and failing attempt at edge 6
+- SvaSequenceWaveformVisualizer@253 — focal part: The selected attempt's start edge
+- Where UVM lives in a SystemVerilog simulation@317 — focal part: The library class uvm_test
+- ScenarioSorter@345 — focal part: The active sort card
+- ScenarioSorter@357 — focal part: The active diagnostic
+- legacy_cnt bench: reset at the first edge, then three increments@470 — focal part: The pass band following the count check
+- KeywordSetExplorer@510 — focal part: The cyan top stack entry
+- KeywordSetExplorer@592 — focal part: The cyan stop for the selected revision
+- ProceduralBlocksSimulator@608 — focal part: The cyan cursor for the current event
+- ScenarioSorter@805 — focal part: The active feature card
+- KeywordSetExplorer@854 — focal part: The cyan entry ring for the selected word

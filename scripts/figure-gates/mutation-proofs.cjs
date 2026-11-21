@@ -21,6 +21,8 @@ const html = `<!doctype html><meta charset="utf-8">
   button { color: #141414; background: transparent; border: 1px solid #888; padding: 4px }
   button span { display: inline-block; width: 12px; height: 8px }
   button[aria-pressed=true] span { background: #043f72; color: #fff }
+  td { padding: 4px }
+  tr[aria-current=true] td { background: #1e2352; color: #fff }
 </style>
 <main data-lesson-article><figure class="fig-panel" data-gate-item="0">
   <div class="fig-stage">
@@ -41,6 +43,7 @@ const html = `<!doctype html><meta charset="utf-8">
   </svg></div>
   <div><button id="selected" type="button" aria-pressed="true">First <span aria-hidden="true"></span></button>
     <button type="button" aria-pressed="false">Second <span aria-hidden="true"></span></button></div>
+  <table><tbody><tr aria-current="true"><td>Current</td></tr><tr><td>Other</td></tr></tbody></table>
 </figure></main>`;
 
 const cases = [
@@ -48,7 +51,9 @@ const cases = [
   ["G12", "place two labels on the same baseline", 'id="second" x="198"', 'id="second" x="24"'],
   ["G13", "change the swatch dash pattern only", 'id="swatch" data-fig-swatch="Threshold" d="M5 10H44" fill="none" stroke="#006b5e" stroke-width="3" stroke-dasharray="4 3"', 'id="swatch" data-fig-swatch="Threshold" d="M5 10H44" fill="none" stroke="#006b5e" stroke-width="3"'],
   ["G14", "keep the old drawing inside a different frame", "#b6d4ee", "#dec497"],
+  ["G14", "remove the stage depth", "box-shadow: inset 0 1px #ddd", "box-shadow: none"],
   ["G15", "paint a selected button exactly like its peer", "background: #043f72; color: #fff", "background: transparent; color: #141414"],
+  ["G15", "paint selected row cells exactly like their peers", "background: #1e2352; color: #fff", "background: transparent; color: #171717"],
   ["G16", "reverse the ordered luminance", 'data-fig-order="1"', 'data-fig-order="3"'],
   ["G17", "lower the focal rim against its background", 'stroke="#171717" stroke-width="3"', 'stroke="#e3edf5" stroke-width="3"'],
 ];

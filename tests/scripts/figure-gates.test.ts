@@ -158,4 +158,40 @@ describe("per-visual figure gates", () => {
     expect(focalWaiver("no focal part: unspecified", { name: "Two curves", line: 20 })).toBeNull();
     expect(focalWaiver("Chart@20 — no focal part: time is the subject", { name: "Chart", line: 20 })).toContain("time");
   });
+
+  it("accepts a named focal record only for a released lesson", async () => {
+    const { focalWaiver } = await import("../../scripts/figure-gates/audit.cjs");
+    const row = { name: "Chart", line: 20 };
+    const report = "- Chart@20 — focal part: the most recent bar (lesson report)";
+    expect(focalWaiver(report, row)).toBeNull();
+    expect(focalWaiver(report, row, true)).toContain("most recent bar");
+  });
+
+  it("sends an undetected drawing to review and still checks reference depth", async () => {
+    const { auditResults } = await import("../../scripts/figure-gates/audit.cjs");
+    const row = { name: "Chart", line: 20, domIndex: 0, hasStage: true, hasTokens: true };
+    const view = { rows: [row], width: 1440, theme: "light", artwork: { 0: { parts: [] } },
+      audits: { 0: { findings: [], depth: false, focus: 1 } }, pixels: [],
+      decisionCrops: { 0: "chart.png" } };
+    const options = { decisions: [] };
+    expect(auditResults([view], null, "", [], options).G14.status).toBe("PASS");
+    expect(options.decisions).toContainEqual(expect.objectContaining({ crop: "chart.png" }));
+    expect(auditResults([view], null, "", [], { skipPixels: true }).G14.status).toBe("FAIL");
+    view.audits[0].depth = true;
+    expect(auditResults([view], null, "", [], { skipPixels: true }).G14.status).toBe("SKIPPED");
+  });
+});
+
+it("accepts only exact released-baseline findings and limits cleared rows to the focused visual", async () => {
+  const { releaseStatus } = await import("../../scripts/figure-gates/released.cjs");
+  const existing = { gate: "G11", visual: "First@10", label: "100%", width: 390, theme: "light" };
+  const other = { ...existing, visual: "Second@20" };
+  const added = { ...existing, width: 768 };
+  const gates = { G11: { status: "FAIL", summary: "two findings", details: [] } };
+  expect(releaseStatus(gates, [existing, added], [existing, other], "First@10")).toEqual({
+    retained: 1, cleared: [], newFindings: [added],
+  });
+  expect(gates.G11.status).toBe("FAIL");
+  expect(releaseStatus(gates, [existing], [existing, other]).cleared).toEqual([other]);
+  expect(gates.G11.status).toBe("PASS");
 });
