@@ -1,8 +1,8 @@
 # Figure review queue
 
 - Last finished lesson · F2A Structs, Unions, and Enums, released in checkpoint 32
-- Lesson in progress · F2A Operators and Expressions paused after the first 20 of 28 visuals passed their focused gates
-- Working tree · Clean at handoff. The Operators and Expressions patch and evidence are saved locally.
+- Lesson in progress · F2A Operators and Expressions · taken by Claude on 2026-11-22 on the local branch `figures/operators`: visuals 1 to 20 come from the saved patch, 21 to 28 are being drawn, and an independent review of all 28 follows before release
+- Working tree · Clean. The Operators and Expressions work is on `figures/operators`, not pushed yet.
 - Lessons finished in this window · 0
 
 Checkpoint 32 is in `origin/curriculum-quality-program` at `669f7d7b`.
@@ -31,9 +31,13 @@ changed, so nothing a learner sees is different. No lesson was finished in this 
 Next, in this order: the Core Data Types baseline; Operators and Expressions visuals 21 to 28 from the saved
 patch; then `F2B` onward as in the brief.
 
+**Update, 2026-11-22.** The Core Data Types baseline is recorded (see the table below). Claude has taken
+Operators and Expressions and, after it, `F2B` index, `F2C` index and `F2C` flow-control, in that order. Codex
+works from the end of Tier 1 upward (section 8 of its brief).
+
 ## Ready for review
 
-The Addendum 3 gate corrections start at `66fe2d08`. Four released visual baselines are recorded. The F1A scratch proof reported exactly one new finding, a clipped label at 390 px in light mode. The Core Data Types baseline rerun was stopped at handoff and is the remaining capture.
+The Addendum 3 gate corrections start at `66fe2d08`. All five released visual baselines are recorded; the Core Data Types one was added on 2026-11-22. The F1A scratch proof reported exactly one new finding, a clipped label at 390 px in light mode.
 
 The Operators and Expressions patch is available for an interim review in `test-results/design-previews/codex/F2A_Core_Data_Types--operators-and-expressions/wip/task-2-operators-and-expressions.patch`. The same folder has `task-2-report-draft.md`, `task-2-baselines/` and `task-2-gate-logs/`. The adjacent before and after folders contain the captures. The full lesson gate and commit remain pending. The conditional operator is the next visual.
 
@@ -46,7 +50,7 @@ Each baseline comes from one full run with the calibrated gate. F1A is the appro
 | F1A The Cost of Bugs | PASS (25 baseline, 0 new) for visual findings. G9 failed in the capture run. | [Findings](reports/F1A_The_Cost_of_Bugs.released-baseline.json) |
 | F1B The Verification Mindset | PASS (21 baseline, 0 new) | [Findings](reports/F1B_The_Verification_Mindset.released-baseline.json) |
 | F1C Why SystemVerilog | PASS (8 baseline, 0 new) | [Findings](reports/F1C_Why_SystemVerilog.released-baseline.json) |
-| F2A Core Data Types | Full rerun stopped at handoff | — |
+| F2A Core Data Types | PASS (27 baseline, 0 new); G9 passed | [Findings](reports/F2A_Core_Data_Types.released-baseline.json) |
 | F2A Structs, Unions, and Enums | PASS (6 baseline, 0 new) for visual findings. G9 failed in the capture run. | [Findings](reports/F2A_Core_Data_Types--structs-unions-enums.released-baseline.json) |
 
 ### Look at these first
@@ -151,6 +155,11 @@ Each baseline comes from one full run with the calibrated gate. F1A is the appro
 | F1B The Verification Mindset | 532 |
 | F1C Why SystemVerilog | 654 |
 | F2A Structs, Unions, and Enums | 528 |
+| F2A Core Data Types | 796 |
+
+The Core Data Types baseline holds 27 findings and none of the "look at these first" kind (no G15): eight G12 rows
+on the bit strips of the five width-and-sign steps (@759, a label meets a painted mark), 18 G14 declaration rows
+across nine visuals, and one G16 row on the anatomy of two declarations (@24). The rows are in the baseline file.
 
 ## Kit requests
 
@@ -193,7 +202,7 @@ The released baseline files record finding identities. Future reports surface ad
 
 - F1A's expert-index test and the Structs run's root-metadata test timed out on their serial retries. G9 remains failed for those runs. Their complete visual readings are recorded separately from G9.
 - The F1A scratch run failed with exactly one `NEW` line. The added SVG clip cut `timing reveal?` at 390 px in light mode. [Mutation proof](../../../test-results/design-previews/codex/released/F1A_The_Cost_of_Bugs/mutation-proof.log)
-- To finish the remaining calibration capture, run `node scripts/figure-gates.cjs content/curriculum/T1_Foundational/F2A_Core_Data_Types/index.mdx --base f671ae67 --write-released-baseline`. The Core Data Types priority crops already captured during the interrupted run are local evidence from that attempt. Use the completed run for the queue.
+- The Core Data Types baseline was recorded on 2026-11-22 with `node scripts/figure-gates.cjs content/curriculum/T1_Foundational/F2A_Core_Data_Types/index.mdx --base f671ae67 --write-released-baseline`. All seventeen gates passed, G9 included (tsc, 36 test files, ESLint).
 
 ## Finished lessons
 
