@@ -3,7 +3,61 @@
 Written 2026-10-12, when the weekly usage limit paused the program. Read this first in the next session,
 then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASKS.md`.
 
-## Start here: state at the 2026-11-15 wind-down (current)
+## Start here: plan for the week of 2026-11-22 (current)
+
+Written on 2026-11-21, before the weekly reset. Claude does this week's work; Codex is out of usage for three to
+four days. Start in a new session: the old one is long, and every turn in it is expensive.
+
+### State
+
+- `main`, `curriculum-quality-program` and `codex/figures-t1` are all at `acbafb07` on origin. The main tree is on
+  `curriculum-quality-program` and clean. Live: checkpoint 32 (five lessons in the new look) plus the figure gate
+  tooling.
+- Operators and Expressions: 20 of 28 visuals redrawn by Codex, saved as a patch under
+  `test-results/design-previews/codex/F2A_Core_Data_Types--operators-and-expressions/wip/` (git-ignored) with a
+  copy in the durable tools folder (`figure-art/operators-wip-2026-11-21/`). The patch applies cleanly to
+  `acbafb07`. Those 20 passed Codex's gate only; nobody independent has looked at them.
+- The figure gate is `node scripts/figure-gates.cjs <lesson.mdx> --base <ref>` (`--only <visual>` for one
+  visual). The five released lessons pass when they show no finding outside their baseline; the Core Data Types
+  baseline is not recorded yet. The reviewer's verdict is at the top of
+  `docs/planning/site-design-refresh-2026-11-10/REVIEW-QUEUE.md`.
+- The older block below still holds for the curriculum closure work, the tools and the release notes.
+
+### The week, in order
+
+Sized to about 35 % of the weekly all-models limit. Pause and report at 50 % unless the owner sets another line.
+Fable plans, assigns and reviews; Opus does the work; Sonnet does mechanical steps. Every workflow agent names
+its model. Measured: 1 % is about 2.5M Opus worker tokens; a redrawn visual costs about 0.3M; an independent
+review of one lesson about 0.4M.
+
+| Step | Work | Can run beside | Rough cost | Ends in |
+|---|---|---|---|---|
+| 0 | Pre-flight: usage, `git status`, disk, dev server on 3000, read the verdict in `REVIEW-QUEUE.md`. | | none | |
+| 1 | **Operators and Expressions to live.** Branch `figures/operators` in a worktree; apply the patch; draw visuals 21 to 28 one at a time with `--only`; then an independent review of all 28 on the rendered page (never the gate alone); fix; re-measure heights of touched interactives; full gates. Start the Core Data Types baseline run as a background shell task first. | step 2 analysis | 2 % | checkpoint 33 |
+| 2 | **Closure round 2.** `closure-analysis.js` told what round 1 found, then `closure-fix.js`. The analysis only reads; the fixes edit lessons, so they start after step 1 is released. | step 1 (analysis only) | 8 to 10 % | checkpoint 34 |
+| 3 | **Kit fixes**, one workflow, six items: the timing highlight band (literal sky classes, 1.49:1 in light); `BitStrip` (protected colours used as categories, 9 px numbers on phones); block-diagram subtitle overflow; phone layout for wide diagrams; light-mode panel presence; cost-chart axis labels under 11 px. Done when the released lessons show "0 new" and a reviewer has compared before and after sheets. Before more lessons, because every later lesson with kit figures gains. | step 4 | 3 % | checkpoint 35 |
+| 4 | **Closure checks and the small builds**: whole-site 390 px and contrast sweep; e2e; bundle; `PROJECT_GUIDE` section 3 review; the M2 passive graded step; placement-quiz questions; the print next link; heights for 640 to 1023 px and the 43 px shift on "Why UVM". | step 3 | 5 % | checkpoint 36 |
+| 5 | **More lessons in the new look**, in the order of the Codex brief: `F2B` index, `F2C` index, `F2C` flow-control, as far as the budget goes. One lesson per release, only when every visual in it is done; show the owner before and after. | | 3 % each | one checkpoint each |
+| 6 | **Wrap-up**: `SESSION_HANDOFF`, a new block here, memory. A Sonnet pass that replaces local folder paths in old committed docs (run journals, audit docs, this file) without changing what any script does. | | under 1 % | docs commit |
+
+Rules that bite this week:
+
+- Two jobs never edit the same lesson file at once. Figure work stays on its own branch and is rebased after each
+  curriculum release.
+- A gate proves only what it measures. Every lesson gets an independent look at the rendered page before release.
+- Release with `checkpoint-release.sh`, or from a clean worktree: push to `curriculum-quality-program`, wait for
+  CI, push `main`, check the deploy (`release-after-ci.sh` in the durable tools folder does the last three).
+  A docs-only push skips CI; then move `main` by hand.
+- When Codex returns it works from the end of the Tier 1 list upward (section 8 of its brief), so the two never
+  meet on a lesson. Keep the status lines of `REVIEW-QUEUE.md` true so it can see what is taken.
+- `TASKS.md` changes only on the owner's instruction.
+
+### Resume prompt (paste into a new session after the reset)
+
+> Resume the sv-uvm-guide work. Read the "Start here: plan for the week of 2026-11-22" block in
+> `docs/curriculum-quality/workflows/RESTART.md` and follow it from step 0. Report usage at each release.
+
+## History: state at the 2026-11-15 wind-down (superseded by the block above)
 
 The owner resumed on 2026-11-15 ("continue ... no quality drop anywhere and complete task") and later the same day set
 this week's usage rule: at 70 % of the all-models weekly limit every agent moves to Fable; at 50 % of the Fable limit,
