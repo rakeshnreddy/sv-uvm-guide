@@ -102,4 +102,16 @@ describe("sv-interface-flow-model: declarations and code", () => {
     expect(outcome("monitor-drives")).toBe("compile-error");
     expect(outcome("read-output")).toBe("compile-error");
   });
+
+  it("a clocking drive after @(vif.cb) lands in Re-NBA of the same slot, with or without a modport (§14.16)", () => {
+    const working = FLOW_PRESETS.find((p) => p.id === "working")!;
+    expect(working.symptom).toMatch(/Re-NBA just after this edge/);
+    expect(working.symptom).toMatch(/capture it at the next edge/);
+    const noModport = checkVifAccess(decl, { modport: null, assigned: true, path: "cb.valid", op: "drive" });
+    expect(noModport).toMatchObject({ outcome: "legal", clause: "§14.16" });
+    expect(noModport.rule).toMatch(/Re-NBA of that same time slot/);
+    expect(noModport.rule).not.toMatch(/lands in Re-NBA at the next clocking event/);
+    const viaDrv = checkVifAccess(decl, working.setup);
+    expect(viaDrv.rule).toMatch(/Re-NBA at the clocking event/);
+  });
 });

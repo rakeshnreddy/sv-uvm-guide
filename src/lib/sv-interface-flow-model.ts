@@ -74,7 +74,7 @@ function checkWithoutModport(decl: InterfaceDecl, path: string, op: AccessOp): {
     }
     return op === "read"
       ? { legal: true, rule: `Reads the value ${head} sampled just before its last clocking event (#1step).`, clause: "§14.13" }
-      : { legal: true, rule: `A synchronous drive: the value lands in Re-NBA at the next clocking event (output skew #0).`, clause: "§14.16" };
+      : { legal: true, rule: `A synchronous drive issued at the clocking event: the value lands in Re-NBA of that same time slot (output skew #0), after the DUT's flops have sampled; they capture it at the next edge. A drive issued between edges acts as if issued at the next clocking event.`, clause: "§14.16" };
   }
   const signal = decl.signals.find((s) => s.name === head);
   if (!signal || tail) return { legal: false, rule: `${decl.name} has no member ${path}.`, clause: "§25.9" };
@@ -223,7 +223,7 @@ export interface FlowPreset {
 }
 
 export const FLOW_PRESETS: FlowPreset[] = [
-  { id: "working", label: "Clocking drive", setup: { modport: "drv", assigned: true, path: "cb.valid", op: "drive" }, symptom: "valid rises one clock edge after the drive." },
+  { id: "working", label: "Clocking drive", setup: { modport: "drv", assigned: true, path: "cb.valid", op: "drive" }, symptom: "valid changes in Re-NBA just after this edge; the DUT's flops capture it at the next edge." },
   { id: "null-vif", label: "Assignment missing", setup: { modport: "drv", assigned: false, path: "cb.valid", op: "drive" }, symptom: "Simulation stops at time 0 with a fatal null-handle error." },
   { id: "bypass-cb", label: "Direct drive via drv", setup: { modport: "drv", assigned: true, path: "valid", op: "drive" }, symptom: "The file does not compile: valid is not visible through drv." },
   { id: "monitor-drives", label: "Monitor handle drives", setup: { modport: "monitor", assigned: true, path: "valid", op: "drive" }, symptom: "Compile error on the assignment to an input." },

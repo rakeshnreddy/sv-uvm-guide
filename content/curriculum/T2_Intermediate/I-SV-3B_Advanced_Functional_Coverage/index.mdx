@@ -288,7 +288,7 @@ The UVM column previews where these pieces go once you reach I-UVM-1D and I-UVM-
 | Stimulus | `alu_txn` objects randomized in `tb_top`, with a `corner_mode` knob | A sequence randomizing sequence items ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)) |
 | Collector | `alu_cov`, called once per transaction with `write(t)` | A `uvm_subscriber` whose `write(t)` samples the covergroup, fed by the monitor's analysis port (IEEE 1800.2-2020 §13.9; [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index), [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)) |
 | Check | `y !== alu_model(...)` after each transaction | A scoreboard with a reference model, plus assertions |
-| Stop decision | `tb_top` stops creating stimulus at the goal or the budget, then reports | The test or a top sequence drops its objection; the checks drain in the check phase and the report summary prints ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)) |
+| Stop decision | `tb_top` stops creating stimulus at the goal or the budget, then reports | The test or a top sequence drops its objection at the goal; a drain time, or a scoreboard objection raised in `phase_ready_to_end`, keeps the run phase open until in-flight items are compared ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)); the check phase then reports leftovers and the report summary prints ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)) |
 
 Two rules follow from the picture. The collector samples each transaction exactly once, after the transaction exists, and does not decide anything. And the stop decision belongs to the code that can see the checks: a collector that calls `$finish` at 100% ends the simulation at once (§20.2), so in-flight transactions are never compared and, in UVM, the check and report phases never run.
 
@@ -599,7 +599,7 @@ These items are for working engineers and interview preparation. The core path a
 ### Expert: stopping at the goal without losing checks
 
 - **`$finish` is immediate.** It "causes the simulator to exit and pass control back to the host operating system" (§20.2). `final` procedures still run (§9.2.3), but they cannot drain transactions still in flight, so a pipelined DUT's last results are never compared.
-- **In UVM it also skips the summary.** In uvm-core 2020.3.1, `uvm_root::run_test()` calls `report_summarize()` only after all phases have run (`uvm_root.svh`); a `$finish` from a component during the run phase skips extract, check, report and final (IEEE 1800.2-2020 §9.8.1) and the report summary that regressions grade on. End the stimulus instead: the test or top sequence drops its objection at the goal, and the scoreboard's end-of-test checks run in the check phase.
+- **In UVM it also skips the summary.** In uvm-core 2020.3.1, `uvm_root::run_test()` calls `report_summarize()` only after all phases have run (`uvm_root.svh`); a `$finish` from a component during the run phase skips extract, check, report and final (IEEE 1800.2-2020 §9.8.1) and the report summary that regressions grade on. End the stimulus instead: the test or top sequence drops its objection at the goal. A bare drop is not enough when results are still in flight, because the run phase ends at the drop and its threads are killed. A drain time, or a scoreboard that raises an objection in `phase_ready_to_end` and drops it when nothing is pending, keeps the run phase open until those results are compared ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) owns this). The check phase is a zero-time function phase, so nothing drains there; it only reports what is still pending.
 - **Compare with `>=`.** `get_inst_coverage()` returns a `real`; comparing it with `== 100.0` is fragile, and `option.goal` may be set below 100. Use `>= option.goal` of the item or the group you care about.
 - **Polling cost.** Each query asks the simulator to compute coverage over every bin of the item. Poll every N transactions, not every cycle; how much a query costs is tool-dependent.
 
@@ -623,7 +623,7 @@ The two ways to stop, side by side:
 
 <SequenceDiagram
   title="Stopping the stimulus and dropping the objection"
-  caption="The test stops starting stimulus at the goal and drops its objection. In uvm-core 2020.3.1, uvm_root::run_test() calls report_summarize() after every phase has run, then $finish when finish_on_completion is 1 (uvm_root.svh)."
+  caption="The test stops starting stimulus at the goal and drops its objection. The scoreboard holds the run phase open from phase_ready_to_end (or a drain time does) until the results still in flight are compared (I-UVM-1C). In uvm-core 2020.3.1, uvm_root::run_test() calls report_summarize() after every phase has run, then $finish when finish_on_completion is 1 (uvm_root.svh)."
   participants={[
     { id: "test", label: "test", kind: "test" },
     { id: "sb", label: "scoreboard", kind: "scoreboard" },
@@ -632,6 +632,7 @@ The two ways to stop, side by side:
   messages={[
     { kind: "self", from: "test", label: "goal reached: start no new stimulus" },
     { kind: "self", from: "test", label: "phase.drop_objection(this)" },
+    { kind: "self", from: "sb", label: "phase_ready_to_end: raise, wait until pending == 0, drop" },
     { kind: "divider", label: "last objection dropped: run_phase ends" },
     { kind: "note", from: "test", to: "root", label: "extract phase, then check phase (IEEE 1800.2-2020 §9.8.1)" },
     { kind: "self", from: "sb", label: "check_phase: end-of-test checks" },
@@ -680,7 +681,7 @@ Sign-off reviews both. The method, with exclusions and merging, is in [The Cover
   question="A teammate wants to save compute by ending simulation as soon as coverage reaches its goal. Where should that logic live in a UVM environment?"
   options={[
     { text: "In the coverage subscriber: call $finish when get_inst_coverage() reaches 100.0.", isCorrect: false, feedback: "$finish exits immediately (§20.2): in-flight transactions are never checked, and the check and report phases and the report summary never run. The == 100.0 comparison is fragile too." },
-    { text: "In the test or a top sequence: stop starting new stimulus at the goal and drop the objection, so the scoreboard drains and the report prints.", isCorrect: true, feedback: "Right. The stop decision sits where the checks are visible; end-of-test then runs normally and grades the run on its report summary." },
+    { text: "In the test or a top sequence: stop starting new stimulus at the goal and drop the objection, with a drain time or a scoreboard phase_ready_to_end objection holding the run phase open until in-flight items are compared; then the report prints.", isCorrect: true, feedback: "Right. The stop decision sits where the checks are visible; end-of-test then runs normally and grades the run on its report summary." },
     { text: "Nowhere: set option.goal = 100 and the simulator stops the test when the goal is reached.", isCorrect: false, feedback: "option.goal is only a target used in reports (Table 19-1). Nothing in the standard stops a simulation when it is reached." },
     { text: "In the monitor: call cg.stop() at the goal, which ends the run phase.", isCorrect: false, feedback: "stop() only stops collecting coverage for that covergroup (Table 19-5). It does not end any phase, and coverage would freeze." }
   ]}
@@ -726,7 +727,7 @@ More staff-level prompts to practise aloud:
       { text: "In the covergroup itself: setting option.goal makes the simulator end the test when the goal is reached", correct: false, feedback: "option.goal is only a target for reports (Table 19-1). Nothing ends the simulation when it is reached." },
       { text: "In the monitor, which calls cg.stop() so that the run ends cleanly", correct: false, feedback: "stop() only stops collecting coverage (Table 19-5). The test keeps running, and coverage freezes." }
     ],
-    explanation: "Stop the stimulus, not the simulation. The test (or tb_top, or a top sequence dropping its objection) ends stimulus at the goal or budget; the checks drain; the report prints; then the simulation ends. A collector calling $finish skips checks, and option.goal and stop() end nothing.",
+    explanation: "Stop the stimulus, not the simulation. The test (or tb_top, or a top sequence dropping its objection) ends stimulus at the goal or budget; the checks drain (in UVM, through a drain time or a scoreboard phase_ready_to_end objection, before the run phase ends); the report prints; then the simulation ends. A collector calling $finish skips checks, and option.goal and stop() end nothing.",
     objective: 2
   },
   {

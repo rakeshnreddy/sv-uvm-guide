@@ -367,7 +367,7 @@ The calls behave very differently when a register has neither an HDL path nor a 
 The second row is a trap: the test still passes, but slower, and the "backdoor" traffic now shows up in bus coverage and scoreboards.
 
 Two more rules from the same source:
-- **Rights.** A backdoor write needs the register's rights in its map to be RW or WO, and a backdoor read needs RW or RO. Otherwise the call returns `UVM_NOT_OK` with **no message at all**, and nothing is deposited. In the timer, OVF is mapped `"RO"`, so `ovf.write(st, 0, UVM_BACKDOOR)` fails silently. Always check the status.
+- **Rights.** A backdoor write needs the register's rights in its map to be RW or WO, and a backdoor read needs RW or RO. Otherwise the call returns `UVM_NOT_OK` with **no message at all**, and nothing is deposited. In the timer, OVF is mapped `"RO"`, so `ovf.write(st, 0, UVM_BACKDOOR)` fails silently. The timer maps OVF `"RO"` on purpose, to show this gate; most models give such a register the default `"RW"` rights, as [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) advises. Always check the status.
 - **Fields.** A field-level backdoor access, such as `ctrl.mode.write(st, 5, UVM_BACKDOOR)`, warns `Individual BACKDOOR field access not available for field '…'. Accessing complete register instead.` and writes the whole register. The other RW-type fields are written with their *mirrored* values (W1C-type and RO neighbours with 0), so a stale mirror corrupts them in the DUT (`uvm_reg_field.svh`, task `do_write`). `ctrl.mode.poke(st, 5)` instead peeks the whole register, changes the field's bits and pokes it back (`uvm_reg_field.svh`, task `poke`; §18.5.5.11).
 
 ### What monitors, predictors and scoreboards see
@@ -461,8 +461,8 @@ Predict before you read on: auto-predict is off and an explicit predictor watche
   ]}
 />
 
-**Debrief.** Only `chan_idx` and `chan_data` change. The predictor maps observed addresses to registers, and no bus transfer carries `chan_cfg`'s address, because it has none. With auto-predict off, `chan_cfg`'s mirror stays where it was. You have three ways to keep it right:
-- turn on auto-predict for the root map, which predicts `chan_cfg` when the frontdoor returns;
+**Debrief.** Only `chan_idx` and `chan_data` change. The predictor maps observed addresses to registers, and no bus transfer carries `chan_cfg`'s address, because it has none. With auto-predict off, `chan_cfg`'s mirror stays where it was. In this set-up, with a predictor connected, you have two ways to keep it right, and a third applies only without a predictor:
+- only if no predictor is connected, turn on auto-predict for the root map, which predicts `chan_cfg` when the frontdoor returns. With a predictor, as here, do not turn it on: `chan_idx` and `chan_data` would then be predicted twice (the "Both" row of the table below);
 - call `ral.chan_cfg.predict(v)` from the test after the access returns; or
 - model a register array behind an index/data pair as `uvm_reg_indirect_data` (§18.7). uvm-core ships a frontdoor for it, and its register predictor forwards observed DATA accesses to the selected register (`uvm_reg_indirect.svh`, `uvm_reg_predictor.svh`).
 
@@ -562,7 +562,7 @@ The messages below are the uvm-core 2020.3.1 texts. Those in the third row come 
 | `unable to locate hdl path (tb_top.dut.enq)` with "Either the name is incorrect, or you may not have PLI/ACC visibility to that name", then `[PREDICT_NOK] status UVM_NOT_OK; skip prediction.` | The path names nothing: a typo, renamed RTL, an unnamed generate block, a different hierarchy; or the simulator was not told to allow access to that signal (tool-dependent) | Print `get_full_hdl_path()` and compare with the design; enable signal access as your simulator's manual describes |
 | `[UVM_HDL_DEPOSIT] uvm_hdl DPI routines are compiled off. Recompile without +define+UVM_HDL_NO_DPI` (a fatal; the ID names the routine, such as `UVM_HDL_READ`) | UVM was compiled with `UVM_HDL_NO_DPI`, which replaces the HDL routines with stubs | Recompile UVM without it and link its DPI library |
 | `[RegModel] Block does not have hdl path defined for abstraction 'RTL'` | The block has no path of that kind: its `configure()` was never called, or the call asked for a kind (for example `"GATE"`) that was never added. (`configure(null, "")` does not cause this; it records an empty path, see Push Further.) | `ral.configure(null, "tb_top.dut")` or `ral.add_hdl_path(…)` |
-| No message; `write(…, UVM_BACKDOOR)` returns `UVM_NOT_OK` | Map rights: a backdoor write needs RW or WO, a read needs RW or RO | Check the rights in `add_reg()`; use `poke()` for set-up of an RO-mapped register |
+| No message; `write(…, UVM_BACKDOOR)` returns `UVM_NOT_OK` | Map rights: a backdoor write needs RW or WO, a read needs RW or RO | Check the rights in `add_reg()`: map the register `"RW"` (the default) unless the map really is read-only; otherwise use `poke()` for set-up of an RO-mapped register |
 | No message, status `UVM_IS_OK`, but the DUT never changes and `peek()` returns 0 | An empty path list: see Push Further | Run the path check below |
 | `Backdoor read of register … with multiple HDL copies: values are not the same` | A register with two copies whose values differ | Find which copy the design really uses, or deposit both |
 | `Register "ral.ctrl" value read from DUT (0x…0f) does not match mirrored value (0x…ffffffff)` after a `poke()` | `poke()` wrote bits the RTL does not store | Poke only stored bits, use backdoor `write()`, or `peek()` after the poke |
@@ -871,6 +871,8 @@ package timer_pkg;
       irq.build();
 
       default_map.add_reg(ctrl, 'h00, "RW");
+      // "RO" on purpose, to show the rights gate on backdoor write();
+      // a real model would usually give OVF the default "RW" (A-UVM-4A).
       default_map.add_reg(ovf,  'h04, "RO");
       default_map.add_reg(irq,  'h08, "RW");
       lock_model();
@@ -1254,7 +1256,7 @@ Attempt each question before you open the feedback.
   question="A regression programs 300 configuration registers with write(..., UVM_BACKDOOR) and checks them with frontdoor mirror(UVM_CHECK) at the end of each test. A colleague wants to switch the set-up to poke() because it skips the read step. What is your answer?"
   options={[
     { text: "Agree: poke() and backdoor write() leave the DUT and the mirror in the same state, and poke() is faster.", isCorrect: false, feedback: "They differ on RO bits, on bits with no storage, and on W1C, W1S and similar fields: poke() deposits raw values and puts them in the mirror, so the end-of-test checks start failing for reasons that are not design bugs." },
-    { text: "Keep backdoor write() for configuration, and use poke() only for hardware-owned states or error injection. The read step is what lets write() honour each field's policy, and it costs zero simulation time.", isCorrect: true, feedback: "Right. Both doors are zero-time; the read is a VPI lookup, not a bus cycle. If set-up speed really matters, a block-level update(st, UVM_BACKDOOR) writes only registers whose desired value differs from the mirror." },
+    { text: "Keep backdoor write() for configuration, and use poke() only for hardware-owned states or error injection. The read step is what lets write() honour each field's policy, and it costs zero simulation time.", isCorrect: true, feedback: "Right. Both doors are zero-time; the read is a VPI lookup, not a bus cycle. If set-up speed really matters, a block-level update(st, UVM_BACKDOOR) writes only registers whose needs_update() is 1: a desired value differs from the mirror, or, in uvm-core, a field is writable and volatile (A-UVM-4A)." },
     { text: "Switch both set-up and checks to poke() and peek(), so the whole test runs in zero time.", isCorrect: false, feedback: "Then nothing ever proves the address decode, the bus protocol or the adapter. Keep a frontdoor proof of every register in the regression." },
     { text: "Disagree, because poke() does not update the mirror: every poke would need a predict(), or the end-of-test mirror(UVM_CHECK) calls would fail.", isCorrect: false, feedback: "In uvm-core 2020.3.1 poke() predicts the mirror itself. The objection to poke() here is that it ignores the access policies, not the mirror." }
   ]}
@@ -1363,7 +1365,7 @@ Answer from the rules, not from the tables. Every question maps to one objective
       { text: "None, because user frontdoors bypass the monitor", correct: false, feedback: "A user frontdoor makes ordinary bus accesses (here two register writes), and the monitor sees each one." },
       { text: "All three, because the predictor follows the frontdoor's rw_info", correct: false, feedback: "The predictor knows nothing about frontdoors or rw_info; it only sees bus transfers." }
     ],
-    explanation: "Keep the target's mirror right with auto-predict on the root map, a predict() after the access, or uvm_reg_indirect_data, whose uvm-core predictor support forwards DATA accesses to the selected register.",
+    explanation: "With a predictor connected, keep the target's mirror right with a predict() after the access, or with uvm_reg_indirect_data, whose uvm-core predictor support forwards DATA accesses to the selected register. Auto-predict on the root map also predicts the target, but only use it when no predictor is connected: next to a predictor it predicts every register-model access twice.",
     objective: 4
   },
   {

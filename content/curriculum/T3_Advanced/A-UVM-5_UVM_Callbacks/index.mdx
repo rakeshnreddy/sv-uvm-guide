@@ -556,7 +556,7 @@ A common misconception says callbacks always replace overrides, or the other way
 | Mistake or belief | Why it is wrong |
 |---|---|
 | "`add(env.agt0.drv, cb)` in a `build_phase` attaches to that driver." | If the driver is not built yet, the handle is null and the call is type-wide; if a handle earlier on the path is null too, reading it stops the simulation (§8.4). |
-| "Callbacks run in registration order." | They run in queue order. `UVM_PREPEND`, the copy of the type-wide queue and later type-wide adds all change it. |
+| "Callbacks always run in the order they were added." | True only while every `add()` uses the default `UVM_APPEND`; the copy of the type-wide queue and later type-wide adds keep that order. A `UVM_PREPEND` add goes in front of everything already queued, and adding the same object twice warns `CBPREG` and leaves it in its first place (§10.7.2.3.1). The order is the order the `add()` calls ran, which depends on the phase each one is in. |
 | "`UVM_PREPEND` guarantees my callback runs first." | Only at that moment. A later `UVM_PREPEND` add, instance or type-wide, goes in front of it. |
 | "A missing `` `uvm_register_cb `` stops the callback." | `add()` only warns `CBUNREG`; the callback is still queued and runs if the hook is called (Annex B.4.1 requires a warning; Push Further). |
 | "`const ref` makes the transaction read-only." | It locks the handle; the object's fields can still be written (§6.20.6). |
@@ -591,7 +591,7 @@ void'(err_cb.callback_mode(0));`}
   mistake="Calling add(env.agt0.drv, err_cb) in a build_phase. If the driver is not built yet the handle is null and every my_driver gets the callback; if env.agt0 is null too, reading the path stops the run."
   inTestbench="A base test registers testbench-wide callbacks type-wide on purpose; an error test attaches its callback to one driver in connect_phase, prints the queues with display() in end_of_elaboration_phase, and switches the callback with callback_mode between items."
 >
-  <svg viewBox="0 0 340 282" role="img" aria-label="Five stages with one trap each. 1, write the three parts; trap: no base-class constructor, or pure hooks. 2, attach after build with add(handle, cb); trap: a null handle means type-wide. 3, order is queue order; trap: the copy of the type-wide queue, UVM_PREPEND and later type-wide adds all change it. 4, switch with callback_mode between items; trap: the mode belongs to the object, so it applies in every queue. 5, verify with display() and get_all(); trap: get_all() also returns callbacks that are off." style={{ width: "100%", maxWidth: 380 }}>
+  <svg viewBox="0 0 340 282" role="img" aria-label="Five stages with one trap each. 1, write the three parts; trap: no base-class constructor, or pure hooks. 2, attach after build with add(handle, cb); trap: a null handle means type-wide. 3, order is queue order; trap: UVM_PREPEND puts a callback ahead of earlier adds. 4, switch with callback_mode between items; trap: the mode belongs to the object, so it applies in every queue. 5, verify with display() and get_all(); trap: get_all() also returns callbacks that are off." style={{ width: "100%", maxWidth: 380 }}>
     <rect x="8" y="8" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
     <text x="18" y="26" fontSize="11" fontWeight="600" fill="currentColor">1. Three parts: base class, hook, callback</text>
     <text x="18" y="44" fontSize="10" fill="currentColor" opacity="0.85">trap: no base-class constructor, or pure hooks</text>
@@ -600,7 +600,7 @@ void'(err_cb.callback_mode(0));`}
     <text x="18" y="98" fontSize="10" fill="currentColor" opacity="0.85">trap: a null handle means type-wide</text>
     <rect x="8" y="116" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
     <text x="18" y="134" fontSize="11" fontWeight="600" fill="currentColor">3. Order is queue order</text>
-    <text x="18" y="152" fontSize="10" fill="currentColor" opacity="0.85">trap: type-wide copy, PREPEND, later type-wide adds</text>
+    <text x="18" y="152" fontSize="10" fill="currentColor" opacity="0.85">trap: UVM_PREPEND goes ahead of earlier adds</text>
     <rect x="8" y="170" width="324" height="46" rx="6" className="fill-cyan-500/10 stroke-cyan-600 dark:stroke-cyan-400" />
     <text x="18" y="188" fontSize="11" fontWeight="600" fill="currentColor">4. Switch with callback_mode, between items</text>
     <text x="18" y="206" fontSize="10" fill="currentColor" opacity="0.85">trap: the mode is per object, in every queue</text>
@@ -955,7 +955,7 @@ Callback messages come from the top of the hierarchy, so they appear as `reporte
 | `CBUNREG` **error**: "Null callback object cannot be registered" | The callback handle is null: it was never created | The message names the target | Create it before `add()` |
 | `CBPREG`: "...is already registered" | The same object was added twice to one queue | `display()` | Remove the second `add()` |
 | One callback skipped (or run twice) after a change inside a hook | The iterator walks the live queue | Trace the hook | Change queues only between items |
-| Callbacks run in an unexpected order | Queue order: type-wide copy, later type-wide adds, `UVM_PREPEND` | `display()` lists each queue in order | Reorder the `add()` calls or use `UVM_PREPEND` |
+| Callbacks run in an unexpected order | The `add()` calls ran in a different order than you expected (for example, in different phases), or one used `UVM_PREPEND` | `display()` lists each queue in order | Reorder the `add()` calls or use `UVM_PREPEND` |
 
 **Checklist before moving on:**
 
