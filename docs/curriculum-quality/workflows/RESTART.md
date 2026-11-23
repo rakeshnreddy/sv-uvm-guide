@@ -5,16 +5,18 @@ then `docs/curriculum-quality/plan.md` (§3 wave table) and the backlog in `TASK
 
 ## Start here: plan for the week of 2026-11-22 (current)
 
-**Paused on 2026-11-22 at 19:20 Pacific, at the 50% weekly usage line (all models 50%, Fable 56%).** Step 0 is
-done. Step 1 is not released: `figures/operators` is at `d7f48c1d`, reviewed, fixed and checked, and one gate
-(G1) still fails for three mechanical reasons; `REVIEW-QUEUE.md` has the detail. Closure round 2 analysis is done
-(52 confirmed: 3 serious, 49 material); no fix has started. The kit-fix design pass is done; nothing is built.
-Measured costs were far above this plan's: a drawing job about 1M tokens, not 0.3M; the review of this
-28-visual lesson about 10M, not 0.4M; the lesson about 9% of the weekly limit; the closure analysis about 9%.
-Before resuming, the owner sets the usage line. Then: finish step 1 (one small fix job, gates, release), then
-the 3 serious and 11 contradiction closure findings grouped by lesson. Use the leaner process: triage first, one
-job per component, scripts measure and agents judge, two reviewers on shared captures, one full gate run before
-review.
+**State on 2026-11-23.** Step 0 is done. Step 1 is released as checkpoint 33 (`c13a9c71`, Operators and
+Expressions in the new figure look). The owner then approved one more piece of work: the 3 serious and 11
+contradiction findings of closure round 2, grouped by lesson (eight jobs; the script is
+`closure-fix-round2-grouped.js` in the durable tools folder, under `closure/round2`), to be released as
+checkpoint 34. After that, stop and report: usage passed the 50% line on 2026-11-22, much of it from other work
+on the account, and the owner sets the line before anything else starts. Not started: the other 38 closure
+findings, the kit fixes (design pass done, nothing built), and steps 4 and 5. Claude's further figure work waits
+for the kit fixes. Measured costs were far above this plan's: a drawing job about 1M tokens, not 0.3M; the
+review of this 28-visual lesson about 10M, not 0.4M; the lesson about 9% of the weekly limit; the closure
+analysis about 9%. Use the leaner process: triage first, one job per component, scripts measure and agents
+judge, two reviewers on shared captures, one full gate run before review, and a rerun at normal load for any
+gate that fails while the machine is short of memory.
 
 Written on 2026-11-21, before the weekly reset. Claude does this week's work; Codex is out of usage for three to
 four days. Start in a new session: the old one is long, and every turn in it is expensive.

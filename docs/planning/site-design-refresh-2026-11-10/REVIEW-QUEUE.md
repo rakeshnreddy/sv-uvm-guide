@@ -1,9 +1,9 @@
 # Figure review queue
 
 - Last finished lesson · F2A Structs, Unions, and Enums, released in checkpoint 32
-- Lesson in progress · F2A Operators and Expressions · taken by Claude on the local branch `figures/operators` (head `d7f48c1d`, not pushed). All 28 visuals are drawn, independently reviewed, fixed and checked. Not released: the full gate passes 16 of 17, and G1 still counts five visuals as old look (`DecisionLab` line 402, the hand-drawn figure at line 695, and three `StreamPackLab` embeds). The causes are mechanical and are listed in the update of 2026-11-22 below. Work paused on 2026-11-22 at the weekly usage line; do not start this lesson again, finish it from that branch
-- Working tree · Clean. The Operators and Expressions work is on the local branch `figures/operators`, not pushed.
-- Lessons finished in this window · 0
+- Lesson in progress · none. F2A Operators and Expressions was released on 2026-11-23 as checkpoint 33 (commit `c13a9c71`): 28 visuals, full gate 17 of 17, and the released Verification Mindset and Core Data Types lessons gated with 0 new. Next in the brief's order is the `F2B` index. Claude's further figure work waits for the diagram-kit fixes (agreed with the owner on 2026-11-22); Codex's brief is unchanged
+- Working tree · Clean. The local branch `figures/operators` went into the release as one commit and is no longer needed.
+- Lessons finished in this window · 1 (F2A Operators and Expressions)
 
 Checkpoint 32 is in `origin/curriculum-quality-program` at `669f7d7b`.
 
@@ -30,6 +30,18 @@ changed, so nothing a learner sees is different. No lesson was finished in this 
 
 Next, in this order: the Core Data Types baseline; Operators and Expressions visuals 21 to 28 from the saved
 patch; then `F2B` onward as in the brief.
+
+**Update, 2026-11-23.** Operators and Expressions is released (checkpoint 33, `c13a9c71`). The three G1 causes
+are fixed: `StreamPackLab` has the standard `fig-panel` frame; `DecisionLab` no longer wraps its frame (its test
+id moved to an optional `testId` on `VisualFrame`, which changes nothing for other visuals); and the figure at
+line 695 renders the words its source has. Carried forward, not fixed in this lesson: visual 11 (the signedness
+decision diagram) is cut off at 390 and visual 28 (the short-circuit sequence diagram) is unchanged, both
+kit-drawn; the "Add parentheses" button label differs from the prose "Rewrite as meant" (a text decision).
+Three lessons for the loop. Run one full lesson gate before the review, because G1 never runs with `--only`.
+When the machine is short of memory, G10 (a hydration warning from a disclosure the gate opens early), G15 (one
+selected-chip reading) and G16 (samples on elements taller than the viewport) report findings that are not in
+the drawing; rerun at normal load before treating one as real. And a fix made for a review finding can undo
+what a gate requires, so the gate must run again after the fixes, in full.
 
 **Update, 2026-11-22, evening.** Operators and Expressions is not released yet. State of `figures/operators`
 at `d7f48c1d`: 28 visuals drawn; five reviewers found 19 faults, 16 minor items and 8 kit notes; 36 findings
@@ -64,6 +76,7 @@ Each baseline comes from one full run with the calibrated gate. F1A is the appro
 | F1B The Verification Mindset | PASS (21 baseline, 0 new) | [Findings](reports/F1B_The_Verification_Mindset.released-baseline.json) |
 | F1C Why SystemVerilog | PASS (8 baseline, 0 new) | [Findings](reports/F1C_Why_SystemVerilog.released-baseline.json) |
 | F2A Core Data Types | PASS (27 baseline, 0 new); G9 passed | [Findings](reports/F2A_Core_Data_Types.released-baseline.json) |
+| F2A Operators and Expressions | PASS, 17 of 17 gates (released 2026-11-23) | [Report](reports/F2A_Core_Data_Types--operators-and-expressions.md) |
 | F2A Structs, Unions, and Enums | PASS (6 baseline, 0 new) for visual findings. G9 failed in the capture run. | [Findings](reports/F2A_Core_Data_Types--structs-unions-enums.released-baseline.json) |
 
 ### Look at these first
