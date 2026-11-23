@@ -569,7 +569,7 @@ describe("OperatorExplorer: the loaded preset is visible", () => {
   it("preset buttons carry the same pressed look as a checked segmented option", () => {
     render(<OperatorExplorer family="conditional" />);
     const button = screen.getByRole("button", { name: "sel = x: 1100 vs 1010" });
-    for (const c of ["aria-pressed:border-cyan-500", "aria-pressed:bg-cyan-500/15", "aria-pressed:font-semibold"]) expect(button.className).toContain(c);
+    for (const c of ["aria-pressed:bg-fig-cyan-text", "dark:aria-pressed:bg-fig-cyan-fill", "aria-pressed:font-semibold"]) expect(button.className).toContain(c);
   });
 
   it("the stream value buttons say which value is loaded", () => {
@@ -580,7 +580,7 @@ describe("OperatorExplorer: the loaded preset is visible", () => {
     expect(other).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(other);
     expect(other).toHaveAttribute("aria-pressed", "true");
-    expect(other.className).toContain("aria-pressed:border-cyan-500");
+    expect(other.className).toContain("aria-pressed:border-fig-cyan-text");
   });
 });
 

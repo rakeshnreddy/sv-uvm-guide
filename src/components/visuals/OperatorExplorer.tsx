@@ -129,7 +129,19 @@ function matchingPreset(spec: OperatorSpec, inputs: OperatorInputs): OperatorPre
   );
 }
 
+const quietBody = "bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))]";
+const indigoBody = "bg-[linear-gradient(180deg,hsl(var(--fig-indigo-body)/var(--fig-obj-top)),hsl(var(--fig-indigo-body)/var(--fig-obj-bottom)))]";
+const cyanBody = "bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))]";
 const bitRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+/** The focal part sits higher: shadow offset 7 instead of 3 (DESIGN.md section 14, rule 3). */
+const focalRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_7px_14px_-4px_hsl(var(--fig-obj-shadow))]";
+/**
+ * One rule for every family's result: a multi-bit result is a raised indigo plate, a 1-bit result
+ * (the last fold row, the selected comparison, the inside OR) a raised neutral plate with the heavier
+ * rim. Cyan stays the colour of a 1 bit and of the pressed control. Each user of the 2 px border
+ * gives back 1 px of padding, so its outer size does not change.
+ */
+const heavyNeutral = cn("border-2 border-fig-generic", quietBody, focalRim);
 
 function bitClass(b: Bit4): string {
   if (b === "x") return cn(bitRim, "border-fig-rose text-fig-rose-text bg-[repeating-linear-gradient(135deg,hsl(var(--fig-rose)/0.18)_0_4px,transparent_4px_8px)]");
@@ -138,12 +150,28 @@ function bitClass(b: Bit4): string {
   return cn(bitRim, "border-fig-slate text-fig-slate-text bg-[linear-gradient(180deg,hsl(var(--fig-slate-body)/var(--fig-obj-top)),hsl(var(--fig-slate-body)/var(--fig-obj-bottom)))]");
 }
 
+/**
+ * A table that may be wider than the card scrolls inside its region. Its caption is
+ * as wide as the table by default, so it would run past the card with it: the region
+ * is a size container and the caption keeps to its visible width and stays in view.
+ */
+const scrollRegion = "overflow-x-auto [container-type:inline-size] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const scrollCaption = "sticky left-0 mb-1 max-w-[100cqw] text-left font-sans text-xs text-muted-foreground";
+
 const Code = ({ children }: { children: React.ReactNode }) => (
   <code className="rounded bg-muted px-1 font-mono text-[0.92em] [font-variant-ligatures:none]">{children}</code>
 );
 
 /** Editable operand: one button per bit, MSB first. Each press cycles 0 → 1 → x → z. */
-function BitEditor({ name, value, onChange, signed }: { name: string; value: Bit4[]; onChange: (next: Bit4[]) => void; signed?: boolean }) {
+function BitEditor({ name, value, onChange, signed, connected, comparison, focus }: {
+  name: string;
+  value: Bit4[];
+  onChange: (next: Bit4[]) => void;
+  signed?: boolean;
+  connected?: boolean;
+  comparison?: "value" | "pattern" | "count";
+  focus?: boolean;
+}) {
   const w = value.length;
   const groups: number[][] = [];
   value.forEach((_, k) => {
@@ -152,14 +180,27 @@ function BitEditor({ name, value, onChange, signed }: { name: string; value: Bit
     groups[groups.length - 1].push(k);
   });
   return (
-    <div role="group" aria-label={`Operand ${name}, ${w} bit${w === 1 ? "" : "s"}`} className="min-w-0 space-y-1">
+    <div
+      role="group"
+      aria-label={`Operand ${name}, ${w} bit${w === 1 ? "" : "s"}`}
+      data-fig-focus={focus ? "operand" : undefined}
+      className={cn(
+        "min-w-0 space-y-1",
+        // 4 px above the label and 2 px between it and the bits: the same outer height as 2 px and 4 px.
+        comparison && ["w-fit max-w-full space-y-0.5 rounded-lg border px-1.5 pb-0.5 pt-1", bitRim],
+        comparison && focus && ["border-2 px-[5px] pb-px pt-[3px]", focalRim],
+        comparison === "value" && ["border-fig-generic", quietBody],
+        comparison === "pattern" && ["border-fig-indigo", indigoBody],
+        comparison === "count" && ["border-dashed border-fig-generic", quietBody],
+      )}
+    >
       <p className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
         {name} = {formatCompact(reinterpret(fromBits(value), false))}
         {signed ? " (signed)" : ""}
       </p>
       <div className="flex flex-wrap gap-x-2 gap-y-1">
         {groups.map((g) => (
-          <span key={g[0]} className="inline-flex gap-0.5">
+          <span key={g[0]} className={cn("inline-flex gap-0.5", connected && "gap-0")}>
             {g.map((k) => {
               const bit = value[k];
               const index = w - 1 - k;
@@ -172,6 +213,8 @@ function BitEditor({ name, value, onChange, signed }: { name: string; value: Bit
                   className={cn(
                     "flex h-10 w-7 items-center justify-center rounded-md border font-mono text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
                     bitClass(bit),
+                    connected && "relative rounded-none first:rounded-l-md last:rounded-r-md focus-visible:z-10",
+                    comparison && bit === "x" && "bg-card",
                   )}
                 >
                   {bit}
@@ -186,20 +229,24 @@ function BitEditor({ name, value, onChange, signed }: { name: string; value: Bit
 }
 
 /** Read-only bit strip with optional per-bit marks (vacated, wildcard). */
-function Strip({ value, label, marks }: { value: SvValue; label: string; marks?: Record<number, string> }) {
+/** `onPlate`: the strip sits straight on a raised plate, with no well of its own and no empty mark row under its cells. */
+function Strip({ value, label, marks, onPlate }: { value: SvValue; label: string; marks?: Record<number, string>; onPlate?: boolean }) {
   const all = bitsOf(value);
-  const markNote = marks && Object.keys(marks).length ? `; marked bits: ${Object.entries(marks).map(([i, m]) => `${i} ${m}`).join(", ")}` : "";
+  const marked = !!marks && Object.keys(marks).length > 0;
+  const markNote = marked && marks ? `; marked bits: ${Object.entries(marks).map(([i, m]) => `${i} ${m}`).join(", ")}` : "";
   return (
-    <span role="img" aria-label={`${label}: ${formatCompact(reinterpret(value, false))}${markNote}`} className="fig-stage inline-flex flex-wrap gap-px rounded-md !p-0 bg-[hsl(var(--fig-well))] font-mono [font-variant-ligatures:none]">
+    <span role="img" aria-label={`${label}: ${formatCompact(reinterpret(value, false))}${markNote}`} className={cn("inline-flex flex-wrap gap-px rounded-md font-mono [font-variant-ligatures:none]", !onPlate && "fig-stage !p-0 bg-[hsl(var(--fig-well))]")}>
       {all.map((b, k) => {
         const index = value.width - 1 - k;
         const mark = marks?.[index];
         return (
           <span key={k} className={cn("flex w-5 flex-col items-center", index % 4 === 3 && k !== 0 && "ml-1")}>
             <span className={cn("flex h-6 w-5 items-center justify-center rounded-[3px] border text-xs font-semibold", bitClass(b), mark && "border-dashed")}>{b}</span>
-            <span aria-hidden className="h-3 text-[11px] leading-3 text-muted-foreground">
-              {mark ?? ""}
-            </span>
+            {onPlate && !marked ? null : (
+              <span aria-hidden className="h-3 text-[11px] leading-3 text-muted-foreground">
+                {mark ?? ""}
+              </span>
+            )}
           </span>
         );
       })}
@@ -280,21 +327,31 @@ function BitwiseDetail({ spec, a, b }: { spec: OperatorSpec; a: SvValue; b: SvVa
   );
 }
 
+const foldRow = "rounded-md border px-2 py-0.5";
+const restingFoldRow = cn(foldRow, "border-fig-generic", quietBody, bitRim);
+const finalFoldRow = cn("rounded-md px-[7px] py-px", heavyNeutral);
+
 function ReductionDetail({ spec, a }: { spec: OperatorSpec; a: SvValue }) {
   const node = parseExpression(spec.template);
   const op: UnaryOp = node.kind === "unary" ? node.op : "&";
   const fold = reductionFold(op, a);
   const core = op.replace("~", "") || "&";
+  const startsWithResult = !fold.steps.length && !fold.inverted;
   return (
-    <ol className="space-y-1 font-mono text-xs [font-variant-ligatures:none]" aria-label="Reduction fold">
-      <li className="text-muted-foreground">start with bit {a.width - 1} = {bitAt(a, a.width - 1)}</li>
-      {fold.steps.map((s) => (
-        <li key={s.index}>
-          {s.acc} {core} {s.bit} <span className="text-muted-foreground">(bit {s.index})</span> = {s.result}
-        </li>
-      ))}
+    <ol className="fig-stage !p-0 space-y-1 rounded-lg font-mono text-xs [font-variant-ligatures:none]" aria-label="Reduction fold">
+      <li className={startsWithResult ? finalFoldRow : restingFoldRow} data-fig-focus={startsWithResult ? "fold-result" : undefined}>
+        start with bit {a.width - 1} = {bitAt(a, a.width - 1)}
+      </li>
+      {fold.steps.map((s, index) => {
+        const final = index === fold.steps.length - 1 && !fold.inverted;
+        return (
+          <li key={s.index} className={final ? finalFoldRow : restingFoldRow} data-fig-focus={final ? "fold-result" : undefined}>
+            {s.acc} {core} {s.bit} <span className="text-muted-foreground">(bit {s.index})</span> = {s.result}
+          </li>
+        );
+      })}
       {fold.inverted ? (
-        <li>
+        <li className={finalFoldRow} data-fig-focus="fold-result">
           ~{fold.base} = {fold.result} <span className="text-muted-foreground">(the ~ form inverts the reduction)</span>
         </li>
       ) : null}
@@ -315,22 +372,34 @@ function LogicalDetail({ spec, a, b }: { spec: OperatorSpec; a: SvValue; b: SvVa
   return <ul className="space-y-1 text-sm">{[describe("a", a), ...(spec.operands.includes("b") ? [describe("b", b)] : [])]}</ul>;
 }
 
-function EqualityDetail({ a, b }: { a: SvValue; b: SvValue }) {
+function EqualityDetail({ spec, a, b }: { spec: OperatorSpec; a: SvValue; b: SvValue }) {
   const fam = equalityFamily(a, b);
+  // The card of the operator being evaluated: != is shown by ==, !== by ===, !=? by ==?.
+  const evaluated = spec.template.replace("!", "=");
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-3 text-sm" aria-label="The three equality operators on the same operands">
+      <div className="fig-stage !p-0 flex flex-wrap gap-3 text-sm" aria-label="The three equality operators on the same operands">
         {(
           [
             ["a == b", fam.logical, "§11.4.5"],
             ["a === b", fam.caseEq, "§11.4.5"],
             ["a ==? b", fam.wildcard, "§11.4.6"],
           ] as const
-        ).map(([src, v, clause]) => (
-          <span key={src} className="inline-flex items-center gap-2 rounded-lg border border-border/70 px-2 py-1">
-            <Code>{src}</Code> <ValueChip value={v} /> <span className="font-mono text-xs text-muted-foreground">{clause}</span>
-          </span>
-        ))}
+        ).map(([src, v, clause]) => {
+          const current = src === evaluated;
+          return (
+            <span
+              key={src}
+              data-fig-focus={current ? "evaluated-comparison" : undefined}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg",
+                current ? ["px-[7px] py-[3px]", heavyNeutral] : ["border border-fig-generic px-2 py-1", quietBody, bitRim],
+              )}
+            >
+              <Code>{src}</Code> <ValueChip value={v} className={v === "x" ? "bg-card" : undefined} /> <span className="font-mono text-xs text-muted-foreground">{clause}</span>
+            </span>
+          );
+        })}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[260px] border-collapse text-left font-mono text-xs [font-variant-ligatures:none]">
@@ -365,12 +434,12 @@ function InsideDetail({ a, b, c }: { a: SvValue; b: SvValue; c: SvValue }) {
   const det = insideDetail(a, [b, c]);
   return (
     <div className="space-y-2 text-sm">
-      <ul className="space-y-1">
+      <ul className="fig-stage !p-0 space-y-1">
         {det.members.map((m, i) => (
-          <li key={i} className="flex flex-wrap items-center gap-2">
+          <li key={i} className={cn("flex flex-wrap items-center gap-2 rounded-md border border-fig-generic px-2 py-0.5", quietBody, bitRim)}>
             <span className="font-mono text-xs [font-variant-ligatures:none]">member {i === 0 ? "b" : "c"} = {formatCompact(reinterpret(m.value, false))}:</span>
             <span className="inline-flex items-center gap-1">
-              <Code>a ==? {i === 0 ? "b" : "c"}</Code> <ValueChip value={m.wildcard} />
+              <Code>a ==? {i === 0 ? "b" : "c"}</Code> <ValueChip value={m.wildcard} className={m.wildcard === "x" ? "bg-card" : undefined} />
             </span>
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               (<Code>a === {i === 0 ? "b" : "c"}</Code> would be <ValueChip value={m.caseEq} />)
@@ -378,10 +447,10 @@ function InsideDetail({ a, b, c }: { a: SvValue; b: SvValue; c: SvValue }) {
           </li>
         ))}
       </ul>
-      <p>
-        <strong>inside</strong> = OR of the <Code>==?</Code> results = <ValueChip value={det.result} />
+      <p data-fig-focus="membership-result" className={cn("rounded-md px-[7px] py-[3px]", heavyNeutral)}>
+        <strong>inside</strong> = OR of the <Code>==?</Code> results = <ValueChip value={det.result} className={det.result === "x" ? "bg-card" : undefined} />
         {det.ifCaseEquality !== det.result ? (
-          <span className="text-rose-700 dark:text-rose-300">
+          <span className="text-fig-rose-text">
             {" "}
             ✕ If inside used <Code>===</Code>, the answer would be {det.ifCaseEquality}.
           </span>
@@ -400,10 +469,12 @@ function ShiftDetail({ spec, a, n, result }: { spec: OperatorSpec; a: SvValue; n
     for (let i = 0; i < s; i += 1) marks[isRight ? a.width - 1 - i : i] = isRight ? (spec.id === "ashr" && a.signed ? "S" : "0") : "0";
   }
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
+    <div className="fig-stage !p-0 flex flex-wrap items-center gap-2 text-sm">
       <Strip value={a} label="a before the shift" />
       <span aria-hidden>→</span>
-      <Strip value={result} label="after the shift" marks={marks} />
+      <span data-fig-focus="filled-bits" className={cn("rounded-md border border-fig-indigo p-1 [&_.border-fig-cyan]:border-fig-cyan-text", indigoBody, bitRim)}>
+        <Strip value={result} label="after the shift" marks={marks} onPlate />
+      </span>
       <span className="text-xs text-muted-foreground">
         {k === null
           ? "The count has x/z bits, so every result bit is x."
@@ -425,7 +496,7 @@ function StreamDetail({ spec, a }: { spec: OperatorSpec; a: SvValue }) {
   return (
     <div className="space-y-2 text-sm">
       {ambiguous ? (
-        <p className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs text-foreground">
+        <p className={cn("rounded-lg border border-fig-generic px-3 py-2 text-xs text-foreground", quietBody, bitRim)}>
           For this value, a bit reversal and a byte swap give the same result, so the value alone cannot tell you which one ran. Load a = 16&apos;h1234 to see them
           differ.
         </p>
@@ -444,7 +515,7 @@ function StreamDetail({ spec, a }: { spec: OperatorSpec; a: SvValue }) {
             <div key={tag} className="flex flex-wrap items-center gap-2 font-mono text-xs [font-variant-ligatures:none]">
               <span className="w-8 text-muted-foreground">{tag}</span>
               {blocks.map((blk, i) => (
-                <span key={i} className="rounded border border-border/70 px-1.5 py-0.5">
+                <span key={i} className={cn("rounded-md border px-1.5 py-0.5", bitRim, tag === "out" ? ["border-fig-indigo", indigoBody] : ["border-fig-generic", quietBody])}>
                   {blk.join("")}
                 </span>
               ))}
@@ -481,9 +552,9 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
           <>Only the {det.truth === "1" ? "first" : "second"} branch is evaluated and returned.</>
         )}
       </p>
-      <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Merge table, scrollable" tabIndex={0}>
+      <div className={scrollRegion} role="region" aria-label="Merge table, scrollable" tabIndex={0}>
         <table className="fig-stage border-collapse bg-[hsl(var(--fig-well))] text-left font-mono text-xs [font-variant-ligatures:none]">
-          <caption className="mb-1 text-left font-sans text-xs text-muted-foreground">{det.merged ? "Merged bit by bit with Table 11-20" : "Table 11-20 for comparison: this run does not use it"}</caption>
+          <caption className={scrollCaption}>{det.merged ? "Merged bit by bit with Table 11-20" : "Table 11-20 for comparison: this run does not use it"}</caption>
           <thead>
             <tr className="text-muted-foreground">
               <th scope="col" className="px-2 py-1">bit</th>
@@ -511,8 +582,8 @@ function MergeDetail({ spec, c, a, b }: { spec: OperatorSpec; c: SvValue; a: SvV
           </tbody>
         </table>
       </div>
-      <div role="group" className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 px-3 py-2" aria-label="if/else contrast">
-        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-label text-violet-800 dark:text-violet-200">if/else</span>
+      <div role="group" className="flex flex-wrap items-center gap-2 rounded-lg border border-fig-generic bg-[hsl(var(--fig-well))] px-3 py-2" aria-label="if/else contrast">
+        <span className={cn("rounded border border-fig-generic px-1.5 py-0.5 text-label text-foreground", quietBody)}>if/else</span>
         <Code>{`if (${cName}) y = ${aName}; else y = ${bName};`}</Code>
         <span aria-hidden>→</span>
         <Strip value={det.ifElse} label="if/else stores" />
@@ -537,9 +608,9 @@ function BitcountDetail({ spec, state }: { spec: OperatorSpec; state: SvValue })
   const current = spec.template.slice(0, spec.template.indexOf("("));
   return (
     <div className="space-y-2 text-sm">
-      <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="region" aria-label="Bit vector functions table, scrollable" tabIndex={0}>
+      <div className={scrollRegion} role="region" aria-label="Bit vector functions table, scrollable" tabIndex={0}>
         <table className="fig-stage border-collapse bg-[hsl(var(--fig-well))] text-left font-mono text-xs [font-variant-ligatures:none]">
-          <caption className="mb-1 text-left font-sans text-xs text-muted-foreground">
+          <caption className={scrollCaption}>
             The four §20.9 convenience functions on <Code>{name}</Code> = {formatCompact(reinterpret(state, false))}
           </caption>
           <thead>
@@ -671,9 +742,16 @@ export interface OperatorExplorerProps {
   width?: number;
 }
 
-/** The pressed look matches a checked SegmentedControl option, so the loaded preset is visible as well as announced. */
+/**
+ * The pressed look matches a checked SegmentedControl option, so the loaded preset is visible as well as announced.
+ * In light the pressed chip is filled (a 15% tint read under 3:1 against its siblings); dark keeps its tint.
+ */
 const PRESET_BUTTON =
-  "min-h-10 rounded-lg border border-border/70 px-3 font-mono text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-cyan-500 aria-pressed:bg-cyan-500/15 aria-pressed:font-semibold [font-variant-ligatures:none]";
+  "min-h-10 rounded-lg border border-border/70 px-3 font-mono text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:font-semibold [font-variant-ligatures:none] aria-pressed:border-fig-cyan-text aria-pressed:bg-fig-cyan-text aria-pressed:text-background dark:aria-pressed:border-fig-cyan dark:aria-pressed:bg-fig-cyan-fill dark:aria-pressed:text-foreground";
+/** On the indigo operand stage an unpressed chip is raised neutral glass with a 3:1 edge, and the pressed one is filled in both themes. */
+const STAGE_PRESETS =
+  "[&_button]:border-fig-generic [&_button]:bg-card [&_button[aria-pressed=true]]:border-fig-cyan-text [&_button[aria-pressed=true]]:bg-fig-cyan-text [&_button[aria-pressed=true]]:bg-none [&_button[aria-pressed=true]]:text-background";
+const stageChip = cn(quietBody, bitRim);
 
 const firstSpec = (f: OperatorFamily) => operatorCatalog.filter((s) => s.family === f)[0];
 
@@ -746,6 +824,24 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
   const presets = operatorPresets.filter((p) => p.family === family);
   const activePreset = matchingPreset(spec, inputs);
   const hasRepl = /\bR\b/.test(spec.template);
+  const showsReduction = family === "reduction";
+  const showsEquality = family === "equality";
+  const showsMembership = family === "inside";
+  const showsConcatenation = family === "concat";
+  const showsShift = family === "shift";
+  const showsStream = family === "stream";
+  const showsConditional = family === "conditional";
+  const comparesOperands = showsEquality || showsMembership;
+  const focalOperand = showsEquality ? "b" : "a";
+  const showsOperandStage = showsReduction || showsConcatenation || showsShift || showsStream || showsConditional;
+  const operandStyle = {
+    // ?: : the two branches are the multi-bit values the condition chooses between or merges; the condition is self-determined (dashed, like a shift count).
+    // == and inside: every operand is a 4-bit value, so all take the same indigo plate; the operand the prose has the learner edit is raised with the heavier rim.
+    a: comparesOperands || showsConditional ? "pattern" : showsConcatenation || showsShift ? "value" : undefined,
+    b: comparesOperands || showsConditional ? "pattern" : showsConcatenation ? "value" : undefined,
+    c: comparesOperands ? "pattern" : showsConditional ? "count" : undefined,
+    n: showsShift ? "count" : undefined,
+  } as const;
   // An operand editor is only worth showing while its value can change the answer: code that does not compile has no value to change.
   const showOperands = !spec.fixedAnswer && result.ok;
   // The correct answer's feedback always shows in the reveal, so a rule it already states is not repeated.
@@ -823,9 +919,33 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
       </div>
 
       {showOperands || hasRepl || presets.length > 0 ? (
-        <div className="grid gap-3 rounded-xl border border-border/70 p-3 grid-cols-[repeat(auto-fit,minmax(min(100%,136px),1fr))]">
+        <div
+          data-fig-art={showsOperandStage || comparesOperands ? "" : undefined}
+          data-fig-focus={!verdict && showsOperandStage ? "source-operands" : undefined}
+          className={cn(
+            "grid gap-3 rounded-xl border border-border/70 p-3 grid-cols-[repeat(auto-fit,minmax(min(100%,136px),1fr))]",
+            showsReduction && ["fig-stage !p-3 w-fit max-w-full border-fig-indigo", indigoBody, bitRim],
+            showsStream && ["fig-stage !p-3 border-fig-indigo", indigoBody, bitRim],
+            (comparesOperands || showsConditional) && "fig-stage !px-3 !py-2.5",
+            showsMembership && "max-[479px]:!py-1",
+            showsConditional && "max-[479px]:!py-[5px]",
+            showsShift && "max-[479px]:!p-1.5 max-[479px]:gap-x-2 max-[479px]:[&>[role=group]]:px-1",
+            (showsConcatenation || showsShift) && ["fig-stage !px-3 !py-2.5 border-fig-indigo", indigoBody, bitRim],
+          )}
+        >
           {showOperands
-            ? spec.operands.map((slot) => <BitEditor key={slot} name={slotName(spec, slot)} value={inputs[slot]} onChange={set(slot)} signed={slot === "a" && inputs.signedA} />)
+            ? spec.operands.map((slot) => (
+              <BitEditor
+                key={slot}
+                name={slotName(spec, slot)}
+                value={inputs[slot]}
+                onChange={set(slot)}
+                signed={slot === "a" && inputs.signedA}
+                connected={showsOperandStage || comparesOperands}
+                comparison={operandStyle[slot]}
+                focus={comparesOperands && slot === focalOperand && !verdict}
+              />
+            ))
             : null}
           {hasRepl ? <ReplCountField value={replCount(spec, inputs)} onChange={(r) => setInputs((prev) => ({ ...prev, repl: r }))} /> : null}
           {family === "shift" ? (
@@ -834,15 +954,15 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
               declare <Code>a</Code> as <Code>logic signed</Code>
             </label>
           ) : null}
-          {family === "stream" ? (
-            <div role="group" aria-label="Stream presets" className="col-span-full flex flex-wrap items-center gap-2">
+          {showsStream ? (
+            <div role="group" aria-label="Stream presets" className={cn("col-span-full flex flex-wrap items-center gap-2", STAGE_PRESETS)}>
               {STREAM_PRESETS.map((p) => (
                 <button
                   key={p}
                   type="button"
                   aria-pressed={inputs.a.join("") === bitsOf(parseLiteral(p).value).join("")}
                   onClick={() => setInputs((prev) => ({ ...prev, a: bitsOf(parseLiteral(p).value) }))}
-                  className={PRESET_BUTTON}
+                  className={cn(PRESET_BUTTON, stageChip)}
                 >
                   a = {p}
                 </button>
@@ -850,7 +970,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
             </div>
           ) : null}
           {presets.length > 0 ? (
-            <div role="group" aria-label="Presets" className="col-span-full flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="Presets" className={cn("col-span-full flex flex-wrap items-center gap-2", showsConcatenation && STAGE_PRESETS)}>
               <span className="text-label text-muted-foreground">Presets</span>
               {presets.map((p) => (
                 <button
@@ -858,7 +978,7 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
                   type="button"
                   aria-pressed={activePreset?.id === p.id}
                   onClick={() => applyPreset(p.id)}
-                  className={PRESET_BUTTON}
+                  className={cn(PRESET_BUTTON, showsConcatenation && stageChip)}
                 >
                   {p.label}
                 </button>
@@ -909,16 +1029,25 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
                 ) : (
                   <>
                     {!spec.targetRhs ? (
-                      <p className="flex flex-wrap items-center gap-2 text-sm">
+                      <p
+                        data-fig-focus={showsConcatenation ? "joined-bits" : showsStream ? "streamed-bits" : showsConditional ? "merged-bits" : undefined}
+                        className={cn(
+                          "flex flex-wrap items-center gap-2 text-sm",
+                          (showsConcatenation || showsStream || showsConditional) && ["fig-stage !p-2 rounded-lg border border-fig-indigo", indigoBody, bitRim],
+                          (showsStream || showsConditional) && "[&_.border-fig-cyan]:border-fig-cyan-text",
+                          // The x hatch is see-through: over the indigo plate its x fell to 4.0:1 in light, so the hatch sits on the card colour.
+                          showsConditional && "[&_.text-fig-rose-text]:bg-card",
+                        )}
+                      >
                         <span className="font-semibold">Result:</span>
                         {result.value.width === 1 ? (
                           <ValueChip name={template} value={bitAt(result.value, 0)} />
                         ) : family === "bitcount" ? (
                           <ValueChip name={template} value={toBigInt(result.value)?.toString() ?? "x"} />
                         ) : (
-                          <Strip value={result.value} label={`${template} result`} />
+                          <Strip value={result.value} label={`${template} result`} onPlate={showsConcatenation || showsStream || showsConditional} />
                         )}
-                        <span className="font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
+                        <span className={cn("font-mono text-xs text-muted-foreground [font-variant-ligatures:none]", (showsConcatenation || showsStream || showsConditional) && "text-foreground")}>
                           {family === "bitcount" && result.value.width === 32
                             ? `int (32 bits, signed) = ${toBigInt(result.value)?.toString() ?? "x"}`
                             : `${formatCompact(reinterpret(result.value, false))} · ${result.value.width} bit${result.value.width === 1 ? "" : "s"}, ${result.signed ? "signed" : "unsigned"}`}
@@ -928,12 +1057,12 @@ export default function OperatorExplorer({ family: initialFamily, initialPreset,
                     {family === "bitwise" ? <BitwiseDetail spec={spec} a={a} b={b} /> : null}
                     {family === "reduction" ? <ReductionDetail spec={spec} a={a} /> : null}
                     {family === "logical" ? <LogicalDetail spec={spec} a={a} b={b} /> : null}
-                    {family === "equality" ? <EqualityDetail a={a} b={b} /> : null}
+                    {family === "equality" ? <EqualityDetail spec={spec} a={a} b={b} /> : null}
                     {family === "inside" ? <InsideDetail a={a} b={b} c={c} /> : null}
                     {family === "conditional" ? <MergeDetail spec={spec} c={c} a={a} b={spec.id === "cond-z" ? fromBits(Array<Bit4>(a.width).fill("z")) : b} /> : null}
                     {family === "shift" ? <ShiftDetail spec={spec} a={a} n={n} result={result.value} /> : null}
                     {family === "bitcount" ? <BitcountDetail spec={spec} state={fromBits(inputs.a)} /> : null}
-                    {family === "stream" ? <StreamDetail spec={spec} a={a} /> : null}
+                    {showsStream ? <StreamDetail spec={spec} a={a} /> : null}
                     {family === "concat" && spec.targetRhs ? <ConcatTargetDetail spec={spec} inputs={inputs} /> : null}
                     {family === "concat" && spec.id === "sign-extend" ? <SignExtendDetail spec={spec} inputs={inputs} result={result.value} /> : null}
                     {family === "concat" && !spec.targetRhs && spec.id !== "sign-extend" ? (

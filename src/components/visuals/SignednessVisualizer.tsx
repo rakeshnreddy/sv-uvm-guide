@@ -114,6 +114,32 @@ function ValueStrip({ value, label, extendedFrom, signBit, droppedFrom, highligh
 }
 
 const SHIFT_OPS = new Set(["<<", ">>", "<<<", ">>>"]);
+const studyBody = "bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))]";
+const studyRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+/** The lit cyan body: the shift step being studied (cyan is active, not a value role). */
+const cyanBody = "bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))]";
+/**
+ * The raised ACT plate in the sky (info) hue, which visual-language.md gives Actual: pale in light mode and deep in dark mode, the top
+ * the lighter end in both, so the foreground text holds 4.5:1 and the info outline 3:1 on it. The outline is named as the figure
+ * colour `--fig-actual` (set to `--info` on the plate), so the figure gates measure it as the focal outline.
+ */
+const actualBody =
+  "bg-[linear-gradient(180deg,hsl(var(--info)/0.1),hsl(var(--info)/0.23))] dark:bg-[linear-gradient(180deg,hsl(var(--info)/0.34),hsl(var(--info)/0.14))]";
+const fillRoseBody = "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))]";
+const expectedBody = "bg-[linear-gradient(180deg,hsl(var(--fig-teal-body)/var(--fig-obj-top)),hsl(var(--fig-teal-body)/var(--fig-obj-bottom)))]";
+const stagedScenarios = new Set(["shift-fill", "signed-compare", "part-select", "ashr-unsigned-context", "x-arith"]);
+/** Presets whose reveal also draws the expected value, the verdict and the fill bit of a shift as figure parts. */
+const intentStudies = new Set(["signed-compare", "ashr-unsigned-context"]);
+const fillStudies = new Set(["ashr-unsigned-context"]);
+/** Presets about how far an x reaches: a result whose every bit is x (or z) is drawn as a lit rose part (X); one with known bits stays the sky ACT plate. */
+const unknownStudies = new Set(["x-arith"]);
+/** Presets whose stage rims were drawn 2 px tall (round 1); their 4 px rim takes one px more from the top padding (see `stageRim`). */
+const heavyRimStudies = new Set(["ashr-unsigned-context", "x-arith"]);
+/** Staged presets: a 4 px ramp rim, its extra height taken from the top padding (p-3), so every card keeps its released height. */
+const stageRim = (id: string) =>
+  !stagedScenarios.has(id) ? undefined : heavyRimStudies.has(id) ? "border-t-4 pt-[10px]" : "border-t-4 pt-[9px]";
+const allUnknown = (v: SvValue) => bitsOf(v).every((b) => b === "x" || b === "z");
+const unknownChip = cn("rounded-md border border-fig-rose px-1.5 py-0.5 font-medium text-foreground", fillRoseBody, studyRim);
 
 /** For a shift step, the bit numbers the shift filled in (vacated positions). */
 function filledBits(step: ExprStep & { kind: "op" }): number[] {
@@ -173,10 +199,14 @@ function NumberField({ label, value, min, max, onCommit }: { label: string; valu
 const evaluationRims = ["border-t-fig-ramp-1", "border-t-fig-ramp-2", "border-t-fig-ramp-3", "border-t-fig-ramp-4", "border-t-fig-ramp-5"];
 
 /** `badge` marks a step that decides the result (`stepBadges`): the trap in a trap variant, the cure or the point in any other. */
-function StepCard({ index, title, why, clause, badge, children }: { index: number; title: React.ReactNode; why: string; clause: string; badge?: StepBadge | null; children?: React.ReactNode }) {
+/**
+ * `rim` is the staged presets' ramp rim (`stageRim`): 4 px tall, so the stage order still reads (and measures) wherever a card
+ * lands on the pixel grid; the 3 px it adds (2 px for the formerly 2 px `heavyRim` studies) come out of the top padding, so the card keeps its height.
+ */
+function StepCard({ index, title, why, clause, badge, rim, children }: { index: number; title: React.ReactNode; why: string; clause: string; badge?: StepBadge | null; rim?: string; children?: React.ReactNode }) {
   const trap = badge === "trap";
   return (
-    <li className={cn("rounded-xl border p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", !badge ? "border-fig-generic" : trap ? "border-fig-rose" : "border-fig-cyan", evaluationRims[Math.min(index, evaluationRims.length) - 1])}>
+    <li className={cn("rounded-xl border p-3 bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))] shadow-[inset_0_1px_hsl(var(--fig-obj-highlight))]", !badge ? "border-fig-generic" : trap ? "border-fig-rose" : "border-fig-cyan", evaluationRims[Math.min(index, evaluationRims.length) - 1], rim)}>
       <div className="flex flex-wrap items-baseline gap-2">
         <span className="text-label text-muted-foreground">Step {index}</span>
         <span className="text-sm font-semibold text-foreground">{title}</span>
@@ -217,10 +247,11 @@ function Prose({ text }: { text: string }) {
 /** PredictionPrompt feedback is plain text: drop the backtick markers. */
 const plain = (text: string) => text.replace(/`/g, "");
 
-function OperandsStep({ operands }: { operands: OperandInfo[] }) {
+function OperandsStep({ operands, rim }: { operands: OperandInfo[]; rim?: string }) {
   return (
     <StepCard
       index={1}
+      rim={rim}
       title="Operand sizes and types"
       why="Each operand's width and sign come from its declaration or literal. Operands marked self-determined keep their own size; the others will be resized to the context."
       clause="§11.6.1, §11.8.1"
@@ -242,7 +273,14 @@ function OperandsStep({ operands }: { operands: OperandInfo[] }) {
   );
 }
 
-function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badge: StepBadge | null }) {
+/** The fill note of a `>>>` step as a lit chip: rose where the 0 fill is the trap, cyan where the sign bit is copied. */
+function fillChip(step: ExprStep & { kind: "op" }, badge: StepBadge | null): string {
+  if (badge === "trap") return cn("rounded-md border border-fig-rose px-2 py-1 font-medium text-foreground", fillRoseBody, studyRim);
+  if (step.op === ">>>") return cn("rounded-md border border-fig-cyan px-2 py-1 font-medium text-foreground", cyanBody, studyRim);
+  return "";
+}
+
+function TraceStep({ step, index, badge, fillStudy = false, rim, unknownStudy = false }: { step: ExprStep; index: number; badge: StepBadge | null; fillStudy?: boolean; rim?: string; unknownStudy?: boolean }) {
   switch (step.kind) {
     case "context":
       return (
@@ -257,6 +295,7 @@ function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badg
           why={step.why}
           clause={step.clause}
           badge={badge}
+          rim={rim}
         />
       );
     case "extend":
@@ -272,6 +311,7 @@ function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badg
           why={step.why}
           clause={step.clause}
           badge={badge}
+          rim={rim}
         >
           <div className="flex flex-wrap items-center gap-2">
             <ValueStrip value={step.from} label={`${step.text} before`} signBit={step.from.signed ? step.from.width - 1 : undefined} />
@@ -301,6 +341,7 @@ function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badg
           why={step.why}
           clause={step.clause}
           badge={badge}
+          rim={rim}
         >
           <div className="flex flex-wrap items-center gap-2">
             {narrowed ? (
@@ -312,9 +353,9 @@ function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badg
               </>
             ) : null}
             <ValueStrip value={step.result} label={`${step.text} result`} highlight={filled.length ? filled : undefined} highlightLabel="filled by the shift" />
-            <span className="font-mono text-xs [font-variant-ligatures:none]">= {formatDecimal(step.result)}</span>
+            <span data-fig-unknown={unknownStudy && allUnknown(step.result) ? "" : undefined} className={cn("font-mono text-xs [font-variant-ligatures:none]", unknownStudy && allUnknown(step.result) && unknownChip)}>= {formatDecimal(step.result)}</span>
             {filled.length ? (
-              <span className="text-xs text-muted-foreground">
+              <span data-fig-fill={fillStudy ? "" : undefined} className={cn("text-xs text-muted-foreground", fillStudy && fillChip(step, badge))}>
                 fill bit{filled.length === 1 ? "" : "s"} (bar): {filled.map((i) => `bit ${i} = ${bitsOf(step.result)[step.result.width - 1 - i]}`).join(", ")}
                 {step.op === ">>>" ? (step.result.signed ? ", a copy of the sign bit because the expression is signed" : ", a 0 because the expression is unsigned") : ""}
               </span>
@@ -335,6 +376,7 @@ function TraceStep({ step, index, badge }: { step: ExprStep; index: number; badg
           why={step.why}
           clause={step.clause}
           badge={badge}
+          rim={rim}
         >
           <div className="flex flex-wrap items-center gap-2">
             <ValueStrip value={step.from} label="value before storing" droppedFrom={step.dropped > 0 ? step.to.width : undefined} />
@@ -424,6 +466,12 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
   const hasNarrowCast = result.ok && result.steps.some(isNarrowingCast);
   const matchesIntent = result.ok && intent !== null && toBigInt(result.final) === intent;
   const badges = result.ok ? stepBadges(variant, result.steps, matchesIntent) : [];
+  const compareStudy = intentStudies.has(scenario.id);
+  const fillStudy = fillStudies.has(scenario.id);
+  const styledStudy = stagedScenarios.has(scenario.id);
+  const rim = stageRim(scenario.id);
+  const unknownStudy = unknownStudies.has(scenario.id);
+  const unknownResult = unknownStudy && result.ok && allUnknown(result.final);
   const promptRef = useRef<HTMLDivElement>(null);
   const [verdict, setVerdict] = useState("");
 
@@ -469,9 +517,25 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
       <p className="text-sm text-muted-foreground">{scenario.summary}</p>
 
       {scenario.variants.length > 1 ? (
-        <div className="space-y-1">
+        // The staged rail's border and inner padding (2 + 8 px) are taken back from the label gap (2 px) and the gap below the rail
+        // (16 to 8 px), so the lab keeps its reserved height and nothing under it moves.
+        <div
+          data-fig-art={styledStudy ? "" : undefined}
+          data-fig-focus={styledStudy && !verdict ? "code-variants" : undefined}
+          className={cn(
+            "space-y-1",
+            styledStudy && ["fig-stage !px-2 !py-1 !mb-[-8px] space-y-0.5 w-full rounded-lg border border-fig-generic", studyBody, studyRim],
+          )}
+        >
           <p className="text-label text-muted-foreground">Code variant</p>
-          <SegmentedControl label="Code variant" options={scenario.variants.map((v) => ({ value: v.id, label: v.label }))} value={variant.id} onChange={setVariantId} mono />
+          <SegmentedControl
+            label="Code variant"
+            options={scenario.variants.map((v) => ({ value: v.id, label: v.label }))}
+            value={variant.id}
+            onChange={setVariantId}
+            className={styledStudy ? "[&_button]:rounded-md [&_button[aria-checked=true]]:border-fig-cyan-text [&_button[aria-checked=true]]:bg-fig-cyan-text [&_button[aria-checked=true]]:text-background" : undefined}
+            mono
+          />
         </div>
       ) : null}
 
@@ -536,20 +600,31 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
               {({ committed }) => (
                 <div className="space-y-4">
                   <RevealAnnouncer prompt={promptRef} text={predictionVerdict(options, committed)} onAnnounce={setVerdict} />
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className={cn("rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]", comparisonStyles.actual.className)}>
+                  <div className={cn("flex flex-wrap items-center gap-2 text-sm", styledStudy && "fig-stage !p-0")}>
+                    <span
+                      data-fig-focus={styledStudy ? "stored-result" : undefined}
+                      className={cn(
+                        "rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]",
+                        comparisonStyles.actual.className,
+                        styledStudy && (unknownResult ? ["border-fig-rose bg-card text-foreground", fillRoseBody, studyRim] : ["[--fig-actual:var(--info)] border-[hsl(var(--fig-actual))] bg-card text-foreground", actualBody, studyRim]),
+                      )}
+                    >
                       {comparisonStyles.actual.tag} {target.name} = {isKnown(result.final) ? formatDecimal(result.final) : formatCompact(reinterpret(result.final, false))}
-                      <span className="ml-2 text-xs opacity-75">{formatCompact(reinterpret(result.final, false))}</span>
+                      <span className={cn("ml-2 text-xs opacity-75", styledStudy && "opacity-100")}>{formatCompact(reinterpret(result.final, false))}</span>
                     </span>
                     {intent !== null && scenario.intent ? (
                       <>
-                        <span className={cn("rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]", comparisonStyles.expected.className)}>
+                        <span className={cn(
+                          "rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]",
+                          comparisonStyles.expected.className,
+                          compareStudy && ["border-dashed border-fig-teal bg-card text-foreground", expectedBody, studyRim],
+                        )}>
                           {comparisonStyles.expected.tag} {target.name} = {intent.toString()}
                         </span>
                         {(() => {
                           const style = matchesIntent ? comparisonStyles.match : comparisonStyles.mismatch;
                           return (
-                            <span className={cn("text-xs font-medium", style.className)}>
+                            <span className={cn("text-xs font-medium", style.className, compareStudy && (matchesIntent ? "text-fig-emerald-text" : "text-fig-rose-text"))}>
                               {style.glyph} {matchesIntent ? "Matches" : "Differs from"} what the author meant ({scenario.intent})
                             </span>
                           );
@@ -562,7 +637,13 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
                     <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                       <span>Without the fix:</span>
                       <Code>{contrast.label}</Code>
-                      <span className={cn("rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]", comparisonStyles.actual.className)}>
+                      <span
+                        className={cn(
+                          "rounded-md border px-2 py-1 font-mono [font-variant-ligatures:none]",
+                          comparisonStyles.actual.className,
+                          fillStudy && "border-fig-rose bg-fig-rose-fill text-foreground",
+                        )}
+                      >
                         {comparisonStyles.actual.tag} {formatTargetValue(contrastResult.target.name, contrastResult.final, labelBits)}
                       </span>
                     </p>
@@ -588,9 +669,9 @@ export default function SignednessVisualizer({ scenario: initialScenario, initia
                   </p>
 
                   <ol className="fig-stage !p-0 space-y-3 rounded-lg bg-[hsl(var(--fig-well))]" aria-label="Evaluation steps">
-                    <OperandsStep operands={result.operands} />
+                    <OperandsStep operands={result.operands} rim={rim} />
                     {result.steps.map((step, i) => (
-                      <TraceStep key={`${step.kind}-${i}`} step={step} index={i + 2} badge={badges[i]} />
+                      <TraceStep key={`${step.kind}-${i}`} step={step} index={i + 2} badge={badges[i]} fillStudy={fillStudy} rim={rim} unknownStudy={unknownStudy} />
                     ))}
                   </ol>
 

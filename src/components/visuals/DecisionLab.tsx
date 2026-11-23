@@ -115,12 +115,22 @@ function BitEditor({ name, bits, onChange }: { name: string; bits: Bit4[]; onCha
 }
 
 const progressText = (progress: TriedProgress) => (progress.complete ? `All ${progress.total} values tried` : `Values tried: ${progress.count} of ${progress.total}`);
+const quietDecisionBody = "bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))]";
+const selectDecisionBody = "bg-[linear-gradient(180deg,hsl(var(--fig-indigo-body)/var(--fig-obj-top)),hsl(var(--fig-indigo-body)/var(--fig-obj-bottom)))]";
+const matchDecisionBody = "bg-[linear-gradient(180deg,hsl(var(--fig-emerald-body)/var(--fig-obj-top)),hsl(var(--fig-emerald-body)/var(--fig-obj-bottom)))]";
+const decisionRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
 
-function QuickValues({ name, options, current, tried, progress, onPick }: { name: string; options: string[]; current: Bit4[]; tried: readonly string[]; progress: TriedProgress | null; onPick: (body: string) => void }) {
+function QuickValues({ name, options, current, tried, progress, onPick, compared }: { name: string; options: string[]; current: Bit4[]; tried: readonly string[]; progress: TriedProgress | null; onPick: (body: string) => void; compared?: boolean }) {
   const now = bitsToString(current);
   return (
-    <div className="space-y-1.5">
-      <div role="group" aria-label={`Values of ${name} to try`} className="flex flex-wrap gap-1.5">
+    <div className={cn("space-y-1.5", compared && "fig-stage !p-0")}>
+      <div
+        role="group"
+        aria-label={`Values of ${name} to try`}
+        data-fig-art={compared ? "" : undefined}
+        data-fig-focus={compared ? "shared-select" : undefined}
+        className={cn("flex flex-wrap gap-1.5", compared && ["-mx-px w-full box-content rounded-xl border border-fig-indigo", selectDecisionBody, decisionRim])}
+      >
         {options.map((body) => {
           const literal = `${body.length}'b${body}`;
           const active = body === now;
@@ -134,6 +144,7 @@ function QuickValues({ name, options, current, tried, progress, onPick }: { name
               className={cn(
                 "min-h-10 rounded-full border px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
                 active ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
+                compared && (active ? "rounded-md border-fig-cyan-text bg-fig-cyan-text text-background" : "rounded-md border-transparent bg-transparent text-foreground"),
               )}
             >
               {name} = {literal}
@@ -255,11 +266,20 @@ const correctFeedback = (options: readonly PredictionOption[]) => options.find((
 const addTried = (prev: Readonly<Record<string, string[]>>, group: string, body: string): Record<string, string[]> =>
   prev[group]?.includes(body) ? prev : { ...prev, [group]: [...(prev[group] ?? []), body] };
 
+const unknownChip = "border-fig-rose bg-card text-fig-rose-text bg-[repeating-linear-gradient(135deg,hsl(var(--fig-rose)/0.12)_0_4px,transparent_4px_8px)]";
 const chipStyle: Record<BitChip["verdict"], string> = {
-  "1": "border-emerald-500/70 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
-  "0": "border-rose-500/70 bg-rose-500/10 text-rose-800 dark:text-rose-200",
-  x: valueStyles.unknown.className,
-  skip: "border-dashed border-slate-400/80 text-slate-600 dark:text-slate-300",
+  // A verdict is the outcome, so it has a body in its hue (match emerald, mismatch rose); the input chips above it stay outlined values.
+  "1": "border-fig-emerald bg-card bg-[linear-gradient(hsl(var(--fig-emerald-fill)),hsl(var(--fig-emerald-fill)))] text-fig-emerald-text",
+  "0": "border-fig-rose bg-card bg-[linear-gradient(hsl(var(--fig-rose-fill)),hsl(var(--fig-rose-fill)))] text-fig-rose-text",
+  x: unknownChip,
+  skip: "border-dashed border-fig-generic text-foreground",
+};
+
+const inputChip: Record<Bit4, string> = {
+  "0": "border-fig-slate-text bg-card text-foreground",
+  "1": "border-fig-cyan-text bg-card text-foreground",
+  x: unknownChip,
+  z: "border-dashed border-fig-amber-text bg-card text-foreground",
 };
 
 const chipWord: Record<BitChip["verdict"], string> = { "1": "match", "0": "mismatch", x: "unknown, no match", skip: "skipped, a do-not-care" };
@@ -296,7 +316,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
             </th>
             {chips.map((c) => (
               <td key={c.index} className="p-0.5">
-                <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded border", valueStyles[classifyValue(c.left)].className)}>{c.left}</span>
+                <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded border", inputChip[c.left])}>{c.left}</span>
               </td>
             ))}
           </tr>
@@ -306,7 +326,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
             </th>
             {chips.map((c) => (
               <td key={c.index} className="p-0.5">
-                <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded border", valueStyles[classifyValue(c.right)].className)}>{c.right}</span>
+                <span className={cn("inline-flex h-6 w-6 items-center justify-center rounded border", inputChip[c.right])}>{c.right}</span>
               </td>
             ))}
           </tr>
@@ -319,7 +339,7 @@ function ChipTable({ chips, caption, leftName, rightName, verdictName }: { chips
                 <span className={cn("relative inline-flex h-6 w-6 items-center justify-center rounded border font-semibold", chipStyle[c.verdict])}>
                   <span aria-hidden>{c.verdict === "skip" ? "–" : c.verdict}</span>
                   {c.wildcard ? (
-                    <span aria-hidden className="absolute -right-1 -top-1 text-[9px] text-emerald-700 dark:text-emerald-300">
+                    <span aria-hidden className="absolute -right-1 -top-1.5 rounded bg-card text-[11px] text-foreground">
                       ?
                     </span>
                   ) : null}
@@ -370,7 +390,7 @@ function ChipScope({ visible, rightName, marks, children }: { visible: boolean; 
 function StatusBadge({ status, config }: { status: ItemVerdict["status"]; config: DecisionConfig }) {
   if (status === "runs")
     return (
-      <strong className={cn("text-xs", comparisonStyles.match.className)}>
+      <strong className="text-xs text-fig-emerald-text">
         <span aria-hidden>{comparisonStyles.match.glyph} </span>matches and runs
       </strong>
     );
@@ -382,7 +402,7 @@ function StatusBadge({ status, config }: { status: ItemVerdict["status"]; config
       </strong>
     );
   return (
-    <span className={cn("text-xs", comparisonStyles.mismatch.className)}>
+    <span className="text-xs text-fig-rose-text">
       <span aria-hidden>{comparisonStyles.mismatch.glyph} </span>no match
     </span>
   );
@@ -390,7 +410,7 @@ function StatusBadge({ status, config }: { status: ItemVerdict["status"]; config
 
 function NoMatchStamp() {
   return (
-    <span className="inline-flex -rotate-2 items-center rounded border-2 border-rose-500/70 px-1.5 py-0.5 text-label text-danger">
+    <span className="inline-flex -rotate-2 items-center rounded border-2 border-fig-rose bg-card px-1.5 py-0.5 text-label text-fig-rose-text">
       x means no match
     </span>
   );
@@ -418,7 +438,7 @@ function TermDetail({ term, why, result, expressionName, showChips }: { term: Te
   );
 }
 
-function ItemCard({ verdict, whys, result, expressionName, showOr, onFoldToggle }: { verdict: ItemVerdict; whys: string[]; result: DecisionResult; expressionName: string; showOr: boolean; onFoldToggle: () => void }) {
+function ItemCard({ verdict, whys, result, expressionName, showOr, onFoldToggle, compared }: { verdict: ItemVerdict; whys: string[]; result: DecisionResult; expressionName: string; showOr: boolean; onFoldToggle: () => void; compared?: boolean }) {
   const { form } = result.config;
   // Chips only where the eye should go: a comparison that matched or gave x. A plain miss folds to one line, and its detail stays one tap away.
   const plainMiss = isPlainMiss(verdict);
@@ -442,6 +462,12 @@ function ItemCard({ verdict, whys, result, expressionName, showOr, onFoldToggle 
       className={cn(
         "space-y-2 rounded-lg border p-2.5",
         verdict.status === "runs" ? "border-emerald-500/60 bg-emerald-500/10" : verdict.status === "matches-not-run" ? "border-amber-500/50 bg-amber-500/[0.06]" : "border-border/60",
+        compared && [
+          "bg-transparent",
+          verdict.status === "runs" ? ["border-fig-emerald", matchDecisionBody] : ["border-fig-generic", quietDecisionBody],
+          verdict.status === "matches-not-run" && "border-dashed",
+          decisionRim,
+        ],
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -475,20 +501,28 @@ function ItemCard({ verdict, whys, result, expressionName, showOr, onFoldToggle 
   );
 }
 
-function ItemList({ result, told, expressionName, showOr = false, onFoldToggle }: { result: DecisionResult; told: readonly string[]; expressionName: string; showOr?: boolean; onFoldToggle: () => void }) {
+function ItemList({ result, told, expressionName, showOr = false, onFoldToggle, compared }: { result: DecisionResult; told: readonly string[]; expressionName: string; showOr?: boolean; onFoldToggle: () => void; compared?: boolean }) {
   const { form, catchAll } = result.config;
   const word = itemWord(form);
   const whys = freshWhys(result, told);
   return (
     <ol aria-label={`${word}s in source order`} className="space-y-2">
       {result.items.map((v) => (
-        <ItemCard key={v.index} verdict={v} whys={whys[v.index]} result={result} expressionName={expressionName} showOr={showOr} onFoldToggle={onFoldToggle} />
+        <ItemCard key={v.index} verdict={v} whys={whys[v.index]} result={result} expressionName={expressionName} showOr={showOr} onFoldToggle={onFoldToggle} compared={compared} />
       ))}
       {catchAll ? (
-        <li className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5 text-sm", result.runs.kind === "catch-all" ? "border-emerald-500/60 bg-emerald-500/10" : "border-border/60")}>
+        <li className={cn(
+          "flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5 text-sm",
+          result.runs.kind === "catch-all" ? "border-fig-emerald bg-fig-emerald-fill" : "border-border/60",
+          compared && [
+            "bg-transparent",
+            result.runs.kind === "catch-all" ? ["border-fig-emerald", matchDecisionBody] : ["border-fig-generic", quietDecisionBody],
+            decisionRim,
+          ],
+        )}>
           <code className="font-mono font-semibold [font-variant-ligatures:none]">{catchAllWord(form)}</code>
           {result.runs.kind === "catch-all" ? (
-            <strong className={cn("text-xs", comparisonStyles.match.className)}>
+            <strong className="text-xs text-fig-emerald-text">
               <span aria-hidden>{comparisonStyles.match.glyph} </span>runs: no {word} matched
             </strong>
           ) : (
@@ -708,6 +742,7 @@ function QualifierLab({ preset }: { preset?: string }) {
   return (
     <VisualFrame
       label="Decision lab: which item runs and what is reported"
+      testId="decision-lab-qualifiers"
       eyebrow="Predict, then experiment"
       title="Which item runs, and what does the qualifier report?"
       summary={<>Pick a value, then predict two things before the reveal: which {word} runs, and what is reported. Every answer is computed from the statement shown.</>}
@@ -850,7 +885,7 @@ function CompareColumn({ title, result, told, expressionName, showOr, onFoldTogg
   const unknownSelect = hasUnknown(result.config.select);
   const form = result.config.form;
   return (
-    <section aria-label={`${title} column`} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
+    <section aria-label={`${title} column`} className={cn("fig-stage !p-3 min-w-0 space-y-3 rounded-xl border border-fig-generic [&_.text-muted-foreground]:text-foreground", quietDecisionBody, decisionRim)}>
       <header>
         <h4 className="font-mono text-sm font-semibold text-foreground [font-variant-ligatures:none]">{title}</h4>
       </header>
@@ -859,7 +894,7 @@ function CompareColumn({ title, result, told, expressionName, showOr, onFoldTogg
         {result.ranLine}
       </p>
       <Caveats result={result} />
-      <ItemList result={result} told={told} expressionName={expressionName} showOr={showOr} onFoldToggle={onFoldToggle} />
+      <ItemList result={result} told={told} expressionName={expressionName} showOr={showOr} onFoldToggle={onFoldToggle} compared />
       {form !== "case-inside" && hidesUnknownSelect(result) ? (
         <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
           <span aria-hidden>⚠ </span>Looks clean: {form === "casez" ? "a z in the select" : "an unknown select"} ran a real branch, because {form} skips {form === "casez" ? "z" : "x and z"} bits in the case expression too
@@ -940,6 +975,7 @@ function CompareLab({ preset }: { preset?: string }) {
   return (
     <VisualFrame
       label={`Decision lab: ${leftKind} versus case inside`}
+      testId="decision-lab-compare"
       eyebrow="Compare, then predict"
       title={
         <>
@@ -949,13 +985,14 @@ function CompareLab({ preset }: { preset?: string }) {
       summary={set.summary}
       fidelity="model"
       assumptions={DECISION_ASSUMPTIONS}
+      className="fig-panel"
     >
       <div className="space-y-3">
         <div className="space-y-1">
           <p className="text-label text-muted-foreground">Item set</p>
           <SegmentedControl label="Item set" value={set.id} onChange={chooseSet} options={COMPARE_SETS.map((s) => ({ value: s.id, label: s.title }))} />
         </div>
-        <QuickValues name={set.selectName} options={set.selectOptions} current={select} tried={tried} progress={progress} onPick={pickValue} />
+        <QuickValues name={set.selectName} options={set.selectOptions} current={select} tried={tried} progress={progress} onPick={pickValue} compared />
         <ControlFold>
           <div className="space-y-1">
             <p className="text-label text-muted-foreground">Left column</p>
@@ -1053,9 +1090,6 @@ export interface DecisionLabProps {
 }
 
 export default function DecisionLab({ mode = "qualifiers", preset }: DecisionLabProps) {
-  return (
-    <div data-testid={mode === "compare" ? "decision-lab-compare" : "decision-lab-qualifiers"}>
-      {mode === "compare" ? <CompareLab preset={preset} /> : <QualifierLab preset={preset} />}
-    </div>
-  );
+  // No wrapper: the lab's frame is the slot's first child (the figure gate reads the panel there); each frame carries its test id.
+  return mode === "compare" ? <CompareLab preset={preset} /> : <QualifierLab preset={preset} />;
 }

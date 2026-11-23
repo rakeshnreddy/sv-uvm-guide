@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { PlaybackControls } from "@/components/visual-system/PlaybackControls";
 import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
@@ -70,30 +70,42 @@ const LEVEL = 72;
 const NODE_W = 76;
 const NODE_H = 42;
 const PAD = 8;
+/** The narrowest spacing (node width plus a 4 px gap) and side margin of the compact layout. */
+const COMPACT_STEP = NODE_W + 4;
+const COMPACT_PAD = 4;
+
+const neutralTreeBody = "bg-[linear-gradient(180deg,hsl(var(--foreground)/var(--fig-quiet-top)),hsl(var(--foreground)/var(--fig-quiet-bottom)))]";
+const cyanTreeBody = "bg-[linear-gradient(180deg,hsl(var(--fig-cyan-body)/var(--fig-obj-top)),hsl(var(--fig-cyan-body)/var(--fig-obj-bottom)))]";
+const indigoTreeBody = "bg-[linear-gradient(180deg,hsl(var(--fig-indigo-body)/var(--fig-obj-top)),hsl(var(--fig-indigo-body)/var(--fig-obj-bottom)))]";
+const roseTreeBody = "bg-[linear-gradient(180deg,hsl(var(--fig-rose-body)/var(--fig-obj-top)),hsl(var(--fig-rose-body)/var(--fig-obj-bottom)))]";
+const predictionBody = "bg-[linear-gradient(180deg,hsl(var(--fig-amber-body)/var(--fig-obj-top)),hsl(var(--fig-amber-body)/var(--fig-obj-bottom)))]";
+const treeRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_3px_7px_-4px_hsl(var(--fig-obj-shadow))]";
+/** The root of a precedence tree: a raised neutral plate (shadow offset 7), never a hue: cyan means 1 or the current step. */
+const rootRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_7px_12px_-5px_hsl(var(--fig-obj-shadow))]";
 
 const bowlTone: Record<BowlKind, { node: string; bowl: string; tag: string; name: string }> = {
   context: {
-    node: "border-cyan-500/70 bg-cyan-500/10",
-    bowl: "border-cyan-500/70 bg-cyan-500/[0.06]",
-    tag: "bg-cyan-500/20 text-cyan-900 dark:text-cyan-100",
+    node: cn("border-fig-indigo bg-card", indigoTreeBody),
+    bowl: cn("border-fig-indigo", indigoTreeBody),
+    tag: "bg-card text-fig-indigo-text",
     name: "context-determined",
   },
   self: {
-    node: "border-violet-500/70 bg-violet-500/10 border-dashed",
-    bowl: "border-violet-500/70 bg-violet-500/[0.06] border-dashed",
-    tag: "bg-violet-500/20 text-violet-900 dark:text-violet-100",
+    node: cn("border-fig-generic bg-card border-dashed", neutralTreeBody),
+    bowl: cn("border-fig-generic border-dashed", neutralTreeBody),
+    tag: "bg-card text-foreground",
     name: "self-determined",
   },
   compare: {
-    node: "border-amber-500/70 bg-amber-500/10 border-dotted",
-    bowl: "border-amber-500/70 bg-amber-500/[0.06] border-dotted",
-    tag: "bg-amber-500/20 text-amber-900 dark:text-amber-100",
+    node: cn("border-fig-generic bg-card border-dotted", neutralTreeBody),
+    bowl: cn("border-fig-generic border-dotted", neutralTreeBody),
+    tag: "bg-card text-foreground",
     name: "comparison operands",
   },
   cast: {
-    node: "border-indigo-500/70 bg-indigo-500/10",
-    bowl: "border-indigo-500/70 bg-indigo-500/[0.06]",
-    tag: "bg-indigo-500/20 text-indigo-900 dark:text-indigo-100",
+    node: cn("border-fig-indigo bg-card border-double", indigoTreeBody),
+    bowl: cn("border-fig-indigo border-double", indigoTreeBody),
+    tag: "bg-card text-fig-indigo-text",
     name: "cast",
   },
 };
@@ -104,7 +116,43 @@ function shortValue(v: SvValue): string {
   return v.width <= 8 ? formatCompact(v) : "has x/z";
 }
 
-const pos = (n: TreeNodeView) => ({ left: PAD + n.x * SLOT + (SLOT - NODE_W) / 2, top: PAD + n.depth * LEVEL });
+/**
+ * A tidier placement for a narrow box: nodes on the same level stay one SLOT apart, but a subtree may slide under a
+ * neighbour that sits on other levels, so a leaf high in the tree no longer takes a column of its own. Same nodes,
+ * same order, same node size; returns each node's x in slots, the leftmost at 0.
+ */
+function compactX(root: TreeNodeView): Map<string, number> {
+  type Placed = { xs: Map<string, number>; contour: { l: number; r: number }[] };
+  const place = (n: TreeNodeView): Placed => {
+    if (n.children.length === 0) return { xs: new Map([[n.id, 0]]), contour: [{ l: 0, r: 0 }] };
+    const xs = new Map<string, number>();
+    const merged: { l: number; r: number }[] = [];
+    const roots: number[] = [];
+    n.children.forEach((c) => {
+      const sub = place(c);
+      let shift = 0;
+      if (roots.length > 0) {
+        shift = -Infinity;
+        sub.contour.forEach((lv, d) => {
+          if (merged[d]) shift = Math.max(shift, merged[d].r + 1 - lv.l);
+        });
+      }
+      sub.xs.forEach((x, id) => xs.set(id, x + shift));
+      sub.contour.forEach((lv, d) => {
+        merged[d] = merged[d] ? { l: Math.min(merged[d].l, lv.l + shift), r: Math.max(merged[d].r, lv.r + shift) } : { l: lv.l + shift, r: lv.r + shift };
+      });
+      roots.push(shift);
+    });
+    const mid = (roots[0] + roots[roots.length - 1]) / 2;
+    xs.forEach((x, id) => xs.set(id, x - mid));
+    xs.set(n.id, 0);
+    return { xs, contour: [{ l: 0, r: 0 }, ...merged.map((lv) => ({ l: lv.l - mid, r: lv.r - mid }))] };
+  };
+  const { xs } = place(root);
+  const min = Math.min(...xs.values());
+  xs.forEach((x, id) => xs.set(id, x - min));
+  return xs;
+}
 
 interface TreeDiagramProps {
   layout: TreeLayout;
@@ -113,12 +161,42 @@ interface TreeDiagramProps {
   shownUpTo?: number;
   bowls?: BowlMap;
   highlight?: string[];
+  /** Nodes whose value lost its carry at the bowl width (drawn in the rose error state). */
+  lost?: string[];
 }
 
-function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [] }: TreeDiagramProps) {
+function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [], lost = [] }: TreeDiagramProps) {
   const outlineId = useId();
   const [selected, setSelected] = useState<string | null>(null);
-  const width = PAD * 2 + layout.slots * SLOT;
+  // On a phone the leaf-per-column layout can be wider than the box (F2.5: the s8 trees at 390 px hid the shift
+  // amount). Measure the box; when the usual layout does not fit, use the compact one, which keeps the node size.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [boxWidth, setBoxWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setBoxWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const wideWidth = PAD * 2 + layout.slots * SLOT;
+  const compact = useMemo(() => {
+    if (boxWidth === null || wideWidth <= boxWidth) return null;
+    const xs = compactX(layout.root);
+    const span = Math.max(...xs.values());
+    // Keep the usual spacing where it fits; else close the gaps between nodes down to 4 px, then the side margin to 4 px.
+    const fit = (pad: number) => (span > 0 ? (boxWidth - pad * 2 - NODE_W) / span : SLOT);
+    const pad = fit(PAD) >= COMPACT_STEP ? PAD : COMPACT_PAD;
+    const step = Math.min(SLOT, Math.max(COMPACT_STEP, fit(pad)));
+    return { xs, pad, step, width: pad * 2 + span * step + NODE_W };
+  }, [boxWidth, wideWidth, layout]);
+  const width = compact ? compact.width : wideWidth;
+  const pos = (n: TreeNodeView) =>
+    compact
+      ? { left: compact.pad + (compact.xs.get(n.id) ?? 0) * compact.step, top: PAD + n.depth * LEVEL }
+      : { left: PAD + n.x * SLOT + (SLOT - NODE_W) / 2, top: PAD + n.depth * LEVEL };
   const height = PAD * 2 + (layout.levels - 1) * LEVEL + NODE_H;
   const bowlById = (id: string): Bowl | undefined => bowls?.bowls.find((b) => b.id === bowls.bowlOf[id]);
   const selectedNode = layout.nodes.find((n) => n.id === selected);
@@ -134,7 +212,7 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
 
   return (
     <div className="space-y-2">
-      <div className="max-w-full overflow-x-auto rounded-xl border border-border/60 bg-background/40" tabIndex={-1}>
+      <div ref={boxRef} className="fig-stage !p-0 max-w-full overflow-x-auto rounded-xl border border-fig-generic bg-[hsl(var(--fig-well))]" tabIndex={-1}>
         <div className="relative" style={{ width, height }}>
           <svg width={width} height={height} role="img" aria-label={label} aria-describedby={outlineId} className="absolute inset-0 text-foreground">
             {edges.map(({ from, to }) => {
@@ -147,9 +225,9 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
                   y1={a.top + NODE_H}
                   x2={b.left + NODE_W / 2}
                   y2={b.top}
-                  stroke="currentColor"
-                  strokeOpacity={to.order <= shownUpTo ? 0.55 : 0.2}
-                  strokeWidth={1.4}
+                  className="stroke-fig-generic"
+                  strokeDasharray={to.order > shownUpTo ? "4 3" : undefined}
+                  strokeWidth={1.8}
                 />
               );
             })}
@@ -167,12 +245,21 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
                 aria-pressed={selected === n.id}
                 aria-label={shown ? nodeSummary(n) : `${n.label}: not evaluated yet`}
                 className={cn(
-                  "absolute flex flex-col items-center justify-center rounded-lg border px-1 font-mono text-xs leading-tight text-foreground transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
+                  "absolute flex flex-col items-center justify-center rounded-lg border px-0.5 font-mono text-xs leading-tight text-foreground transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none [font-variant-ligatures:none]",
                   bowl ? bowlTone[bowl.kind].node : "border-border bg-card",
                   isRoot && "border-2",
+                  lost.includes(n.id) && ["border-2 border-fig-rose bg-card", roseTreeBody, treeRim],
                   !shown && "opacity-40",
-                  highlight.includes(n.id) && "ring-2 ring-cyan-400 ring-offset-1 ring-offset-background",
-                  selected === n.id && "outline outline-2 outline-offset-2 outline-foreground/60",
+                  highlight.includes(n.id) && "ring-2 ring-fig-cyan ring-offset-1 ring-offset-background",
+                  // The neutral selection ring (DESIGN.md section 13). Written as one arbitrary property: cn() dropped the bare
+                  // `outline` style next to focus-visible:outline-none, so the ring never showed.
+                  selected === n.id && "[outline:2px_solid_hsl(var(--foreground))] [outline-offset:2px]",
+                  !bowls && cn(
+                    "border-fig-generic opacity-100",
+                    shown && !isRoot && neutralTreeBody,
+                    !shown && "border-dashed",
+                    isRoot && ["border-foreground/75 bg-card", shown && [neutralTreeBody, rootRim]],
+                  ),
                 )}
                 style={{ left: p.left, top: p.top, width: NODE_W, height: NODE_H }}
               >
@@ -183,7 +270,7 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
                   {shown ? `${n.annotation.width}b · ${shortValue(n.annotation.value)}` : "…"}
                 </span>
                 {bowl ? (
-                  <span aria-hidden className={cn("absolute -right-1 -top-2 rounded px-1 text-[9px] font-bold", bowlTone[bowl.kind].tag)}>
+                  <span aria-hidden className={cn("absolute -right-1 -top-2 rounded px-1 text-[11px] font-bold", bowlTone[bowl.kind].tag)}>
                     {bowl.id}
                   </span>
                 ) : null}
@@ -208,12 +295,21 @@ function TreeDiagram({ layout, label, shownUpTo = Infinity, bowls, highlight = [
   );
 }
 
-function Decls({ decls, label = "Declarations" }: { decls: string[]; label?: string }) {
+function Decls({ decls, label = "Declarations", bowlInputs }: { decls: string[]; label?: string; bowlInputs?: boolean }) {
   if (decls.length === 0) return null;
   return (
-    <div className="rounded-lg bg-code-surface px-3 py-2 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]" aria-label={label} role="group">
+    <div
+      data-fig-art={bowlInputs ? "" : undefined}
+      data-fig-focus={bowlInputs ? "width-declarations" : undefined}
+      className={cn(
+        "rounded-lg bg-code-surface px-3 py-2 font-mono text-[12px] leading-5 text-code-foreground [font-variant-ligatures:none]",
+        bowlInputs && ["fig-stage !px-3 !py-[7px] border border-fig-indigo bg-card text-foreground", indigoTreeBody, treeRim],
+      )}
+      aria-label={label}
+      role="group"
+    >
       {decls.map((d) => (
-        <div key={d} className="break-words">
+        <div key={d} className={cn("break-words", bowlInputs && ["rounded-sm border-l-2 border-fig-generic pl-2", neutralTreeBody])}>
           {d}
         </div>
       ))}
@@ -251,6 +347,7 @@ function PrecedenceView({ initial }: { initial?: string }) {
       summary="Predict how Table 11-2 groups an expression written without parentheses, then watch the parse tree build bottom-up."
       fidelity="model"
       assumptions={EXPRESSION_TREE_ASSUMPTIONS}
+      className="fig-panel"
     >
       <SegmentedControl
         label="Expression"
@@ -330,9 +427,9 @@ function PrecedenceRound({ preset }: { preset: PrecedencePreset }) {
       {!canChooseGrouping ? <p className="text-xs text-muted-foreground">{GROUPING_UNAVAILABLE}</p> : null}
       {method === "tap" || !canChooseGrouping ? (
         <div className="space-y-3">
-          <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
+          <div className="fig-stage !px-4 !py-3 rounded-xl border border-fig-generic">
             <p className="mb-3 text-sm font-semibold text-foreground" id={`q-${preset.id}`}>
-              <span className="mr-2 rounded bg-warning-subtle px-1.5 py-0.5 text-label text-warning">Predict</span>
+              <span className="mr-2 rounded bg-fig-amber-fill px-1.5 py-0.5 text-label text-fig-amber-text">Predict</span>
               Tap the operator the parser applies last: the root of the tree.
             </p>
             <SourceWithOperators
@@ -406,10 +503,11 @@ function SourceWithOperators({
         disabled={disabled}
         onClick={() => onTap(t.nodeId)}
         aria-label={`Predict: ${t.symbol === "?" || t.symbol === ":" ? "?:" : t.symbol} (operator ${i + 1}) is applied last`}
+        data-fig-state={disabled ? (isRoot ? "correct" : tapped === t.nodeId ? "wrong" : undefined) : undefined}
         className={cn(
-          "mx-0.5 inline-flex min-h-9 min-w-9 items-center justify-center rounded-md border border-amber-500/60 bg-amber-500/10 px-1.5 font-mono font-semibold text-foreground hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
-          disabled && isRoot && "border-emerald-500 bg-emerald-500/15",
-          disabled && tapped === t.nodeId && !isRoot && "border-rose-500 bg-rose-500/15",
+          "mx-0.5 inline-flex min-h-9 min-w-9 items-center justify-center rounded-md border border-fig-generic px-1.5 font-mono font-semibold text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
+          disabled && isRoot && "border-fig-emerald bg-fig-emerald-fill",
+          disabled && tapped === t.nodeId && !isRoot && "border-fig-rose bg-fig-rose-fill",
         )}
       >
         {t.symbol}
@@ -418,7 +516,19 @@ function SourceWithOperators({
     cursor = t.end + offset;
   });
   if (cursor < source.length) parts.push(<span key="tail">{source.slice(cursor)}</span>);
-  return <div className="flex flex-wrap items-center gap-y-1 font-mono text-base text-foreground [font-variant-ligatures:none]">{parts}</div>;
+  return (
+    <div
+      data-fig-art=""
+      data-fig-focus="prediction-expression"
+      className={cn(
+        "flex flex-wrap items-center gap-y-1 rounded-lg border-2 border-fig-amber px-1 py-0.5 font-mono text-base text-foreground [font-variant-ligatures:none]",
+        predictionBody,
+        treeRim,
+      )}
+    >
+      {parts}
+    </div>
+  );
 }
 
 function PrecedenceReveal({ analysis }: { analysis: PrecedenceAnalysis }) {
@@ -505,6 +615,7 @@ function WidthView({ initial }: { initial?: string }) {
       summary="One context-determined region, joined to the target, shares one width. Self-determined operands and comparison operands get bowls of their own."
       fidelity="model"
       assumptions={EXPRESSION_TREE_ASSUMPTIONS}
+      className="fig-panel"
     >
       <SegmentedControl
         label="Statement"
@@ -522,7 +633,7 @@ function WidthRound({ analysis, onContrast }: { analysis: WidthAnalysis; onContr
   const focus = analysis.preset.focus;
   return (
     <div className="space-y-4">
-      <Decls decls={analysis.declarations} />
+      <Decls decls={analysis.declarations} bowlInputs />
       <pre className="overflow-x-auto rounded-lg bg-code-surface px-3 py-2 font-mono text-sm text-code-foreground [font-variant-ligatures:none]">{analysis.statement}</pre>
       <PredictionPrompt
         question={<>How wide is the bowl in which <code className="font-mono">{focus}</code> is added?</>}
@@ -542,24 +653,34 @@ function WidthRound({ analysis, onContrast }: { analysis: WidthAnalysis; onContr
 function BowlView({ bowl, map, focusBowl }: { bowl: Bowl; map: BowlMap; focusBowl: string }) {
   const tone = bowlTone[bowl.kind];
   const kids = bowl.children.map((id) => map.bowls.find((b) => b.id === id)!).filter(Boolean);
+  // The operand that sets the bowl's width: as wide as the bowl while another part of it is narrower.
+  const widths = [...bowl.members.map((m) => m.width), ...(bowl.target ? [bowl.target.width] : [])];
+  const setsWidth = (w: number) => w === bowl.width && widths.some((x) => x < bowl.width);
   return (
     <li
-      className={cn("min-w-0 list-none rounded-b-[1.75rem] border-x-2 border-b-2 border-t-4 px-3 pb-4 pt-2", tone.bowl, bowl.id === focusBowl && "ring-2 ring-cyan-400/70")}
+      className={cn("min-w-0 list-none rounded-b-[1.75rem] border-x-2 border-b-2 border-t-4 px-3 pb-4 pt-2", tone.bowl, treeRim, bowl.id === focusBowl && "ring-2 ring-inset ring-fig-cyan")}
       aria-label={`Bowl ${bowl.id}: ${bowl.width} bits, ${tone.name}${bowl.reason ? `, ${bowl.reason}` : ""}`}
     >
       <p className="text-xs font-semibold text-foreground">
         <span className={cn("mr-1.5 rounded px-1 text-xs font-bold", tone.tag)}>{bowl.id}</span>
         {bowl.width}-bit bowl · {tone.name}
       </p>
-      {bowl.reason ? <p className="text-xs text-muted-foreground">{bowl.reason}</p> : null}
+      {bowl.reason ? <p className="text-xs text-foreground">{bowl.reason}</p> : null}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {bowl.members.map((m) => (
-          <span key={m.text} className="rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]">
+          <span
+            key={m.text}
+            data-fig-sets-width={setsWidth(m.width) ? "" : undefined}
+            className={cn(
+              "rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-xs [font-variant-ligatures:none]",
+              setsWidth(m.width) && ["border-2 border-foreground/70 bg-card px-[5px] py-px font-semibold", neutralTreeBody, treeRim],
+            )}
+          >
             {m.text} <span className="text-muted-foreground">({m.width})</span>
           </span>
         ))}
         {bowl.target ? (
-          <span className="rounded-md border-2 border-cyan-600/70 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold [font-variant-ligatures:none]">
+          <span className={cn("rounded-md border-2 border-fig-cyan bg-card px-1.5 py-0.5 font-mono text-xs font-semibold [font-variant-ligatures:none]", cyanTreeBody)}>
             target {bowl.target.text} <span className="text-muted-foreground">({bowl.target.width})</span>
           </span>
         ) : null}
@@ -583,17 +704,18 @@ function WidthReveal({ analysis, onContrast }: { analysis: WidthAnalysis; onCont
   const focusOpIndex = steps.findIndex((s) => s.kind === "op" && s.text === analysis.preset.focus);
   const highlight = analysis.layout.nodes.filter((n) => n.text === step.text).map((n) => n.id);
   const root = analysis.bowls.bowls[0];
+  const lost = !analysis.carryKept && focusOpIndex >= 0 && index >= focusOpIndex ? [analysis.focusNode.id] : [];
   const contrast = analysis.preset.contrast ? widthPresets.find((p) => p.id === analysis.preset.contrast) : undefined;
 
   return (
     <div className="space-y-4">
       <div>
         <h4 className="mb-2 text-sm font-semibold text-foreground">The bowls</h4>
-        <ul aria-label="Bowls of the expression">
+        <ul className="fig-stage !p-0" aria-label="Bowls of the expression">
           <BowlView bowl={root} map={analysis.bowls} focusBowl={analysis.focusBowl.id} />
         </ul>
       </div>
-      <TreeDiagram layout={analysis.layout} label={`Tree of ${analysis.statement} with each node tagged by its bowl`} bowls={analysis.bowls} highlight={highlight} />
+      <TreeDiagram layout={analysis.layout} label={`Tree of ${analysis.statement} with each node tagged by its bowl`} bowls={analysis.bowls} highlight={highlight} lost={lost} />
       <PlaybackControls playback={playback} stepCount={steps.length} stepNoun="Step" describeStep={(i) => stepLabel(steps[Math.min(i, steps.length - 1)])} />
       <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm" aria-live="polite">
         <p className="font-semibold text-foreground">
@@ -604,7 +726,7 @@ function WidthReveal({ analysis, onContrast }: { analysis: WidthAnalysis; onCont
         </p>
       </div>
       {focusOpIndex >= 0 && index >= focusOpIndex ? (
-        <p className={cn("text-sm font-semibold", analysis.carryKept ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+        <p className={cn("text-sm font-semibold", analysis.carryKept ? "text-fig-emerald-text" : "text-fig-rose-text")}>
           <span aria-hidden>{analysis.carryKept ? "✓ " : "✕ "}</span>
           {analysis.carryText}
         </p>

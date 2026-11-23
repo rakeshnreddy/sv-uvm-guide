@@ -15,8 +15,6 @@ import {
   CAST_PRESETS,
   CAST_SOURCE_IDS,
   CAST_SOURCE_LABELS,
-  FILL_ORIGIN,
-  NONEXISTENT_ORIGIN,
   REC24_X_NOTE,
   STREAM_ASSUMPTIONS,
   STREAM_OPS,
@@ -60,9 +58,14 @@ const mono = "font-mono [font-variant-ligatures:none]";
 const panel = "rounded-xl border border-border bg-card p-3";
 /** The shared primitives size some buttons below 40 px (text links, min-h-9 segments): size them for touch from here. */
 const touchButtons = "[@media(pointer:coarse)]:[&_button]:min-h-10";
-const frameClass = "[@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
+const frameClass = "fig-panel [@media(pointer:coarse)]:[&_summary]:min-h-10 [@media(pointer:coarse)]:[&_summary]:py-3";
 const checkLabelClass = "flex items-center gap-2 text-xs text-foreground [@media(pointer:coarse)]:min-h-10";
 const eyebrowClass = "text-label text-muted-foreground";
+const indigoBody = "bg-[linear-gradient(180deg,hsl(var(--fig-indigo-body)/var(--fig-obj-top)),hsl(var(--fig-indigo-body)/var(--fig-obj-bottom)))]";
+const raisedRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_2px_4px_hsl(var(--fig-obj-shadow))]";
+/** The focal plate: the indigo body raised higher than a part at rest (shadow offset 7 instead of 3, DESIGN.md section 14). */
+const focalRim = "shadow-[inset_0_1px_hsl(var(--fig-obj-highlight)),0_7px_14px_-4px_hsl(var(--fig-obj-shadow))]";
+const checkedChoice = "[&_button[aria-checked=true]]:border-fig-cyan-text [&_button[aria-checked=true]]:bg-fig-cyan-text [&_button[aria-checked=true]]:text-background";
 
 const toPredictionOptions = (options: LabOption[], seed: string): PredictionOption[] =>
   arrangeOptions(options, seed).map((o) => ({ id: o.id, label: <span className={cn(mono, "break-words text-xs")}>{o.label}</span>, correct: o.correct, feedback: o.feedback }));
@@ -149,23 +152,27 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function CodeBlock({ lines, label }: { lines: string[]; label: string }) {
-  return (
-    <pre aria-label={label} className={cn("whitespace-pre-wrap break-words rounded-lg bg-code-surface p-3 text-[12px] leading-5 text-code-foreground", mono)} data-testid="lab-code">
-      <code>{lines.join("\n")}</code>
+/** `focal` false keeps the statement's look but hands the one focal declaration to a part drawn after the reveal. */
+function CodeBlock({ lines, label, staged = false, focal = true }: { lines: string[]; label: string; staged?: boolean; focal?: boolean }) {
+  const code = (
+    <pre aria-label={label} className={cn("whitespace-pre-wrap break-words rounded-lg p-3 text-[12px] leading-5", mono, staged ? "bg-card text-foreground" : "bg-code-surface text-code-foreground")} data-testid="lab-code">
+      <code>{staged ? (
+        <>
+          {lines.slice(0, -1).join("\n")}{"\n"}
+          <span data-fig-focus={focal ? "statement" : "false"} className={cn("-mx-1.5 block rounded-md border border-fig-indigo px-1.5 leading-[18px]", indigoBody, raisedRim)}>
+            {lines.at(-1)}
+          </span>
+        </>
+      ) : lines.join("\n")}</code>
     </pre>
   );
+  return staged ? <div className="fig-stage !p-0" data-fig-art="statement">{code}</div> : code;
 }
 
-// Tones: one per hdr field, so a field keeps its colour wherever the stream moves it.
-const FIELD_TONES: Record<string, BitTone> = { len: "cyan", addr: "violet", kind: "amber", a: "cyan", b: "violet", lit: "sky", [FILL_ORIGIN]: "slate", [NONEXISTENT_ORIGIN]: "slate" };
-
-function toneFor(origin: string): BitTone {
-  const known = FIELD_TONES[origin];
-  if (known) return known;
-  const index = /\[(\d+)\]/.exec(origin);
-  return index && Number(index[1]) % 2 === 1 ? "sky" : "emerald";
-}
+// One neutral tone for every segment. Fields, queue entries and fills are told
+// apart by their labels and brackets, never by a protected hue (cyan is logic 1
+// in the same strip, violet design, amber Z or testbench).
+const SEGMENT_TONE: BitTone = "slate";
 
 /** One line that tells the learner which number is which. */
 function BracketKey() {
@@ -179,21 +186,23 @@ function BracketKey() {
 /** Segments for a BitStrip in its default [w-1:0] numbering, from the model's runs. */
 function segmentsFor(bits: readonly TaggedBit[]): BitSegment[] {
   const w = bits.length;
-  return bitRuns(bits).map((r) => ({ hi: w - 1 - r.start, lo: w - 1 - r.end, label: segmentWords(r), tone: toneFor(r.origin) }));
+  return bitRuns(bits).map((r) => ({ hi: w - 1 - r.start, lo: w - 1 - r.end, label: segmentWords(r), tone: SEGMENT_TONE }));
 }
 
 function Strip({ bits, label, marked, markLabel }: { bits: readonly TaggedBit[]; label: string; marked?: number[]; markLabel?: string }) {
   if (bits.length === 0) return null;
   const w = bits.length;
   return (
-    <BitStrip
-      bits={bits.map((b) => b.v)}
-      label={label}
-      valueText={formatBits(bits.map((b) => b.v))}
-      segments={segmentsFor(bits)}
-      highlight={marked?.map((p) => w - 1 - p)}
-      highlightLabel={markLabel}
-    />
+    <div className="contents" data-figure-kit>
+      <BitStrip
+        bits={bits.map((b) => b.v)}
+        label={label}
+        valueText={formatBits(bits.map((b) => b.v))}
+        segments={segmentsFor(bits)}
+        highlight={marked?.map((p) => w - 1 - p)}
+        highlightLabel={markLabel}
+      />
+    </div>
   );
 }
 
@@ -204,13 +213,20 @@ const MAX_CARDS = 12;
  * Cards keep a layoutId per label, so between the slice and reverse steps each
  * slice visibly moves to its new place. With reduced motion it jumps.
  */
-function StepView({ step, reducedMotion, groupId }: { step: StreamStep; reducedMotion: boolean; groupId: string }) {
+function StepView({ step, reducedMotion, groupId, staged, focus }: { step: StreamStep; reducedMotion: boolean; groupId: string; staged: boolean; focus: boolean }) {
+  const stream = <Strip bits={step.bits} label={`${step.title}: the stream`} marked={step.marked} markLabel={step.markLabel} />;
+  // The whole-versus-field lab lifts the current step's stream: each field in the position the step puts it.
+  const streamView = focus && step.bits.length > 0 ? (
+    <div data-fig-focus="stream-step" className={cn("rounded-lg border-2 border-fig-indigo bg-card px-2.5 py-2", indigoBody, focalRim)}>
+      {stream}
+    </div>
+  ) : stream;
   const cards = step.cards && step.cards.length > 1 && step.cards.length <= MAX_CARDS ? step.cards : null;
   const transition = reducedMotion ? { duration: 0 } : { type: "spring" as const, stiffness: 260, damping: 28 };
   return (
     <div className="space-y-3" data-testid={`step-${step.id}`} data-reduced-motion={reducedMotion ? "true" : "false"}>
       {step.error ? (
-        <p role="note" className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-800 dark:text-rose-200">
+        <p role="note" className="rounded-lg border border-fig-rose bg-fig-rose-fill px-3 py-2 text-sm text-fig-rose-text">
           <span aria-hidden>✕ </span>
           {step.text}
         </p>
@@ -218,22 +234,22 @@ function StepView({ step, reducedMotion, groupId }: { step: StreamStep; reducedM
       {cards ? (
         <ol className="flex flex-wrap gap-2" aria-label={`${step.title}: ${cards.length} pieces, in order`}>
           {cards.map((c, i) => (
-            <motion.li layout="position" layoutId={`${groupId}-${c.label}`} transition={transition} key={`${c.label}-${i}`} className="min-w-0 max-w-full rounded-lg border border-border/70 bg-background/60 p-2">
+            <motion.li layout="position" layoutId={`${groupId}-${c.label}`} transition={transition} key={`${c.label}-${i}`} className={cn("min-w-0 max-w-full rounded-lg border p-2", staged ? ["border-fig-indigo bg-card", indigoBody, raisedRim] : "border-border/70 bg-background/60")}>
               <p className={cn("mb-1 text-xs font-semibold text-foreground", mono)}>{c.label}</p>
               <Strip bits={c.bits} label={c.label} />
             </motion.li>
           ))}
         </ol>
       ) : (
-        <Strip bits={step.bits} label={`${step.title}: the stream`} marked={step.marked} markLabel={step.markLabel} />
+        streamView
       )}
-      {cards && step.marked ? <Strip bits={step.bits} label={`${step.title}: the stream`} marked={step.marked} markLabel={step.markLabel} /> : null}
+      {cards && step.marked ? streamView : null}
     </div>
   );
 }
 
 /** Step-through of the model's steps: buttons, a scrubber and the step text in a live region. */
-function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
+function StepThrough({ steps, label, staged, focus = false }: { steps: StreamStep[]; label: string; staged: boolean; focus?: boolean }) {
   const [index, setIndex] = useState(0);
   const reducedMotion = usePrefersReducedMotion();
   const groupId = useId();
@@ -243,7 +259,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
   if (!step) return null;
   const hasMarks = steps.some((s) => s.marked && s.marked.length > 0);
   return (
-    <div className={cn("space-y-3", panel)} role="group" aria-label={label}>
+    <div className={cn("space-y-3", panel, staged && "fig-stage !p-3")} role="group" aria-label={label}>
       <div className="flex flex-wrap items-center gap-2">
         <StepButton label="Previous step" atEnd={i === 0} onClick={() => setIndex(i - 1)}>
           <span aria-hidden>←</span>
@@ -259,7 +275,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
           onChange={(e) => setIndex(Number(e.target.value))}
           aria-label="Step scrubber"
           aria-valuetext={`Step ${i + 1} of ${steps.length}: ${step.title}`}
-          className="h-2 min-w-[120px] flex-1 cursor-pointer accent-cyan-500 [@media(pointer:coarse)]:h-10"
+          className="h-2 min-w-[120px] flex-1 cursor-pointer accent-fig-cyan [@media(pointer:coarse)]:h-10"
         />
         <span className="whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground" aria-hidden>
           {i + 1}/{steps.length}
@@ -274,7 +290,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
               onClick={() => setIndex(k)}
               className={cn(
                 "min-h-8 rounded-full border px-2.5 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-10",
-                k === i ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
+                k === i ? "border-fig-cyan-text bg-fig-cyan-text font-semibold text-background" : "border-border/70 text-muted-foreground hover:bg-muted",
               )}
             >
               {k + 1}. {s.title}
@@ -282,7 +298,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
           </li>
         ))}
       </ol>
-      <p className="text-sm text-foreground" aria-live="polite" data-testid="step-text">
+      <p className={cn("text-sm text-foreground", staged && ["rounded-lg border border-fig-indigo bg-card px-3 py-2", indigoBody, raisedRim])} aria-live="polite" data-testid="step-text">
         <strong>
           Step {i + 1} of {steps.length}: {step.title}.{" "}
         </strong>
@@ -290,7 +306,7 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
       </p>
       <MotionConfig reducedMotion="user">
         <LayoutGroup id={groupId}>
-          <StepView step={step} reducedMotion={reducedMotion} groupId={groupId} />
+          <StepView step={step} reducedMotion={reducedMotion} groupId={groupId} staged={staged} focus={focus} />
         </LayoutGroup>
       </MotionConfig>
       <BracketKey />
@@ -299,15 +315,25 @@ function StepThrough({ steps, label }: { steps: StreamStep[]; label: string }) {
   );
 }
 
-function CompareList({ rows, title }: { rows: CompareRow[]; title: string }) {
+/**
+ * `cast` raises every row as neutral glass. `current` (the whole-versus-field lab) does the same and gives the row
+ * of the statement being stepped through the indigo body of the stream above it, so the two rows read as this one
+ * and the other one.
+ */
+function CompareList({ rows, title, cast = false, current }: { rows: CompareRow[]; title: string; cast?: boolean; current?: string }) {
+  const lifted = cast || current !== undefined;
   return (
     <div className="space-y-2">
       <p className={eyebrowClass}>{title}</p>
       <ul className="space-y-2" data-testid="compare-rows">
         {rows.map((r) => (
-          <li key={r.code} className={cn(panel, "space-y-1 text-sm", r.error && "border-rose-500/50")}>
+          <li
+            key={r.code}
+            data-compare-current={current !== undefined && r.code === current ? "true" : undefined}
+            className={cn(panel, "space-y-1 text-sm", lifted && raisedRim, r.error ? "border-fig-rose" : current !== undefined && r.code === current ? ["border-fig-indigo", indigoBody] : lifted && "border-fig-generic")}
+          >
             <code className={cn(mono, "block break-words text-xs")}>{r.code}</code>
-            <p className={cn(mono, "font-semibold", r.error && "text-rose-700 dark:text-rose-300")}>{r.result}</p>
+            <p className={cn(mono, "font-semibold", r.error && "text-fig-rose-text")}>{r.result}</p>
             <p className="text-xs text-muted-foreground">{r.why}</p>
           </li>
         ))}
@@ -326,6 +352,7 @@ function StreamLab({ preset }: { preset?: string }) {
   const [config, setConfig] = useState<StreamConfig>(initial.config);
   const [attempt, setAttempt] = useState(0);
   const [said, setSaid] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const run = useMemo(() => runStream(config), [config]);
   const resetKey = `${attempt}|${JSON.stringify(config)}`;
   const options = useMemo(() => toPredictionOptions(run.options, resetKey), [run, resetKey]);
@@ -342,6 +369,9 @@ function StreamLab({ preset }: { preset?: string }) {
   };
 
   const { subject } = config;
+  // Every stream preset is staged; the whole-versus-field embed also lifts the stepped stream and marks its row below.
+  const staged = true;
+  const fieldFocus = preset === "whole-vs-field";
   const unpack = config.direction === "unpack" || subject === "payload";
   const steps = run.pack?.steps ?? run.unpack?.steps ?? [];
   const opOptions = SUBJECT_OPS[subject].map((id) => ({ value: id, label: STREAM_OPS[id].label }));
@@ -357,7 +387,7 @@ function StreamLab({ preset }: { preset?: string }) {
       assumptions={STREAM_ASSUMPTIONS}
       className={frameClass}
     >
-      <div className={cn("space-y-3", touchButtons)}>
+      <div className={cn("space-y-3", touchButtons, staged && checkedChoice)}>
         <Field label="Preset">
           <select className={selectClass} value={presetId} onChange={(e) => applyPreset(e.target.value)}>
             {STREAM_PRESETS.map((p) => (
@@ -423,7 +453,7 @@ function StreamLab({ preset }: { preset?: string }) {
         ) : null}
       </div>
 
-      <CodeBlock lines={run.code} label="The code to predict" />
+      <CodeBlock lines={run.code} label="The code to predict" staged={staged} focal={!(fieldFocus && revealed)} />
       {run.notes.map((n) => (
         <p key={n} role="note" className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
           {n}
@@ -436,14 +466,15 @@ function StreamLab({ preset }: { preset?: string }) {
         {({ committed }) => (
           <div className="space-y-4" data-testid="stream-reveal">
             <VerdictSignal options={options} committed={committed} onSay={setSaid} />
+            <CompileRevealSignal onChange={setRevealed} />
             <RevealHeading>Step through the stream</RevealHeading>
-            <StepThrough key={resetKey} steps={steps} label="Streaming steps" />
+            <StepThrough key={resetKey} steps={steps} label="Streaming steps" staged={staged} focus={fieldFocus} />
             {run.unpack?.status === "not-modelled" ? (
               <p role="note" className="text-sm text-amber-900 dark:text-amber-100">
                 {run.unpack.message}
               </p>
             ) : null}
-            {run.compare.length > 1 ? <CompareList rows={run.compare} title="The same operands with each operator" /> : null}
+            {run.compare.length > 1 ? <CompareList rows={run.compare} title="The same operands with each operator" current={fieldFocus ? run.code.at(-1) : undefined} /> : null}
           </div>
         )}
       </PredictionPrompt>
@@ -499,7 +530,7 @@ function CastLab({ preset }: { preset?: string }) {
       assumptions={CAST_ASSUMPTIONS}
       className={frameClass}
     >
-      <div className={cn("space-y-3", touchButtons)}>
+      <div className={cn("space-y-3", touchButtons, checkedChoice)}>
         <Field label="Preset">
           <select className={selectClass} value={presetId} onChange={(e) => applyPreset(e.target.value)}>
             {CAST_PRESETS.map((p) => (
@@ -539,7 +570,7 @@ function CastLab({ preset }: { preset?: string }) {
         </div>
       </div>
 
-      <CodeBlock lines={run.code} label="The code to predict" />
+      <CodeBlock lines={run.code} label="The code to predict" staged />
 
       <LiveAnnouncement text={said} />
 
@@ -553,12 +584,12 @@ function CastLab({ preset }: { preset?: string }) {
               <p className="text-sm text-foreground">{run.result.message}</p>
             ) : (
               <>
-                <p role="note" className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-800 dark:text-rose-200">
+                <p role="note" className="rounded-lg border border-fig-rose bg-fig-rose-fill px-3 py-2 text-sm text-fig-rose-text">
                   <span aria-hidden>✕ </span>
                   {run.result.message}
                 </p>
                 <CastStrips run={run} showValue={false} />
-                <CompareList rows={run.compare} title="Streaming handles what the cast cannot: each row assigns to a 32-bit word_t w" />
+                <CompareList rows={run.compare} title="Streaming handles what the cast cannot: each row assigns to a 32-bit word_t w" cast />
               </>
             )}
           </div>
@@ -575,7 +606,7 @@ function CastLab({ preset }: { preset?: string }) {
                 v = <code className={cn(mono, "font-semibold")}>{run.valueText}</code>
               </p>
               <CastStrips run={run} showValue />
-              <CompareList rows={run.compare} title="The same source three ways: each row assigns to a 32-bit word_t w" />
+              <CompareList rows={run.compare} title="The same source three ways: each row assigns to a 32-bit word_t w" cast />
             </div>
           )}
         </PredictionPrompt>
@@ -590,7 +621,7 @@ function CastLab({ preset }: { preset?: string }) {
   );
 }
 
-/** Mounted only inside the compile reveal, so the value prompt appears after it. */
+/** Mounted only inside a reveal: tells the lab that its reveal is open (the cast lab's value prompt, the stream lab's focal part). */
 function CompileRevealSignal({ onChange }: { onChange: (revealed: boolean) => void }) {
   useEffect(() => {
     onChange(true);
@@ -604,7 +635,7 @@ function CastStrips({ run, showValue }: { run: ReturnType<typeof runCast>; showV
   // Before the value reveal the Cut step is hidden; the message is already shown above, so it is not repeated.
   const steps = showValue ? run.result.steps : run.result.steps.filter((s) => !s.startsWith("Cut") && s !== run.result.message);
   return (
-    <div className={cn("space-y-3", panel)}>
+    <div className={cn("fig-stage !p-3 space-y-3", panel)}>
       {steps.length > 0 ? (
         <ol className="list-decimal space-y-1 pl-5 text-sm text-foreground" aria-label="How the cast works">
           {steps.map((s) => (
@@ -612,12 +643,12 @@ function CastStrips({ run, showValue }: { run: ReturnType<typeof runCast>; showV
           ))}
         </ol>
       ) : null}
-      <div className="space-y-1">
+      <div className={cn("space-y-1 rounded-lg border border-fig-generic bg-card px-3 py-2", raisedRim)}>
         <p className={eyebrowClass}>Flattened {run.source.name}</p>
         <Strip bits={run.result.generic} label={`${run.source.name} flattened`} />
       </div>
       {showValue && run.result.value ? (
-        <div className="space-y-1">
+        <div className={cn("space-y-1 rounded-lg border border-fig-indigo bg-card px-3 py-2", indigoBody, raisedRim)}>
           <p className={eyebrowClass}>v, cut from the left</p>
           <Strip bits={run.result.value} label="v after the cast" />
         </div>

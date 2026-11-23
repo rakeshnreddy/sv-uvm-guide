@@ -16,6 +16,8 @@ interface VisualFrameProps {
   assumptions?: string[];
   children: React.ReactNode;
   className?: string;
+  /** Test id for the frame itself, so a component need not wrap its frame in an extra element. */
+  testId?: string;
 }
 
 /** The label style shared by eyebrows and section labels around every visual. */
@@ -47,11 +49,12 @@ export const VISUAL_FRAME_CLASS = "glass-liquid not-prose my-8 space-y-4 p-3 sm:
  * Standard shell for every curriculum visual: header, fidelity declaration,
  * and consistent spacing that stays compact on phones.
  */
-export function VisualFrame({ label, eyebrow, title, summary, fidelity, assumptions, children, className }: VisualFrameProps) {
+export function VisualFrame({ label, eyebrow, title, summary, fidelity, assumptions, children, className, testId }: VisualFrameProps) {
   return (
     <section
       aria-label={label}
       className={cn(VISUAL_FRAME_CLASS, className)}
+      data-testid={testId}
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
