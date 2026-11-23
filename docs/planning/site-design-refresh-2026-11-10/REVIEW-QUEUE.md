@@ -1,8 +1,8 @@
 # Figure review queue
 
 - Last finished lesson · F2A Structs, Unions, and Enums, released in checkpoint 32
-- Lesson in progress · F2A Operators and Expressions · taken by Claude on 2026-11-22 on the local branch `figures/operators`: visuals 1 to 20 come from the saved patch, 21 to 28 are being drawn, and an independent review of all 28 follows before release
-- Working tree · Clean. The Operators and Expressions work is on `figures/operators`, not pushed yet.
+- Lesson in progress · F2A Operators and Expressions · taken by Claude on the local branch `figures/operators` (head `d7f48c1d`, not pushed). All 28 visuals are drawn, independently reviewed, fixed and checked. Not released: the full gate passes 16 of 17, and G1 still counts five visuals as old look (`DecisionLab` line 402, the hand-drawn figure at line 695, and three `StreamPackLab` embeds). The causes are mechanical and are listed in the update of 2026-11-22 below. Work paused on 2026-11-22 at the weekly usage line; do not start this lesson again, finish it from that branch
+- Working tree · Clean. The Operators and Expressions work is on the local branch `figures/operators`, not pushed.
 - Lessons finished in this window · 0
 
 Checkpoint 32 is in `origin/curriculum-quality-program` at `669f7d7b`.
@@ -30,6 +30,19 @@ changed, so nothing a learner sees is different. No lesson was finished in this 
 
 Next, in this order: the Core Data Types baseline; Operators and Expressions visuals 21 to 28 from the saved
 patch; then `F2B` onward as in the brief.
+
+**Update, 2026-11-22, evening.** Operators and Expressions is not released yet. State of `figures/operators`
+at `d7f48c1d`: 28 visuals drawn; five reviewers found 19 faults, 16 minor items and 8 kit notes; 36 findings
+were sent to fixers and all are fixed and independently checked except three that a rule blocks (a button label
+that differs from the prose, also on the live page; and two kit-drawn figures, visual 11 cut off at 390 and
+visual 28 unchanged, which wait for the kit step). The full gate passes 16 of 17. G1 fails on five visuals, for
+three mechanical reasons that no `--only` run can see, because G1 runs only in a full lesson run:
+`DecisionLab` has a class-less wrapper between its slot and `section.fig-panel`; `StreamPackLab` has no
+`fig-panel` on its outer section; and the figure at line 695 reads as stale because its rendered words no longer
+match the source after a `tspan` edit. The released Verification Mindset lesson passes with 0 new. One visible
+change reaches released lessons: the pressed preset chip in `OperatorExplorer` is a solid cyan fill in light
+theme, which clears the 1.97:1 finding. Lesson for the loop: run one full lesson gate before the review, not
+only `--only` runs.
 
 **Update, 2026-11-22.** The Core Data Types baseline is recorded (see the table below). Claude has taken
 Operators and Expressions and, after it, `F2B` index, `F2C` index and `F2C` flow-control, in that order. Codex
